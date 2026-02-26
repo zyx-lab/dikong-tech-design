@@ -45,6 +45,7 @@ PostgreSQL
 | 2 | 离线 |
 | 3 | 故障 |
 | 4 | 维护中 |
+| 9 | 已报废 |
 
 **示例数据**：
 | name | sn | drone_type_id |
@@ -82,7 +83,7 @@ PostgreSQL
 **account_status 账号状态**：
 | 值 | 含义 |
 |----|------|
-| 0 | 关闭 |
+| 0 | 关闭（含离职/已删除） |
 | 1 | 开启 |
 
 **示例数据**：
@@ -110,6 +111,17 @@ PostgreSQL
 | status             | smallint      | -        | 1      | 状态               |
 | created_at         | timestamp     | -        | now()  | 创建时间           |
 | updated_at         | timestamp     | -        | -      | 更新时间           |
+
+**status 状态值**:
+| 值 | 含义 |
+|----|------|
+| 0 | 禁用（已删除） |
+| 1 | 正常 |
+
+> **删除策略说明**：
+>
+> - 如果航线已被任务引用，禁止物理删除，只能设置为 `0-禁用`
+> - 未被使用的草稿航线可以物理删除
 
 **route_type 航线类型**：
 | 值 | 含义 |
@@ -234,7 +246,15 @@ PostgreSQL
 | latitude         | numeric(12,8) | -        | -      | 拍摄位置-纬度    |
 | longitude        | numeric(12,8) | -        | -      | 拍摄位置-经度    |
 | captured_at      | timestamp     | -        | -      | 拍摄时间         |
+| is_deleted       | boolean       | -        | false  | 是否已删除       |
+| deleted_at       | timestamp     | -        | -      | 删除时间         |
 | created_at       | timestamp     | -        | now()  | 创建时间         |
+
+> **删除策略说明**：
+>
+> - 支持逻辑删除（回收站机制），删除后设置 `is_deleted=true`
+> - 建议定期清理（如30天后）物理删除文件和记录
+> - 物理删除时需同步删除云存储（OSS）上的文件
 
 **media_type 媒体类型**：
 | 值 | 含义 |

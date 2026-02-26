@@ -35,15 +35,15 @@ PostgreSQL
 
 ### 2.2 drones（无人机表）
 
-| 字段名        | 类型         | 约束                | 说明                                   |
-| ------------- | ------------ | ------------------- | -------------------------------------- |
-| id            | bigserial    | PK                  | 无人机ID                               |
-| name          | varchar(100) | NOT NULL            | 名称，如：应急测绘-01、河道巡检-03     |
-| sn            | varchar(100) | UNIQUE              | 设备序列号                             |
-| drone_type_id | bigint       | FK → drone_types.id | 无人机类型ID                           |
-| status        | smallint     | DEFAULT 1           | 状态：1-在线, 2-离线, 3-故障, 4-维护中 |
-| created_at    | timestamp    | DEFAULT now()       | 创建时间                               |
-| updated_at    | timestamp    |                     | 更新时间                               |
+| 字段名        | 类型         | 约束                | 说明                                             |
+| ------------- | ------------ | ------------------- | ------------------------------------------------ |
+| id            | bigserial    | PK                  | 无人机ID                                         |
+| name          | varchar(100) | NOT NULL            | 名称，如：应急测绘-01、河道巡检-03               |
+| sn            | varchar(100) | UNIQUE              | 设备序列号                                       |
+| drone_type_id | bigint       | FK → drone_types.id | 无人机类型ID                                     |
+| status        | smallint     | DEFAULT 1           | 状态：1-在线, 2-离线, 3-故障, 4-维护中, 9-已报废 |
+| created_at    | timestamp    | DEFAULT now()       | 创建时间                                         |
+| updated_at    | timestamp    |                     | 更新时间                                         |
 
 ---
 
@@ -59,7 +59,7 @@ PostgreSQL
 | cert_no          | varchar(100) |               | 证件编号                                         |
 | cert_issue_date  | date         |               | 发证日期                                         |
 | cert_expiry_date | date         |               | 有效期限                                         |
-| account_status   | smallint     | DEFAULT 1     | 账号状态：1-开启, 0-关闭                         |
+| account_status   | smallint     | DEFAULT 1     | 账号状态：1-开启, 0-关闭（含离职/已删除）        |
 | created_at       | timestamp    | DEFAULT now() | 创建时间                                         |
 | updated_at       | timestamp    |               | 更新时间                                         |
 
@@ -77,7 +77,7 @@ PostgreSQL
 | estimated_duration | integer       |                     | 预计飞行时长（秒）               |
 | waypoint_count     | integer       |                     | 航点数量                         |
 | creator_name       | varchar(50)   |                     | 创建人姓名                       |
-| status             | smallint      | DEFAULT 1           | 状态：1-正常, 0-禁用             |
+| status             | smallint      | DEFAULT 1           | 状态：1-正常, 0-禁用（已删除）   |
 | created_at         | timestamp     | DEFAULT now()       | 创建时间                         |
 | updated_at         | timestamp     |                     | 更新时间                         |
 
@@ -158,6 +158,8 @@ PostgreSQL
 | latitude         | numeric(12,8) |                        | 拍摄位置-纬度            |
 | longitude        | numeric(12,8) |                        | 拍摄位置-经度            |
 | captured_at      | timestamp     |                        | 拍摄时间                 |
+| is_deleted       | boolean       | DEFAULT false          | 是否已删除               |
+| deleted_at       | timestamp     |                        | 删除时间                 |
 | created_at       | timestamp     | DEFAULT now()          | 创建时间                 |
 
 ---
