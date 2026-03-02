@@ -17,6 +17,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "apps.access",
     "apps.api_v1",
+    "apps.drone",
     "drf_spectacular",
 ]
 

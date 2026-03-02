@@ -10,6 +10,7 @@ from django.forms.models import BaseInlineFormSet
 from apps.access.models import (
     AuditLog,
     GroupPermissionScope,
+    RegistrationApplication,
     ScopeStatus,
     StaffProfile,
     StaffType,
@@ -291,8 +292,8 @@ class UserAdmin(DjangoUserAdmin):
 
 @admin.register(StaffType)
 class StaffTypeAdmin(admin.ModelAdmin):
-    list_display = ("id", "code", "name", "status", "created_at", "updated_at")
-    list_filter = ("status",)
+    list_display = ("id", "code", "name", "is_registrable", "status", "created_at", "updated_at")
+    list_filter = ("is_registrable", "status")
     search_fields = ("code", "name", "description")
     inlines = (StaffTypeGroupByStaffTypeInline,)
 
@@ -394,6 +395,49 @@ class AuditLogAdmin(admin.ModelAdmin):
         "ip",
         "request_id",
         "created_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(RegistrationApplication)
+class RegistrationApplicationAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "application_no",
+        "name",
+        "phone",
+        "requested_staff_type_code",
+        "status",
+        "reviewer_user",
+        "reviewed_at",
+        "created_at",
+    )
+    search_fields = ("application_no", "name", "phone", "email", "requested_staff_type_code")
+    list_filter = ("status", "requested_staff_type_code")
+    readonly_fields = (
+        "application_no",
+        "name",
+        "phone",
+        "email",
+        "requested_staff_type_code",
+        "requested_org_id",
+        "application_note",
+        "status",
+        "reviewer_user",
+        "reviewed_at",
+        "review_comment",
+        "created_user",
+        "created_staff",
+        "created_at",
+        "updated_at",
     )
 
     def has_add_permission(self, request):

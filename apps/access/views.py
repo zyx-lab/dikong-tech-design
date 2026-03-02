@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from django.contrib.auth.models import Group, Permission
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import generics, status
@@ -13,7 +14,19 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 
 from apps.access.drf_permissions import PermissionMapMixin, RequireInternalPermission
-from apps.access.models import AuditLog, GroupPermissionScope, ScopeStatus, StaffType, StaffTypeGroup, User
+from apps.access.models import (
+    AuditLog,
+    EmploymentStatus,
+    GroupPermissionScope,
+    RegistrationApplication,
+    RegistrationApplicationStatus,
+    ScopeStatus,
+    StaffProfile,
+    StaffType,
+    StaffTypeGroup,
+    User,
+    UserStatus,
+)
 from apps.access.serializers import (
     AuditLogSerializer,
     GroupPermissionAssignSerializer,
@@ -21,6 +34,9 @@ from apps.access.serializers import (
     GroupSerializer,
     MePermissionSerializer,
     PermissionCodeSerializer,
+    RegistrationApplicationAdminSerializer,
+    RegistrationApplicationApproveSerializer,
+    RegistrationApplicationRejectSerializer,
     StaffTypeGroupAssignSerializer,
     StaffTypeSerializer,
     UserManageSerializer,
@@ -83,6 +99,24 @@ def _user_payload(user: User) -> dict:
     return payload
 
 
+def _registration_payload(application: RegistrationApplication) -> dict:
+    return {
+        "id": application.id,
+        "application_no": application.application_no,
+        "name": application.name,
+        "phone": application.phone,
+        "email": application.email,
+        "requested_staff_type_code": application.requested_staff_type_code,
+        "requested_org_id": application.requested_org_id,
+        "status": application.status,
+        "review_comment": application.review_comment,
+        "reviewer_user_id": application.reviewer_user_id,
+        "reviewed_at": application.reviewed_at.isoformat() if application.reviewed_at else None,
+        "created_user_id": application.created_user_id,
+        "created_staff_id": application.created_staff_id,
+    }
+
+
 def _parse_iso_datetime(value: str):
     try:
         parsed = datetime.fromisoformat(value)
@@ -131,6 +165,7 @@ class ApiRootView(APIView):
                     "staff_types": reverse("staff-type-list-create", request=request),
                     "scope_matrix": reverse("scope-matrix", request=request),
                     "audit_logs": reverse("audit-log-list", request=request),
+                    "registration_applications": reverse("registration-application-list", request=request),
                 },
             }
         )
@@ -386,6 +421,201 @@ class ScopeMatrixView(PermissionMapMixin, APIView):
             )
 
         return Response({"rows": rows})
+
+
+class RegistrationApplicationListView(PermissionMapMixin, generics.ListAPIView):
+    """IAM 侧：注册申请列表。"""
+
+    serializer_class = RegistrationApplicationAdminSerializer
+    permission_classes = [RequireInternalPermission]
+    required_permission = "access.view_registration_application"
+    queryset = RegistrationApplication.objects.select_related("reviewer_user", "created_user", "created_staff").all()
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        status_value = self.request.query_params.get("status")
+        phone = self.request.query_params.get("phone")
+        email = self.request.query_params.get("email")
+        application_no = self.request.query_params.get("application_no")
+        requested_staff_type_code = self.request.query_params.get("requested_staff_type_code")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+
+        if status_value:
+            qs = qs.filter(status=status_value)
+        if phone:
+            qs = qs.filter(phone__icontains=phone)
+        if email:
+            qs = qs.filter(email__icontains=email)
+        if application_no:
+            qs = qs.filter(application_no__icontains=application_no)
+        if requested_staff_type_code:
+            qs = qs.filter(requested_staff_type_code=requested_staff_type_code)
+
+        if date_from:
+            start = _parse_iso_datetime(date_from)
+            if start is not None:
+                qs = qs.filter(created_at__gte=start)
+
+        if date_to:
+            end = _parse_iso_datetime(date_to)
+            if end is not None:
+                qs = qs.filter(created_at__lte=end)
+
+        return qs.order_by("-created_at", "-id")
+
+
+class RegistrationApplicationDetailView(PermissionMapMixin, generics.RetrieveAPIView):
+    """IAM 侧：注册申请详情。"""
+
+    serializer_class = RegistrationApplicationAdminSerializer
+    permission_classes = [RequireInternalPermission]
+    required_permission = "access.view_registration_application"
+    queryset = RegistrationApplication.objects.select_related("reviewer_user", "created_user", "created_staff").all()
+
+
+class RegistrationApplicationApproveView(PermissionMapMixin, generics.GenericAPIView):
+    """IAM 侧：审核通过并创建正式业务账号。"""
+
+    serializer_class = RegistrationApplicationApproveSerializer
+    permission_classes = [RequireInternalPermission]
+    required_permission = "access.manage_registration_application"
+
+    @extend_schema(request=RegistrationApplicationApproveSerializer, responses=RegistrationApplicationAdminSerializer)
+    def post(self, request, pk: int):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():
+            application = get_object_or_404(RegistrationApplication.objects.select_for_update(), id=pk)
+
+            if application.status != RegistrationApplicationStatus.PENDING_REVIEW:
+                return Response(
+                    {
+                        "detail": "APPLICATION_NOT_PENDING_REVIEW",
+                        "status": application.status,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            staff_no = serializer.validated_data["staff_no"]
+            if StaffProfile.objects.filter(staff_no=staff_no).exists():
+                return Response({"staff_no": ["staff_no 已存在"]}, status=status.HTTP_400_BAD_REQUEST)
+
+            # 防止重复开户造成身份事实冲突。
+            if StaffProfile.objects.filter(phone=application.phone).exists():
+                return Response({"phone": ["该手机号已存在正式人员档案"]}, status=status.HTTP_400_BAD_REQUEST)
+            if StaffProfile.objects.filter(email=application.email).exists():
+                return Response({"email": ["该邮箱已存在正式人员档案"]}, status=status.HTTP_400_BAD_REQUEST)
+
+            final_staff_type = serializer.resolve_final_staff_type(application.requested_staff_type_code)
+            before_data = _registration_payload(application)
+
+            user = User.objects.create_user(
+                username=serializer.validated_data["username"],
+                password=serializer.validated_data["password"],
+                is_active=True,
+                is_staff=False,
+                is_superuser=False,
+                status=UserStatus.ACTIVE,
+            )
+            staff = StaffProfile.objects.create(
+                user=user,
+                staff_no=staff_no,
+                name=application.name,
+                phone=application.phone,
+                email=application.email,
+                employment_status=EmploymentStatus.ACTIVE,
+                staff_type=final_staff_type,
+                org_id=serializer.validated_data.get("final_org_id", application.requested_org_id),
+            )
+
+            application.status = RegistrationApplicationStatus.APPROVED_ACCOUNT_CREATED
+            application.reviewer_user = request.user
+            application.reviewed_at = timezone.now()
+            application.review_comment = serializer.validated_data.get("review_comment", "")
+            application.created_user = user
+            application.created_staff = staff
+            application.save(
+                update_fields=[
+                    "status",
+                    "reviewer_user",
+                    "reviewed_at",
+                    "review_comment",
+                    "created_user",
+                    "created_staff",
+                    "updated_at",
+                ]
+            )
+
+            log_action(
+                request=request,
+                action="REGISTRATION_APPLICATION_APPROVE",
+                target_type="registration_application",
+                target_id=application.id,
+                before_data=before_data,
+                after_data=_registration_payload(application),
+            )
+            log_action(
+                request=request,
+                action="REGISTRATION_ACCOUNT_CREATE",
+                target_type="user",
+                target_id=user.id,
+                after_data=_user_payload(user),
+            )
+
+        return Response(RegistrationApplicationAdminSerializer(application).data, status=status.HTTP_200_OK)
+
+
+class RegistrationApplicationRejectView(PermissionMapMixin, generics.GenericAPIView):
+    """IAM 侧：驳回注册申请。"""
+
+    serializer_class = RegistrationApplicationRejectSerializer
+    permission_classes = [RequireInternalPermission]
+    required_permission = "access.manage_registration_application"
+
+    @extend_schema(request=RegistrationApplicationRejectSerializer, responses=RegistrationApplicationAdminSerializer)
+    def post(self, request, pk: int):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():
+            application = get_object_or_404(RegistrationApplication.objects.select_for_update(), id=pk)
+
+            if application.status != RegistrationApplicationStatus.PENDING_REVIEW:
+                return Response(
+                    {
+                        "detail": "APPLICATION_NOT_PENDING_REVIEW",
+                        "status": application.status,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            before_data = _registration_payload(application)
+            application.status = RegistrationApplicationStatus.REJECTED
+            application.reviewer_user = request.user
+            application.reviewed_at = timezone.now()
+            application.review_comment = serializer.validated_data["review_comment"]
+            application.save(
+                update_fields=[
+                    "status",
+                    "reviewer_user",
+                    "reviewed_at",
+                    "review_comment",
+                    "updated_at",
+                ]
+            )
+
+            log_action(
+                request=request,
+                action="REGISTRATION_APPLICATION_REJECT",
+                target_type="registration_application",
+                target_id=application.id,
+                before_data=before_data,
+                after_data=_registration_payload(application),
+            )
+
+        return Response(RegistrationApplicationAdminSerializer(application).data, status=status.HTTP_200_OK)
 
 
 class AuditLogListView(PermissionMapMixin, generics.ListAPIView):

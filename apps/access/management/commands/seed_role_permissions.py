@@ -12,6 +12,7 @@ class StaffTypeDefinition:
     code: str
     name: str
     description: str
+    is_registrable: bool
 
 
 @dataclass(frozen=True)
@@ -20,11 +21,12 @@ class CapabilityGroupDefinition:
 
 
 STAFF_TYPE_DEFINITIONS = {
-    "ops_admin": StaffTypeDefinition("ops_admin", "运营管理员", "负责授权配置、账号治理与审计查看"),
-    "route_planner": StaffTypeDefinition("route_planner", "航线规划员", "负责航线与航点规划"),
-    "dispatcher": StaffTypeDefinition("dispatcher", "任务调度员", "负责任务编排、调度与下发"),
-    "pilot_operator": StaffTypeDefinition("pilot_operator", "飞手操作员", "负责任务执行与飞行记录"),
-    "auditor": StaffTypeDefinition("auditor", "审计员", "负责审计查询与合规核查"),
+    "ops_admin": StaffTypeDefinition("ops_admin", "运营管理员", "负责授权配置、账号治理与审计查看", False),
+    "business_super_admin": StaffTypeDefinition("business_super_admin", "业务超级管理员", "负责业务平面全量权限操作", False),
+    "route_planner": StaffTypeDefinition("route_planner", "航线规划员", "负责航线与航点规划", True),
+    "dispatcher": StaffTypeDefinition("dispatcher", "任务调度员", "负责任务编排、调度与下发", True),
+    "pilot_operator": StaffTypeDefinition("pilot_operator", "飞手操作员", "负责任务执行与飞行记录", True),
+    "auditor": StaffTypeDefinition("auditor", "审计员", "负责审计查询与合规核查", True),
 }
 
 CAPABILITY_GROUP_DEFINITIONS = {
@@ -32,6 +34,11 @@ CAPABILITY_GROUP_DEFINITIONS = {
     "cap_user_admin": CapabilityGroupDefinition("账号与人员查看组"),
     "cap_staff_self": CapabilityGroupDefinition("员工自助访问组"),
     "cap_audit_reader": CapabilityGroupDefinition("审计日志只读组"),
+    "cap_drone_admin": CapabilityGroupDefinition("无人机管理组"),
+    "cap_business_super_admin": CapabilityGroupDefinition("业务超级权限组"),
+    "cap_drone_viewer": CapabilityGroupDefinition("无人机全量查看组"),
+    "cap_drone_dispatch": CapabilityGroupDefinition("无人机分配管理组"),
+    "cap_drone_assigned_viewer": CapabilityGroupDefinition("无人机按分配查看组"),
 }
 
 GROUP_MATRIX = {
@@ -41,6 +48,8 @@ GROUP_MATRIX = {
         "access.manage_auth_scopes": ScopeType.ALL,
         "access.manage_staff_type_groups": ScopeType.ALL,
         "access.manage_user_accounts": ScopeType.ALL,
+        "access.view_registration_application": ScopeType.ALL,
+        "access.manage_registration_application": ScopeType.ALL,
     },
     "cap_user_admin": {
         "access.view_user": ScopeType.ALL,
@@ -52,13 +61,35 @@ GROUP_MATRIX = {
     "cap_audit_reader": {
         "access.view_auth_audit_logs": ScopeType.ALL,
     },
+    "cap_drone_admin": {
+        "drone.view_drone": ScopeType.ALL,
+        "drone.manage_drone": ScopeType.ALL,
+        "drone.change_drone_status": ScopeType.ALL,
+        "drone.manage_drone_assignment": ScopeType.ALL,
+    },
+    "cap_business_super_admin": {
+        "drone.view_drone": ScopeType.ALL,
+        "drone.manage_drone": ScopeType.ALL,
+        "drone.change_drone_status": ScopeType.ALL,
+        "drone.manage_drone_assignment": ScopeType.ALL,
+    },
+    "cap_drone_viewer": {
+        "drone.view_drone": ScopeType.ALL,
+    },
+    "cap_drone_dispatch": {
+        "drone.manage_drone_assignment": ScopeType.ALL,
+    },
+    "cap_drone_assigned_viewer": {
+        "drone.view_drone": ScopeType.ASSIGNED,
+    },
 }
 
 STAFF_TYPE_GROUPS = {
-    "ops_admin": ["cap_auth_admin", "cap_user_admin", "cap_audit_reader"],
+    "ops_admin": ["cap_auth_admin", "cap_user_admin", "cap_audit_reader", "cap_drone_admin"],
+    "business_super_admin": ["cap_business_super_admin"],
     "route_planner": ["cap_staff_self"],
-    "dispatcher": ["cap_user_admin"],
-    "pilot_operator": ["cap_staff_self"],
+    "dispatcher": ["cap_user_admin", "cap_drone_viewer", "cap_drone_dispatch"],
+    "pilot_operator": ["cap_staff_self", "cap_drone_assigned_viewer"],
     "auditor": ["cap_user_admin", "cap_audit_reader"],
 }
 
@@ -119,6 +150,7 @@ class Command(BaseCommand):
             defaults={
                 "name": definition.name,
                 "description": definition.description,
+                "is_registrable": definition.is_registrable,
                 "status": StaffTypeStatus.ACTIVE,
             },
         )
@@ -130,12 +162,15 @@ class Command(BaseCommand):
         if staff_type.description != definition.description:
             staff_type.description = definition.description
             changed = True
+        if staff_type.is_registrable != definition.is_registrable:
+            staff_type.is_registrable = definition.is_registrable
+            changed = True
         if staff_type.status != StaffTypeStatus.ACTIVE:
             staff_type.status = StaffTypeStatus.ACTIVE
             changed = True
 
         if changed:
-            staff_type.save(update_fields=["name", "description", "status", "updated_at"])
+            staff_type.save(update_fields=["name", "description", "is_registrable", "status", "updated_at"])
 
         return staff_type
 

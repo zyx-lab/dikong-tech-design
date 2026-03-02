@@ -2,6 +2,7 @@ from django.conf import settings
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import Group, Permission, PermissionsMixin
 from django.db import models
+from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
 
@@ -39,6 +40,12 @@ class ScopeType(models.TextChoices):
 class ScopeStatus(models.IntegerChoices):
     DISABLED = 0, "disabled"
     ACTIVE = 1, "active"
+
+
+class RegistrationApplicationStatus(models.TextChoices):
+    PENDING_REVIEW = "PENDING_REVIEW", "PENDING_REVIEW"
+    APPROVED_ACCOUNT_CREATED = "APPROVED_ACCOUNT_CREATED", "APPROVED_ACCOUNT_CREATED"
+    REJECTED = "REJECTED", "REJECTED"
 
 
 class UserManager(BaseUserManager):
@@ -136,6 +143,8 @@ class StaffType(TimeStampedModel):
     code = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=64)
     description = models.CharField(max_length=255, blank=True)
+    # 仅允许白名单身份类型出现在“业务侧注册申请”下拉中。
+    is_registrable = models.BooleanField(default=False)
     status = models.PositiveSmallIntegerField(choices=StaffTypeStatus.choices, default=StaffTypeStatus.ACTIVE)
 
     class Meta:
@@ -173,6 +182,76 @@ class StaffProfile(TimeStampedModel):
 
     def __str__(self):
         return f"{self.staff_no}-{self.name}"
+
+
+class RegistrationApplication(TimeStampedModel):
+    """业务注册申请单。
+
+    规则：
+    - 业务侧只创建申请单，不直接创建正式账号。
+    - 申请通过后由 IAM 审核接口创建 User + StaffProfile。
+    """
+
+    application_no = models.CharField(max_length=32, unique=True)
+    name = models.CharField(max_length=64)
+    phone = models.CharField(max_length=32)
+    email = models.EmailField()
+    requested_staff_type_code = models.CharField(max_length=64)
+    requested_org_id = models.BigIntegerField(null=True, blank=True)
+    application_note = models.CharField(max_length=255, blank=True)
+    status = models.CharField(
+        max_length=32,
+        choices=RegistrationApplicationStatus.choices,
+        default=RegistrationApplicationStatus.PENDING_REVIEW,
+    )
+    reviewer_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reviewed_registration_applications",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_comment = models.CharField(max_length=255, blank=True)
+    created_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_by_registration_applications",
+    )
+    created_staff = models.ForeignKey(
+        StaffProfile,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_from_registration_applications",
+    )
+
+    class Meta:
+        db_table = "registration_applications"
+        default_permissions = ()
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            # 待审核单据里，手机号和邮箱都不允许重复提交。
+            models.UniqueConstraint(
+                fields=["phone"],
+                condition=Q(status=RegistrationApplicationStatus.PENDING_REVIEW),
+                name="uniq_pending_registration_phone",
+            ),
+            models.UniqueConstraint(
+                fields=["email"],
+                condition=Q(status=RegistrationApplicationStatus.PENDING_REVIEW),
+                name="uniq_pending_registration_email",
+            ),
+        ]
+        permissions = [
+            ("view_registration_application", "可查看注册申请"),
+            ("manage_registration_application", "可审核注册申请"),
+        ]
+
+    def __str__(self):
+        return f"{self.application_no}:{self.status}"
 
 
 class StaffTypeGroup(TimeStampedModel):
