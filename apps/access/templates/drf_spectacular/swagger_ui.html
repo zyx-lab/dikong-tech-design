@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    {% block head %}
+    <title>{{ title|default:"Swagger" }}</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% if favicon_href %}<link rel="icon" href="{{ favicon_href }}">{% endif %}
+    <link rel="stylesheet" href="{{ swagger_ui_css }}">
+    <style>
+      html { box-sizing: border-box; overflow-y: scroll; }
+      *, *:after, *:before { box-sizing: inherit; }
+      body { background: #fafafa; margin: 0; }
+
+      #auth-status-banner {
+        position: sticky;
+        top: 0;
+        z-index: 9999;
+        padding: 10px 16px;
+        font-size: 14px;
+        border-bottom: 1px solid #d9d9d9;
+        background: #fff8e1;
+        color: #5d4037;
+      }
+
+      #auth-status-banner.ok {
+        background: #e8f5e9;
+        color: #1b5e20;
+      }
+
+      #auth-status-banner.warn {
+        background: #fff8e1;
+        color: #5d4037;
+      }
+    </style>
+    {% endblock head %}
+  </head>
+  <body>
+    {% block body %}
+    <div id="auth-status-banner" class="warn">正在检测登录状态...</div>
+    <div id="swagger-ui"></div>
+    <script src="{{ swagger_ui_bundle }}"></script>
+    <script src="{{ swagger_ui_standalone }}"></script>
+    {% if script_url %}
+    <script src="{{ script_url }}"></script>
+    {% else %}
+    <script>
+    {% include template_name_js %}
+    </script>
+    {% endif %}
+    <script>
+      (function () {
+        var banner = document.getElementById('auth-status-banner');
+        var pathname = window.location.pathname || '';
+
+        function setBanner(text, cls) {
+          banner.textContent = text;
+          banner.className = cls;
+        }
+
+        if (!pathname.startsWith('/internal/docs/')) {
+          setBanner('当前为业务 API 文档页。业务接口是否可用由业务认证与权限策略决定。', 'warn');
+          return;
+        }
+
+        fetch('/internal/auth/session-status', { credentials: 'same-origin' })
+          .then(function (response) {
+            if (!response.ok) {
+              throw new Error('HTTP ' + response.status);
+            }
+            return response.json();
+          })
+          .then(function (data) {
+            if (data.is_authenticated) {
+              var tag = data.is_superuser ? '（superuser）' : '';
+              setBanner('当前登录用户：' + data.username + tag + '。Swagger 调试请求会复用该登录态。', 'ok');
+            } else {
+              setBanner('当前未登录。受保护接口调试会返回 401/403。', 'warn');
+            }
+          })
+          .catch(function () {
+            setBanner('无法读取登录状态，请检查 /internal/auth/session-status。', 'warn');
+          });
+      })();
+    </script>
+    {% endblock %}
+  </body>
+</html>
