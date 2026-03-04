@@ -18,7 +18,7 @@
 
 ---
 
-## 2. 当前系统的表清单（共 15 张）
+## 2. 当前系统的表清单（共 17 张）
 
 ### 2.1 权限系统核心表（我们设计的）
 1. `auth_users`：账号主表（自定义 User）
@@ -41,6 +41,10 @@
 3. `django_migrations`：迁移记录
 4. `django_session`：Session 会话
 
+### 2.4 业务表（当前已落地）
+1. `drones`：无人机台账
+2. `drone_assignments`：无人机与飞手分配关系
+
 ---
 
 ## 3. 为什么 Admin 看不到这些表
@@ -60,8 +64,8 @@
 
 原因：降低菜单噪音，改在 `StaffType` / `Group` 页面用 inline 维护。
 
-### 3.3 Django 内置表通常不作为业务菜单项
-例如 `django_migrations`、`django_session` 不会在你这个业务分组下展示。
+### 3.3 业务表未注册 Admin 时也不会显示
+例如当前 `drones`、`drone_assignments` 主要通过 Business API 维护，未注册到 Admin 菜单。
 
 ---
 
@@ -83,5 +87,4 @@
 python manage.py shell -c "from django.db import connection; print('\n'.join(sorted(connection.introspection.table_names())))"
 ```
 
-如果你看到 15 张表且包含上面清单，就是正常状态。
-
+如果你看到 17 张表且包含上面清单，就是正常状态。

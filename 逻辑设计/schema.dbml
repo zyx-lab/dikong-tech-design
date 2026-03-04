@@ -1,144 +1,49 @@
 // ============================================================
-// 低空智能巡检平台 - 数据库Schema (DBML)
+// 低空智能巡检平台 - 业务域 Schema（当前实现）
 // 数据库：PostgreSQL
+// 说明：本文件只覆盖当前已落地业务表
 // ============================================================
 
-Project low_altitude_inspection {
+Project low_altitude_business_current {
   database_type: 'PostgreSQL'
-  Note: '低空智能巡检平台数据库'
+  Note: '当前实现：无人机台账 + 无人机分配关系'
 }
 
 // ============================================================
-// 1. drone_types 无人机类型表
+// 1. drones 无人机台账表
 // ============================================================
-Table drone_types [note: '无人机类型表'] {
-  id bigserial [pk, note: 'id 类型ID']
-  name varchar(100) [not null, note: 'name 型号名称，如：大疆Mavic 3E、CW-15']
-  manufacturer varchar(100) [note: 'manufacturer 制造商']
+Table drones [note: '无人机台账'] {
+  id bigserial [pk, note: 'id 主键']
+  code varchar(64) [not null, unique, note: 'code 业务编码']
+  name varchar(128) [not null, note: 'name 无人机名称']
+  model varchar(128) [not null, note: 'model 型号']
+  serial_no varchar(128) [not null, unique, note: 'serial_no 出厂序列号']
+  status varchar(16) [not null, default: 'DISABLED', note: 'status ENABLED/DISABLED/MAINTENANCE/RETIRED']
+  org_id bigint [note: 'org_id 组织ID（预留）']
+  created_by_staff_id bigint [note: 'created_by_staff_id 创建人staff_id（审计/OWN预留）']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 }
 
 // ============================================================
-// 2. drones 无人机表
+// 2. drone_assignments 无人机分配关系表
 // ============================================================
-Table drones [note: '无人机表'] {
-  id bigserial [pk, note: 'id 无人机ID']
-  name varchar(100) [not null, note: 'name 名称，如：应急测绘-01']
-  sn varchar(100) [unique, note: 'sn 设备序列号']
-  drone_type_id bigint [ref: > drone_types.id, note: 'drone_type_id 无人机类型ID']
-  status smallint [default: 1, note: 'status 状态：1-在线, 2-离线, 3-故障, 4-维护中, 9-已报废']
-  created_at timestamp [default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [note: 'updated_at 更新时间']
-}
-
-// ============================================================
-// 3. pilots 飞手表
-// ============================================================
-Table pilots [note: '飞手表'] {
-  id bigserial [pk, note: 'id 飞手ID']
-  username varchar(50) [not null, note: 'username 用户账号']
-  name varchar(50) [not null, note: 'name 姓名']
-  phone varchar(20) [note: 'phone 联系电话']
-  cert_type smallint [note: 'cert_type 证件类型：1-AOPA合格证, 2-ALPA合格证, 3-CAAC执照']
-  cert_no varchar(100) [note: 'cert_no 证件编号']
-  cert_issue_date date [note: 'cert_issue_date 发证日期']
-  cert_expiry_date date [note: 'cert_expiry_date 有效期限']
-  account_status smallint [default: 1, note: 'account_status 账号状态：1-开启, 0-关闭（含离职/已删除）']
-  created_at timestamp [default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [note: 'updated_at 更新时间']
-}
-
-// ============================================================
-// 4. routes 航线表
-// ============================================================
-Table routes [note: '航线表'] {
-  id bigserial [pk, note: 'id 航线ID']
-  name varchar(100) [not null, note: 'name 航线名称']
-  route_type smallint [not null, note: 'route_type 航线类型：1-点状, 2-环状, 3-面状']
-  drone_type_id bigint [ref: > drone_types.id, note: 'drone_type_id 适用无人机类型ID']
-  total_distance numeric(12,2) [note: 'total_distance 航线总长度（米）']
-  estimated_duration integer [note: 'estimated_duration 预计飞行时长（秒）']
-  waypoint_count integer [note: 'waypoint_count 航点数量']
-  creator_name varchar(50) [note: 'creator_name 创建人姓名']
-  status smallint [default: 1, note: 'status 状态：1-正常, 0-禁用（已删除）']
-  created_at timestamp [default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [note: 'updated_at 更新时间']
-}
-
-// ============================================================
-// 5. waypoints 航点表
-// ============================================================
-Table waypoints [note: '航点表'] {
-  id bigserial [pk, note: 'id 航点ID']
-  route_id bigint [ref: > routes.id, not null, note: 'route_id 所属航线ID']
-  sequence integer [not null, note: 'sequence 航点序号']
-  latitude numeric(12,8) [not null, note: 'latitude 纬度']
-  longitude numeric(12,8) [not null, note: 'longitude 经度']
-  altitude numeric(10,2) [not null, note: 'altitude 飞行高度（米）']
-  created_at timestamp [default: `now()`, note: 'created_at 创建时间']
+Table drone_assignments [note: '无人机与飞手分配关系'] {
+  id bigserial [pk, note: 'id 主键']
+  drone_id bigint [not null, ref: > drones.id, note: 'drone_id 无人机ID']
+  staff_id bigint [not null, ref: > staff_profiles.id, note: 'staff_id 飞手staff_profile ID']
+  status varchar(16) [not null, default: 'ACTIVE', note: 'status ACTIVE/INACTIVE']
+  start_at timestamp [not null, default: `now()`, note: 'start_at 生效时间']
+  end_at timestamp [note: 'end_at 结束时间']
+  created_by_staff_id bigint [note: 'created_by_staff_id 操作人staff_id']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 
   indexes {
-    (route_id, sequence) [unique]
+    (drone_id, staff_id, status) [name: 'idx_drone_staff_status']
   }
 }
 
-// ============================================================
-// 6. missions 任务表
-// ============================================================
-Table missions [note: '任务表'] {
-  id bigserial [pk, note: 'id 任务ID']
-  name varchar(100) [not null, note: 'name 任务名称']
-  route_id bigint [ref: > routes.id, note: 'route_id 任务航线ID']
-  route_name varchar(100) [note: 'route_name 航线名称（冗余）']
-  drone_id bigint [ref: > drones.id, note: 'drone_id 执行无人机ID']
-  drone_name varchar(100) [note: 'drone_name 无人机名称（冗余）']
-  pilot_id bigint [ref: > pilots.id, note: 'pilot_id 执行飞手ID']
-  pilot_name varchar(50) [note: 'pilot_name 飞手姓名（冗余）']
-  scheduled_at timestamp [note: 'scheduled_at 计划执行时间']
-  remark varchar(500) [note: 'remark 任务备注']
-  status smallint [default: 0, note: 'status 状态：0-待执行, 1-执行中, 2-已暂停, 3-已完成, 4-已取消, 5-执行失败']
-  created_at timestamp [default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [note: 'updated_at 更新时间']
-}
-
-// ============================================================
-// 7. flight_records 飞行记录表
-// ============================================================
-Table flight_records [note: '飞行记录表'] {
-  id bigserial [pk, note: 'id 记录ID']
-  flight_no varchar(50) [unique, not null, note: 'flight_no 架次编号，如：YJ202511163281']
-  mission_id bigint [ref: > missions.id, note: 'mission_id 所属任务ID']
-  mission_name varchar(100) [note: 'mission_name 任务名称（冗余）']
-  route_name varchar(100) [note: 'route_name 航线名称（冗余）']
-  airport_name varchar(100) [note: 'airport_name 执行机场名称']
-  drone_id bigint [ref: > drones.id, note: 'drone_id 执行无人机ID']
-  drone_name varchar(100) [note: 'drone_name 无人机名称（冗余）']
-  pilot_id bigint [ref: > pilots.id, note: 'pilot_id 执行飞手ID']
-  pilot_name varchar(50) [note: 'pilot_name 飞手姓名（冗余）']
-  start_time timestamp [note: 'start_time 开始时间']
-  end_time timestamp [note: 'end_time 结束时间']
-  flight_duration integer [note: 'flight_duration 飞行时长（秒）']
-  photo_count integer [default: 0, note: 'photo_count 拍摄照片数量']
-  video_count integer [default: 0, note: 'video_count 录制视频数量']
-  status smallint [default: 0, note: 'status 状态：0-飞行中, 1-已完成, 2-异常终止']
-  created_at timestamp [default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [note: 'updated_at 更新时间']
-}
-
-// ============================================================
-// 8. media_files 媒体文件表
-// ============================================================
-Table media_files [note: '媒体文件表'] {
-  id bigserial [pk, note: 'id 媒体ID']
-  flight_record_id bigint [ref: > flight_records.id, note: 'flight_record_id 关联飞行记录ID']
-  media_type smallint [not null, note: 'media_type 媒体类型：1-照片, 2-视频']
-  file_name varchar(255) [not null, note: 'file_name 文件名']
-  file_url varchar(500) [not null, note: 'file_url 文件URL']
-  thumbnail_url varchar(500) [note: 'thumbnail_url 缩略图URL']
-  file_size bigint [note: 'file_size 文件大小（字节）']
-  latitude numeric(12,8) [note: 'latitude 拍摄位置-纬度']
-  longitude numeric(12,8) [note: 'longitude 拍摄位置-经度']
-  captured_at timestamp [note: 'captured_at 拍摄时间']
-  is_deleted boolean [default: false, note: 'is_deleted 是否已删除']
-  deleted_at timestamp [note: 'deleted_at 删除时间']
-  created_at timestamp [default: `now()`, note: 'created_at 创建时间']
-}
+// 注意：真实数据库中存在“部分唯一约束”
+// uniq_active_drone_staff_assignment: unique(drone_id, staff_id) where status='ACTIVE'
+// DBML 这里用注释表达，实际以 Django migration 为准。

@@ -10,7 +10,7 @@
 2. Business API Plane（业务开放）
 - 前缀：`/api/v1/*`
 - 文档：`/api/v1/docs/`
-- 用途：业务资源接口（任务、无人机、飞行记录等）
+- 用途：业务资源接口（当前已开放无人机台账与分配关系）
 
 ## 快速启动
 
@@ -59,12 +59,17 @@ python manage.py runserver 0.0.0.0:8001
 
 ## 文档导航
 
-- 设计基线：[权限管理/权限设计.md](权限管理/权限设计.md)
-- 权限矩阵：[权限管理/角色权限矩阵设计.md](权限管理/角色权限矩阵设计.md)
-- 业务扩展：[权限管理/业务接口扩展指南.md](权限管理/业务接口扩展指南.md)
-- 无人机计划：[权限管理/无人机管理V1设计计划.md](权限管理/无人机管理V1设计计划.md)
-- 维护学习：[权限管理/维护与学习参考.md](权限管理/维护与学习参考.md)
-- Admin 与表关系：[权限管理/Admin菜单与数据库表关系说明.md](权限管理/Admin菜单与数据库表关系说明.md)
+- 权限设计基线：[权限设计.md](权限管理设计/权限设计.md)
+- 角色权限矩阵：[角色权限矩阵设计.md](权限管理设计/角色权限矩阵设计.md)
+- 维护学习参考：[维护与学习参考.md](权限管理设计/维护与学习参考.md)
+- Admin 与表关系：[Admin菜单与数据库表关系说明.md](权限管理设计/Admin菜单与数据库表关系说明.md)
+- 业务接口扩展指南：[业务接口扩展指南.md](业务侧概念设计/业务接口扩展指南.md)
+- 无人机管理设计（当前实现）：[无人机管理V1设计计划.md](业务侧概念设计/无人机管理V1设计计划.md)
+- 业务逻辑模型（当前实现）：[business_logical_model.md](逻辑设计/business_logical_model.md)
+- 业务数据字典（当前实现）：[business_data_dictionary.md](逻辑设计/business_data_dictionary.md)
+- 业务 DBML（当前实现）：[schema.dbml](逻辑设计/schema.dbml)
+- 权限逻辑模型：[authz_logical_model.md](逻辑设计/authz_logical_model.md)
+- 权限 DBML：[authz_schema.dbml](逻辑设计/authz_schema.dbml)
 
 ## 代码定位
 
