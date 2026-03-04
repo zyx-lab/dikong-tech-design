@@ -76,3 +76,51 @@ python manage.py runserver 0.0.0.0:8001
 - IAM 模块：`apps/access/*`
 - 业务 API 骨架：`apps/api_v1/*`
 - 路由编排：`config/urls.py`
+
+## TODO（未完成功能规划 / 基于当前设计）
+
+### 1. 业务前端（当前未做）
+
+- [ ] 实现业务登录页与会话管理（对接 `/api/v1/*`）。
+- [ ] 实现无人机台账页面（列表、详情、新增、编辑、状态动作）。
+- [ ] 实现无人机分配页面（创建分配、取消分配、分配列表筛选）。
+- [ ] 实现“按权限显示菜单与按钮”（`business_admin` / `dispatcher` / `pilot_operator`）。
+
+### 2. 航线域（Route/Waypoint，当前未做）
+
+- [ ] 新增 `routes`、`waypoints` 业务模型与迁移。
+- [ ] 开放 `/api/v1/routes*`、`/api/v1/waypoints*` 接口。
+- [ ] 新增权限码并接入矩阵（建议：`route.view_route`、`route.manage_route`）。
+- [ ] 在 `route_planner` 角色落地对应能力组与 scope。
+
+### 3. 任务域（Mission，当前未做）
+
+- [ ] 新增 `missions` 模型与任务状态机（待执行/执行中/完成/取消等）。
+- [ ] 开放 `/api/v1/missions*` 接口（创建、派发、状态流转、查询）。
+- [ ] 落地任务与无人机/飞手的业务约束（如退役无人机不可派发）。
+- [ ] 新增任务域权限矩阵并补测试。
+
+### 4. 飞行记录与媒体域（当前未做）
+
+- [ ] 新增 `flight_records`、`media_files` 模型与迁移。
+- [ ] 开放 `/api/v1/flight-records*`、`/api/v1/media-files*` 接口。
+- [ ] 定义飞手上传、调度查看、审计查看的权限边界。
+- [ ] 补“删除策略”落地（逻辑删除、审计追踪、清理策略）。
+
+### 5. IAM 能力增强（当前部分已做）
+
+- [ ] 增加角色矩阵导出接口（便于审阅与存档）。
+- [ ] 增加权限变更差异日志展示（变更前后矩阵对比）。
+- [ ] 增加一键校验命令：检查 `staff_type -> group -> permission(scope)` 是否完整。
+
+### 6. 部署与边界治理（当前未做）
+
+- [ ] 按环境隔离 Internal IAM 与 Business API 的访问入口（网关/白名单）。
+- [ ] 区分生产鉴权策略（如业务侧切换为 Token/JWT，后台保留 Session）。
+- [ ] 增加 CI 任务：`check + migration check + tests` 强制通过后再发布。
+
+### 7. 文档持续维护规则
+
+- [ ] 每新增业务域，同步更新 `逻辑设计/business_logical_model.md`、`逻辑设计/business_data_dictionary.md`、`逻辑设计/schema.dbml`。
+- [ ] 每次矩阵调整，同步更新 `权限管理设计/角色权限矩阵设计.md`。
+- [ ] Future 规划文档必须标注 `Future`，防止与“当前实现”混淆。
