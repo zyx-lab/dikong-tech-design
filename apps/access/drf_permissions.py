@@ -27,7 +27,7 @@ class RequireInternalPermission(BasePermission):
     """内部 IAM 接口鉴权。
 
     规则：
-    - superuser：允许（仅用于系统运维）。
+    - superuser：允许（root，全量权限）。
     - 普通账号：必须具备有效 staff/staff_type，且命中声明的权限码。
     - 不做 scope 对象级限制（IAM 管理动作默认使用 ALL 管理语义）。
     """

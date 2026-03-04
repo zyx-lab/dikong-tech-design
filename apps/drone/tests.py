@@ -64,15 +64,40 @@ class DroneApiAuthzTests(TestCase):
         self.assertEqual(response.data["count"], 2)
 
 
+class SuperuserRootPermissionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.superuser = User.objects.create_superuser(username="root_business", password="pass1234")
+        self.client.force_authenticate(self.superuser)
+
+    def test_superuser_should_access_business_list_without_staff_or_matrix(self):
+        Drone.objects.create(code="DJ-ROOT-01", name="Root 机型", model="Matrice 4", serial_no="ROOT-SN-01")
+        response = self.client.get("/api/v1/drones")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+
+    def test_superuser_should_create_drone_without_staff_binding(self):
+        payload = {
+            "code": "DJ-ROOT-02",
+            "name": "Root 新建",
+            "model": "Matrice 4T",
+            "serial_no": "ROOT-SN-02",
+        }
+        response = self.client.post("/api/v1/drones", payload, format="json")
+        self.assertEqual(response.status_code, 201)
+        drone = Drone.objects.get(code="DJ-ROOT-02")
+        self.assertIsNone(drone.created_by_staff_id)
+
+
 class DroneApiWriteTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.staff_type = StaffType.objects.create(code="ops_admin_test", name="运营管理员", status=1)
+        self.staff_type = StaffType.objects.create(code="ops_admin_test", name="Admin管理员", status=1)
         self.user = User.objects.create_user(username="drone_admin", password="pass1234", status=1)
         self.staff = StaffProfile.objects.create(
             user=self.user,
             staff_no="D-100",
-            name="运营管理员A",
+            name="Admin管理员A",
             employment_status=1,
             staff_type=self.staff_type,
         )
@@ -318,15 +343,15 @@ class DroneAssignmentApiTests(TestCase):
         self.assertIn("staff", response.data)
 
 
-class BusinessSuperAdminApiTests(TestCase):
+class BusinessAdminApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.staff_type = StaffType.objects.create(code="business_super_admin", name="业务超级管理员", status=1)
+        self.staff_type = StaffType.objects.create(code="business_admin", name="业务管理员", status=1)
         self.user = User.objects.create_user(username="biz_super_u", password="pass1234", status=1)
         self.staff = StaffProfile.objects.create(
             user=self.user,
             staff_no="BS-900",
-            name="业务超级U",
+            name="业务管理员U",
             employment_status=1,
             staff_type=self.staff_type,
         )
@@ -341,7 +366,7 @@ class BusinessSuperAdminApiTests(TestCase):
             staff_type=self.pilot_type,
         )
 
-        group = Group.objects.create(name="业务超级权限组")
+        group = Group.objects.create(name="业务管理员权限组")
         for codename in ("view_drone", "manage_drone", "change_drone_status", "manage_drone_assignment"):
             perm = Permission.objects.get(content_type__app_label="drone", codename=codename)
             group.permissions.add(perm)
@@ -354,7 +379,7 @@ class BusinessSuperAdminApiTests(TestCase):
         StaffTypeGroup.objects.create(staff_type=self.staff_type, group=group, status=ScopeStatus.ACTIVE)
         self.client.force_authenticate(self.user)
 
-    def test_business_super_admin_can_access_business_apis(self):
+    def test_business_admin_can_access_business_apis(self):
         create_drone_resp = self.client.post(
             "/api/v1/drones",
             {

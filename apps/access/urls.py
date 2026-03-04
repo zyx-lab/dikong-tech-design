@@ -18,24 +18,4 @@ urlpatterns = [
     path("staff-types/<int:staff_type_id>/groups", views.StaffTypeGroupAssignView.as_view(), name="staff-type-group-assign"),
     path("scopes/matrix", views.ScopeMatrixView.as_view(), name="scope-matrix"),
     path("audit-logs", views.AuditLogListView.as_view(), name="audit-log-list"),
-    path(
-        "registration-applications",
-        views.RegistrationApplicationListView.as_view(),
-        name="registration-application-list",
-    ),
-    path(
-        "registration-applications/<int:pk>",
-        views.RegistrationApplicationDetailView.as_view(),
-        name="registration-application-detail",
-    ),
-    path(
-        "registration-applications/<int:pk>/approve",
-        views.RegistrationApplicationApproveView.as_view(),
-        name="registration-application-approve",
-    ),
-    path(
-        "registration-applications/<int:pk>/reject",
-        views.RegistrationApplicationRejectView.as_view(),
-        name="registration-application-reject",
-    ),
 ]

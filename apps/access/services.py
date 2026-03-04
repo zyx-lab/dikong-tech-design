@@ -31,7 +31,6 @@ class IdentityReason:
     UNAUTHENTICATED = "UNAUTHENTICATED"
     ACCOUNT_DISABLED = "ACCOUNT_DISABLED"
     USER_STATUS_INVALID = "USER_STATUS_INVALID"
-    SUPERUSER_NOT_BUSINESS_USER = "SUPERUSER_NOT_BUSINESS_USER"
     STAFF_NOT_BOUND = "STAFF_NOT_BOUND"
     STAFF_INACTIVE = "STAFF_INACTIVE"
     STAFF_TYPE_NOT_ASSIGNED = "STAFF_TYPE_NOT_ASSIGNED"
@@ -73,18 +72,20 @@ class IdentityService:
 
     @staticmethod
     def check_business_user(user: User) -> IdentityCheckResult:
-        return IdentityService._check(user, allow_superuser=False, require_staff=True)
+        return IdentityService._check(
+            user,
+            require_staff=not bool(getattr(user, "is_superuser", False)),
+        )
 
     @staticmethod
     def check_system_operator(user: User) -> IdentityCheckResult:
         return IdentityService._check(
             user,
-            allow_superuser=True,
             require_staff=not bool(getattr(user, "is_superuser", False)),
         )
 
     @staticmethod
-    def _check(user: User, *, allow_superuser: bool, require_staff: bool) -> IdentityCheckResult:
+    def _check(user: User, *, require_staff: bool) -> IdentityCheckResult:
         if not user or not user.is_authenticated:
             return IdentityCheckResult(False, IdentityReason.UNAUTHENTICATED)
 
@@ -95,9 +96,7 @@ class IdentityService:
             return IdentityCheckResult(False, IdentityReason.USER_STATUS_INVALID)
 
         if user.is_superuser:
-            if allow_superuser:
-                return IdentityCheckResult(True, IdentityReason.OK)
-            return IdentityCheckResult(False, IdentityReason.SUPERUSER_NOT_BUSINESS_USER)
+            return IdentityCheckResult(True, IdentityReason.OK)
 
         if not require_staff:
             return IdentityCheckResult(True, IdentityReason.OK)
@@ -176,6 +175,16 @@ def _parse_permission_code(permission_code: str) -> tuple[Optional[str], Optiona
     return app_label, codename
 
 
+def _is_active_superuser(user) -> bool:
+    return bool(
+        user
+        and getattr(user, "is_authenticated", False)
+        and getattr(user, "is_superuser", False)
+        and getattr(user, "is_active", False)
+        and getattr(user, "status", None) == UserStatus.ACTIVE
+    )
+
+
 def get_permission_obj(permission_code: str) -> Optional[Permission]:
     app_label, codename = _parse_permission_code(permission_code)
     if not app_label:
@@ -206,6 +215,10 @@ def _pick_max_scope(scopes: list[str]) -> Optional[str]:
 
 
 def resolve_effective_scope(user, permission_code: str) -> Optional[str]:
+    if _is_active_superuser(user):
+        permission = get_permission_obj(permission_code)
+        return ScopeType.ALL if permission else None
+
     identity_result = IdentityService.check_business_user(user)
     if not identity_result.ok:
         return None
@@ -230,6 +243,10 @@ def resolve_effective_scope(user, permission_code: str) -> Optional[str]:
 
 
 def get_staff_type_permission_codes(user) -> list[str]:
+    if _is_active_superuser(user):
+        permissions = Permission.objects.select_related("content_type").all().order_by("content_type__app_label", "codename")
+        return [f"{perm.content_type.app_label}.{perm.codename}" for perm in permissions]
+
     identity_result = IdentityService.check_business_user(user)
     if not identity_result.ok:
         return []
@@ -252,6 +269,9 @@ def has_staff_type_permission(user, permission_code: str) -> bool:
     if not permission or not user or not user.is_authenticated:
         return False
 
+    if _is_active_superuser(user):
+        return True
+
     # 这里复用业务身份校验：只有有效业务身份（staff + staff_type）才可拿到权限。
     identity_result = IdentityService.check_business_user(user)
     if not identity_result.ok:
@@ -265,45 +285,25 @@ def has_staff_type_permission(user, permission_code: str) -> bool:
 
 
 def _is_owner(obj, staff_id: int) -> bool:
-    for field in ("created_by_staff_id", "creator_staff_id", "staff_id", "owner_staff_id"):
-        value = getattr(obj, field, None)
-        if value is not None:
-            return value == staff_id
-
-    for relation in ("created_by_staff", "creator_staff", "staff", "owner_staff"):
-        related_obj = getattr(obj, relation, None)
-        if related_obj is not None and getattr(related_obj, "id", None) is not None:
-            return related_obj.id == staff_id
-
-    return False
+    # 统一约定 OWN 只认 created_by_staff_id，避免多套隐式命名带来的理解成本。
+    return getattr(obj, "created_by_staff_id", None) == staff_id
 
 
 def _is_assigned(obj, staff_id: int) -> bool:
-    for field in ("assigned_staff_id", "assignee_staff_id"):
-        value = getattr(obj, field, None)
-        if value is not None:
-            return value == staff_id
+    # 统一约定 ASSIGNED 优先认 assigned_staff_id；
+    # 若资源使用 assignments 关系（如无人机），按 ACTIVE 分配判定。
+    if getattr(obj, "assigned_staff_id", None) == staff_id:
+        return True
 
-    for field in ("assigned_staff_ids", "assignee_staff_ids"):
-        values = getattr(obj, field, None)
-        if isinstance(values, (list, tuple, set)):
-            return staff_id in values
+    assignments = getattr(obj, "assignments", None)
+    if assignments is None or not hasattr(assignments, "filter"):
+        return False
 
-    for relation in ("assignees", "mission_assignees", "assignments"):
-        manager = getattr(obj, relation, None)
-        if manager is None or not hasattr(manager, "filter"):
-            continue
-
-        if relation == "assignees" and manager.filter(id=staff_id).exists():
-            return True
-
-        if relation == "mission_assignees" and manager.filter(staff_id=staff_id, status=1).exists():
-            return True
-
-        if relation == "assignments" and manager.filter(staff_id=staff_id).exists():
-            return True
-
-    return False
+    qs = assignments.filter(staff_id=staff_id)
+    model_fields = {field.name for field in assignments.model._meta.fields}
+    if "status" in model_fields:
+        qs = qs.filter(status="ACTIVE")
+    return qs.exists()
 
 
 def is_obj_in_scope(obj, scope: str, staff_id: int) -> bool:
@@ -330,15 +330,7 @@ def apply_scope_to_queryset(
     field_names = {field.name for field in queryset.model._meta.get_fields()}
 
     if scope == ScopeType.OWN:
-        if "created_by_staff_id" in field_names:
-            return queryset.filter(created_by_staff_id=staff_id)
-        if "creator_staff_id" in field_names:
-            return queryset.filter(creator_staff_id=staff_id)
-        if "staff_id" in field_names:
-            return queryset.filter(staff_id=staff_id)
-        if "owner_staff_id" in field_names:
-            return queryset.filter(owner_staff_id=staff_id)
-        if "created_by_staff" in field_names:
+        if "created_by_staff_id" in field_names or "created_by_staff" in field_names:
             return queryset.filter(created_by_staff_id=staff_id)
         return queryset.none()
 
@@ -348,18 +340,8 @@ def apply_scope_to_queryset(
 
         if "assigned_staff_id" in field_names:
             return queryset.filter(assigned_staff_id=staff_id)
-        if "assignee_staff_id" in field_names:
-            return queryset.filter(assignee_staff_id=staff_id)
-        if "assigned_staff" in field_names:
-            return queryset.filter(assigned_staff_id=staff_id)
-        if "assignee_staff" in field_names:
-            return queryset.filter(assignee_staff_id=staff_id)
-        if "assignees" in field_names:
-            return queryset.filter(assignees__id=staff_id).distinct()
-        if "mission_assignees" in field_names:
-            return queryset.filter(mission_assignees__staff_id=staff_id, mission_assignees__status=1).distinct()
         if "assignments" in field_names:
-            return queryset.filter(assignments__staff_id=staff_id).distinct()
+            return queryset.filter(assignments__staff_id=staff_id, assignments__status="ACTIVE").distinct()
 
         return queryset.none()
 
@@ -371,14 +353,24 @@ class AuthzService:
 
     @staticmethod
     def authorize(user, permission_code: str, obj=None, biz_checker: Optional[Callable[[object, object], bool]] = None):
+        permission = get_permission_obj(permission_code)
+        if not permission:
+            return AuthorizationDecision(False, AuthorizationReason.PERMISSION_NOT_FOUND)
+
+        # superuser 视为 root：拥有所有当前/未来权限，不参与 staff_type 矩阵与 scope 收敛。
+        if user and getattr(user, "is_authenticated", False) and getattr(user, "is_superuser", False):
+            if not user.is_active:
+                return AuthorizationDecision(False, IdentityReason.ACCOUNT_DISABLED)
+            if user.status != UserStatus.ACTIVE:
+                return AuthorizationDecision(False, IdentityReason.USER_STATUS_INVALID)
+            if biz_checker is not None and not biz_checker(user, obj):
+                return AuthorizationDecision(False, AuthorizationReason.BIZ_RULE_DENIED, scope=ScopeType.ALL)
+            return AuthorizationDecision(True, AuthorizationReason.OK, scope=ScopeType.ALL)
+
         # 统一鉴权链：身份 -> 权限 -> scope -> 业务状态机。
         identity_result = IdentityService.check_business_user(user)
         if not identity_result.ok:
             return AuthorizationDecision(False, identity_result.reason_code)
-
-        permission = get_permission_obj(permission_code)
-        if not permission:
-            return AuthorizationDecision(False, AuthorizationReason.PERMISSION_NOT_FOUND, staff_id=identity_result.staff.id)
 
         if not has_staff_type_permission(user, permission_code):
             return AuthorizationDecision(False, AuthorizationReason.PERMISSION_DENIED, staff_id=identity_result.staff.id)

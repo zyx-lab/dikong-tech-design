@@ -9,13 +9,13 @@ User = get_user_model()
 
 
 class Command(BaseCommand):
-    help = "创建或更新业务超级角色账号（普通业务账号，非 Django superuser）"
+    help = "创建或更新业务管理员角色账号（普通业务账号，非 Django superuser）"
 
     def add_arguments(self, parser):
         parser.add_argument("--username", required=True, help="登录账号")
         parser.add_argument("--password", help="登录密码；不传则自动生成")
         parser.add_argument("--staff-no", help="人员编号；默认 BS-<USERNAME>")
-        parser.add_argument("--name", default="业务超级管理员", help="人员姓名")
+        parser.add_argument("--name", default="业务管理员", help="人员姓名")
         parser.add_argument("--phone", default="", help="手机号")
         parser.add_argument("--email", default="", help="邮箱")
         parser.add_argument("--org-id", type=int, default=None, help="组织 ID（可选）")
@@ -31,15 +31,15 @@ class Command(BaseCommand):
         if not username:
             raise CommandError("username cannot be empty")
 
-        staff_type = StaffType.objects.filter(code="business_super_admin").first()
+        staff_type = StaffType.objects.filter(code="business_admin").first()
         if not staff_type:
-            raise CommandError("staff_type 'business_super_admin' not found, run seed_role_permissions first")
+            raise CommandError("staff_type 'business_admin' not found, run seed_role_permissions first")
 
         password = options.get("password") or get_random_string(16)
         password_auto_generated = not bool(options.get("password"))
 
         staff_no = options.get("staff_no") or f"BS-{username.upper()}"
-        name = options.get("name") or "业务超级管理员"
+        name = options.get("name") or "业务管理员"
         phone = options.get("phone") or ""
         email = options.get("email") or ""
         org_id = options.get("org_id")
@@ -68,7 +68,7 @@ class Command(BaseCommand):
 
         staff = StaffProfile.objects.filter(user=user).first()
         if not staff:
-            # 一账号一 staff：首次创建时直接绑定业务超级角色 staff_type。
+            # 一账号一 staff：首次创建时直接绑定业务管理员角色 staff_type。
             staff = StaffProfile.objects.create(
                 user=user,
                 staff_no=staff_no,
@@ -102,7 +102,7 @@ class Command(BaseCommand):
             )
             self.stdout.write(self.style.SUCCESS(f"updated staff profile: {staff.staff_no} (id={staff.id})"))
 
-        self.stdout.write(self.style.SUCCESS("business super account is ready"))
+        self.stdout.write(self.style.SUCCESS("business admin account is ready"))
         self.stdout.write(f"username={user.username}")
         if password_auto_generated:
             self.stdout.write(self.style.WARNING(f"generated_password={password}"))

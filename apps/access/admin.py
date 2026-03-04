@@ -10,7 +10,6 @@ from django.forms.models import BaseInlineFormSet
 from apps.access.models import (
     AuditLog,
     GroupPermissionScope,
-    RegistrationApplication,
     ScopeStatus,
     StaffProfile,
     StaffType,
@@ -88,8 +87,9 @@ class AccessUserChangeForm(UserChangeForm):
             self.fields["is_staff"].label = "可登录后台（Admin）"
             self.fields["is_staff"].help_text = "仅控制能否登录 Django Admin，不代表业务角色。"
         if "is_superuser" in self.fields:
-            self.fields["is_superuser"].label = "超级管理员（系统运维）"
-            self.fields["is_superuser"].help_text = "仅用于系统运维，不参与业务授权链。"
+            self.fields["is_superuser"].label = "超级管理员（Root）"
+            self.fields["is_superuser"].help_text = "拥有全量系统/业务权限；仅允许命令行创建，不允许在后台修改。"
+            self.fields["is_superuser"].disabled = True
 
 
 class AccessUserCreationForm(UserCreationForm):
@@ -105,15 +105,16 @@ class AccessUserCreationForm(UserCreationForm):
             self.fields["is_staff"].label = "可登录后台（Admin）"
             self.fields["is_staff"].help_text = "仅控制能否登录 Django Admin，不代表业务角色。"
         if "is_superuser" in self.fields:
-            self.fields["is_superuser"].label = "超级管理员（系统运维）"
-            self.fields["is_superuser"].help_text = "仅用于系统运维，不参与业务授权链。"
+            self.fields["is_superuser"].label = "超级管理员（Root）"
+            self.fields["is_superuser"].help_text = "拥有全量系统/业务权限；仅允许命令行创建，不允许在后台修改。"
+            self.fields["is_superuser"].disabled = True
 
 
 class StaffProfileInlineFormSet(BaseInlineFormSet):
     """User 页内联 staff 的规则校验。
 
     规则：
-    - superuser：不允许绑定 staff。
+    - superuser：不允许绑定 staff（superuser 直接拥有全量权限）。
     - 非 superuser：必须绑定且只能绑定 1 条 staff。
     """
 
@@ -224,6 +225,15 @@ def _group_staff_type_payload(group: Group):
     return [{"staff_type_id": link.staff_type_id, "staff_type": link.staff_type.code} for link in links]
 
 
+def _staff_type_group_payload(staff_type: StaffType):
+    links = (
+        StaffTypeGroup.objects.filter(staff_type=staff_type, status=ScopeStatus.ACTIVE)
+        .select_related("group")
+        .order_by("group_id")
+    )
+    return [{"group_id": link.group_id, "group_name": link.group.name} for link in links]
+
+
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
     form = AccessUserChangeForm
@@ -233,7 +243,7 @@ class UserAdmin(DjangoUserAdmin):
         "id",
         "username",
         "is_active",
-        "is_staff",
+        "admin_login_enabled",
         "is_superuser",
         "status",
         "staff_summary",
@@ -260,16 +270,15 @@ class UserAdmin(DjangoUserAdmin):
                     "password2",
                     "is_active",
                     "is_staff",
-                    "is_superuser",
                     "status",
                 ),
             },
         ),
     )
-    readonly_fields = ("staff_summary", "direct_group_count")
+    readonly_fields = ("staff_summary", "direct_group_count", "is_superuser")
 
     def get_inlines(self, request, obj):
-        # superuser 不参与业务授权链，不展示 staff 内联编辑区。
+        # superuser 不走 staff 绑定链路，不展示 staff 内联编辑区。
         if obj and obj.is_superuser:
             return ()
         return super().get_inlines(request, obj)
@@ -280,6 +289,10 @@ class UserAdmin(DjangoUserAdmin):
         if not staff:
             return "-"
         return f"{staff.staff_no} / {staff.name} / {staff.staff_type.code}"
+
+    @admin.display(boolean=True, ordering="is_staff", description="可登录后台(Admin)")
+    def admin_login_enabled(self, obj):
+        return obj.is_staff
 
     @admin.display(description="直绑 Group 数")
     def direct_group_count(self, obj):
@@ -292,10 +305,24 @@ class UserAdmin(DjangoUserAdmin):
 
 @admin.register(StaffType)
 class StaffTypeAdmin(admin.ModelAdmin):
-    list_display = ("id", "code", "name", "is_registrable", "status", "created_at", "updated_at")
-    list_filter = ("is_registrable", "status")
+    list_display = ("id", "code", "name", "status", "created_at", "updated_at")
+    list_filter = ("status",)
     search_fields = ("code", "name", "description")
     inlines = (StaffTypeGroupByStaffTypeInline,)
+
+    def save_related(self, request, form, formsets, change):
+        before_groups = _staff_type_group_payload(form.instance) if change else []
+        super().save_related(request, form, formsets, change)
+        after_groups = _staff_type_group_payload(form.instance)
+        if before_groups != after_groups:
+            log_action(
+                request=request,
+                action="STAFF_TYPE_GROUP_BULK_UPDATE_ADMIN",
+                target_type="staff_type",
+                target_id=form.instance.id,
+                before_data={"groups": before_groups},
+                after_data={"groups": after_groups},
+            )
 
 
 try:
@@ -407,38 +434,21 @@ class AuditLogAdmin(admin.ModelAdmin):
         return False
 
 
-@admin.register(RegistrationApplication)
-class RegistrationApplicationAdmin(admin.ModelAdmin):
-    list_display = (
-        "id",
-        "application_no",
-        "name",
-        "phone",
-        "requested_staff_type_code",
-        "status",
-        "reviewer_user",
-        "reviewed_at",
-        "created_at",
-    )
-    search_fields = ("application_no", "name", "phone", "email", "requested_staff_type_code")
-    list_filter = ("status", "requested_staff_type_code")
-    readonly_fields = (
-        "application_no",
-        "name",
-        "phone",
-        "email",
-        "requested_staff_type_code",
-        "requested_org_id",
-        "application_note",
-        "status",
-        "reviewer_user",
-        "reviewed_at",
-        "review_comment",
-        "created_user",
-        "created_staff",
-        "created_at",
-        "updated_at",
-    )
+@admin.register(StaffTypeGroup)
+class StaffTypeGroupAdmin(admin.ModelAdmin):
+    list_display = ("id", "staff_type", "group", "status", "updated_at")
+    search_fields = ("staff_type__code", "staff_type__name", "group__name")
+    list_filter = ("status",)
+
+    def get_model_perms(self, request):
+        # 降低菜单噪声：优先在 StaffType/Group 页面维护。
+        return {}
+
+    def has_module_permission(self, request):
+        return False
+
+    def has_view_permission(self, request, obj=None):
+        return False
 
     def has_add_permission(self, request):
         return False
@@ -450,17 +460,6 @@ class RegistrationApplicationAdmin(admin.ModelAdmin):
         return False
 
 
-@admin.register(StaffTypeGroup)
-class StaffTypeGroupAdmin(admin.ModelAdmin):
-    list_display = ("id", "staff_type", "group", "status", "updated_at")
-    search_fields = ("staff_type__code", "staff_type__name", "group__name")
-    list_filter = ("status",)
-
-    def get_model_perms(self, request):
-        # 降低菜单噪声：优先在 StaffType/Group 页面维护。
-        return {}
-
-
 @admin.register(GroupPermissionScope)
 class GroupPermissionScopeAdmin(admin.ModelAdmin):
     list_display = ("id", "group", "permission", "scope_type", "status", "updated_at")
@@ -469,3 +468,18 @@ class GroupPermissionScopeAdmin(admin.ModelAdmin):
 
     def get_model_perms(self, request):
         return {}
+
+    def has_module_permission(self, request):
+        return False
+
+    def has_view_permission(self, request, obj=None):
+        return False
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
