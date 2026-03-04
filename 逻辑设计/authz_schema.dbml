@@ -1,0 +1,169 @@
+// ============================================================
+// 低空平台 - 权限系统 Schema (DBML)
+// 目标：只表达授权域，不混入业务资源模型
+// 说明：
+// 1) 本文件包含“参与授权设计”的全部表（含部分 Django 内建表）
+// 2) 纯框架运行辅助表见：django_internal_tables.md
+// ============================================================
+
+Project low_altitude_authz_core {
+  database_type: 'PostgreSQL'
+  Note: '核心授权模型（不含业务资源表）'
+}
+
+// ============================================================
+// 1. auth_users 账号表（自定义 User）
+// ============================================================
+Table auth_users [note: '账号表（登录身份，不承载人员事实）'] {
+  id bigserial [pk, note: 'id 账号ID']
+  username varchar(150) [not null, unique, note: 'username 登录账号']
+  password varchar(128) [not null, note: 'password 密码哈希']
+  is_staff boolean [not null, default: false, note: 'is_staff 是否可登录 Django Admin']
+  is_active boolean [not null, default: true, note: 'is_active Django 账户启用状态']
+  is_superuser boolean [not null, default: false, note: 'is_superuser 超级管理员（Root）']
+  status smallint [not null, default: 1, note: 'status 业务账户状态：1-active, 0-disabled']
+  last_login timestamp [note: 'last_login 最近登录时间']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+}
+
+// ============================================================
+// 2. staff_types 身份类型表
+// ============================================================
+Table staff_types [note: '身份类型（岗位分类）'] {
+  id bigserial [pk, note: 'id 身份类型ID']
+  code varchar(64) [not null, unique, note: 'code 机器码，如 ops_admin/pilot_operator']
+  name varchar(64) [not null, note: 'name 中文名']
+  description varchar(255) [note: 'description 说明']
+  status smallint [not null, default: 1, note: 'status 状态：1-active, 0-disabled']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+}
+
+// ============================================================
+// 3. staff_profiles 人员档案表
+// ============================================================
+Table staff_profiles [note: '人员档案（一账号一Staff；superuser 禁止绑定，应用层约束）'] {
+  id bigserial [pk, note: 'id 人员档案ID']
+  user_id bigint [not null, unique, ref: > auth_users.id, note: 'user_id 关联账号ID（1:1）']
+  staff_no varchar(64) [not null, unique, note: 'staff_no 工号']
+  name varchar(64) [not null, note: 'name 姓名']
+  phone varchar(32) [note: 'phone 手机号']
+  email varchar(254) [note: 'email 邮箱']
+  employment_status smallint [not null, default: 1, note: 'employment_status 在职状态：1-active, 0-inactive']
+  staff_type_id bigint [not null, ref: > staff_types.id, note: 'staff_type_id 身份类型ID']
+  org_id bigint [note: 'org_id 组织ID']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+}
+
+// ============================================================
+// 4. auth_group 能力组表（Django 内建，参与授权设计）
+// ============================================================
+Table auth_group [note: '能力组（Group）'] {
+  id integer [pk, note: 'id 组ID']
+  name varchar(150) [not null, unique, note: 'name 组名称']
+}
+
+// ============================================================
+// 5. auth_permission 权限点字典（Django 内建，参与授权设计）
+// 说明：content_type_id 对应 django_content_type.id（见附录文档）
+// ============================================================
+Table auth_permission [note: '权限点字典'] {
+  id integer [pk, note: 'id 权限ID']
+  name varchar(255) [not null, note: 'name 权限中文名']
+  content_type_id integer [not null, note: 'content_type_id 内容类型ID（内部表 django_content_type）']
+  codename varchar(100) [not null, note: 'codename 权限码后半段']
+
+  indexes {
+    (content_type_id, codename) [unique]
+  }
+}
+
+// ============================================================
+// 6. auth_group_permissions 组权限关系（Django 内建，参与授权设计）
+// ============================================================
+Table auth_group_permissions [note: 'group -> permission 多对多关系'] {
+  id integer [pk, note: 'id 关系ID']
+  group_id integer [not null, ref: > auth_group.id, note: 'group_id 能力组ID']
+  permission_id integer [not null, ref: > auth_permission.id, note: 'permission_id 权限ID']
+
+  indexes {
+    (group_id, permission_id) [unique]
+  }
+}
+
+// ============================================================
+// 7. staff_type_groups 身份类型能力组映射
+// ============================================================
+Table staff_type_groups [note: 'staff_type -> group 映射'] {
+  id bigserial [pk, note: 'id 映射ID']
+  staff_type_id bigint [not null, ref: > staff_types.id, note: 'staff_type_id 身份类型ID']
+  group_id integer [not null, ref: > auth_group.id, note: 'group_id 能力组ID']
+  status smallint [not null, default: 1, note: 'status 状态：1-active, 0-disabled']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+
+  indexes {
+    (staff_type_id, group_id) [unique, name: 'uniq_staff_type_group']
+  }
+}
+
+// ============================================================
+// 8. auth_group_permission_scopes 组权限范围表
+// ============================================================
+Table auth_group_permission_scopes [note: 'group+permission 的scope策略'] {
+  id bigserial [pk, note: 'id 范围策略ID']
+  group_id integer [not null, ref: > auth_group.id, note: 'group_id 能力组ID']
+  permission_id integer [not null, ref: > auth_permission.id, note: 'permission_id 权限ID']
+  scope_type varchar(16) [not null, note: 'scope_type ALL/ASSIGNED/OWN']
+  status smallint [not null, default: 1, note: 'status 状态：1-active, 0-disabled']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+
+  indexes {
+    (group_id, permission_id) [unique, name: 'uniq_group_permission_scope']
+  }
+}
+
+// ============================================================
+// 9. auth_users_groups 用户直绑组关系（Django 内建，业务禁用）
+// ============================================================
+Table auth_users_groups [note: 'user -> group 直绑关系（被业务规则禁止）'] {
+  id integer [pk, note: 'id 关系ID']
+  user_id bigint [not null, ref: > auth_users.id, note: 'user_id 账号ID']
+  group_id integer [not null, ref: > auth_group.id, note: 'group_id 能力组ID']
+
+  indexes {
+    (user_id, group_id) [unique]
+  }
+}
+
+// ============================================================
+// 10. auth_users_user_permissions 用户直绑权限（Django 内建，业务禁用）
+// ============================================================
+Table auth_users_user_permissions [note: 'user -> permission 直绑关系（被业务规则禁止）'] {
+  id integer [pk, note: 'id 关系ID']
+  user_id bigint [not null, ref: > auth_users.id, note: 'user_id 账号ID']
+  permission_id integer [not null, ref: > auth_permission.id, note: 'permission_id 权限ID']
+
+  indexes {
+    (user_id, permission_id) [unique]
+  }
+}
+
+// ============================================================
+// 11. auth_audit_logs 审计日志
+// ============================================================
+Table auth_audit_logs [note: '权限关键动作审计日志'] {
+  id bigserial [pk, note: 'id 日志ID']
+  actor_user_id bigint [ref: > auth_users.id, note: 'actor_user_id 操作人账号ID']
+  action varchar(128) [not null, note: 'action 动作码']
+  target_type varchar(128) [not null, note: 'target_type 目标类型']
+  target_id varchar(64) [note: 'target_id 目标主键']
+  before_data json [note: 'before_data 变更前快照']
+  after_data json [note: 'after_data 变更后快照']
+  ip varchar(39) [note: 'ip 请求IP']
+  request_id varchar(64) [note: 'request_id 请求追踪ID']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+}
