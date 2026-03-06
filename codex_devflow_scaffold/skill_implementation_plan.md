@@ -10,6 +10,25 @@
 - 固化门禁、回退、日志、文档产出规则。
 - 保证每轮迭代可追踪、可回放、可审计。
 
+## 1.1 当前仓库对齐快照（2026-03-06）
+
+当前仓库与本规划的对应状态如下：
+
+1. 已落地
+- Django 主工程（`apps/access`、`apps/api_v1`、`apps/drone`）可运行。
+- 业务与权限文档目录已存在：`项目总体概览/`、`业务侧实现/`、`权限管理侧实现/`。
+- `codex_devflow_scaffold/` 目录骨架已存在。
+- 本规划文件 `codex_devflow_scaffold/skill_implementation_plan.md` 已存在。
+
+2. 未落地（仍属规划目标）
+- `tools/workflow_runner.py`
+- `codex_skills/codex-tdd-devflow/`
+- `state.json`、`workflow_spec.json`、`registry/*.json`、`schemas/*.json` 等核心执行文件
+
+3. 使用约束
+- 本文档中的 Stage0-Stage8 规则按“目标态”定义。
+- 若条目涉及未落地文件，视为实施任务，不视为当前可执行能力。
+
 ## 2. 总体原则
 
 - 仅使用 Codex CLI 作为模型执行入口。
@@ -63,10 +82,12 @@
 - 默认：`codex_devflow_scaffold/`
 
 5. 执行器与技能目录
-- Runner：`tools/workflow_runner.py`
-- Skill：`codex_skills/codex-tdd-devflow/`
+- Runner（目标路径，当前未创建）：`tools/workflow_runner.py`
+- Skill（目标路径，当前未创建）：`codex_skills/codex-tdd-devflow/`
 
 ## 3.2 核心文件
+
+以下为目标态核心文件清单（当前仓库尚未全部落地）：
 
 - `codex_devflow_scaffold/workflow_spec.json`
 - `codex_devflow_scaffold/state.json`

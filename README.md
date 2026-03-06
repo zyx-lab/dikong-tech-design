@@ -1,16 +1,22 @@
 # 低空平台权限系统（V3）
 
-本仓库当前采用双平面 API 架构：
+## 当前状态（对齐日期：2026-03-06）
+
+本仓库当前是一个 Django + DRF 的双平面 API 项目，代码已实现：
 
 1. Internal IAM Plane（内部管理）
 - 前缀：`/internal/auth/*`
 - 文档：`/internal/docs/`
-- 用途：账号、身份类型、能力组、权限范围、审计
+- 能力：账号管理、能力组与权限范围管理、身份类型映射、审计日志查询
 
 2. Business API Plane（业务开放）
 - 前缀：`/api/v1/*`
 - 文档：`/api/v1/docs/`
-- 用途：业务资源接口（当前已开放无人机台账与分配关系）
+- 能力：无人机台账、无人机分配、无人机状态流转
+
+3. Skill 规划（流程脚手架）
+- 规划文件：`codex_devflow_scaffold/skill_implementation_plan.md`
+- 当前实现状态：**仅规划文档已落库**，Runner/Skill 代码尚未落地（见下方“Skill 规划对齐”）
 
 ## 快速启动
 
@@ -25,7 +31,14 @@ python manage.py create_business_admin_account --username biz_root --password 'Y
 python manage.py runserver 0.0.0.0:8001
 ```
 
-## 当前 API 入口
+## 代码与能力映射
+
+- 路由入口：`config/urls.py`
+- Internal IAM：`apps/access/*`
+- Business API 根入口：`apps/api_v1/*`
+- 无人机业务域：`apps/drone/*`
+
+### 已实现接口清单（与当前代码一致）
 
 1. Internal IAM
 - `GET /internal/auth/`
@@ -57,6 +70,37 @@ python manage.py runserver 0.0.0.0:8001
 - `GET /api/v1/drone-assignments/{id}`
 - `POST /api/v1/drone-assignments/{id}/cancel`
 
+## 鉴权与授权边界
+
+- 认证方式：`SessionAuthentication` + `BasicAuthentication`
+- 默认权限：`IsAuthenticated`
+- 明确开放（AllowAny）：
+  - `GET /internal/auth/`
+  - `GET /internal/auth/session-status`
+  - `GET /api/v1/`
+  - `GET /api/v1/health`
+- Internal IAM 权限类：`RequireInternalPermission`
+- Business API 权限类：`ScopedActionPermission`
+- Scope 类型：`ALL` / `OWN` / `ASSIGNED`
+- superuser 作为 root 账号：不走 staff_type 授权链，拥有全量权限
+
+## Skill 规划对齐（实现态 vs 规划态）
+
+`codex_devflow_scaffold/skill_implementation_plan.md` 已定义 Stage0-Stage8 规范，但当前仓库实际状态如下：
+
+1. 已存在
+- `codex_devflow_scaffold/skill_implementation_plan.md`
+- `codex_devflow_scaffold/` 下阶段目录骨架（`artifacts/inputs/schemas/...`）
+
+2. 尚未落地（规划中）
+- `tools/workflow_runner.py`
+- `codex_skills/codex-tdd-devflow/`
+- 规划中要求的 schema、state、registry、events 等核心文件
+
+3. 结论
+- 当前仓库的“可运行能力”仍以 Django API 主工程为主。
+- `codex_devflow_scaffold` 目前是规范先行状态，不应被视为已可执行流程。
+
 ## 文档导航
 
 - 总体概念图：[overall_er_diagram.md](项目总体概览/概念设计/overall_er_diagram.md)
@@ -74,58 +118,27 @@ python manage.py runserver 0.0.0.0:8001
 - Admin 与表关系：[Admin菜单与数据库表关系说明.md](权限管理侧实现/Admin菜单与数据库表关系说明.md)
 - 权限逻辑模型：[authz_logical_model.md](权限管理侧实现/authz_logical_model.md)
 - 权限 DBML：[authz_schema.dbml](权限管理侧实现/authz_schema.dbml)
+- Skill 实施规划：[skill_implementation_plan.md](codex_devflow_scaffold/skill_implementation_plan.md)
 
-## 代码定位
+## 近期路线（与代码现状对齐）
 
-- IAM 模块：`apps/access/*`
-- 业务 API 骨架：`apps/api_v1/*`
-- 路由编排：`config/urls.py`
+1. 业务前端（未开始）
+- [ ] 登录与会话管理
+- [ ] 无人机台账页面
+- [ ] 无人机分配页面
+- [ ] 菜单/按钮级权限展示
 
-## TODO（未完成功能规划 / 基于当前设计）
+2. 业务域扩展（未开始）
+- [ ] 航线域（routes/waypoints）
+- [ ] 任务域（missions）
+- [ ] 飞行记录与媒体域（flight_records/media_files）
 
-### 1. 业务前端（当前未做）
+3. IAM 增强（部分已做）
+- [ ] 矩阵导出接口
+- [ ] 权限差异对比视图
+- [ ] 授权链完整性一键校验命令
 
-- [ ] 实现业务登录页与会话管理（对接 `/api/v1/*`）。
-- [ ] 实现无人机台账页面（列表、详情、新增、编辑、状态动作）。
-- [ ] 实现无人机分配页面（创建分配、取消分配、分配列表筛选）。
-- [ ] 实现“按权限显示菜单与按钮”（`business_admin` / `dispatcher` / `pilot_operator`）。
-
-### 2. 航线域（Route/Waypoint，当前未做）
-
-- [ ] 新增 `routes`、`waypoints` 业务模型与迁移。
-- [ ] 开放 `/api/v1/routes*`、`/api/v1/waypoints*` 接口。
-- [ ] 新增权限码并接入矩阵（建议：`route.view_route`、`route.manage_route`）。
-- [ ] 在 `route_planner` 角色落地对应能力组与 scope。
-
-### 3. 任务域（Mission，当前未做）
-
-- [ ] 新增 `missions` 模型与任务状态机（待执行/执行中/完成/取消等）。
-- [ ] 开放 `/api/v1/missions*` 接口（创建、派发、状态流转、查询）。
-- [ ] 落地任务与无人机/飞手的业务约束（如退役无人机不可派发）。
-- [ ] 新增任务域权限矩阵并补测试。
-
-### 4. 飞行记录与媒体域（当前未做）
-
-- [ ] 新增 `flight_records`、`media_files` 模型与迁移。
-- [ ] 开放 `/api/v1/flight-records*`、`/api/v1/media-files*` 接口。
-- [ ] 定义飞手上传、调度查看、审计查看的权限边界。
-- [ ] 补“删除策略”落地（逻辑删除、审计追踪、清理策略）。
-
-### 5. IAM 能力增强（当前部分已做）
-
-- [ ] 增加角色矩阵导出接口（便于审阅与存档）。
-- [ ] 增加权限变更差异日志展示（变更前后矩阵对比）。
-- [ ] 增加一键校验命令：检查 `staff_type -> group -> permission(scope)` 是否完整。
-
-### 6. 部署与边界治理（当前未做）
-
-- [ ] 按环境隔离 Internal IAM 与 Business API 的访问入口（网关/白名单）。
-- [ ] 区分生产鉴权策略（如业务侧切换为 Token/JWT，后台保留 Session）。
-- [ ] 增加 CI 任务：`check + migration check + tests` 强制通过后再发布。
-
-### 7. 文档持续维护规则
-
-- [ ] 每新增业务域，同步新增并更新 `业务侧实现/<domain>_logical_model.md`、`业务侧实现/<domain>_data_dictionary.md`、`业务侧实现/<domain>_schema.dbml`。
-- [ ] 每次矩阵调整，同步更新 `权限管理侧实现/角色权限矩阵设计.md`。
-- [ ] 涉及跨域模型变更，同步更新 `项目总体概览/逻辑设计/overall_*` 文档。
-- [ ] Future 规划文档必须标注 `Future`，防止与“当前实现”混淆。
+4. Skill 流程落地（未开始）
+- [ ] 实现 `workflow_runner`
+- [ ] 落地 `codex-tdd-devflow` skill 目录
+- [ ] 按规划补齐 schemas/registry/state 机器校验闭环
