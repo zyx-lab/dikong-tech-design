@@ -1,0 +1,845 @@
+{
+  "generated_at": "2026-03-05T19:30:21.620480+00:00",
+  "cases": [
+    {
+      "case_id": "CASE-0001",
+      "event_id": "EVT-0001",
+      "flow_id": "FLOW-0001",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0002",
+      "event_id": "EVT-0001",
+      "flow_id": "FLOW-0002",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0003",
+      "event_id": "EVT-0002",
+      "flow_id": "FLOW-0003",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 401
+    },
+    {
+      "case_id": "CASE-0004",
+      "event_id": "EVT-0002",
+      "flow_id": "FLOW-0004",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 401
+    },
+    {
+      "case_id": "CASE-0005",
+      "event_id": "EVT-0003",
+      "flow_id": "FLOW-0005",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 403
+    },
+    {
+      "case_id": "CASE-0006",
+      "event_id": "EVT-0003",
+      "flow_id": "FLOW-0006",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 403
+    },
+    {
+      "case_id": "CASE-0007",
+      "event_id": "EVT-0004",
+      "flow_id": "FLOW-0007",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 400
+    },
+    {
+      "case_id": "CASE-0008",
+      "event_id": "EVT-0004",
+      "flow_id": "FLOW-0008",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 400
+    },
+    {
+      "case_id": "CASE-0009",
+      "event_id": "EVT-0005",
+      "flow_id": "FLOW-0009",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0010",
+      "event_id": "EVT-0005",
+      "flow_id": "FLOW-0010",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0011",
+      "event_id": "EVT-0006",
+      "flow_id": "FLOW-0011",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0012",
+      "event_id": "EVT-0006",
+      "flow_id": "FLOW-0012",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0013",
+      "event_id": "EVT-0007",
+      "flow_id": "FLOW-0013",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0014",
+      "event_id": "EVT-0007",
+      "flow_id": "FLOW-0014",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0015",
+      "event_id": "EVT-0008",
+      "flow_id": "FLOW-0015",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0016",
+      "event_id": "EVT-0008",
+      "flow_id": "FLOW-0016",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0017",
+      "event_id": "EVT-0009",
+      "flow_id": "FLOW-0017",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 401
+    },
+    {
+      "case_id": "CASE-0018",
+      "event_id": "EVT-0009",
+      "flow_id": "FLOW-0018",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 401
+    },
+    {
+      "case_id": "CASE-0019",
+      "event_id": "EVT-0010",
+      "flow_id": "FLOW-0019",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 403
+    },
+    {
+      "case_id": "CASE-0020",
+      "event_id": "EVT-0010",
+      "flow_id": "FLOW-0020",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 403
+    },
+    {
+      "case_id": "CASE-0021",
+      "event_id": "EVT-0011",
+      "flow_id": "FLOW-0021",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 400
+    },
+    {
+      "case_id": "CASE-0022",
+      "event_id": "EVT-0011",
+      "flow_id": "FLOW-0022",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 400
+    },
+    {
+      "case_id": "CASE-0023",
+      "event_id": "EVT-0012",
+      "flow_id": "FLOW-0023",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0024",
+      "event_id": "EVT-0012",
+      "flow_id": "FLOW-0024",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0025",
+      "event_id": "EVT-0013",
+      "flow_id": "FLOW-0025",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0026",
+      "event_id": "EVT-0013",
+      "flow_id": "FLOW-0026",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0027",
+      "event_id": "EVT-0014",
+      "flow_id": "FLOW-0027",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0028",
+      "event_id": "EVT-0014",
+      "flow_id": "FLOW-0028",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^routes/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0029",
+      "event_id": "EVT-0015",
+      "flow_id": "FLOW-0029",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0030",
+      "event_id": "EVT-0015",
+      "flow_id": "FLOW-0030",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0031",
+      "event_id": "EVT-0016",
+      "flow_id": "FLOW-0031",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 401
+    },
+    {
+      "case_id": "CASE-0032",
+      "event_id": "EVT-0016",
+      "flow_id": "FLOW-0032",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 401
+    },
+    {
+      "case_id": "CASE-0033",
+      "event_id": "EVT-0017",
+      "flow_id": "FLOW-0033",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 403
+    },
+    {
+      "case_id": "CASE-0034",
+      "event_id": "EVT-0017",
+      "flow_id": "FLOW-0034",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 403
+    },
+    {
+      "case_id": "CASE-0035",
+      "event_id": "EVT-0018",
+      "flow_id": "FLOW-0035",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 400
+    },
+    {
+      "case_id": "CASE-0036",
+      "event_id": "EVT-0018",
+      "flow_id": "FLOW-0036",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 400
+    },
+    {
+      "case_id": "CASE-0037",
+      "event_id": "EVT-0019",
+      "flow_id": "FLOW-0037",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0038",
+      "event_id": "EVT-0019",
+      "flow_id": "FLOW-0038",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0039",
+      "event_id": "EVT-0020",
+      "flow_id": "FLOW-0039",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0040",
+      "event_id": "EVT-0020",
+      "flow_id": "FLOW-0040",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0041",
+      "event_id": "EVT-0021",
+      "flow_id": "FLOW-0041",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0042",
+      "event_id": "EVT-0021",
+      "flow_id": "FLOW-0042",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0043",
+      "event_id": "EVT-0022",
+      "flow_id": "FLOW-0043",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0044",
+      "event_id": "EVT-0022",
+      "flow_id": "FLOW-0044",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0045",
+      "event_id": "EVT-0023",
+      "flow_id": "FLOW-0045",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 401
+    },
+    {
+      "case_id": "CASE-0046",
+      "event_id": "EVT-0023",
+      "flow_id": "FLOW-0046",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 401
+    },
+    {
+      "case_id": "CASE-0047",
+      "event_id": "EVT-0024",
+      "flow_id": "FLOW-0047",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 403
+    },
+    {
+      "case_id": "CASE-0048",
+      "event_id": "EVT-0024",
+      "flow_id": "FLOW-0048",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 403
+    },
+    {
+      "case_id": "CASE-0049",
+      "event_id": "EVT-0025",
+      "flow_id": "FLOW-0049",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 400
+    },
+    {
+      "case_id": "CASE-0050",
+      "event_id": "EVT-0025",
+      "flow_id": "FLOW-0050",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 400
+    },
+    {
+      "case_id": "CASE-0051",
+      "event_id": "EVT-0026",
+      "flow_id": "FLOW-0051",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0052",
+      "event_id": "EVT-0026",
+      "flow_id": "FLOW-0052",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0053",
+      "event_id": "EVT-0027",
+      "flow_id": "FLOW-0053",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0054",
+      "event_id": "EVT-0027",
+      "flow_id": "FLOW-0054",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0055",
+      "event_id": "EVT-0028",
+      "flow_id": "FLOW-0055",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "case_id": "CASE-0056",
+      "event_id": "EVT-0028",
+      "flow_id": "FLOW-0056",
+      "mode": "search",
+      "actor_role": "dispatcher",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/^waypoints/(?P<pk>[^/.]+)",
+        "params": {
+          "example": "value"
+        }
+      },
+      "expected_status": 200
+    }
+  ]
+}

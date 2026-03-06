@@ -1,0 +1,725 @@
+{
+  "generated_at": "2026-03-05T19:11:12.637128+00:00",
+  "events": [
+    {
+      "event_id": "EVT-0001",
+      "type": "happy_path",
+      "api": "/api/v1/",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0002",
+      "type": "unauthenticated",
+      "api": "/api/v1/",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0003",
+      "type": "forbidden",
+      "api": "/api/v1/",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0004",
+      "type": "invalid_params",
+      "api": "/api/v1/",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0005",
+      "type": "happy_path",
+      "api": "/api/v1/^drone-assignments",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0006",
+      "type": "unauthenticated",
+      "api": "/api/v1/^drone-assignments",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0007",
+      "type": "forbidden",
+      "api": "/api/v1/^drone-assignments",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0008",
+      "type": "invalid_params",
+      "api": "/api/v1/^drone-assignments",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0009",
+      "type": "happy_path",
+      "api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0010",
+      "type": "unauthenticated",
+      "api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0011",
+      "type": "forbidden",
+      "api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0012",
+      "type": "invalid_params",
+      "api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0013",
+      "type": "happy_path",
+      "api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)/cancel",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0014",
+      "type": "unauthenticated",
+      "api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)/cancel",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0015",
+      "type": "forbidden",
+      "api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)/cancel",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0016",
+      "type": "invalid_params",
+      "api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)/cancel",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0017",
+      "type": "happy_path",
+      "api": "/api/v1/^drones",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0018",
+      "type": "unauthenticated",
+      "api": "/api/v1/^drones",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0019",
+      "type": "forbidden",
+      "api": "/api/v1/^drones",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0020",
+      "type": "invalid_params",
+      "api": "/api/v1/^drones",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0021",
+      "type": "happy_path",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0022",
+      "type": "unauthenticated",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0023",
+      "type": "forbidden",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0024",
+      "type": "invalid_params",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0025",
+      "type": "happy_path",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/disable",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0026",
+      "type": "unauthenticated",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/disable",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0027",
+      "type": "forbidden",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/disable",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0028",
+      "type": "invalid_params",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/disable",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0029",
+      "type": "happy_path",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/enable",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0030",
+      "type": "unauthenticated",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/enable",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0031",
+      "type": "forbidden",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/enable",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0032",
+      "type": "invalid_params",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/enable",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0033",
+      "type": "happy_path",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/maintenance",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0034",
+      "type": "unauthenticated",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/maintenance",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0035",
+      "type": "forbidden",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/maintenance",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0036",
+      "type": "invalid_params",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/maintenance",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0037",
+      "type": "happy_path",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/retire",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0038",
+      "type": "unauthenticated",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/retire",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0039",
+      "type": "forbidden",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/retire",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0040",
+      "type": "invalid_params",
+      "api": "/api/v1/^drones/(?P<pk>[^/.]+)/retire",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0041",
+      "type": "happy_path",
+      "api": "/api/v1/docs/",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0042",
+      "type": "unauthenticated",
+      "api": "/api/v1/docs/",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0043",
+      "type": "forbidden",
+      "api": "/api/v1/docs/",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0044",
+      "type": "invalid_params",
+      "api": "/api/v1/docs/",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0045",
+      "type": "happy_path",
+      "api": "/api/v1/docs/schema/",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0046",
+      "type": "unauthenticated",
+      "api": "/api/v1/docs/schema/",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0047",
+      "type": "forbidden",
+      "api": "/api/v1/docs/schema/",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0048",
+      "type": "invalid_params",
+      "api": "/api/v1/docs/schema/",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0049",
+      "type": "happy_path",
+      "api": "/api/v1/health",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0050",
+      "type": "unauthenticated",
+      "api": "/api/v1/health",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0051",
+      "type": "forbidden",
+      "api": "/api/v1/health",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0052",
+      "type": "invalid_params",
+      "api": "/api/v1/health",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0053",
+      "type": "happy_path",
+      "api": "/internal/auth/",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0054",
+      "type": "unauthenticated",
+      "api": "/internal/auth/",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0055",
+      "type": "forbidden",
+      "api": "/internal/auth/",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0056",
+      "type": "invalid_params",
+      "api": "/internal/auth/",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0057",
+      "type": "happy_path",
+      "api": "/internal/auth/audit-logs",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0058",
+      "type": "unauthenticated",
+      "api": "/internal/auth/audit-logs",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0059",
+      "type": "forbidden",
+      "api": "/internal/auth/audit-logs",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0060",
+      "type": "invalid_params",
+      "api": "/internal/auth/audit-logs",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0061",
+      "type": "happy_path",
+      "api": "/internal/auth/groups",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0062",
+      "type": "unauthenticated",
+      "api": "/internal/auth/groups",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0063",
+      "type": "forbidden",
+      "api": "/internal/auth/groups",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0064",
+      "type": "invalid_params",
+      "api": "/internal/auth/groups",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0065",
+      "type": "happy_path",
+      "api": "/internal/auth/groups/<int:group_id>/permissions",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0066",
+      "type": "unauthenticated",
+      "api": "/internal/auth/groups/<int:group_id>/permissions",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0067",
+      "type": "forbidden",
+      "api": "/internal/auth/groups/<int:group_id>/permissions",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0068",
+      "type": "invalid_params",
+      "api": "/internal/auth/groups/<int:group_id>/permissions",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0069",
+      "type": "happy_path",
+      "api": "/internal/auth/groups/<int:group_id>/scopes",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0070",
+      "type": "unauthenticated",
+      "api": "/internal/auth/groups/<int:group_id>/scopes",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0071",
+      "type": "forbidden",
+      "api": "/internal/auth/groups/<int:group_id>/scopes",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0072",
+      "type": "invalid_params",
+      "api": "/internal/auth/groups/<int:group_id>/scopes",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0073",
+      "type": "happy_path",
+      "api": "/internal/auth/groups/<int:pk>",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0074",
+      "type": "unauthenticated",
+      "api": "/internal/auth/groups/<int:pk>",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0075",
+      "type": "forbidden",
+      "api": "/internal/auth/groups/<int:pk>",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0076",
+      "type": "invalid_params",
+      "api": "/internal/auth/groups/<int:pk>",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0077",
+      "type": "happy_path",
+      "api": "/internal/auth/me/permissions",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0078",
+      "type": "unauthenticated",
+      "api": "/internal/auth/me/permissions",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0079",
+      "type": "forbidden",
+      "api": "/internal/auth/me/permissions",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0080",
+      "type": "invalid_params",
+      "api": "/internal/auth/me/permissions",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0081",
+      "type": "happy_path",
+      "api": "/internal/auth/permissions",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0082",
+      "type": "unauthenticated",
+      "api": "/internal/auth/permissions",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0083",
+      "type": "forbidden",
+      "api": "/internal/auth/permissions",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0084",
+      "type": "invalid_params",
+      "api": "/internal/auth/permissions",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0085",
+      "type": "happy_path",
+      "api": "/internal/auth/scopes/matrix",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0086",
+      "type": "unauthenticated",
+      "api": "/internal/auth/scopes/matrix",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0087",
+      "type": "forbidden",
+      "api": "/internal/auth/scopes/matrix",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0088",
+      "type": "invalid_params",
+      "api": "/internal/auth/scopes/matrix",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0089",
+      "type": "happy_path",
+      "api": "/internal/auth/session-status",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0090",
+      "type": "unauthenticated",
+      "api": "/internal/auth/session-status",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0091",
+      "type": "forbidden",
+      "api": "/internal/auth/session-status",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0092",
+      "type": "invalid_params",
+      "api": "/internal/auth/session-status",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0093",
+      "type": "happy_path",
+      "api": "/internal/auth/staff-types",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0094",
+      "type": "unauthenticated",
+      "api": "/internal/auth/staff-types",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0095",
+      "type": "forbidden",
+      "api": "/internal/auth/staff-types",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0096",
+      "type": "invalid_params",
+      "api": "/internal/auth/staff-types",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0097",
+      "type": "happy_path",
+      "api": "/internal/auth/staff-types/<int:pk>",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0098",
+      "type": "unauthenticated",
+      "api": "/internal/auth/staff-types/<int:pk>",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0099",
+      "type": "forbidden",
+      "api": "/internal/auth/staff-types/<int:pk>",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0100",
+      "type": "invalid_params",
+      "api": "/internal/auth/staff-types/<int:pk>",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0101",
+      "type": "happy_path",
+      "api": "/internal/auth/staff-types/<int:staff_type_id>/groups",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0102",
+      "type": "unauthenticated",
+      "api": "/internal/auth/staff-types/<int:staff_type_id>/groups",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0103",
+      "type": "forbidden",
+      "api": "/internal/auth/staff-types/<int:staff_type_id>/groups",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0104",
+      "type": "invalid_params",
+      "api": "/internal/auth/staff-types/<int:staff_type_id>/groups",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0105",
+      "type": "happy_path",
+      "api": "/internal/auth/users",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0106",
+      "type": "unauthenticated",
+      "api": "/internal/auth/users",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0107",
+      "type": "forbidden",
+      "api": "/internal/auth/users",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0108",
+      "type": "invalid_params",
+      "api": "/internal/auth/users",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0109",
+      "type": "happy_path",
+      "api": "/internal/auth/users/<int:pk>",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0110",
+      "type": "unauthenticated",
+      "api": "/internal/auth/users/<int:pk>",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0111",
+      "type": "forbidden",
+      "api": "/internal/auth/users/<int:pk>",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0112",
+      "type": "invalid_params",
+      "api": "/internal/auth/users/<int:pk>",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0113",
+      "type": "happy_path",
+      "api": "/internal/docs/",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0114",
+      "type": "unauthenticated",
+      "api": "/internal/docs/",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0115",
+      "type": "forbidden",
+      "api": "/internal/docs/",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0116",
+      "type": "invalid_params",
+      "api": "/internal/docs/",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0117",
+      "type": "happy_path",
+      "api": "/internal/docs/schema/",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0118",
+      "type": "unauthenticated",
+      "api": "/internal/docs/schema/",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0119",
+      "type": "forbidden",
+      "api": "/internal/docs/schema/",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0120",
+      "type": "invalid_params",
+      "api": "/internal/docs/schema/",
+      "expected_status": 400
+    }
+  ]
+}

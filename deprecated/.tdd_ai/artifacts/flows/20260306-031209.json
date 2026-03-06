@@ -1,0 +1,782 @@
+{
+  "generated_at": "2026-03-05T19:12:09.414021+00:00",
+  "flows": [
+    {
+      "flow_id": "FLOW-0001",
+      "event_id": "EVT-0001",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0002",
+      "event_id": "EVT-0001",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0003",
+      "event_id": "EVT-0002",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 401
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0004",
+      "event_id": "EVT-0002",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 401,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0005",
+      "event_id": "EVT-0003",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 403
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0006",
+      "event_id": "EVT-0003",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 403,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0007",
+      "event_id": "EVT-0004",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 400
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0008",
+      "event_id": "EVT-0004",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 400,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0009",
+      "event_id": "EVT-0005",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0010",
+      "event_id": "EVT-0005",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0011",
+      "event_id": "EVT-0006",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0012",
+      "event_id": "EVT-0006",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0013",
+      "event_id": "EVT-0007",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0014",
+      "event_id": "EVT-0007",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/routes",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0015",
+      "event_id": "EVT-0008",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0016",
+      "event_id": "EVT-0008",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0017",
+      "event_id": "EVT-0009",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 401
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0018",
+      "event_id": "EVT-0009",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 401,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0019",
+      "event_id": "EVT-0010",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 403
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0020",
+      "event_id": "EVT-0010",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 403,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0021",
+      "event_id": "EVT-0011",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 400
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0022",
+      "event_id": "EVT-0011",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 400,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0023",
+      "event_id": "EVT-0012",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0024",
+      "event_id": "EVT-0012",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0025",
+      "event_id": "EVT-0013",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0026",
+      "event_id": "EVT-0013",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0027",
+      "event_id": "EVT-0014",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0028",
+      "event_id": "EVT-0014",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/waypoints",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0029",
+      "event_id": "EVT-0015",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0030",
+      "event_id": "EVT-0015",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0031",
+      "event_id": "EVT-0016",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 401
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0032",
+      "event_id": "EVT-0016",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 401,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0033",
+      "event_id": "EVT-0017",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 403
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0034",
+      "event_id": "EVT-0017",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 403,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0035",
+      "event_id": "EVT-0018",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 400
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0036",
+      "event_id": "EVT-0018",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 400,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0037",
+      "event_id": "EVT-0019",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0038",
+      "event_id": "EVT-0019",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0039",
+      "event_id": "EVT-0020",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0040",
+      "event_id": "EVT-0020",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0041",
+      "event_id": "EVT-0021",
+      "view": "role",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200
+        }
+      ]
+    },
+    {
+      "flow_id": "FLOW-0042",
+      "event_id": "EVT-0021",
+      "view": "business",
+      "actor_role": "dispatcher",
+      "steps": [
+        {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/missions",
+            "params": {
+              "example": "value"
+            }
+          },
+          "expected_status": 200,
+          "status_note": "must include auth/permission/error coverage"
+        }
+      ]
+    }
+  ]
+}

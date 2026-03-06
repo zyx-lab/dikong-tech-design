@@ -1,0 +1,273 @@
+{
+  "version": "1.0.0",
+  "darkMode": false,
+  "gridEnabling": false,
+  "detailLevel": "All",
+  "tablePositions": [
+    {
+      "name": "auth_users",
+      "schemaName": "public",
+      "x": 382.77490234375,
+      "y": 12
+    },
+    {
+      "name": "staff_types",
+      "schemaName": "public",
+      "x": 382.77490234375,
+      "y": 410
+    },
+    {
+      "name": "staff_profiles",
+      "schemaName": "public",
+      "x": 1315.9825156751317,
+      "y": 405.5992247683022
+    },
+    {
+      "name": "auth_group",
+      "schemaName": "public",
+      "x": 12,
+      "y": 1122.8015504633954
+    },
+    {
+      "name": "auth_permission",
+      "schemaName": "public",
+      "x": 335.24755859375,
+      "y": 1122.8015504633954
+    },
+    {
+      "name": "auth_group_permissions",
+      "schemaName": "public",
+      "x": 645.86376953125,
+      "y": 1122.8015504633954
+    },
+    {
+      "name": "staff_type_groups",
+      "schemaName": "public",
+      "x": 993.2589986839617,
+      "y": 848.8015504633953
+    },
+    {
+      "name": "auth_group_permission_scopes",
+      "schemaName": "public",
+      "x": 12,
+      "y": 12
+    },
+    {
+      "name": "auth_users_groups",
+      "schemaName": "public",
+      "x": 943.42919921875,
+      "y": 1122.8015504633954
+    },
+    {
+      "name": "auth_users_user_permissions",
+      "schemaName": "public",
+      "x": 12,
+      "y": 1268.8015504633954
+    },
+    {
+      "name": "auth_audit_logs",
+      "schemaName": "public",
+      "x": 1060.737552236661,
+      "y": -27.606977085280022
+    }
+  ],
+  "tableGroupCollapseStates": [],
+  "stickyNoteLayouts": [],
+  "referencePaths": [
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_users",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "user_id"
+      ],
+      "secondTableName": "staff_profiles",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "staff_types",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "staff_type_id"
+      ],
+      "secondTableName": "staff_profiles",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_group",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "group_id"
+      ],
+      "secondTableName": "auth_group_permissions",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_permission",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "permission_id"
+      ],
+      "secondTableName": "auth_group_permissions",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "staff_types",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "staff_type_id"
+      ],
+      "secondTableName": "staff_type_groups",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_group",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "group_id"
+      ],
+      "secondTableName": "staff_type_groups",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_group",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "group_id"
+      ],
+      "secondTableName": "auth_group_permission_scopes",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_permission",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "permission_id"
+      ],
+      "secondTableName": "auth_group_permission_scopes",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_users",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "user_id"
+      ],
+      "secondTableName": "auth_users_groups",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_group",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "group_id"
+      ],
+      "secondTableName": "auth_users_groups",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_users",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "user_id"
+      ],
+      "secondTableName": "auth_users_user_permissions",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_permission",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "permission_id"
+      ],
+      "secondTableName": "auth_users_user_permissions",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "auth_users",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "actor_user_id"
+      ],
+      "secondTableName": "auth_audit_logs",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    }
+  ]
+}

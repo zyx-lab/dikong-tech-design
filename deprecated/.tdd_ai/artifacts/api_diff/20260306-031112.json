@@ -1,0 +1,275 @@
+{
+  "generated_at": "2026-03-05T19:11:12.632041+00:00",
+  "added": [
+    {
+      "path": "/api/v1/",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/api/v1/^drone-assignments",
+      "methods": [
+        "GET",
+        "POST"
+      ]
+    },
+    {
+      "path": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)",
+      "methods": [
+        "GET"
+      ]
+    },
+    {
+      "path": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)/cancel",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/api/v1/^drones",
+      "methods": [
+        "GET",
+        "POST"
+      ]
+    },
+    {
+      "path": "/api/v1/^drones/(?P<pk>[^/.]+)",
+      "methods": [
+        "GET",
+        "PATCH",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/api/v1/^drones/(?P<pk>[^/.]+)/disable",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/api/v1/^drones/(?P<pk>[^/.]+)/enable",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/api/v1/^drones/(?P<pk>[^/.]+)/maintenance",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/api/v1/^drones/(?P<pk>[^/.]+)/retire",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/api/v1/docs/",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/api/v1/docs/schema/",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/api/v1/health",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/audit-logs",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/groups",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/groups/<int:group_id>/permissions",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/groups/<int:group_id>/scopes",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/groups/<int:pk>",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/me/permissions",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/permissions",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/scopes/matrix",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/session-status",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/staff-types",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/staff-types/<int:pk>",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/staff-types/<int:staff_type_id>/groups",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/users",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/auth/users/<int:pk>",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/docs/",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    },
+    {
+      "path": "/internal/docs/schema/",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "POST",
+        "PUT"
+      ]
+    }
+  ],
+  "removed": [],
+  "changed": []
+}

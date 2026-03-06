@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-03-05T19:13:26.895101+00:00",
+  "decision": "continue",
+  "reason": "Changes are incremental and tests pass; continue with constrained scope.",
+  "signals": {
+    "semantic_changed": false,
+    "new_feature": true,
+    "tests_passed": true,
+    "api_change_count": 0
+  }
+}

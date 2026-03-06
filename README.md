@@ -59,17 +59,21 @@ python manage.py runserver 0.0.0.0:8001
 
 ## 文档导航
 
-- 权限设计基线：[权限设计.md](权限管理设计/权限设计.md)
-- 角色权限矩阵：[角色权限矩阵设计.md](权限管理设计/角色权限矩阵设计.md)
-- 维护学习参考：[维护与学习参考.md](权限管理设计/维护与学习参考.md)
-- Admin 与表关系：[Admin菜单与数据库表关系说明.md](权限管理设计/Admin菜单与数据库表关系说明.md)
-- 业务接口扩展指南：[业务接口扩展指南.md](业务侧概念设计/业务接口扩展指南.md)
-- 无人机管理设计（当前实现）：[无人机管理V1设计计划.md](业务侧概念设计/无人机管理V1设计计划.md)
-- 业务逻辑模型（当前实现）：[business_logical_model.md](逻辑设计/business_logical_model.md)
-- 业务数据字典（当前实现）：[business_data_dictionary.md](逻辑设计/business_data_dictionary.md)
-- 业务 DBML（当前实现）：[schema.dbml](逻辑设计/schema.dbml)
-- 权限逻辑模型：[authz_logical_model.md](逻辑设计/authz_logical_model.md)
-- 权限 DBML：[authz_schema.dbml](逻辑设计/authz_schema.dbml)
+- 总体概念图：[overall_er_diagram.md](项目总体概览/概念设计/overall_er_diagram.md)
+- 总体逻辑模型：[overall_logical_model.md](项目总体概览/逻辑设计/overall_logical_model.md)
+- 总体数据字典：[overall_data_dictionary.md](项目总体概览/逻辑设计/overall_data_dictionary.md)
+- 总体 DBML：[overall_schema.dbml](项目总体概览/逻辑设计/overall_schema.dbml)
+- 业务接口扩展指南：[业务接口扩展指南.md](项目总体概览/业务接口扩展指南.md)
+- 无人机实现设计：[drone_impl_desc.md](业务侧实现/drone_impl_desc.md)
+- 无人机逻辑模型：[drone_logical_model.md](业务侧实现/drone_logical_model.md)
+- 无人机数据字典：[drone_data_dictionary.md](业务侧实现/drone_data_dictionary.md)
+- 无人机 DBML：[drone_schema.dbml](业务侧实现/drone_schema.dbml)
+- 权限设计基线：[权限设计.md](权限管理侧实现/权限设计.md)
+- 角色权限矩阵：[角色权限矩阵设计.md](权限管理侧实现/角色权限矩阵设计.md)
+- 维护学习参考：[维护与学习参考.md](权限管理侧实现/维护与学习参考.md)
+- Admin 与表关系：[Admin菜单与数据库表关系说明.md](权限管理侧实现/Admin菜单与数据库表关系说明.md)
+- 权限逻辑模型：[authz_logical_model.md](权限管理侧实现/authz_logical_model.md)
+- 权限 DBML：[authz_schema.dbml](权限管理侧实现/authz_schema.dbml)
 
 ## 代码定位
 
@@ -121,6 +125,7 @@ python manage.py runserver 0.0.0.0:8001
 
 ### 7. 文档持续维护规则
 
-- [ ] 每新增业务域，同步更新 `逻辑设计/business_logical_model.md`、`逻辑设计/business_data_dictionary.md`、`逻辑设计/schema.dbml`。
-- [ ] 每次矩阵调整，同步更新 `权限管理设计/角色权限矩阵设计.md`。
+- [ ] 每新增业务域，同步新增并更新 `业务侧实现/<domain>_logical_model.md`、`业务侧实现/<domain>_data_dictionary.md`、`业务侧实现/<domain>_schema.dbml`。
+- [ ] 每次矩阵调整，同步更新 `权限管理侧实现/角色权限矩阵设计.md`。
+- [ ] 涉及跨域模型变更，同步更新 `项目总体概览/逻辑设计/overall_*` 文档。
 - [ ] Future 规划文档必须标注 `Future`，防止与“当前实现”混淆。

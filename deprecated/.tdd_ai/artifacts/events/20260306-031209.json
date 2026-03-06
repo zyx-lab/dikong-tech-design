@@ -1,0 +1,140 @@
+{
+  "generated_at": "2026-03-05T19:12:09.413096+00:00",
+  "events": [
+    {
+      "event_id": "EVT-0001",
+      "type": "happy_path",
+      "api": "/api/v1/routes",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0002",
+      "type": "unauthenticated",
+      "api": "/api/v1/routes",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0003",
+      "type": "forbidden",
+      "api": "/api/v1/routes",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0004",
+      "type": "invalid_params",
+      "api": "/api/v1/routes",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0005",
+      "type": "new_old_combination",
+      "api": "/api/v1/routes",
+      "related_old_api": "/api/v1/",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0006",
+      "type": "new_old_combination",
+      "api": "/api/v1/routes",
+      "related_old_api": "/api/v1/^drone-assignments",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0007",
+      "type": "new_old_combination",
+      "api": "/api/v1/routes",
+      "related_old_api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0008",
+      "type": "happy_path",
+      "api": "/api/v1/waypoints",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0009",
+      "type": "unauthenticated",
+      "api": "/api/v1/waypoints",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0010",
+      "type": "forbidden",
+      "api": "/api/v1/waypoints",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0011",
+      "type": "invalid_params",
+      "api": "/api/v1/waypoints",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0012",
+      "type": "new_old_combination",
+      "api": "/api/v1/waypoints",
+      "related_old_api": "/api/v1/",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0013",
+      "type": "new_old_combination",
+      "api": "/api/v1/waypoints",
+      "related_old_api": "/api/v1/^drone-assignments",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0014",
+      "type": "new_old_combination",
+      "api": "/api/v1/waypoints",
+      "related_old_api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0015",
+      "type": "happy_path",
+      "api": "/api/v1/missions",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0016",
+      "type": "unauthenticated",
+      "api": "/api/v1/missions",
+      "expected_status": 401
+    },
+    {
+      "event_id": "EVT-0017",
+      "type": "forbidden",
+      "api": "/api/v1/missions",
+      "expected_status": 403
+    },
+    {
+      "event_id": "EVT-0018",
+      "type": "invalid_params",
+      "api": "/api/v1/missions",
+      "expected_status": 400
+    },
+    {
+      "event_id": "EVT-0019",
+      "type": "new_old_combination",
+      "api": "/api/v1/missions",
+      "related_old_api": "/api/v1/",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0020",
+      "type": "new_old_combination",
+      "api": "/api/v1/missions",
+      "related_old_api": "/api/v1/^drone-assignments",
+      "expected_status": 200
+    },
+    {
+      "event_id": "EVT-0021",
+      "type": "new_old_combination",
+      "api": "/api/v1/missions",
+      "related_old_api": "/api/v1/^drone-assignments/(?P<pk>[^/.]+)",
+      "expected_status": 200
+    }
+  ]
+}
