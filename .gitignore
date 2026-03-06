@@ -9,5 +9,4 @@ db.sqlite3.bak.*
 .DS_Store
 .lsp/
 .clj-kondo/
-note.md
 逻辑设计/*.dbdiagram
