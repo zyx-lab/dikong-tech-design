@@ -43,18 +43,19 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py case-web --host
 
 当 `run-auto` 返回 `waiting_decision` 时：
 
-1. 查看 `codex_devflow_scaffold/decisions/pending.json`
-2. 编辑 `codex_devflow_scaffold/decisions/decision.json`
-3. 执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py resume --auto`
+1. 执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py gate`（会直接输出可读摘要）
+2. 基于摘要做人审决策（approve/reject/goto_stage/run_stage8）
+3. 执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approve --apply`（默认不跨门禁自动续跑）
 
 标准化快捷方式（推荐）：
 
 ```bash
 python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py gate
-python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approve --apply --auto
+python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approve --apply
 python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --reject --apply
-python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --goto-stage 1 --reason "retry stage1" --apply --auto
-python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --run-stage8 --apply --auto
+python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --goto-stage 1 --reason "retry stage1" --apply
+python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --run-stage8 --apply
+python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approve --apply --auto --allow-auto-continue
 ```
 
 ## P2 能力
@@ -71,3 +72,4 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --run-st
 - Stage 4 测试覆盖码来源于 Stage 0 的 `required_case_codes`。
 - Stage 6 会校验“触达实体四件套”与权限文档影响；未通过时回退到 Stage 1。
 - 离线扫描可通过 `workflow_spec.business_api.local_scan_command` 覆盖默认命令。
+- 默认 `approval_mode=manual`：`--auto` 续跑需显式追加 `--allow-auto-continue`。

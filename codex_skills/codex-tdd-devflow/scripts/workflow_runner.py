@@ -64,6 +64,7 @@ IGNORE_ENTITY_SEGMENTS = {
 DEFAULT_WORKFLOW_SPEC: dict[str, Any] = {
     "schema_version": 1,
     "name": "codex-tdd-devflow",
+    "approval_mode": "manual",
     "stage_count": 9,
     "max_new_api_per_iteration": 1,
     "stage5_failure_threshold": 2,
@@ -580,6 +581,171 @@ def load_state(paths: Paths) -> dict[str, Any]:
 def save_state(paths: Paths, state: dict[str, Any]) -> None:
     state["updated_at"] = now_iso()
     write_json(paths.state, state)
+
+
+def approval_mode(spec: dict[str, Any]) -> str:
+    mode = str(spec.get("approval_mode", "manual")).strip().lower()
+    if mode not in {"manual", "auto"}:
+        return "manual"
+    return mode
+
+
+def ensure_auto_continue_allowed(spec: dict[str, Any], allowed_by_flag: bool, command_name: str) -> None:
+    if approval_mode(spec) == "manual" and not allowed_by_flag:
+        raise WorkflowError(
+            f"{command_name} 使用 --auto 被阻断：当前 approval_mode=manual。"
+            "请先人工审核 gate 摘要；若确认自动续跑，追加 --allow-auto-continue。"
+        )
+
+
+def _pick(artifact: dict[str, Any], *keys: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key in keys:
+        if key in artifact:
+            payload[key] = artifact[key]
+    return payload
+
+
+def summarize_stage_artifact(stage: int, artifact: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(artifact, dict):
+        return {"available": False}
+
+    summary: dict[str, Any] = {"available": True, "stage": stage}
+    summary.update(_pick(artifact, "generated_at"))
+
+    if stage == 0:
+        summary.update(
+            _pick(
+                artifact,
+                "api_candidates",
+                "required_case_codes",
+                "risk_assessment",
+                "semantic_gap_report",
+                "touched_entities",
+            )
+        )
+    elif stage == 2:
+        summary.update(
+            _pick(
+                artifact,
+                "source",
+                "scan_error",
+                "new_api_keys",
+                "drift_items",
+                "bootstrap_mode",
+            )
+        )
+    elif stage == 4:
+        generated_cases = artifact.get("generated_cases", [])
+        summary.update(
+            _pick(
+                artifact,
+                "generated_test_files",
+                "coverage_by_event",
+            )
+        )
+        summary["generated_cases_count"] = len(generated_cases) if isinstance(generated_cases, list) else 0
+    elif stage == 5:
+        reg = artifact.get("regression_summary", {})
+        summary.update(
+            {
+                "executed_cases": artifact.get("executed_cases"),
+                "failed_cases": artifact.get("failed_cases"),
+                "return_code": reg.get("return_code") if isinstance(reg, dict) else None,
+                "consecutive_failures": reg.get("consecutive_failures") if isinstance(reg, dict) else None,
+                "failure_distribution": reg.get("failure_distribution") if isinstance(reg, dict) else None,
+            }
+        )
+    elif stage == 6:
+        summary.update(
+            _pick(
+                artifact,
+                "registry_updates",
+                "docs_updates",
+                "business_doc_sync",
+                "permission_doc_changed",
+                "settlement_commit_message",
+            )
+        )
+    elif stage == 7:
+        summary.update(
+            _pick(
+                artifact,
+                "intervention_summary",
+                "recommendations",
+            )
+        )
+    elif stage == 8:
+        summary.update(
+            _pick(
+                artifact,
+                "decision",
+                "reasoning",
+                "actions",
+            )
+        )
+    else:
+        summary.update(_pick(artifact, "notes"))
+    return summary
+
+
+def tail_events(paths: Paths, limit: int = 5) -> list[dict[str, Any]]:
+    if not paths.events.exists():
+        return []
+    lines = paths.events.read_text(encoding="utf-8").splitlines()
+    rows = lines[-limit:]
+    events: list[dict[str, Any]] = []
+    for line in rows:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            events.append(payload)
+    return events
+
+
+def build_gate_review_payload(paths: Paths, include_events: bool = True) -> dict[str, Any]:
+    state = load_state(paths)
+    pending = read_json(paths.pending, DEFAULT_PENDING)
+
+    payload: dict[str, Any] = {
+        "status": state.get("status"),
+        "current_stage": state.get("current_stage"),
+        "pending": pending,
+    }
+
+    stage = None
+    if isinstance(pending, dict) and pending.get("stage") in STAGES:
+        stage = int(pending["stage"])
+    elif state.get("current_stage") in STAGES:
+        stage = int(state["current_stage"])
+
+    if stage is not None:
+        artifact_path = paths.stage_artifact(stage)
+        artifact = read_json(artifact_path, None)
+        payload["review"] = {
+            "stage": stage,
+            "artifact_path": rel_path(paths, artifact_path),
+            "artifact_summary": summarize_stage_artifact(stage, artifact if isinstance(artifact, dict) else None),
+            "decision_actions": pending.get("allowed_actions", []) if isinstance(pending, dict) else [],
+            "approval_mode": approval_mode(read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)),
+        }
+    else:
+        payload["review"] = {
+            "stage": None,
+            "artifact_path": None,
+            "artifact_summary": {"available": False},
+            "decision_actions": [],
+            "approval_mode": approval_mode(read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)),
+        }
+
+    if include_events:
+        payload["recent_events"] = tail_events(paths, limit=6)
+    return payload
 
 
 def ensure_scaffold(paths: Paths, force: bool = False) -> None:
@@ -1978,13 +2144,7 @@ def cmd_status(args: argparse.Namespace, paths: Paths) -> int:
 
 def cmd_gate(args: argparse.Namespace, paths: Paths) -> int:
     ensure_scaffold(paths, force=False)
-    state = load_state(paths)
-    pending = read_json(paths.pending, DEFAULT_PENDING)
-    gate_payload = {
-        "status": state.get("status"),
-        "current_stage": state.get("current_stage"),
-        "pending": pending,
-    }
+    gate_payload = build_gate_review_payload(paths, include_events=True)
     print(json.dumps(gate_payload, ensure_ascii=False, indent=2))
     return 0
 
@@ -2016,13 +2176,20 @@ def cmd_run_auto(args: argparse.Namespace, paths: Paths) -> int:
     ensure_scaffold(paths, force=False)
     result = run_auto(paths)
     print(f"run-auto result={result}")
+    if result == "waiting_decision":
+        print(json.dumps({"gate_review": build_gate_review_payload(paths, include_events=True)}, ensure_ascii=False, indent=2))
     return 0
 
 
 def cmd_resume(args: argparse.Namespace, paths: Paths) -> int:
     ensure_scaffold(paths, force=False)
+    spec = read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)
+    if args.auto:
+        ensure_auto_continue_allowed(spec, allowed_by_flag=bool(args.allow_auto_continue), command_name="resume")
     result = resume(paths, auto_continue=args.auto)
     print(f"resume result={result}")
+    if result == "waiting_decision":
+        print(json.dumps({"gate_review": build_gate_review_payload(paths, include_events=True)}, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -2066,6 +2233,9 @@ def cmd_decision_template(args: argparse.Namespace, paths: Paths) -> int:
 
 def cmd_decide(args: argparse.Namespace, paths: Paths) -> int:
     ensure_scaffold(paths, force=False)
+    state = load_state(paths)
+    if state.get("status") != "waiting_decision":
+        raise WorkflowError("当前不在等待决策状态，请先执行 run-auto 或 gate 查看状态")
     pending = read_json(paths.pending, None)
     pending_errors = validate_pending_decision(pending if isinstance(pending, dict) else None)
     if pending_errors:
@@ -2100,8 +2270,13 @@ def cmd_decide(args: argparse.Namespace, paths: Paths) -> int:
     )
 
     if args.apply:
+        spec = read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)
+        if args.auto:
+            ensure_auto_continue_allowed(spec, allowed_by_flag=bool(args.allow_auto_continue), command_name="decide")
         result = resume(paths, auto_continue=args.auto)
         print(f"decide+resume result={result}")
+        if result == "waiting_decision":
+            print(json.dumps({"gate_review": build_gate_review_payload(paths, include_events=True)}, ensure_ascii=False, indent=2))
         return 0
 
     print(f"decision written: {paths.decision}")
@@ -2162,6 +2337,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_resume = sub.add_parser("resume", help="Apply decision.json and continue")
     p_resume.add_argument("--auto", action="store_true", help="Continue auto-run after resume")
+    p_resume.add_argument(
+        "--allow-auto-continue",
+        action="store_true",
+        help="Override manual approval mode and allow --auto to continue after decision",
+    )
 
     p_tpl = sub.add_parser("decision-template", help="Generate decision.json template from pending gate")
     p_tpl.add_argument("--action", choices=["approve", "reject", "goto_stage", "run_stage8"], help="Decision action")
@@ -2177,6 +2357,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_decide.add_argument("--target-ref", help="Optional rollback target ref")
     p_decide.add_argument("--apply", action="store_true", help="Immediately apply decision (call resume)")
     p_decide.add_argument("--auto", action="store_true", help="Use with --apply: continue auto-run after resume")
+    p_decide.add_argument(
+        "--allow-auto-continue",
+        action="store_true",
+        help="Override manual approval mode and allow --auto to continue after decision",
+    )
 
     p_recalc = sub.add_parser("recalc-analyze", help="Analyze semantic change -> downstream rerun stages")
     p_recalc.add_argument("--changed", nargs="*", help="Optional changed paths; default from git status")

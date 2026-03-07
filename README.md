@@ -100,7 +100,7 @@ python manage.py runserver 0.0.0.0:8001
 - `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py init`
 - `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py run-auto`
 - `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py gate`
-- `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approve --apply --auto`
+- `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approve --apply`
 
 3. 结论
 - 当前仓库包含两条可运行能力：Django API 主工程 + codex-tdd-devflow 工作流 Skill。

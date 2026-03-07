@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "name": "codex-tdd-devflow",
+  "approval_mode": "manual",
   "stage_count": 9,
   "max_new_api_per_iteration": 1,
   "stage5_failure_threshold": 2,
