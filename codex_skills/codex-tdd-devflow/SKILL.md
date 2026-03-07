@@ -45,12 +45,25 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py case-web --host
 
 当 `run-auto` 返回 `waiting_decision` 时：
 
+强约束（必须遵守）：
+- 进入 `waiting_decision` 后，只允许先执行 `gate` 并展示摘要，然后停止等待用户明确指令。
+- 未收到用户明确指令前，禁止执行 `stage3-semantic`、`stage4-semantic`、`decide`、`run-auto`、`resume --auto`。
+- 向用户请求决策前，必须先给出“可决策摘要”：`current_stage`、`reason`、`decision_id`、`allowed_actions`、`approve/reject/goto_stage` 的后续影响、关键产物要点与风险（如 `semantic_review` / `test_generation` / 回归结果）。
+- 向用户请求决策前，必须补充“决策信息清单（按阶段）”：
+  - Stage0：候选 API 列表、每个候选的选择理由（语义来源/去重依据）、风险等级、`approve` 后将进入的下一阶段。
+  - Stage3：本轮 session 选择保留的测试事件（`selected_event_ids`）、被剔除事件、事件对应业务状态码与语义理由。
+  - Stage4：本轮 session 选择保留的测试用例（`selected_case_ids`）、生成的测试函数名、测试代码就绪状态（`test_generation` 是否 ready、missing_tests 是否为空）。
+  - Stage5/6：代码回归结果（通过/失败、失败分布、关键 stdout/stderr 摘要）、对下一步决策的影响。
+
+标准步骤：
 1. 执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py gate`（会直接输出可读摘要）
-2. 若是 Stage3 门禁，先执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py stage3-semantic ...` 完成业务事件语义筛选
-3. 若是 Stage4 门禁，先执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py stage4-semantic ...` 完成测试用例语义筛选
-4. Stage4 语义筛选后，由当前 Codex session 按 `generated_cases` 生成/更新测试代码到 `generated_test_files`（Runner 不代写）
-5. 基于摘要做人审决策（approve/reject/goto_stage/run_stage8）
+2. 等待用户明确回复（`approve/reject/goto_stage/run_stage8` 或要求先做 Stage3/4 语义筛选）
+3. 若用户要求 Stage3 语义筛选，执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py stage3-semantic ...`
+4. 若用户要求 Stage4 语义筛选，执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py stage4-semantic ...`
+5. Stage4 语义筛选后，由当前 Codex session 按 `generated_cases` 生成/更新测试代码到 `generated_test_files`（Runner 不代写）
 6. 执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approve --apply`（默认不跨门禁自动续跑）
+
+说明：Stage6 门禁 `approve` 后会把 `current_stage` 置为 0（进入下一轮）。此时如果再执行 `run-auto`，会继续跑到“下一轮 Stage0 门禁”。
 
 标准化快捷方式（推荐）：
 
@@ -88,6 +101,9 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approv
 - Stage3 approve 前必须先完成业务事件语义筛选确认（`semantic_review.status=approved`）。
 - Stage4 approve 前必须先完成语义筛选确认（`semantic_review.status=approved`）。
 - Stage4 approve 时会校验 `generated_test_files` 是否覆盖全部 `expected_tests`；缺失时不允许进入 Stage5。
+- 任何 `waiting_decision` 门禁点，若用户未明确授权，不得自动执行后续决策命令（含 `decide` / `run-auto` / `resume --auto`）。
+- 任何门禁提问都必须给出有助于决策的明确信息，不得只输出“请 approve/reject”而不附上下文与影响说明。
+- 门禁摘要必须明确回答三个问题：为什么是这个候选（或事件/用例）、当前回归状态如何、用户本次决策会带来什么后果。
 - Stage 5 会先校验 Stage4 生成测试的“预期数量/命名/执行结果”一致性，再汇总全量回归结果。
 - Stage 0 若本轮无可推进候选，会进入 `stage0_no_candidate_blocking` 门禁（仅允许 `reject/goto_stage`）。
 - Bootstrap 轮次允许按扫描到的既有 API 批量初始化校验，不受“每轮新增 1 个 API”限制。

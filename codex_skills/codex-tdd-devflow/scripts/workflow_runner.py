@@ -1594,20 +1594,42 @@ def stage0_candidate_api_keys_from_artifact(stage0_artifact: dict[str, Any]) -> 
 
 
 def stage3_focus_api_keys(stage0_artifact: dict[str, Any], stage2_artifact: dict[str, Any]) -> list[str]:
-    keys = stage0_candidate_api_keys_from_artifact(stage0_artifact)
-    if keys:
-        return keys
-
     stage2_keys = stage2_artifact.get("new_api_keys", []) if isinstance(stage2_artifact, dict) else []
-    fallback: list[str] = []
+    stage2_normalized: list[str] = []
     if isinstance(stage2_keys, list):
         for item in stage2_keys:
             if not isinstance(item, str):
                 continue
             normalized = normalize_api_key(item)
             if normalized:
-                fallback.append(normalized)
-    return dedupe_keep_order(fallback)
+                stage2_normalized.append(normalized)
+    stage2_normalized = dedupe_keep_order(stage2_normalized)
+
+    bootstrap_mode = bool(stage2_artifact.get("bootstrap_mode", False)) if isinstance(stage2_artifact, dict) else False
+    if bootstrap_mode and stage2_normalized:
+        # bootstrap 期望批量初始化既有 API，优先采用 Stage2 扫描全集。
+        return stage2_normalized
+
+    keys = stage0_candidate_api_keys_from_artifact(stage0_artifact)
+    if keys:
+        return keys
+
+    # 非 bootstrap 且 Stage0 无候选时，回退到 Stage2 扫描增量。
+    if stage2_normalized:
+        return stage2_normalized
+
+    # 最终兜底：空集合（上游会走默认事件）。
+    return []
+
+
+def should_increment_iteration_on_decision(pending_stage: int, next_stage: int, action: str) -> bool:
+    if action != "approve":
+        return False
+    if pending_stage == 6 and next_stage == 0:
+        return True
+    if pending_stage == 8 and next_stage == 0:
+        return True
+    return False
 
 
 def infer_entity_from_api_key(api_key: str, semantic_model: dict[str, Any]) -> str:
@@ -3303,7 +3325,7 @@ def resume(paths: Paths, auto_continue: bool) -> str:
     state["status"] = "idle"
     state["current_stage"] = next_stage
     pending_stage = int(pending.get("stage", -1))
-    if next_stage == 0 and pending_stage in {6, 8}:
+    if should_increment_iteration_on_decision(pending_stage, next_stage, action):
         state["running_iteration"] = int(state.get("running_iteration", 1)) + 1
 
     duration_ms = int((time.perf_counter() - started) * 1000)
