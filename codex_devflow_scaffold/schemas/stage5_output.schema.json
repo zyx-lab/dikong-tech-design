@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "type": "object",
+  "required": [
+    "executed_cases",
+    "failed_cases",
+    "regression_summary"
+  ]
+}

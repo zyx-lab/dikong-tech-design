@@ -1,0 +1,41 @@
+{
+  "stage": 0,
+  "generated_at": "2026-03-07T01:22:21.942612Z",
+  "api_candidates": [
+    {
+      "api_key": "POST /api/v1/drones",
+      "reason": "由 Stage0 按语义资源自动生成候选，需人工 review",
+      "risk": "medium"
+    }
+  ],
+  "biz_status_codes": [
+    "SUCCESS",
+    "INVALID_PARAMS",
+    "PERMISSION_DENIED",
+    "RESOURCE_NOT_FOUND",
+    "STATE_CONFLICT",
+    "IDEMPOTENT_DUPLICATE"
+  ],
+  "required_case_codes": [
+    "SUCCESS",
+    "INVALID_PARAMS",
+    "PERMISSION_DENIED",
+    "RESOURCE_NOT_FOUND",
+    "STATE_CONFLICT",
+    "IDEMPOTENT_DUPLICATE"
+  ],
+  "risk_assessment": {
+    "level": "medium",
+    "notes": "语义缺口存在时禁止进入开发执行"
+  },
+  "commit_message": "stage-0(api-seed): generate next api candidate",
+  "semantic_gap_report": {
+    "blocking": false,
+    "missing_fields": [],
+    "missing_semantic_directories": []
+  },
+  "api_registry_items": 15,
+  "touched_entities": [
+    "drone"
+  ]
+}

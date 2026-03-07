@@ -1,0 +1,54 @@
+{
+  "analyzed_at": "2026-03-07T01:10:21.084399Z",
+  "changed_paths": [
+    "README.md",
+    "codex_devflow_scaffold/artifacts/",
+    "codex_devflow_scaffold/cases/",
+    "codex_devflow_scaffold/decisions/",
+    "codex_devflow_scaffold/docs/",
+    "codex_devflow_scaffold/inputs/",
+    "codex_devflow_scaffold/logs/",
+    "codex_devflow_scaffold/prompts/",
+    "codex_devflow_scaffold/registry/",
+    "codex_devflow_scaffold/schemas/",
+    "codex_devflow_scaffold/semantic/",
+    "codex_devflow_scaffold/skill_implementation_plan.md",
+    "codex_devflow_scaffold/state.json",
+    "codex_devflow_scaffold/workflow_spec.json",
+    "codex_skills/"
+  ],
+  "semantic_snapshot": {
+    "old_hash": "372b6d80b1ffe7e48ac5aeda98609be9e118568b3a092fd04ceedfca6ed1ebb8",
+    "current_hash": "372b6d80b1ffe7e48ac5aeda98609be9e118568b3a092fd04ceedfca6ed1ebb8",
+    "changed": false
+  },
+  "affected_stages": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "recommended_rerun_from_stage": 0,
+  "reasons": [
+    {
+      "path": "codex_devflow_scaffold/workflow_spec.json",
+      "reason": "dependency hit",
+      "stages": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    }
+  ]
+}

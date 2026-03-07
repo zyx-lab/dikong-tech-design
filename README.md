@@ -14,9 +14,10 @@
 - 文档：`/api/v1/docs/`
 - 能力：无人机台账、无人机分配、无人机状态流转
 
-3. Skill 规划（流程脚手架）
+3. Skill 工作流（流程脚手架）
 - 规划文件：`codex_devflow_scaffold/skill_implementation_plan.md`
-- 当前实现状态：**仅规划文档已落库**，Runner/Skill 代码尚未落地（见下方“Skill 规划对齐”）
+- 运行入口（自包含）：`python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py`
+- 当前实现状态：已落地并可执行 Stage0-Stage8，支持 `gate/decide`、`case-web`、`recalc-analyze`、`stage8-rollback`、Stage6 文档同步门禁、Stage2 离线 API 扫描（免启动服务）
 
 ## 快速启动
 
@@ -84,22 +85,26 @@ python manage.py runserver 0.0.0.0:8001
 - Scope 类型：`ALL` / `OWN` / `ASSIGNED`
 - superuser 作为 root 账号：不走 staff_type 授权链，拥有全量权限
 
-## Skill 规划对齐（实现态 vs 规划态）
+## Skill 规划对齐（实现态）
 
-`codex_devflow_scaffold/skill_implementation_plan.md` 已定义 Stage0-Stage8 规范，但当前仓库实际状态如下：
+`codex_devflow_scaffold/skill_implementation_plan.md` 定义了 Stage0-Stage8 规范，当前仓库实现状态如下：
 
 1. 已存在
 - `codex_devflow_scaffold/skill_implementation_plan.md`
-- `codex_devflow_scaffold/` 下阶段目录骨架（`artifacts/inputs/schemas/...`）
+- `codex_skills/codex-tdd-devflow/SKILL.md`
+- `codex_skills/codex-tdd-devflow/scripts/workflow_runner.py`
+- `codex_skills/codex-tdd-devflow/scripts/workflow_case_web.py`
+- `codex_devflow_scaffold/` 运行态目录与核心文件（`artifacts/inputs/schemas/registry/decisions/logs/state.json`）
 
-2. 尚未落地（规划中）
-- `tools/workflow_runner.py`
-- `codex_skills/codex-tdd-devflow/`
-- 规划中要求的 schema、state、registry、events 等核心文件
+2. 使用入口（自包含）
+- `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py init`
+- `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py run-auto`
+- `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py gate`
+- `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approve --apply --auto`
 
 3. 结论
-- 当前仓库的“可运行能力”仍以 Django API 主工程为主。
-- `codex_devflow_scaffold` 目前是规范先行状态，不应被视为已可执行流程。
+- 当前仓库包含两条可运行能力：Django API 主工程 + codex-tdd-devflow 工作流 Skill。
+- Skill 入口与脚本均位于 `codex_skills/codex-tdd-devflow/`，不依赖 `tools/` 路径。
 
 ## 文档导航
 
@@ -138,7 +143,9 @@ python manage.py runserver 0.0.0.0:8001
 - [ ] 权限差异对比视图
 - [ ] 授权链完整性一键校验命令
 
-4. Skill 流程落地（未开始）
-- [ ] 实现 `workflow_runner`
-- [ ] 落地 `codex-tdd-devflow` skill 目录
-- [ ] 按规划补齐 schemas/registry/state 机器校验闭环
+4. Skill 流程（已实现）
+- [x] 实现 `workflow_runner`
+- [x] 落地 `codex-tdd-devflow` skill 目录
+- [x] 按规划补齐 schemas/registry/state 机器校验闭环
+- [x] 门禁决策标准化（`gate` / `decide`）
+- [x] P2 能力（`case-web` / `recalc-analyze` / `stage8-rollback`）

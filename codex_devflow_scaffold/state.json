@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "status": "waiting_decision",
+  "current_stage": 0,
+  "running_iteration": 1,
+  "stage5_consecutive_failures": 0,
+  "last_completed_stage": 0,
+  "last_event_id": "7bb45dab-e3c9-40ed-a6f0-2a347f0bb782",
+  "updated_at": "2026-03-07T01:22:21.943712Z"
+}

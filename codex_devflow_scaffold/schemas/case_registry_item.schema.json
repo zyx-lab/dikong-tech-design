@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "type": "object",
+  "required": [
+    "case_id",
+    "test_file",
+    "test_name",
+    "event_id",
+    "api_refs",
+    "enabled"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "type": "object",
+  "required": [
+    "generated_cases",
+    "generated_test_files",
+    "coverage_by_event"
+  ]
+}

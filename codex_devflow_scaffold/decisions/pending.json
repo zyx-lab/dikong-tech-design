@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "decision_id": "a837ed24-253f-4d3d-aba0-79dcc4516d5b",
+  "stage": 0,
+  "reason": "stage0_review_required",
+  "allowed_actions": [
+    "approve",
+    "reject",
+    "goto_stage"
+  ],
+  "next_stage_on_approve": 1,
+  "fallback_stage": 0,
+  "created_at": "2026-03-07T01:22:21.943497Z"
+}

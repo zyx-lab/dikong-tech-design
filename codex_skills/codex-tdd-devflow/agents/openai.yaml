@@ -1,0 +1,8 @@
+version: 1
+display_name: Codex TDD Devflow
+short_description: 运行 Stage0-Stage8 工作流并处理门禁决策
+default_prompt: >-
+  运行 codex-tdd-devflow：先执行
+  python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py init，
+  再 run-auto；若进入 waiting_decision，用 gate 查看 pending，
+  然后用 decide 命令写入并应用决策。

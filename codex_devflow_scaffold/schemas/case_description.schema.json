@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "type": "object",
+  "required": [
+    "case_id",
+    "event_id",
+    "api_refs",
+    "expected_business_code",
+    "status"
+  ]
+}

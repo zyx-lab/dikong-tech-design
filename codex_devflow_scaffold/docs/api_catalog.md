@@ -1,0 +1,5 @@
+# API Catalog
+
+- scanned_apis: ['GET /api/v1/', 'GET /api/v1/drone-assignments', 'GET /api/v1/drone-assignments/{id}', 'GET /api/v1/drones', 'GET /api/v1/drones/{id}', 'GET /api/v1/health', 'PATCH /api/v1/drones/{id}', 'POST /api/v1/drone-assignments', 'POST /api/v1/drone-assignments/{id}/cancel', 'POST /api/v1/drones', 'POST /api/v1/drones/{id}/disable', 'POST /api/v1/drones/{id}/enable', 'POST /api/v1/drones/{id}/maintenance', 'POST /api/v1/drones/{id}/retire', 'PUT /api/v1/drones/{id}']
+- new_api_keys: ['GET /api/v1/', 'GET /api/v1/drone-assignments', 'GET /api/v1/drone-assignments/{id}', 'GET /api/v1/drones', 'GET /api/v1/drones/{id}', 'GET /api/v1/health', 'PATCH /api/v1/drones/{id}', 'POST /api/v1/drone-assignments', 'POST /api/v1/drone-assignments/{id}/cancel', 'POST /api/v1/drones', 'POST /api/v1/drones/{id}/disable', 'POST /api/v1/drones/{id}/enable', 'POST /api/v1/drones/{id}/maintenance', 'POST /api/v1/drones/{id}/retire', 'PUT /api/v1/drones/{id}']
+- 业务状态码以 Stage0 `required_case_codes` 为准。

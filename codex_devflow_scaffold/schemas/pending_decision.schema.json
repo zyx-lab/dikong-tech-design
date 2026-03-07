@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "type": "object",
+  "required": [
+    "decision_id",
+    "stage",
+    "reason",
+    "allowed_actions",
+    "next_stage_on_approve",
+    "fallback_stage",
+    "created_at"
+  ]
+}

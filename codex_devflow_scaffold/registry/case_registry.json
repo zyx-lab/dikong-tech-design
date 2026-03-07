@@ -1,0 +1,1085 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "case_id": "CASE-AUTO-001",
+      "event_id": "EVT-001",
+      "api_refs": [
+        "GET /api/v1/"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_001",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-002",
+      "event_id": "EVT-001",
+      "api_refs": [
+        "GET /api/v1/"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_002",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-003",
+      "event_id": "EVT-001",
+      "api_refs": [
+        "GET /api/v1/"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_003",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-004",
+      "event_id": "EVT-001",
+      "api_refs": [
+        "GET /api/v1/"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_004",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-005",
+      "event_id": "EVT-001",
+      "api_refs": [
+        "GET /api/v1/"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_005",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-006",
+      "event_id": "EVT-001",
+      "api_refs": [
+        "GET /api/v1/"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_006",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-007",
+      "event_id": "EVT-002",
+      "api_refs": [
+        "GET /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_007",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-008",
+      "event_id": "EVT-002",
+      "api_refs": [
+        "GET /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_008",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-009",
+      "event_id": "EVT-002",
+      "api_refs": [
+        "GET /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_009",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-010",
+      "event_id": "EVT-002",
+      "api_refs": [
+        "GET /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_010",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-011",
+      "event_id": "EVT-002",
+      "api_refs": [
+        "GET /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_011",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-012",
+      "event_id": "EVT-002",
+      "api_refs": [
+        "GET /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_012",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-013",
+      "event_id": "EVT-003",
+      "api_refs": [
+        "GET /api/v1/drone-assignments/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_013",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-014",
+      "event_id": "EVT-003",
+      "api_refs": [
+        "GET /api/v1/drone-assignments/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_014",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-015",
+      "event_id": "EVT-003",
+      "api_refs": [
+        "GET /api/v1/drone-assignments/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_015",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-016",
+      "event_id": "EVT-003",
+      "api_refs": [
+        "GET /api/v1/drone-assignments/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_016",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-017",
+      "event_id": "EVT-003",
+      "api_refs": [
+        "GET /api/v1/drone-assignments/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_017",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-018",
+      "event_id": "EVT-003",
+      "api_refs": [
+        "GET /api/v1/drone-assignments/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_018",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-019",
+      "event_id": "EVT-004",
+      "api_refs": [
+        "GET /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_019",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-020",
+      "event_id": "EVT-004",
+      "api_refs": [
+        "GET /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_020",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-021",
+      "event_id": "EVT-004",
+      "api_refs": [
+        "GET /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_021",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-022",
+      "event_id": "EVT-004",
+      "api_refs": [
+        "GET /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_022",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-023",
+      "event_id": "EVT-004",
+      "api_refs": [
+        "GET /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_023",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-024",
+      "event_id": "EVT-004",
+      "api_refs": [
+        "GET /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_024",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-025",
+      "event_id": "EVT-005",
+      "api_refs": [
+        "GET /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_025",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-026",
+      "event_id": "EVT-005",
+      "api_refs": [
+        "GET /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_026",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-027",
+      "event_id": "EVT-005",
+      "api_refs": [
+        "GET /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_027",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-028",
+      "event_id": "EVT-005",
+      "api_refs": [
+        "GET /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_028",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-029",
+      "event_id": "EVT-005",
+      "api_refs": [
+        "GET /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_029",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-030",
+      "event_id": "EVT-005",
+      "api_refs": [
+        "GET /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_030",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-031",
+      "event_id": "EVT-006",
+      "api_refs": [
+        "GET /api/v1/health"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_031",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-032",
+      "event_id": "EVT-006",
+      "api_refs": [
+        "GET /api/v1/health"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_032",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-033",
+      "event_id": "EVT-006",
+      "api_refs": [
+        "GET /api/v1/health"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_033",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-034",
+      "event_id": "EVT-006",
+      "api_refs": [
+        "GET /api/v1/health"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_034",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-035",
+      "event_id": "EVT-006",
+      "api_refs": [
+        "GET /api/v1/health"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_035",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-036",
+      "event_id": "EVT-006",
+      "api_refs": [
+        "GET /api/v1/health"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_036",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-037",
+      "event_id": "EVT-007",
+      "api_refs": [
+        "PATCH /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_037",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-038",
+      "event_id": "EVT-007",
+      "api_refs": [
+        "PATCH /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_038",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-039",
+      "event_id": "EVT-007",
+      "api_refs": [
+        "PATCH /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_039",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-040",
+      "event_id": "EVT-007",
+      "api_refs": [
+        "PATCH /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_040",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-041",
+      "event_id": "EVT-007",
+      "api_refs": [
+        "PATCH /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_041",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-042",
+      "event_id": "EVT-007",
+      "api_refs": [
+        "PATCH /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_042",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-043",
+      "event_id": "EVT-008",
+      "api_refs": [
+        "POST /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_043",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-044",
+      "event_id": "EVT-008",
+      "api_refs": [
+        "POST /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_044",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-045",
+      "event_id": "EVT-008",
+      "api_refs": [
+        "POST /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_045",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-046",
+      "event_id": "EVT-008",
+      "api_refs": [
+        "POST /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_046",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-047",
+      "event_id": "EVT-008",
+      "api_refs": [
+        "POST /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_047",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-048",
+      "event_id": "EVT-008",
+      "api_refs": [
+        "POST /api/v1/drone-assignments"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_048",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-049",
+      "event_id": "EVT-009",
+      "api_refs": [
+        "POST /api/v1/drone-assignments/{id}/cancel"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_049",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-050",
+      "event_id": "EVT-009",
+      "api_refs": [
+        "POST /api/v1/drone-assignments/{id}/cancel"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_050",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-051",
+      "event_id": "EVT-009",
+      "api_refs": [
+        "POST /api/v1/drone-assignments/{id}/cancel"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_051",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-052",
+      "event_id": "EVT-009",
+      "api_refs": [
+        "POST /api/v1/drone-assignments/{id}/cancel"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_052",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-053",
+      "event_id": "EVT-009",
+      "api_refs": [
+        "POST /api/v1/drone-assignments/{id}/cancel"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_053",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-054",
+      "event_id": "EVT-009",
+      "api_refs": [
+        "POST /api/v1/drone-assignments/{id}/cancel"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_054",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-055",
+      "event_id": "EVT-010",
+      "api_refs": [
+        "POST /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_055",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-056",
+      "event_id": "EVT-010",
+      "api_refs": [
+        "POST /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_056",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-057",
+      "event_id": "EVT-010",
+      "api_refs": [
+        "POST /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_057",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-058",
+      "event_id": "EVT-010",
+      "api_refs": [
+        "POST /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_058",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-059",
+      "event_id": "EVT-010",
+      "api_refs": [
+        "POST /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_059",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-060",
+      "event_id": "EVT-010",
+      "api_refs": [
+        "POST /api/v1/drones"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_060",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-061",
+      "event_id": "EVT-011",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/disable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_061",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-062",
+      "event_id": "EVT-011",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/disable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_062",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-063",
+      "event_id": "EVT-011",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/disable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_063",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-064",
+      "event_id": "EVT-011",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/disable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_064",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-065",
+      "event_id": "EVT-011",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/disable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_065",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-066",
+      "event_id": "EVT-011",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/disable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_066",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-067",
+      "event_id": "EVT-012",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/enable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_067",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-068",
+      "event_id": "EVT-012",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/enable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_068",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-069",
+      "event_id": "EVT-012",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/enable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_069",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-070",
+      "event_id": "EVT-012",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/enable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_070",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-071",
+      "event_id": "EVT-012",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/enable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_071",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-072",
+      "event_id": "EVT-012",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/enable"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_072",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-073",
+      "event_id": "EVT-013",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/maintenance"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_073",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-074",
+      "event_id": "EVT-013",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/maintenance"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_074",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-075",
+      "event_id": "EVT-013",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/maintenance"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_075",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-076",
+      "event_id": "EVT-013",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/maintenance"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_076",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-077",
+      "event_id": "EVT-013",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/maintenance"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_077",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-078",
+      "event_id": "EVT-013",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/maintenance"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_078",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-079",
+      "event_id": "EVT-014",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/retire"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_079",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-080",
+      "event_id": "EVT-014",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/retire"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_080",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-081",
+      "event_id": "EVT-014",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/retire"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_081",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-082",
+      "event_id": "EVT-014",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/retire"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_082",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-083",
+      "event_id": "EVT-014",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/retire"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_083",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-084",
+      "event_id": "EVT-014",
+      "api_refs": [
+        "POST /api/v1/drones/{id}/retire"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_084",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-085",
+      "event_id": "EVT-015",
+      "api_refs": [
+        "PUT /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_085",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-086",
+      "event_id": "EVT-015",
+      "api_refs": [
+        "PUT /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_086",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-087",
+      "event_id": "EVT-015",
+      "api_refs": [
+        "PUT /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_087",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-088",
+      "event_id": "EVT-015",
+      "api_refs": [
+        "PUT /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_088",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-089",
+      "event_id": "EVT-015",
+      "api_refs": [
+        "PUT /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_089",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    },
+    {
+      "case_id": "CASE-AUTO-090",
+      "event_id": "EVT-015",
+      "api_refs": [
+        "PUT /api/v1/drones/{id}"
+      ],
+      "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+      "test_name": "test_auto__case_auto_090",
+      "test_type": "api",
+      "enabled": true,
+      "updated_at": "2026-03-07T01:22:14.264351Z"
+    }
+  ]
+}

@@ -20,8 +20,8 @@
 - `codex_devflow_scaffold/` 目录骨架已存在。
 - 本规划文件 `codex_devflow_scaffold/skill_implementation_plan.md` 已存在。
 
-2. 未落地（仍属规划目标）
-- `tools/workflow_runner.py`
+2. 已落地（执行入口）
+- `codex_skills/codex-tdd-devflow/scripts/workflow_runner.py`
 - `codex_skills/codex-tdd-devflow/`
 - `state.json`、`workflow_spec.json`、`registry/*.json`、`schemas/*.json` 等核心执行文件
 
@@ -82,12 +82,12 @@
 - 默认：`codex_devflow_scaffold/`
 
 5. 执行器与技能目录
-- Runner（目标路径，当前未创建）：`tools/workflow_runner.py`
-- Skill（目标路径，当前未创建）：`codex_skills/codex-tdd-devflow/`
+- Runner（已落地）：`codex_skills/codex-tdd-devflow/scripts/workflow_runner.py`
+- Skill（已落地）：`codex_skills/codex-tdd-devflow/`
 
 ## 3.2 核心文件
 
-以下为目标态核心文件清单（当前仓库尚未全部落地）：
+以下为核心文件清单（默认由 `init` 生成，可按迭代持续更新）：
 
 - `codex_devflow_scaffold/workflow_spec.json`
 - `codex_devflow_scaffold/state.json`

@@ -1,0 +1,6 @@
+{
+  "stage": 6,
+  "workflow_spec": "/home/charles/dikong-tech-design/codex_devflow_scaffold/workflow_spec.json",
+  "semantic_model": "/home/charles/dikong-tech-design/codex_devflow_scaffold/semantic/business_semantic_model.json",
+  "generated_at": "2026-03-07T01:22:14.266346Z"
+}

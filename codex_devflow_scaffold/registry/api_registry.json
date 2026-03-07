@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "bootstrap_done": true,
+  "items": [
+    {
+      "api_key": "GET /api/v1/",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "GET /api/v1/drone-assignments",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "GET /api/v1/drone-assignments/{id}",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "GET /api/v1/drones",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "GET /api/v1/drones/{id}",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "GET /api/v1/health",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "PATCH /api/v1/drones/{id}",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "POST /api/v1/drone-assignments",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "POST /api/v1/drone-assignments/{id}/cancel",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "POST /api/v1/drones",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "POST /api/v1/drones/{id}/disable",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "POST /api/v1/drones/{id}/enable",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "POST /api/v1/drones/{id}/maintenance",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "POST /api/v1/drones/{id}/retire",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    },
+    {
+      "api_key": "PUT /api/v1/drones/{id}",
+      "source": "bootstrap_scan",
+      "created_at": "2026-03-07T01:22:14.263362Z",
+      "updated_at": "2026-03-07T01:22:14.263362Z",
+      "enabled": true
+    }
+  ]
+}

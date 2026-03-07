@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "type": "object",
+  "required": [
+    "business_goal",
+    "roles",
+    "resources",
+    "actions",
+    "state_machines",
+    "constraints",
+    "permission_boundary"
+  ]
+}
