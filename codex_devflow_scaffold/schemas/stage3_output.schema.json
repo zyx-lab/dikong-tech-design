@@ -2,7 +2,12 @@
   "schema_version": 1,
   "type": "object",
   "required": [
+    "business_event_candidates",
     "business_events",
+    "focus_api_keys",
+    "progress_snapshot",
+    "semantic_context",
+    "semantic_review",
     "editor_notes"
   ]
 }

@@ -1,1 +1,0 @@
-{"event_id": "2f1e60f0-3a18-4424-9d0e-26010b045a5d", "timestamp": "2026-03-07T01:38:10.158332Z", "type": "workflow_initialized", "payload": {"force": true, "trigger_source": "init"}}

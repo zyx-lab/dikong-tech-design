@@ -34,7 +34,8 @@ SEMANTIC_DIR_NAMES = {
     "business": "业务侧实现",
     "permission": "权限管理侧实现",
 }
-GENERATED_TEST_FILE = "codex_devflow_scaffold/tests/generated/test_generated_specs.py"
+GENERATED_TEST_FILENAME = "test_generated_specs.py"
+GENERATED_EVENT_NOTES_FILENAME = "business_events_zh.md"
 SEMANTIC_BLOCKED_STAGES = {1, 3, 4, 7, 8}
 ENTITY_DOC_SUFFIXES = (
     "data_dictionary.md",
@@ -75,6 +76,8 @@ DEFAULT_WORKFLOW_SPEC: dict[str, Any] = {
         "local_scan_enabled": True,
         "local_scan_urlconf": "config.business_api_urlconf",
     },
+    "business_code_fields": ["business_code", "biz_code", "code", "status_code"],
+    "stage4_business_code_strict": False,
     "test_command": [".venv/bin/python", "manage.py", "test"],
     "gate_policy": {
         "0": {
@@ -82,6 +85,18 @@ DEFAULT_WORKFLOW_SPEC: dict[str, Any] = {
             "allowed_actions": ["approve", "reject", "goto_stage"],
             "next_stage_on_approve": 1,
             "fallback_stage": 0,
+        },
+        "3": {
+            "reason": "stage3_semantic_event_review_required",
+            "allowed_actions": ["approve", "reject", "goto_stage"],
+            "next_stage_on_approve": 4,
+            "fallback_stage": 2,
+        },
+        "4": {
+            "reason": "stage4_semantic_review_required",
+            "allowed_actions": ["approve", "reject", "goto_stage"],
+            "next_stage_on_approve": 5,
+            "fallback_stage": 3,
         },
         "6": {
             "reason": "stage6_final_gate",
@@ -172,12 +187,36 @@ STAGE_REQUIRED_FIELDS = {
     0: ["api_candidates", "biz_status_codes", "required_case_codes", "risk_assessment", "semantic_gap_report"],
     1: ["implementation_tasks", "changed_files", "notes"],
     2: ["scanned_apis", "existing_api_keys", "new_api_keys", "drift_items"],
-    3: ["business_events", "editor_notes"],
-    4: ["generated_cases", "generated_test_files", "coverage_by_event"],
+    3: [
+        "business_event_candidates",
+        "business_events",
+        "focus_api_keys",
+        "progress_snapshot",
+        "semantic_context",
+        "semantic_review",
+        "editor_notes",
+    ],
+    4: [
+        "candidate_cases",
+        "generated_cases",
+        "generated_test_files",
+        "coverage_by_event",
+        "semantic_review",
+        "test_generation",
+    ],
     5: ["executed_cases", "failed_cases", "regression_summary"],
     6: ["registry_updates", "docs_updates", "settlement_commit_message"],
     7: ["intervention_summary", "recommendations"],
     8: ["decision", "reasoning", "actions"],
+}
+
+HTTP_STATUS_BY_BIZ_CODE = {
+    "SUCCESS": 200,
+    "INVALID_PARAMS": 400,
+    "PERMISSION_DENIED": 403,
+    "RESOURCE_NOT_FOUND": 404,
+    "STATE_CONFLICT": 409,
+    "IDEMPOTENT_DUPLICATE": 409,
 }
 
 
@@ -333,6 +372,31 @@ def rel_path(paths: Paths, target: Path) -> str:
         return target.resolve().as_posix()
 
 
+def generated_test_file_path(paths: Paths) -> Path:
+    return paths.scaffold / "tests" / "generated" / GENERATED_TEST_FILENAME
+
+
+def generated_event_notes_path(paths: Paths) -> Path:
+    return paths.scaffold / "cases" / GENERATED_EVENT_NOTES_FILENAME
+
+
+def stage4_business_code_fields(spec: dict[str, Any]) -> list[str]:
+    raw = spec.get("business_code_fields", [])
+    fields: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            token = str(item).strip()
+            if token:
+                fields.append(token)
+    if not fields:
+        fields = ["business_code", "biz_code", "code", "status_code"]
+    return dedupe_keep_order(fields)
+
+
+def stage4_business_code_strict(spec: dict[str, Any]) -> bool:
+    return bool(spec.get("stage4_business_code_strict", False))
+
+
 def semantic_directories(paths: Paths) -> dict[str, Path]:
     return {key: paths.root / dirname for key, dirname in SEMANTIC_DIR_NAMES.items()}
 
@@ -391,6 +455,16 @@ def dedupe_keep_order(items: list[str]) -> list[str]:
         seen.add(item)
         result.append(item)
     return result
+
+
+def normalize_api_key(api_key: str) -> str:
+    token = " ".join(api_key.strip().split())
+    if not token:
+        return ""
+    parts = token.split(" ", 1)
+    if len(parts) == 1:
+        return parts[0].upper()
+    return f"{parts[0].upper()} {parts[1]}"
 
 
 def normalize_entity_name(raw: str) -> str:
@@ -463,6 +537,47 @@ def resolve_entities(candidates: list[str], available_entities: set[str]) -> lis
                 resolved.append(entity)
                 break
     return dedupe_keep_order(resolved)
+
+
+def pluralize_entity_slug(entity: str) -> str:
+    token = entity.strip().lower().replace("_", "-")
+    if not token:
+        return "todos"
+    if token.endswith("y") and len(token) > 1 and token[-2] not in "aeiou":
+        return f"{token[:-1]}ies"
+    if token.endswith("s"):
+        return token
+    return f"{token}s"
+
+
+def normalize_action_slug(raw: str) -> str:
+    token = raw.strip().lower().replace("_", "-")
+    token = re.sub(r"[^a-z0-9-]+", "-", token).strip("-")
+    return token
+
+
+def stage0_candidate_api_keys(entity: str, actions: list[str]) -> list[str]:
+    plural = pluralize_entity_slug(entity)
+    base = f"/api/v1/{plural}"
+    candidates = [
+        f"POST {base}",
+        f"PATCH {base}/{{id}}",
+        f"PUT {base}/{{id}}",
+        f"DELETE {base}/{{id}}",
+    ]
+
+    action_slugs: list[str] = []
+    for action in actions:
+        slug = normalize_action_slug(action)
+        if slug:
+            action_slugs.append(slug)
+
+    for action in dedupe_keep_order(action_slugs):
+        if action in {"view", "create", "update"}:
+            continue
+        candidates.append(f"POST {base}/{{id}}/{action}")
+
+    return dedupe_keep_order([normalize_api_key(item) for item in candidates if item])
 
 
 def infer_touched_entities(
@@ -606,7 +721,7 @@ def _pick(artifact: dict[str, Any], *keys: str) -> dict[str, Any]:
     return payload
 
 
-def summarize_stage_artifact(stage: int, artifact: dict[str, Any] | None) -> dict[str, Any]:
+def summarize_stage_artifact(stage: int, artifact: dict[str, Any] | None, paths: Paths | None = None) -> dict[str, Any]:
     if not isinstance(artifact, dict):
         return {"available": False}
 
@@ -635,16 +750,71 @@ def summarize_stage_artifact(stage: int, artifact: dict[str, Any] | None) -> dic
                 "bootstrap_mode",
             )
         )
+    elif stage == 3:
+        candidate_events = artifact.get("business_event_candidates", [])
+        selected_events = artifact.get("business_events", [])
+        summary.update(
+            _pick(
+                artifact,
+                "focus_api_keys",
+                "progress_snapshot",
+                "semantic_context",
+                "semantic_review",
+                "editor_notes",
+            )
+        )
+        summary["candidate_events_count"] = len(candidate_events) if isinstance(candidate_events, list) else 0
+        summary["selected_events_count"] = len(selected_events) if isinstance(selected_events, list) else 0
+        if isinstance(candidate_events, list) and candidate_events:
+            preview: list[dict[str, Any]] = []
+            for event in candidate_events[:6]:
+                if not isinstance(event, dict):
+                    continue
+                preview.append(
+                    {
+                        "event_id": event.get("event_id"),
+                        "title": event.get("title"),
+                        "api_refs": event.get("api_refs"),
+                        "expected_business_codes": event.get("expected_business_codes", []),
+                    }
+                )
+            summary["event_preview"] = preview
     elif stage == 4:
+        candidate_cases = artifact.get("candidate_cases", [])
         generated_cases = artifact.get("generated_cases", [])
+        test_generation = artifact.get("test_generation")
+        if paths is not None and isinstance(generated_cases, list):
+            test_generation = analyze_stage4_test_generation(paths, [item for item in generated_cases if isinstance(item, dict)])
         summary.update(
             _pick(
                 artifact,
                 "generated_test_files",
+                "business_event_files",
+                "semantic_review",
                 "coverage_by_event",
+                "business_code_fields",
+                "strict_business_code",
+                "session_codegen_note",
             )
         )
+        if isinstance(test_generation, dict):
+            summary["test_generation"] = test_generation
+        summary["candidate_cases_count"] = len(candidate_cases) if isinstance(candidate_cases, list) else 0
         summary["generated_cases_count"] = len(generated_cases) if isinstance(generated_cases, list) else 0
+        if isinstance(candidate_cases, list) and candidate_cases:
+            preview: list[dict[str, Any]] = []
+            for case in candidate_cases[:6]:
+                if not isinstance(case, dict):
+                    continue
+                preview.append(
+                    {
+                        "case_id": case.get("case_id"),
+                        "event_id": case.get("event_id"),
+                        "api_refs": case.get("api_refs"),
+                        "expected_business_code": case.get("expected_business_code"),
+                    }
+                )
+            summary["candidate_preview"] = preview
     elif stage == 5:
         reg = artifact.get("regression_summary", {})
         summary.update(
@@ -730,7 +900,7 @@ def build_gate_review_payload(paths: Paths, include_events: bool = True) -> dict
         payload["review"] = {
             "stage": stage,
             "artifact_path": rel_path(paths, artifact_path),
-            "artifact_summary": summarize_stage_artifact(stage, artifact if isinstance(artifact, dict) else None),
+            "artifact_summary": summarize_stage_artifact(stage, artifact if isinstance(artifact, dict) else None, paths=paths),
             "decision_actions": pending.get("allowed_actions", []) if isinstance(pending, dict) else [],
             "approval_mode": approval_mode(read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)),
         }
@@ -812,7 +982,7 @@ def ensure_scaffold(paths: Paths, force: bool = False) -> None:
     for doc_name, content in DEFAULT_DOCS.items():
         ensure_text(paths.scaffold / "docs" / doc_name, content, force)
 
-    ensure_text(paths.scaffold / "tests" / "generated" / "test_generated_specs.py", DEFAULT_GENERATED_TEST, force)
+    ensure_text(generated_test_file_path(paths), DEFAULT_GENERATED_TEST, force)
 
 
 def default_prompt(stage: int) -> str:
@@ -879,7 +1049,14 @@ def stage4_schema() -> dict[str, Any]:
     return {
         "schema_version": 1,
         "type": "object",
-        "required": ["generated_cases", "generated_test_files", "coverage_by_event"],
+        "required": [
+            "candidate_cases",
+            "generated_cases",
+            "generated_test_files",
+            "coverage_by_event",
+            "semantic_review",
+            "test_generation",
+        ],
     }
 
 
@@ -1083,12 +1260,20 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
     missing = validate_semantic_model(model if isinstance(model, dict) else {})
     missing_dirs = missing_semantic_directories(paths)
     resources = model.get("resources", []) if isinstance(model, dict) else []
-    touched_entities: list[str] = []
+    resource_entities: list[str] = []
     for resource in resources:
         normalized = normalize_entity_name(str(resource))
         if normalized:
-            touched_entities.append(normalized)
-    touched_entities = dedupe_keep_order(touched_entities[:1])
+            resource_entities.append(normalized)
+    resource_entities = dedupe_keep_order(resource_entities)
+
+    actions = model.get("actions", []) if isinstance(model, dict) else []
+    action_tokens: list[str] = []
+    if isinstance(actions, list):
+        for action in actions:
+            token = str(action).strip()
+            if token:
+                action_tokens.append(token)
 
     blocking = bool(missing) or bool(missing_dirs)
     semantic_gap_report = {
@@ -1097,20 +1282,54 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
         "missing_semantic_directories": missing_dirs,
     }
 
+    existing_api_keys: set[str] = set()
+    if isinstance(api_registry, dict):
+        items = api_registry.get("items", [])
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                key = item.get("api_key")
+                if isinstance(key, str):
+                    normalized_key = normalize_api_key(key)
+                    if normalized_key:
+                        existing_api_keys.add(normalized_key)
+
+    candidate_pool: list[dict[str, str]] = []
+    for entity in resource_entities:
+        for api_key in stage0_candidate_api_keys(entity, action_tokens):
+            candidate_pool.append({"entity": entity, "api_key": api_key})
+
+    fresh_candidates: list[dict[str, str]] = []
+    skipped_existing = 0
+    seen_keys: set[str] = set()
+    for item in candidate_pool:
+        api_key = normalize_api_key(item["api_key"])
+        if not api_key or api_key in seen_keys:
+            continue
+        seen_keys.add(api_key)
+        if api_key in existing_api_keys:
+            skipped_existing += 1
+            continue
+        fresh_candidates.append({"entity": item["entity"], "api_key": api_key})
+
+    selected_candidates: list[dict[str, str]] = []
     api_candidates = []
     if not blocking:
-        entity = touched_entities[0] if touched_entities else "todo"
-        plural = f"{entity}s" if not entity.endswith("s") else entity
-        api_candidates = [
-            {
-                "api_key": f"POST /api/v1/{plural.replace('_', '-')}",
-                "reason": "由 Stage0 按语义资源自动生成候选，需人工 review",
-                "risk": "medium",
-            }
-        ]
+        selected_candidates = fresh_candidates
 
     max_new_api = int(spec.get("max_new_api_per_iteration", 1))
-    api_candidates = api_candidates[: max(1, max_new_api)]
+    selected_candidates = selected_candidates[: max(1, max_new_api)]
+    for item in selected_candidates:
+        api_candidates.append(
+            {
+                "api_key": item["api_key"],
+                "reason": "由 Stage0 按语义资源自动生成且未在 api_registry 出现，需人工 review",
+                "risk": "medium",
+            }
+        )
+
+    touched_entities = dedupe_keep_order([item["entity"] for item in selected_candidates])
 
     artifact = {
         "stage": 0,
@@ -1139,6 +1358,8 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
         "commit_message": "stage-0(api-seed): generate next api candidate",
         "semantic_gap_report": semantic_gap_report,
         "api_registry_items": len(api_registry.get("items", [])),
+        "candidate_pool_size": len(candidate_pool),
+        "candidate_skipped_existing": skipped_existing,
         "touched_entities": touched_entities,
     }
 
@@ -1318,6 +1539,9 @@ def stage2(paths: Paths, spec: dict[str, Any], state: dict[str, Any]) -> StageRe
     bootstrap_mode = (not existing_api_keys) and (not bootstrap_done)
 
     new_api_keys = sorted(set(scanned_apis) - set(existing_api_keys))
+    if bootstrap_mode:
+        # bootstrap 轮次用于按 SKILL 规则对既有 API 做批量初始化校验。
+        new_api_keys = sorted(set(scanned_apis))
     missing_online = sorted(set(existing_api_keys) - set(scanned_apis))
 
     drift_items: list[dict[str, Any]] = []
@@ -1346,38 +1570,312 @@ def stage2(paths: Paths, spec: dict[str, Any], state: dict[str, Any]) -> StageRe
     return StageResult(stage=2, artifact=artifact, next_stage=3)
 
 
+def parse_api_key_parts(api_key: str) -> tuple[str, str]:
+    normalized = normalize_api_key(api_key)
+    parts = normalized.split(" ", 1)
+    if len(parts) != 2:
+        return "GET", "/"
+    return parts[0].upper(), parts[1]
+
+
+def stage0_candidate_api_keys_from_artifact(stage0_artifact: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    candidates = stage0_artifact.get("api_candidates", []) if isinstance(stage0_artifact, dict) else []
+    if isinstance(candidates, list):
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            api_key = item.get("api_key")
+            if isinstance(api_key, str):
+                normalized = normalize_api_key(api_key)
+                if normalized:
+                    keys.append(normalized)
+    return dedupe_keep_order(keys)
+
+
+def stage3_focus_api_keys(stage0_artifact: dict[str, Any], stage2_artifact: dict[str, Any]) -> list[str]:
+    keys = stage0_candidate_api_keys_from_artifact(stage0_artifact)
+    if keys:
+        return keys
+
+    stage2_keys = stage2_artifact.get("new_api_keys", []) if isinstance(stage2_artifact, dict) else []
+    fallback: list[str] = []
+    if isinstance(stage2_keys, list):
+        for item in stage2_keys:
+            if not isinstance(item, str):
+                continue
+            normalized = normalize_api_key(item)
+            if normalized:
+                fallback.append(normalized)
+    return dedupe_keep_order(fallback)
+
+
+def infer_entity_from_api_key(api_key: str, semantic_model: dict[str, Any]) -> str:
+    resources = semantic_model.get("resources", []) if isinstance(semantic_model, dict) else []
+    available_entities = {
+        normalized
+        for raw in resources if isinstance(raw, str)
+        for normalized in [normalize_entity_name(raw)]
+        if normalized
+    }
+    if not available_entities:
+        return ""
+
+    _, raw_path = parse_api_key_parts(api_key)
+    segments = [segment for segment in raw_path.split("/") if segment and not segment.startswith("{")]
+    candidates: list[str] = []
+    for segment in segments:
+        token = segment.strip().lower()
+        if token in {"api", "v1"} or token in IGNORE_ENTITY_SEGMENTS:
+            continue
+        normalized = normalize_entity_name(token)
+        if normalized:
+            candidates.append(normalized)
+        if normalized.endswith("ies") and len(normalized) > 3:
+            candidates.append(normalized[:-3] + "y")
+        if normalized.endswith("s") and len(normalized) > 1:
+            candidates.append(normalized[:-1])
+        break
+
+    resolved = resolve_entities(candidates, available_entities)
+    if resolved:
+        return resolved[0]
+    return sorted(available_entities)[0]
+
+
+def stage3_semantic_context_for_entity(entity: str, semantic_model: dict[str, Any]) -> dict[str, Any]:
+    state_machine = None
+    raw_machines = semantic_model.get("state_machines", []) if isinstance(semantic_model, dict) else []
+    if isinstance(raw_machines, list):
+        for item in raw_machines:
+            if not isinstance(item, dict):
+                continue
+            resource = normalize_entity_name(str(item.get("resource", "")))
+            if entity and resource == entity:
+                state_machine = item
+                break
+
+    constraints = semantic_model.get("constraints", []) if isinstance(semantic_model, dict) else []
+    constraint_rows = [str(item) for item in constraints if isinstance(item, str)]
+    permission_boundary = semantic_model.get("permission_boundary", {}) if isinstance(semantic_model, dict) else {}
+
+    return {
+        "entity": entity,
+        "state_machine": state_machine if isinstance(state_machine, dict) else {},
+        "constraints": constraint_rows,
+        "permission_boundary": permission_boundary if isinstance(permission_boundary, dict) else {},
+    }
+
+
+def stage3_progress_snapshot(
+    paths: Paths,
+    stage0_artifact: dict[str, Any],
+    stage1_artifact: dict[str, Any],
+    stage2_artifact: dict[str, Any],
+) -> dict[str, Any]:
+    stage0_candidates = stage0_candidate_api_keys_from_artifact(stage0_artifact)
+    scanned_apis = stage2_artifact.get("scanned_apis", []) if isinstance(stage2_artifact, dict) else []
+    scanned_keys = dedupe_keep_order([normalize_api_key(item) for item in scanned_apis if isinstance(item, str)])
+    scanned_set = set(scanned_keys)
+    candidate_set = set(stage0_candidates)
+
+    implemented_candidates = [api_key for api_key in stage0_candidates if api_key in scanned_set]
+    unimplemented_candidates = [api_key for api_key in stage0_candidates if api_key not in scanned_set]
+    changed_paths = git_changed_paths(paths)
+    changed_files = stage1_artifact.get("changed_files", []) if isinstance(stage1_artifact, dict) else []
+    changed_files = [str(item) for item in changed_files if isinstance(item, str)]
+    implementation_tasks = stage1_artifact.get("implementation_tasks", []) if isinstance(stage1_artifact, dict) else []
+    implementation_tasks = [str(item) for item in implementation_tasks if isinstance(item, str)]
+
+    return {
+        "stage0_candidate_api_count": len(stage0_candidates),
+        "stage2_scanned_api_count": len(scanned_keys),
+        "implemented_candidate_api_count": len(implemented_candidates),
+        "unimplemented_candidate_api_count": len(unimplemented_candidates),
+        "implemented_candidate_apis": implemented_candidates[:20],
+        "unimplemented_candidate_apis": unimplemented_candidates[:20],
+        "stage1_task_count": len(implementation_tasks),
+        "stage1_changed_files_count": len(changed_files),
+        "stage1_changed_files": changed_files[:30],
+        "git_changed_paths_count": len(changed_paths),
+        "git_changed_paths": changed_paths[:40],
+        "bootstrap_mode": bool(stage2_artifact.get("bootstrap_mode", False)) if isinstance(stage2_artifact, dict) else False,
+        "candidate_apis_observed_online": len(candidate_set & scanned_set),
+    }
+
+
+def stage3_event_candidates_for_api(
+    api_key: str,
+    entity: str,
+    semantic_context: dict[str, Any],
+    progress_snapshot: dict[str, Any],
+) -> list[dict[str, Any]]:
+    method, raw_path = parse_api_key_parts(api_key)
+    state_machine = semantic_context.get("state_machine", {}) if isinstance(semantic_context, dict) else {}
+    constraints = semantic_context.get("constraints", []) if isinstance(semantic_context, dict) else []
+    permissions = semantic_context.get("permission_boundary", {}) if isinstance(semantic_context, dict) else {}
+
+    entity_title = entity or "目标实体"
+    has_state_machine = isinstance(state_machine, dict) and bool(state_machine.get("states", []))
+    has_path_id = "{" in raw_path and "}" in raw_path
+    api_seen = api_key in set(progress_snapshot.get("implemented_candidate_apis", []))
+    progress_note = "已在当前扫描中观测到该 API" if api_seen else "当前扫描尚未观测到该 API"
+
+    templates: list[dict[str, Any]] = [
+        {
+            "title": f"{entity_title}主流程成功",
+            "description": f"{progress_note}，验证 {api_key} 在标准输入下返回 SUCCESS 并完成主流程。",
+            "expected_business_codes": ["SUCCESS"],
+            "reasoning_zh": "主流程成功是上线前最小闭环。",
+        },
+        {
+            "title": f"{entity_title}参数校验异常",
+            "description": f"覆盖 {api_key} 的非法输入路径，确认返回 INVALID_PARAMS。",
+            "expected_business_codes": ["INVALID_PARAMS"],
+            "reasoning_zh": "参数校验是最常见失败路径，必须稳定。",
+        },
+        {
+            "title": f"{entity_title}权限边界校验",
+            "description": (
+                f"基于权限边界 {permissions or '(未声明)'}，验证 {api_key} 在越权访问时返回 PERMISSION_DENIED。"
+            ),
+            "expected_business_codes": ["PERMISSION_DENIED"],
+            "reasoning_zh": "跨角色访问是业务风险高点，需要独立覆盖。",
+        },
+    ]
+
+    if has_path_id or method in {"GET", "PUT", "PATCH", "DELETE"}:
+        templates.append(
+            {
+                "title": f"{entity_title}资源不存在",
+                "description": f"对 {api_key} 提供不存在资源标识，验证 RESOURCE_NOT_FOUND。",
+                "expected_business_codes": ["RESOURCE_NOT_FOUND"],
+                "reasoning_zh": "对象级 API 需覆盖不存在资源场景。",
+            }
+        )
+
+    if has_state_machine or any("不可逆" in str(item) or "ACTIVE" in str(item).upper() for item in constraints):
+        state_text = state_machine.get("states", []) if isinstance(state_machine, dict) else []
+        templates.append(
+            {
+                "title": f"{entity_title}状态冲突校验",
+                "description": f"结合状态机 {state_text} 与约束 {constraints}，验证非法状态迁移返回 STATE_CONFLICT。",
+                "expected_business_codes": ["STATE_CONFLICT"],
+                "reasoning_zh": "状态机与业务约束是语义冲突高发点。",
+            }
+        )
+
+    if method == "POST":
+        templates.append(
+            {
+                "title": f"{entity_title}幂等重复提交",
+                "description": f"对 {api_key} 模拟重复请求，验证 IDEMPOTENT_DUPLICATE。",
+                "expected_business_codes": ["IDEMPOTENT_DUPLICATE"],
+                "reasoning_zh": "创建型接口需明确幂等语义。",
+            }
+        )
+
+    # 去重，避免语义模板重复。
+    deduped: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for item in templates:
+        codes = dedupe_keep_order(
+            [str(code).strip() for code in item.get("expected_business_codes", []) if str(code).strip()]
+        )
+        if not codes:
+            continue
+        key = (str(item.get("title", "")).strip(), ",".join(codes))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        row = dict(item)
+        row["expected_business_codes"] = codes
+        deduped.append(row)
+    return deduped
+
+
 def stage3(paths: Paths, spec: dict[str, Any]) -> StageResult:
     stage2_artifact = read_json(paths.stage_artifact(2), {})
-    new_api_keys = stage2_artifact.get("new_api_keys", []) if isinstance(stage2_artifact, dict) else []
+    stage0_artifact = read_json(paths.stage_artifact(0), {})
+    stage1_artifact = read_json(paths.stage_artifact(1), {})
+    semantic_model = read_json(paths.semantic_model, DEFAULT_SEMANTIC_MODEL)
+    focus_api_keys = stage3_focus_api_keys(
+        stage0_artifact if isinstance(stage0_artifact, dict) else {},
+        stage2_artifact if isinstance(stage2_artifact, dict) else {},
+    )
+    progress = stage3_progress_snapshot(
+        paths,
+        stage0_artifact if isinstance(stage0_artifact, dict) else {},
+        stage1_artifact if isinstance(stage1_artifact, dict) else {},
+        stage2_artifact if isinstance(stage2_artifact, dict) else {},
+    )
 
-    business_events = []
-    for idx, api_key in enumerate(new_api_keys, start=1):
-        business_events.append(
-            {
-                "event_id": f"EVT-{idx:03d}",
-                "title": f"新 API 接入事件 {idx}",
-                "api_refs": [api_key],
-                "description": "由 Stage3 自动组合，开发者可编辑",
-            }
-        )
+    business_event_candidates: list[dict[str, Any]] = []
+    seq = 1
+    for api_key in focus_api_keys:
+        entity = infer_entity_from_api_key(api_key, semantic_model if isinstance(semantic_model, dict) else {})
+        semantic_context = stage3_semantic_context_for_entity(entity, semantic_model if isinstance(semantic_model, dict) else {})
+        for template in stage3_event_candidates_for_api(api_key, entity, semantic_context, progress):
+            business_event_candidates.append(
+                {
+                    "event_id": f"EVT-{seq:03d}",
+                    "title": str(template.get("title", f"业务事件 {seq}")),
+                    "api_refs": [api_key],
+                    "description": str(template.get("description", "由 Stage3 结合业务语义自动生成")),
+                    "expected_business_codes": template.get("expected_business_codes", []),
+                    "reasoning_zh": str(template.get("reasoning_zh", "")),
+                    "entity": entity,
+                }
+            )
+            seq += 1
 
-    if not business_events:
-        business_events.append(
+    if not business_event_candidates:
+        fallback_refs = focus_api_keys[:1]
+        business_event_candidates = [
             {
                 "event_id": "EVT-001",
-                "title": "无新增 API 的占位事件",
-                "api_refs": [],
-                "description": "用于保持阶段产物结构完整",
+                "title": "候选 API 语义回归事件",
+                "api_refs": fallback_refs,
+                "description": "未识别到可细分事件模板，使用兜底语义事件。",
+                "expected_business_codes": ["SUCCESS", "INVALID_PARAMS"],
+                "reasoning_zh": "兜底事件用于保证 Stage4 可持续生成可执行测试。",
+                "entity": infer_entity_from_api_key(fallback_refs[0], semantic_model) if fallback_refs else "",
             }
-        )
+        ]
+
+    business_events = clone_case_rows(business_event_candidates)
+    semantic_resources = semantic_model.get("resources", []) if isinstance(semantic_model, dict) else []
+    semantic_actions = semantic_model.get("actions", []) if isinstance(semantic_model, dict) else []
+    semantic_constraints = semantic_model.get("constraints", []) if isinstance(semantic_model, dict) else []
+    semantic_context = {
+        "resources": [str(item) for item in semantic_resources if isinstance(item, str)],
+        "actions": [str(item) for item in semantic_actions if isinstance(item, str)],
+        "constraints": [str(item) for item in semantic_constraints if isinstance(item, str)],
+    }
 
     artifact = {
         "stage": 3,
         "generated_at": now_iso(),
         "business_events": business_events,
-        "editor_notes": ["可在 Stage3 产物基础上手工补充复杂业务流"],
+        "business_event_candidates": business_event_candidates,
+        "focus_api_keys": focus_api_keys,
+        "progress_snapshot": progress,
+        "semantic_context": semantic_context,
+        "semantic_review": {
+            "status": "pending",
+            "reviewer": "",
+            "reason": "等待当前 Codex session 结合业务语义审阅测试事件",
+            "candidate_count": len(business_event_candidates),
+            "selected_count": len(business_events),
+            "selected_event_ids": [
+                str(item.get("event_id", "")) for item in business_events if isinstance(item, dict)
+            ],
+            "rejected_event_ids": [],
+            "updated_at": now_iso(),
+        },
+        "editor_notes": ["可在 Stage3 语义事件基础上继续补充复杂业务流程与跨 API 串联场景"],
     }
-    return StageResult(stage=3, artifact=artifact, next_stage=4)
+    return StageResult(stage=3, artifact=artifact, next_stage=4, gate=True)
 
 
 def _write_case_descriptions(paths: Paths, cases: list[dict[str, Any]]) -> None:
@@ -1386,6 +1884,512 @@ def _write_case_descriptions(paths: Paths, cases: list[dict[str, Any]]) -> None:
     if text:
         text += "\n"
     write_text(paths.case_descriptions, text)
+
+
+def _test_name_for_case(case_id: str, seq: int) -> str:
+    token = re.sub(r"[^a-z0-9_]+", "_", case_id.lower().replace("-", "_")).strip("_")
+    if not token:
+        token = f"case_{seq:03d}"
+    if token[0].isdigit():
+        token = f"case_{token}"
+    return f"test_auto__{token}"
+
+
+def assign_case_test_names(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    used_names: set[str] = set()
+    for idx, case in enumerate(cases, start=1):
+        if not isinstance(case, dict):
+            continue
+        case_id = str(case.get("case_id", f"CASE-AUTO-{idx:03d}"))
+        candidate = str(case.get("test_name", "")).strip()
+        test_name = candidate if candidate.startswith("test_") else _test_name_for_case(case_id, idx)
+        while test_name in used_names:
+            test_name = f"{test_name}_{idx}"
+        used_names.add(test_name)
+        case["test_name"] = test_name
+        rows.append({"case": case, "case_id": case_id, "test_name": test_name})
+    return rows
+
+
+def expected_test_names_from_cases(cases: list[dict[str, Any]]) -> list[str]:
+    rows = assign_case_test_names(cases)
+    return [str(row["test_name"]) for row in rows]
+
+
+def extract_test_functions_from_text(test_text: str) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"(?m)^\s*def\s+(test_[A-Za-z0-9_]+)\s*\(", test_text or ""):
+        name = str(match.group(1)).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def analyze_stage4_test_generation(paths: Paths, generated_cases: list[dict[str, Any]]) -> dict[str, Any]:
+    expected_tests = expected_test_names_from_cases(generated_cases)
+    test_file = generated_test_file_path(paths)
+    rel_file = rel_path(paths, test_file)
+
+    file_exists = test_file.exists()
+    content = ""
+    if file_exists:
+        content = test_file.read_text(encoding="utf-8")
+
+    observed_tests = extract_test_functions_from_text(content)
+    observed_set = set(observed_tests)
+    expected_set = set(expected_tests)
+    missing_tests = [name for name in expected_tests if name not in observed_set]
+    extra_tests = [name for name in observed_tests if name not in expected_set]
+    placeholder_detected = "test_placeholder_generated_case" in observed_set
+
+    ready = bool(expected_tests) and not missing_tests and not placeholder_detected
+    reason = "ready_for_stage5" if ready else "waiting_session_codegen"
+
+    return {
+        "status": "ready" if ready else "pending",
+        "reason": reason,
+        "test_file": rel_file,
+        "file_exists": file_exists,
+        "expected_tests": expected_tests,
+        "observed_tests": observed_tests,
+        "missing_tests": missing_tests,
+        "extra_tests": extra_tests,
+        "placeholder_detected": placeholder_detected,
+        "updated_at": now_iso(),
+    }
+
+
+def clone_case_rows(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for case in cases:
+        if isinstance(case, dict):
+            rows.append(dict(case))
+    return rows
+
+
+def normalize_case_id_tokens(raw_tokens: list[str]) -> list[str]:
+    tokens: list[str] = []
+    for raw in raw_tokens:
+        for chunk in str(raw).split(","):
+            token = chunk.strip()
+            if token:
+                tokens.append(token)
+    return dedupe_keep_order(tokens)
+
+
+def normalize_event_id_tokens(raw_tokens: list[str]) -> list[str]:
+    tokens: list[str] = []
+    for raw in raw_tokens:
+        for chunk in str(raw).split(","):
+            token = chunk.strip()
+            if token:
+                tokens.append(token)
+    return dedupe_keep_order(tokens)
+
+
+def apply_stage3_semantic_selection(
+    paths: Paths,
+    stage3_artifact: dict[str, Any],
+    selected_event_ids: list[str],
+    reason: str,
+    reviewer: str,
+) -> dict[str, Any]:
+    candidate_events_raw = stage3_artifact.get("business_event_candidates", [])
+    candidate_events = [dict(item) for item in candidate_events_raw if isinstance(item, dict)]
+    if not candidate_events:
+        raise WorkflowError("stage3 artifact 缺少 business_event_candidates，无法执行语义筛选")
+
+    event_by_id: dict[str, dict[str, Any]] = {}
+    candidate_ids: list[str] = []
+    for event in candidate_events:
+        event_id = str(event.get("event_id", "")).strip()
+        if not event_id or event_id in event_by_id:
+            continue
+        event_by_id[event_id] = event
+        candidate_ids.append(event_id)
+
+    normalized_selected = normalize_event_id_tokens(selected_event_ids)
+    if not normalized_selected:
+        normalized_selected = list(candidate_ids)
+
+    missing_ids = [event_id for event_id in normalized_selected if event_id not in event_by_id]
+    if missing_ids:
+        preview = missing_ids[:8]
+        tail = "..." if len(missing_ids) > 8 else ""
+        raise WorkflowError(f"存在未知 event_id: {preview}{tail}")
+
+    selected_set = set(normalized_selected)
+    ordered_selected_ids = [event_id for event_id in candidate_ids if event_id in selected_set]
+    if not ordered_selected_ids:
+        raise WorkflowError("语义筛选后 business_events 为空，请至少保留 1 个事件")
+
+    selected_events = [dict(event_by_id[event_id]) for event_id in ordered_selected_ids]
+    rejected_event_ids = [event_id for event_id in candidate_ids if event_id not in selected_set]
+
+    stage3_artifact["business_events"] = selected_events
+    stage3_artifact["semantic_review"] = {
+        "status": "approved",
+        "reviewer": reviewer,
+        "reason": reason or "session semantic review",
+        "candidate_count": len(candidate_ids),
+        "selected_count": len(ordered_selected_ids),
+        "selected_event_ids": ordered_selected_ids,
+        "rejected_event_ids": rejected_event_ids,
+        "updated_at": now_iso(),
+    }
+    stage3_artifact["selection_updated_at"] = now_iso()
+    write_json(paths.stage_artifact(3), stage3_artifact)
+
+    append_event(
+        paths,
+        "stage3_semantic_review_applied",
+        {
+            "selected_count": len(ordered_selected_ids),
+            "candidate_count": len(candidate_ids),
+            "reviewer": reviewer,
+        },
+    )
+
+    return {
+        "selected_count": len(ordered_selected_ids),
+        "candidate_count": len(candidate_ids),
+        "rejected_count": len(rejected_event_ids),
+        "selected_event_ids": ordered_selected_ids,
+        "rejected_event_ids": rejected_event_ids,
+    }
+
+
+def build_stage4_coverage(
+    business_events: list[dict[str, Any]],
+    required_codes: list[str],
+    generated_cases: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    coverage_by_event: list[dict[str, Any]] = []
+    event_ids: list[str] = []
+    for event in business_events:
+        if not isinstance(event, dict):
+            continue
+        event_id = str(event.get("event_id", "")).strip()
+        if event_id:
+            event_ids.append(event_id)
+
+    event_ids = dedupe_keep_order(event_ids)
+    if not event_ids:
+        for case in generated_cases:
+            if not isinstance(case, dict):
+                continue
+            event_id = str(case.get("event_id", "")).strip()
+            if event_id:
+                event_ids.append(event_id)
+        event_ids = dedupe_keep_order(event_ids)
+
+    normalized_codes = dedupe_keep_order([str(code).strip() for code in required_codes if str(code).strip()])
+    expected_by_event: dict[str, list[str]] = {}
+    for event in business_events:
+        if not isinstance(event, dict):
+            continue
+        event_id = str(event.get("event_id", "")).strip()
+        if not event_id:
+            continue
+        event_codes = event.get("expected_business_codes", [])
+        if not isinstance(event_codes, list):
+            event_codes = []
+        normalized_event_codes = dedupe_keep_order([str(code).strip() for code in event_codes if str(code).strip()])
+        expected_by_event[event_id] = normalized_event_codes or normalized_codes
+
+    for event_id in event_ids:
+        event_codes: list[str] = []
+        for item in generated_cases:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("event_id", "")) != event_id:
+                continue
+            code = str(item.get("expected_business_code", "")).strip()
+            if code:
+                event_codes.append(code)
+        covered = dedupe_keep_order(event_codes)
+        covered_set = set(covered)
+        expected_codes = expected_by_event.get(event_id, normalized_codes)
+        coverage_by_event.append(
+            {
+                "event_id": event_id,
+                "covered_codes": covered,
+                "missing_codes": [code for code in expected_codes if code not in covered_set],
+            }
+        )
+    return coverage_by_event
+
+
+def apply_stage4_semantic_selection(
+    paths: Paths,
+    stage4_artifact: dict[str, Any],
+    selected_case_ids: list[str],
+    reason: str,
+    reviewer: str,
+) -> dict[str, Any]:
+    candidate_cases_raw = stage4_artifact.get("candidate_cases", [])
+    candidate_cases = [dict(item) for item in candidate_cases_raw if isinstance(item, dict)]
+    if not candidate_cases:
+        raise WorkflowError("stage4 artifact 缺少 candidate_cases，无法执行语义筛选")
+
+    case_id_to_case: dict[str, dict[str, Any]] = {}
+    candidate_ids: list[str] = []
+    for case in candidate_cases:
+        case_id = str(case.get("case_id", "")).strip()
+        if not case_id or case_id in case_id_to_case:
+            continue
+        case_id_to_case[case_id] = case
+        candidate_ids.append(case_id)
+
+    normalized_selected = normalize_case_id_tokens(selected_case_ids)
+    if not normalized_selected:
+        normalized_selected = list(candidate_ids)
+
+    missing_case_ids = [case_id for case_id in normalized_selected if case_id not in case_id_to_case]
+    if missing_case_ids:
+        preview = missing_case_ids[:8]
+        tail = "..." if len(missing_case_ids) > 8 else ""
+        raise WorkflowError(f"存在未知 case_id: {preview}{tail}")
+
+    selected_set = set(normalized_selected)
+    ordered_selected_ids = [case_id for case_id in candidate_ids if case_id in selected_set]
+    if not ordered_selected_ids:
+        raise WorkflowError("语义筛选后无可执行用例，请至少保留 1 条 case")
+
+    generated_cases = [dict(case_id_to_case[case_id]) for case_id in ordered_selected_ids]
+    assign_case_test_names(generated_cases)
+
+    business_events_raw = stage4_artifact.get("business_events", [])
+    business_events = [dict(item) for item in business_events_raw if isinstance(item, dict)]
+    required_codes_raw = stage4_artifact.get("required_case_codes", [])
+    required_codes = dedupe_keep_order([str(item).strip() for item in required_codes_raw if str(item).strip()])
+
+    _write_case_descriptions(paths, generated_cases)
+    _write_business_event_notes(paths, business_events)
+
+    coverage_by_event = build_stage4_coverage(business_events, required_codes, generated_cases)
+    rejected_case_ids = [case_id for case_id in candidate_ids if case_id not in selected_set]
+    test_generation = analyze_stage4_test_generation(paths, generated_cases)
+
+    stage4_artifact["generated_cases"] = generated_cases
+    stage4_artifact["generated_test_files"] = [rel_path(paths, generated_test_file_path(paths))]
+    stage4_artifact["business_event_files"] = [rel_path(paths, generated_event_notes_path(paths))]
+    stage4_artifact["coverage_by_event"] = coverage_by_event
+    stage4_artifact["test_generation"] = test_generation
+    stage4_artifact["semantic_review"] = {
+        "status": "approved",
+        "reviewer": reviewer,
+        "reason": reason or "session semantic review",
+        "candidate_count": len(candidate_ids),
+        "selected_count": len(ordered_selected_ids),
+        "rejected_count": len(rejected_case_ids),
+        "selected_case_ids": ordered_selected_ids,
+        "rejected_case_ids": rejected_case_ids,
+        "updated_at": now_iso(),
+    }
+    stage4_artifact["selection_updated_at"] = now_iso()
+    write_json(paths.stage_artifact(4), stage4_artifact)
+
+    append_event(
+        paths,
+        "stage4_semantic_review_applied",
+        {
+            "selected_count": len(ordered_selected_ids),
+            "candidate_count": len(candidate_ids),
+            "reviewer": reviewer,
+        },
+    )
+
+    return {
+        "selected_count": len(ordered_selected_ids),
+        "candidate_count": len(candidate_ids),
+        "rejected_count": len(rejected_case_ids),
+        "selected_case_ids": ordered_selected_ids,
+        "rejected_case_ids": rejected_case_ids,
+        "coverage_by_event": coverage_by_event,
+        "test_generation": test_generation,
+    }
+
+
+def _write_business_event_notes(paths: Paths, events: list[dict[str, Any]]) -> None:
+    lines = ["# Business Events (中文)", ""]
+    if not events:
+        lines.append("- 本轮未生成业务事件。")
+    for event in events:
+        event_id = str(event.get("event_id", "EVT-UNKNOWN"))
+        title = str(event.get("title", "未命名业务事件"))
+        description = str(event.get("description", "无补充说明"))
+        refs = event.get("api_refs", [])
+        api_refs = refs if isinstance(refs, list) else []
+        api_text = ", ".join(str(item) for item in api_refs) if api_refs else "(未声明)"
+        lines.extend(
+            [
+                f"## {event_id} {title}",
+                "",
+                f"- 描述：{description}",
+                f"- 关联 API：{api_text}",
+                "",
+            ]
+        )
+
+    notes_file = generated_event_notes_path(paths)
+    write_text(notes_file, "\n".join(lines).rstrip() + "\n")
+
+
+def parse_generated_test_status(output: str) -> tuple[set[str], set[str], set[str], int]:
+    observed: set[str] = set()
+    failed: set[str] = set()
+    skipped: set[str] = set()
+    pending_test: str | None = None
+    for line in output.splitlines():
+        line = line.rstrip()
+
+        m_pending = re.match(r"^\s*(test_[a-zA-Z0-9_]+)\s+\([^)]+\)\s*$", line)
+        if m_pending:
+            pending_test = m_pending.group(1).strip()
+            continue
+
+        if pending_test:
+            m_follow = re.match(r"^\s*.*\.\.\.\s+(.+?)\s*$", line)
+            if m_follow:
+                status = m_follow.group(1).strip().lower()
+                observed.add(pending_test)
+                if status.startswith("fail") or status.startswith("error"):
+                    failed.add(pending_test)
+                elif status.startswith("skip"):
+                    skipped.add(pending_test)
+                pending_test = None
+                continue
+
+        m = re.match(r"^\s*(test_[a-zA-Z0-9_]+)\s+\([^)]+\)\s+\.\.\.\s+(.+?)\s*$", line)
+        if not m:
+            continue
+        test_name = m.group(1).strip()
+        status = m.group(2).strip().lower()
+        observed.add(test_name)
+        if status.startswith("fail") or status.startswith("error"):
+            failed.add(test_name)
+        elif status.startswith("skip"):
+            skipped.add(test_name)
+
+    ran_count = len(observed)
+    if ran_count == 0:
+        m = re.search(r"Ran\s+(\d+)\s+tests?", output)
+        if m:
+            ran_count = int(m.group(1))
+    return observed, failed, skipped, ran_count
+
+
+def generated_test_label(paths: Paths) -> str:
+    test_file = generated_test_file_path(paths)
+    try:
+        rel = test_file.resolve().relative_to(paths.root.resolve()).as_posix()
+        return rel.removesuffix(".py").replace("/", ".")
+    except ValueError:
+        return test_file.parent.as_posix()
+
+
+def resolve_python_from_test_command(paths: Paths, test_command: list[str]) -> str:
+    if test_command:
+        first = str(test_command[0]).strip()
+        if first and "python" in Path(first).name.lower():
+            return first
+    venv_python = paths.root / ".venv" / "bin" / "python"
+    if venv_python.exists():
+        return venv_python.as_posix()
+    return sys.executable
+
+
+def run_generated_case_suite(
+    paths: Paths,
+    generated_cases: list[dict[str, Any]],
+    test_command: list[str],
+) -> dict[str, Any]:
+    rows = assign_case_test_names(generated_cases)
+    expected_names = [row["test_name"] for row in rows]
+    case_by_test = {row["test_name"]: row["case_id"] for row in rows}
+
+    if not expected_names:
+        return {
+            "command": [],
+            "return_code": 0,
+            "tests_run": 0,
+            "expected_count": 0,
+            "expected_tests": [],
+            "observed_tests": [],
+            "failed_tests": [],
+            "skipped_tests": [],
+            "missing_tests": [],
+            "failed_cases": [],
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "mismatch": False,
+            "parse_source": "empty_cases",
+        }
+
+    command = [
+        resolve_python_from_test_command(paths, test_command),
+        "manage.py",
+        "test",
+        generated_test_label(paths),
+        "-v",
+        "2",
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(paths.root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return_code = proc.returncode
+        stdout = proc.stdout
+        stderr = proc.stderr
+    except OSError as exc:
+        return {
+            "command": command,
+            "return_code": 1,
+            "tests_run": 0,
+            "expected_count": len(expected_names),
+            "expected_tests": expected_names,
+            "observed_tests": [],
+            "failed_tests": [],
+            "skipped_tests": [],
+            "missing_tests": expected_names,
+            "failed_cases": [row["case_id"] for row in rows],
+            "stdout_tail": "",
+            "stderr_tail": str(exc),
+            "mismatch": True,
+            "parse_source": "oserror",
+        }
+
+    combined = "\n".join([stdout, stderr])
+    observed, failed, skipped, ran_count = parse_generated_test_status(combined)
+    missing = [name for name in expected_names if name not in observed]
+    failed_case_ids = [case_by_test[name] for name in expected_names if name in failed or name in missing or name in skipped]
+    mismatch = ran_count != len(expected_names)
+
+    return {
+        "command": command,
+        "return_code": return_code,
+        "tests_run": ran_count,
+        "expected_count": len(expected_names),
+        "expected_tests": expected_names,
+        "observed_tests": sorted(observed),
+        "failed_tests": sorted(failed),
+        "skipped_tests": sorted(skipped),
+        "missing_tests": missing,
+        "failed_cases": failed_case_ids,
+        "stdout_tail": "\n".join(stdout.splitlines()[-80:]),
+        "stderr_tail": "\n".join(stderr.splitlines()[-80:]),
+        "mismatch": mismatch,
+        "parse_source": "verbose_status" if observed else "summary_only",
+    }
 
 
 def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
@@ -1397,6 +2401,17 @@ def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
     if not required_codes:
         required_codes = ["SUCCESS", "INVALID_PARAMS"]
     required_codes = dedupe_keep_order([str(item) for item in required_codes if isinstance(item, str) and item.strip()])
+    if not required_codes:
+        required_codes = ["SUCCESS", "INVALID_PARAMS"]
+
+    fallback_api_refs: list[str] = []
+    if isinstance(stage0_artifact, dict):
+        stage0_candidates = stage0_artifact.get("api_candidates", [])
+        if isinstance(stage0_candidates, list):
+            for item in stage0_candidates:
+                if isinstance(item, dict) and isinstance(item.get("api_key"), str):
+                    fallback_api_refs.append(item["api_key"])
+    fallback_api_refs = dedupe_keep_order(fallback_api_refs)[:1]
 
     normalized_events: list[dict[str, Any]] = []
     if isinstance(events, list):
@@ -1406,24 +2421,62 @@ def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
             event_id = str(event.get("event_id", f"EVT-{idx:03d}"))
             refs = event.get("api_refs", [])
             api_refs = [str(item) for item in refs if isinstance(item, str)] if isinstance(refs, list) else []
-            normalized_events.append({"event_id": event_id, "api_refs": api_refs})
+            if not api_refs:
+                api_refs = list(fallback_api_refs)
+            title = str(event.get("title", f"业务事件 {event_id}"))
+            description = str(event.get("description", "由 Stage4 生成测试时自动补全"))
+            event_codes = event.get("expected_business_codes", [])
+            if not isinstance(event_codes, list):
+                event_codes = []
+            expected_codes = dedupe_keep_order([str(item).strip() for item in event_codes if str(item).strip()])
+            if not expected_codes:
+                expected_codes = list(required_codes)
+            normalized_events.append(
+                {
+                    "event_id": event_id,
+                    "api_refs": api_refs,
+                    "title": title,
+                    "description": description,
+                    "expected_business_codes": expected_codes,
+                }
+            )
     if not normalized_events:
-        normalized_events = [{"event_id": "EVT-001", "api_refs": []}]
+        normalized_events = [
+            {
+                "event_id": "EVT-001",
+                "api_refs": list(fallback_api_refs),
+                "title": "默认业务事件",
+                "description": "未读取到 Stage3 业务事件，使用默认事件兜底。",
+                "expected_business_codes": list(required_codes),
+            }
+        ]
 
-    generated_cases = []
+    state = read_json(paths.state, DEFAULT_STATE)
+    running_iteration = int(state.get("running_iteration", 1)) if isinstance(state, dict) else 1
+
+    candidate_cases: list[dict[str, Any]] = []
     case_idx = 1
     for event in normalized_events:
-        for code in required_codes:
-            generated_cases.append(
+        event_codes = event.get("expected_business_codes", [])
+        if not isinstance(event_codes, list):
+            event_codes = []
+        expected_codes = dedupe_keep_order([str(code).strip() for code in event_codes if str(code).strip()])
+        if not expected_codes:
+            expected_codes = list(required_codes)
+        for code in expected_codes:
+            expected_http_status = HTTP_STATUS_BY_BIZ_CODE.get(code, 400)
+            candidate_cases.append(
                 {
-                    "case_id": f"CASE-AUTO-{case_idx:03d}",
+                    "case_id": f"CASE-AUTO-I{running_iteration:03d}-{case_idx:03d}",
                     "title": f"{event['event_id']} 自动生成用例 {code}",
                     "event_id": event["event_id"],
+                    "event_title_zh": event["title"],
+                    "event_description_zh": event["description"],
                     "api_refs": event["api_refs"],
                     "preconditions": [],
                     "steps": [],
                     "expected_business_code": code,
-                    "expected_http_status": 200 if code == "SUCCESS" else 400,
+                    "expected_http_status": expected_http_status,
                     "tags": ["auto", "stage4"],
                     "status": "draft",
                     "owner": "workflow_runner",
@@ -1432,33 +2485,46 @@ def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
             )
             case_idx += 1
 
+    assign_case_test_names(candidate_cases)
+    generated_cases = clone_case_rows(candidate_cases)
     _write_case_descriptions(paths, generated_cases)
+    _write_business_event_notes(paths, normalized_events)
 
-    coverage_by_event = []
-    for event in normalized_events:
-        event_codes = [
-            item["expected_business_code"]
-            for item in generated_cases
-            if item.get("event_id") == event["event_id"]
-        ]
-        covered_set = set(event_codes)
-        coverage_by_event.append(
-            {
-                "event_id": event["event_id"],
-                "covered_codes": dedupe_keep_order(event_codes),
-                "missing_codes": [code for code in required_codes if code not in covered_set],
-            }
-        )
+    coverage_by_event = build_stage4_coverage(normalized_events, required_codes, generated_cases)
+    test_generation = analyze_stage4_test_generation(paths, generated_cases)
 
     artifact = {
         "stage": 4,
         "generated_at": now_iso(),
+        "business_events": normalized_events,
+        "required_case_codes": required_codes,
+        "business_code_fields": stage4_business_code_fields(spec),
+        "strict_business_code": stage4_business_code_strict(spec),
+        "candidate_cases": candidate_cases,
         "generated_cases": generated_cases,
-        "generated_test_files": [GENERATED_TEST_FILE],
+        "generated_test_files": [rel_path(paths, generated_test_file_path(paths))],
+        "business_event_files": [rel_path(paths, generated_event_notes_path(paths))],
         "coverage_by_event": coverage_by_event,
+        "test_generation": test_generation,
+        "semantic_review": {
+            "status": "pending",
+            "reviewer": "",
+            "reason": "等待当前 Codex session 进行语义筛选（可读摘要见 gate 输出）",
+            "candidate_count": len(candidate_cases),
+            "selected_count": len(generated_cases),
+            "rejected_count": 0,
+            "selected_case_ids": [str(item.get("case_id", "")) for item in generated_cases if isinstance(item, dict)],
+            "rejected_case_ids": [],
+            "updated_at": now_iso(),
+        },
+        "session_codegen_note": (
+            "测试代码需由当前 Codex session 生成并写入 generated_test_files。"
+            "断言应优先使用业务状态码字段 business_code/biz_code/code/status_code，HTTP 仅作辅助。"
+            "Runner 仅校验测试函数命名与覆盖完整性。"
+        ),
     }
 
-    return StageResult(stage=4, artifact=artifact, next_stage=5)
+    return StageResult(stage=4, artifact=artifact, next_stage=5, gate=True)
 
 
 def stage5(paths: Paths, spec: dict[str, Any], state: dict[str, Any]) -> StageResult:
@@ -1467,7 +2533,9 @@ def stage5(paths: Paths, spec: dict[str, Any], state: dict[str, Any]) -> StageRe
         raise WorkflowError("workflow_spec.test_command 配置非法")
 
     stage4_artifact = read_json(paths.stage_artifact(4), {})
-    generated_cases = stage4_artifact.get("generated_cases", []) if isinstance(stage4_artifact, dict) else []
+    generated_cases_raw = stage4_artifact.get("generated_cases", []) if isinstance(stage4_artifact, dict) else []
+    generated_cases = [item for item in generated_cases_raw if isinstance(item, dict)]
+    generated_suite = run_generated_case_suite(paths, generated_cases, test_command)
 
     try:
         proc = subprocess.run(
@@ -1477,23 +2545,44 @@ def stage5(paths: Paths, spec: dict[str, Any], state: dict[str, Any]) -> StageRe
             text=True,
             check=False,
         )
-        return_code = proc.returncode
-        stdout_tail = "\n".join(proc.stdout.splitlines()[-40:])
-        stderr_tail = "\n".join(proc.stderr.splitlines()[-40:])
+        regression_return_code = proc.returncode
+        stdout_tail = "\n".join(proc.stdout.splitlines()[-80:])
+        stderr_tail = "\n".join(proc.stderr.splitlines()[-80:])
     except OSError as exc:
-        return_code = 1
+        regression_return_code = 1
         stdout_tail = ""
         stderr_tail = str(exc)
 
-    failed_cases = []
-    if return_code != 0 and generated_cases:
-        failed_cases = [item.get("case_id") for item in generated_cases if isinstance(item, dict)]
+    failed_cases = [item for item in generated_suite.get("failed_cases", []) if isinstance(item, str)]
+    generated_suite_failed = bool(failed_cases) or bool(generated_suite.get("mismatch", False))
+    generated_suite_error = int(generated_suite.get("return_code", 1)) != 0
+    return_code = 0 if (regression_return_code == 0 and not generated_suite_failed and not generated_suite_error) else 1
+    skipped_tests = [item for item in generated_suite.get("skipped_tests", []) if isinstance(item, str)]
+    missing_tests = [item for item in generated_suite.get("missing_tests", []) if isinstance(item, str)]
+
     failure_distribution = {}
     for case_id in failed_cases:
-        if not isinstance(case_id, str):
-            continue
         failure_distribution[case_id] = {
-            "error_type": "test_command_failed",
+            "error_type": "generated_case_test_failed",
+            "fail_count": 1,
+        }
+    if skipped_tests:
+        failure_distribution["__generated_suite_skipped__"] = {
+            "error_type": "generated_case_skipped",
+            "fail_count": len(skipped_tests),
+            "tests": skipped_tests,
+        }
+    if bool(generated_suite.get("mismatch", False)):
+        failure_distribution["__stage4_stage5_consistency__"] = {
+            "error_type": "generated_suite_count_mismatch",
+            "fail_count": 1,
+            "expected": generated_suite.get("expected_count", 0),
+            "actual": generated_suite.get("tests_run", 0),
+            "missing_tests": missing_tests,
+        }
+    if regression_return_code != 0:
+        failure_distribution["__regression_suite__"] = {
+            "error_type": "regression_command_failed",
             "fail_count": 1,
         }
 
@@ -1511,15 +2600,17 @@ def stage5(paths: Paths, spec: dict[str, Any], state: dict[str, Any]) -> StageRe
     artifact = {
         "stage": 5,
         "generated_at": now_iso(),
-        "executed_cases": len(generated_cases),
+        "executed_cases": int(generated_suite.get("tests_run", 0)),
         "failed_cases": failed_cases,
         "regression_summary": {
             "return_code": return_code,
             "command": test_command,
+            "regression_return_code": regression_return_code,
             "consecutive_failures": consecutive,
             "failure_threshold": threshold,
             "stdout_tail": stdout_tail,
             "stderr_tail": stderr_tail,
+            "generated_suite": generated_suite,
             "failure_distribution": failure_distribution,
         },
     }
@@ -1582,19 +2673,18 @@ def _upsert_case_registry(paths: Paths) -> dict[str, Any]:
     }
 
     now = now_iso()
-    for item in generated_cases:
-        if not isinstance(item, dict):
-            continue
-        case_id = str(item.get("case_id", ""))
+    for row in assign_case_test_names(generated_cases if isinstance(generated_cases, list) else []):
+        item = row["case"]
+        case_id = row["case_id"]
         event_id = str(item.get("event_id", ""))
         api_refs = item.get("api_refs", [])
-        test_name = f"test_auto__{case_id.lower().replace('-', '_')}"
+        test_name = row["test_name"]
         key = (case_id, test_name)
         existing[key] = {
             "case_id": case_id,
             "event_id": event_id,
             "api_refs": api_refs if isinstance(api_refs, list) else [],
-            "test_file": GENERATED_TEST_FILE,
+            "test_file": rel_path(paths, generated_test_file_path(paths)),
             "test_name": test_name,
             "test_type": "api",
             "enabled": True,
@@ -1624,9 +2714,12 @@ def _update_docs(
         "",
         f"- generated_at: {now_iso()}",
         f"- stage2.new_api_keys: {stage2_artifact.get('new_api_keys', [])}",
-        "- 本轮仅新增 1 个 API（规划约束，候选仍需人工确认）。",
         f"- touched_entities: {touched_entities}",
     ]
+    if bool(stage2_artifact.get("bootstrap_mode", False)):
+        summary_lines.append("- bootstrap_mode=true，本轮按扫描结果批量初始化校验。")
+    else:
+        summary_lines.append("- 本轮候选按增量迭代推进，仍需人工门禁确认。")
     missing_docs = doc_sync.get("missing_docs", {})
     unsynced_entities = set(doc_sync.get("unsynced_entities", []))
     if touched_entities:
@@ -1693,6 +2786,25 @@ def _update_docs(
         "# Test Example Records\n\n"
         f"- case_count: {len(stage4_artifact.get('generated_cases', [])) if isinstance(stage4_artifact, dict) else 0}\n"
     )
+    generated_cases = stage4_artifact.get("generated_cases", []) if isinstance(stage4_artifact, dict) else []
+    if isinstance(generated_cases, list) and generated_cases:
+        test_records += "\n## 业务事件（中文）\n\n"
+        seen_event_ids: set[str] = set()
+        for case in generated_cases:
+            if not isinstance(case, dict):
+                continue
+            event_id = str(case.get("event_id", "EVT-UNKNOWN"))
+            if event_id in seen_event_ids:
+                continue
+            seen_event_ids.add(event_id)
+            event_title = str(case.get("event_title_zh", "未命名业务事件"))
+            event_desc = str(case.get("event_description_zh", "无补充说明"))
+            api_refs = case.get("api_refs", [])
+            api_text = ", ".join(str(item) for item in api_refs) if isinstance(api_refs, list) and api_refs else "(未声明)"
+            test_records += f"- {event_id} {event_title}\n"
+            test_records += f"  - 描述: {event_desc}\n"
+            test_records += f"  - 关联 API: {api_text}\n"
+
     write_text(paths.scaffold / "docs" / "test_example_records.md", test_records)
     docs_updates.append("test_example_records.md")
 
@@ -1936,11 +3048,33 @@ def run_one_stage(
     state["last_event_id"] = event_id
 
     gate_policy = gate_for_stage(spec, stage) if result.gate else None
+    if stage == 3 and result.gate and not gate_policy:
+        gate_policy = {
+            "reason": "stage3_semantic_event_review_required",
+            "allowed_actions": ["approve", "reject", "goto_stage"],
+            "next_stage_on_approve": 4,
+            "fallback_stage": 2,
+        }
+    if stage == 4 and result.gate and not gate_policy:
+        gate_policy = {
+            "reason": "stage4_semantic_review_required",
+            "allowed_actions": ["approve", "reject", "goto_stage"],
+            "next_stage_on_approve": 5,
+            "fallback_stage": 3,
+        }
     if stage == 0 and isinstance(result.artifact, dict):
         semantic_gap = result.artifact.get("semantic_gap_report", {})
+        api_candidates = result.artifact.get("api_candidates", [])
         if isinstance(semantic_gap, dict) and semantic_gap.get("blocking"):
             gate_policy = {
                 "reason": "stage0_semantic_gap_blocking",
+                "allowed_actions": ["reject", "goto_stage"],
+                "next_stage_on_approve": 0,
+                "fallback_stage": 0,
+            }
+        elif isinstance(api_candidates, list) and not api_candidates:
+            gate_policy = {
+                "reason": "stage0_no_candidate_blocking",
                 "allowed_actions": ["reject", "goto_stage"],
                 "next_stage_on_approve": 0,
                 "fallback_stage": 0,
@@ -1964,8 +3098,6 @@ def run_one_stage(
     clear_pending(paths)
     state["status"] = "idle"
     state["current_stage"] = result.next_stage
-    if stage == 8 and result.next_stage == 0:
-        state["running_iteration"] = int(state.get("running_iteration", 1)) + 1
     save_state(paths, state)
     return "idle"
 
@@ -2063,6 +3195,73 @@ def update_semantic_snapshot(paths: Paths) -> dict[str, Any]:
     return payload
 
 
+def ensure_stage3_semantic_gate_ready(paths: Paths, pending: dict[str, Any], action: str) -> None:
+    if int(pending.get("stage", -1)) != 3 or action != "approve":
+        return
+
+    artifact = read_json(paths.stage_artifact(3), {})
+    if not isinstance(artifact, dict):
+        raise WorkflowError("stage3 产物不存在，无法继续审批")
+
+    semantic_review = artifact.get("semantic_review", {})
+    status = str(semantic_review.get("status", "")).strip().lower() if isinstance(semantic_review, dict) else ""
+    if status != "approved":
+        raise WorkflowError(
+            "Stage3 语义事件筛选尚未确认。"
+            "请先执行 `stage3-semantic --keep-all --reason \"...\"` "
+            "或指定 `--keep-event-id` 完成筛选，再 approve。"
+        )
+
+    business_events = artifact.get("business_events", [])
+    if not isinstance(business_events, list) or not business_events:
+        raise WorkflowError("Stage3 语义筛选后 business_events 为空，不能推进到 Stage4")
+
+
+def ensure_stage4_semantic_gate_ready(paths: Paths, pending: dict[str, Any], action: str) -> None:
+    if int(pending.get("stage", -1)) != 4 or action != "approve":
+        return
+
+    artifact = read_json(paths.stage_artifact(4), {})
+    if not isinstance(artifact, dict):
+        raise WorkflowError("stage4 产物不存在，无法继续审批")
+
+    semantic_review = artifact.get("semantic_review", {})
+    status = str(semantic_review.get("status", "")).strip().lower() if isinstance(semantic_review, dict) else ""
+    if status != "approved":
+        raise WorkflowError(
+            "Stage4 语义筛选尚未确认。"
+            "请先执行 `stage4-semantic --keep-all --reason \"...\"` "
+            "或指定 `--keep-case-id` 完成筛选，再 approve。"
+        )
+
+    generated_cases = artifact.get("generated_cases", [])
+    if not isinstance(generated_cases, list) or not generated_cases:
+        raise WorkflowError("Stage4 语义筛选后 generated_cases 为空，不能推进到 Stage5")
+
+    rows = [item for item in generated_cases if isinstance(item, dict)]
+    test_generation = analyze_stage4_test_generation(paths, rows)
+    if test_generation.get("status") != "ready":
+        missing = test_generation.get("missing_tests", [])
+        missing_preview = ", ".join(missing[:8]) if isinstance(missing, list) else ""
+        if isinstance(missing, list) and len(missing) > 8:
+            missing_preview = f"{missing_preview}, ..."
+        placeholder = bool(test_generation.get("placeholder_detected", False))
+        test_file = str(test_generation.get("test_file", generated_test_file_path(paths)))
+        details = []
+        if missing_preview:
+            details.append(f"missing_tests={missing_preview}")
+        if placeholder:
+            details.append("detected_placeholder_test=true")
+        detail_text = f" ({'; '.join(details)})" if details else ""
+        raise WorkflowError(
+            "Stage4 测试代码尚未就绪。"
+            f"请由当前 Codex session 先更新 `{test_file}` 并覆盖全部 expected_tests 后再 approve{detail_text}。"
+        )
+
+    artifact["test_generation"] = test_generation
+    write_json(paths.stage_artifact(4), artifact)
+
+
 def resume(paths: Paths, auto_continue: bool) -> str:
     spec = read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)
     state = load_state(paths)
@@ -2085,6 +3284,8 @@ def resume(paths: Paths, auto_continue: bool) -> str:
         raise WorkflowError(f"decision.json 校验失败: {decision_errors}")
 
     action = decision["action"]
+    ensure_stage3_semantic_gate_ready(paths, pending, action)
+    ensure_stage4_semantic_gate_ready(paths, pending, action)
     next_stage = int(state.get("current_stage", 0))
 
     if action == "approve":
@@ -2101,6 +3302,9 @@ def resume(paths: Paths, auto_continue: bool) -> str:
 
     state["status"] = "idle"
     state["current_stage"] = next_stage
+    pending_stage = int(pending.get("stage", -1))
+    if next_stage == 0 and pending_stage in {6, 8}:
+        state["running_iteration"] = int(state.get("running_iteration", 1)) + 1
 
     duration_ms = int((time.perf_counter() - started) * 1000)
     event_id = append_event(
@@ -2146,6 +3350,142 @@ def cmd_gate(args: argparse.Namespace, paths: Paths) -> int:
     ensure_scaffold(paths, force=False)
     gate_payload = build_gate_review_payload(paths, include_events=True)
     print(json.dumps(gate_payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_stage3_semantic(args: argparse.Namespace, paths: Paths) -> int:
+    ensure_scaffold(paths, force=False)
+    state = load_state(paths)
+    pending = read_json(paths.pending, DEFAULT_PENDING)
+
+    if state.get("status") != "waiting_decision" or int(pending.get("stage", -1)) != 3:
+        raise WorkflowError("stage3-semantic 仅可在 Stage3 waiting_decision 门禁时执行")
+
+    stage3_artifact = read_json(paths.stage_artifact(3), {})
+    if not isinstance(stage3_artifact, dict):
+        raise WorkflowError("stage3 artifact 不存在或格式错误")
+
+    candidate_events = stage3_artifact.get("business_event_candidates", [])
+    candidate_ids: list[str] = []
+    if isinstance(candidate_events, list):
+        for item in candidate_events:
+            if isinstance(item, dict):
+                event_id = str(item.get("event_id", "")).strip()
+                if event_id:
+                    candidate_ids.append(event_id)
+    candidate_ids = dedupe_keep_order(candidate_ids)
+    if not candidate_ids:
+        raise WorkflowError("stage3 artifact 缺少 business_event_candidates，无法执行语义筛选")
+
+    raw_keep_ids = args.keep_event_id or []
+    if args.keep_all:
+        selected_event_ids = list(candidate_ids)
+    elif raw_keep_ids:
+        selected_event_ids = normalize_event_id_tokens(raw_keep_ids)
+    else:
+        existing_events = stage3_artifact.get("business_events", [])
+        selected_event_ids = []
+        if isinstance(existing_events, list):
+            for item in existing_events:
+                if isinstance(item, dict):
+                    event_id = str(item.get("event_id", "")).strip()
+                    if event_id:
+                        selected_event_ids.append(event_id)
+        selected_event_ids = dedupe_keep_order(selected_event_ids) or list(candidate_ids)
+
+    if args.max_events is not None:
+        if args.max_events <= 0:
+            raise WorkflowError("--max-events 必须 > 0")
+        selected_set = set(selected_event_ids)
+        selected_event_ids = [event_id for event_id in candidate_ids if event_id in selected_set][: args.max_events]
+
+    summary = apply_stage3_semantic_selection(
+        paths,
+        stage3_artifact,
+        selected_event_ids=selected_event_ids,
+        reason=args.reason or "session semantic event review",
+        reviewer=args.reviewer or "codex_session",
+    )
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "stage": 3,
+                "artifact_path": rel_path(paths, paths.stage_artifact(3)),
+                "summary": summary,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_stage4_semantic(args: argparse.Namespace, paths: Paths) -> int:
+    ensure_scaffold(paths, force=False)
+    state = load_state(paths)
+    pending = read_json(paths.pending, DEFAULT_PENDING)
+
+    if state.get("status") != "waiting_decision" or int(pending.get("stage", -1)) != 4:
+        raise WorkflowError("stage4-semantic 仅可在 Stage4 waiting_decision 门禁时执行")
+
+    stage4_artifact = read_json(paths.stage_artifact(4), {})
+    if not isinstance(stage4_artifact, dict):
+        raise WorkflowError("stage4 artifact 不存在或格式错误")
+
+    candidate_cases = stage4_artifact.get("candidate_cases", [])
+    candidate_ids: list[str] = []
+    if isinstance(candidate_cases, list):
+        for item in candidate_cases:
+            if isinstance(item, dict):
+                case_id = str(item.get("case_id", "")).strip()
+                if case_id:
+                    candidate_ids.append(case_id)
+    candidate_ids = dedupe_keep_order(candidate_ids)
+    if not candidate_ids:
+        raise WorkflowError("stage4 artifact 缺少 candidate_cases，无法执行语义筛选")
+
+    raw_keep_ids = args.keep_case_id or []
+    if args.keep_all:
+        selected_case_ids = list(candidate_ids)
+    elif raw_keep_ids:
+        selected_case_ids = normalize_case_id_tokens(raw_keep_ids)
+    else:
+        existing_generated = stage4_artifact.get("generated_cases", [])
+        selected_case_ids = []
+        if isinstance(existing_generated, list):
+            for item in existing_generated:
+                if isinstance(item, dict):
+                    case_id = str(item.get("case_id", "")).strip()
+                    if case_id:
+                        selected_case_ids.append(case_id)
+        selected_case_ids = dedupe_keep_order(selected_case_ids) or list(candidate_ids)
+
+    if args.max_cases is not None:
+        if args.max_cases <= 0:
+            raise WorkflowError("--max-cases 必须 > 0")
+        selected_set = set(selected_case_ids)
+        selected_case_ids = [case_id for case_id in candidate_ids if case_id in selected_set][: args.max_cases]
+
+    summary = apply_stage4_semantic_selection(
+        paths,
+        stage4_artifact,
+        selected_case_ids=selected_case_ids,
+        reason=args.reason or "session semantic review",
+        reviewer=args.reviewer or "codex_session",
+    )
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "stage": 4,
+                "artifact_path": rel_path(paths, paths.stage_artifact(4)),
+                "summary": summary,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -2326,6 +3666,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="Show current state and pending decision")
     sub.add_parser("gate", help="Show gate-centric view (status + pending)")
+    p_stage3_semantic = sub.add_parser("stage3-semantic", help="Apply stage3 semantic event selection in current session")
+    p_stage3_semantic.add_argument(
+        "--keep-event-id",
+        action="append",
+        default=[],
+        help="Event id to keep; can repeat or use comma-separated values",
+    )
+    p_stage3_semantic.add_argument("--keep-all", action="store_true", help="Keep all stage3 candidate events")
+    p_stage3_semantic.add_argument("--max-events", type=int, help="Optional cap after semantic selection")
+    p_stage3_semantic.add_argument("--reason", help="Semantic review reason")
+    p_stage3_semantic.add_argument("--reviewer", help="Semantic reviewer label")
+    p_stage4_semantic = sub.add_parser("stage4-semantic", help="Apply stage4 semantic case selection in current session")
+    p_stage4_semantic.add_argument(
+        "--keep-case-id",
+        action="append",
+        default=[],
+        help="Case id to keep; can repeat or use comma-separated values",
+    )
+    p_stage4_semantic.add_argument("--keep-all", action="store_true", help="Keep all stage4 candidate cases")
+    p_stage4_semantic.add_argument("--max-cases", type=int, help="Optional cap after semantic selection")
+    p_stage4_semantic.add_argument("--reason", help="Semantic review reason")
+    p_stage4_semantic.add_argument("--reviewer", help="Semantic reviewer label")
     p_case_web = sub.add_parser("case-web", help="Run web case CRUD server")
     p_case_web.add_argument("--host", default="127.0.0.1", help="Bind host")
     p_case_web.add_argument("--port", type=int, default=8787, help="Bind port")
@@ -2389,6 +3751,10 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_status(args, paths)
         if args.command == "gate":
             return cmd_gate(args, paths)
+        if args.command == "stage3-semantic":
+            return cmd_stage3_semantic(args, paths)
+        if args.command == "stage4-semantic":
+            return cmd_stage4_semantic(args, paths)
         if args.command == "case-web":
             return cmd_case_web(args, paths)
         if args.command == "run-stage":

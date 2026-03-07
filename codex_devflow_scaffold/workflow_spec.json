@@ -12,6 +12,13 @@
     "local_scan_enabled": true,
     "local_scan_urlconf": "config.business_api_urlconf"
   },
+  "business_code_fields": [
+    "business_code",
+    "biz_code",
+    "code",
+    "status_code"
+  ],
+  "stage4_business_code_strict": false,
   "test_command": [
     ".venv/bin/python",
     "manage.py",
@@ -27,6 +34,26 @@
       ],
       "next_stage_on_approve": 1,
       "fallback_stage": 0
+    },
+    "3": {
+      "reason": "stage3_semantic_event_review_required",
+      "allowed_actions": [
+        "approve",
+        "reject",
+        "goto_stage"
+      ],
+      "next_stage_on_approve": 4,
+      "fallback_stage": 2
+    },
+    "4": {
+      "reason": "stage4_semantic_review_required",
+      "allowed_actions": [
+        "approve",
+        "reject",
+        "goto_stage"
+      ],
+      "next_stage_on_approve": 5,
+      "fallback_stage": 3
     },
     "6": {
       "reason": "stage6_final_gate",
