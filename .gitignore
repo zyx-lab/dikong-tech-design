@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+deprecated/
 *.pyo
 *.pyd
 db.sqlite3

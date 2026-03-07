@@ -1,26 +1,4 @@
 {
   "stage": 6,
-  "generated_at": "2026-03-07T01:22:14.266014Z",
-  "registry_updates": {
-    "api_registry_count": 15,
-    "case_registry_count": 90
-  },
-  "docs_updates": [
-    "api_change_summary.md",
-    "api_catalog.md",
-    "data_model_delta.md",
-    "traceability_matrix.md",
-    "test_example_records.md"
-  ],
-  "settlement_commit_message": "stage-6(settlement): update registry and docs",
-  "business_doc_sync": {
-    "touched_entities": [
-      "drone"
-    ],
-    "code_changed": false,
-    "missing_docs": {},
-    "unsynced_entities": [],
-    "passed": true
-  },
-  "permission_doc_changed": false
+  "initialized": true
 }

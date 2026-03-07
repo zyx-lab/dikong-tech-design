@@ -1,43 +1,4 @@
 {
   "stage": 2,
-  "generated_at": "2026-03-07T01:22:10.937272Z",
-  "source": "local_openapi",
-  "scan_error": "",
-  "scanned_apis": [
-    "GET /api/v1/",
-    "GET /api/v1/drone-assignments",
-    "GET /api/v1/drone-assignments/{id}",
-    "GET /api/v1/drones",
-    "GET /api/v1/drones/{id}",
-    "GET /api/v1/health",
-    "PATCH /api/v1/drones/{id}",
-    "POST /api/v1/drone-assignments",
-    "POST /api/v1/drone-assignments/{id}/cancel",
-    "POST /api/v1/drones",
-    "POST /api/v1/drones/{id}/disable",
-    "POST /api/v1/drones/{id}/enable",
-    "POST /api/v1/drones/{id}/maintenance",
-    "POST /api/v1/drones/{id}/retire",
-    "PUT /api/v1/drones/{id}"
-  ],
-  "existing_api_keys": [],
-  "new_api_keys": [
-    "GET /api/v1/",
-    "GET /api/v1/drone-assignments",
-    "GET /api/v1/drone-assignments/{id}",
-    "GET /api/v1/drones",
-    "GET /api/v1/drones/{id}",
-    "GET /api/v1/health",
-    "PATCH /api/v1/drones/{id}",
-    "POST /api/v1/drone-assignments",
-    "POST /api/v1/drone-assignments/{id}/cancel",
-    "POST /api/v1/drones",
-    "POST /api/v1/drones/{id}/disable",
-    "POST /api/v1/drones/{id}/enable",
-    "POST /api/v1/drones/{id}/maintenance",
-    "POST /api/v1/drones/{id}/retire",
-    "PUT /api/v1/drones/{id}"
-  ],
-  "drift_items": [],
-  "bootstrap_mode": true
+  "initialized": true
 }

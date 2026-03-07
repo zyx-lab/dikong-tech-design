@@ -1,3 +1,3 @@
 # Test Example Records
 
-- case_count: 90
+本文件由 Stage 6 维护。

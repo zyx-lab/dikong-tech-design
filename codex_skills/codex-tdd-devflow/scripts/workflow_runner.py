@@ -34,6 +34,7 @@ SEMANTIC_DIR_NAMES = {
     "business": "业务侧实现",
     "permission": "权限管理侧实现",
 }
+GENERATED_TEST_FILE = "codex_devflow_scaffold/tests/generated/test_generated_specs.py"
 SEMANTIC_BLOCKED_STAGES = {1, 3, 4, 7, 8}
 ENTITY_DOC_SUFFIXES = (
     "data_dictionary.md",
@@ -160,6 +161,11 @@ DEFAULT_DOCS = {
     "traceability_matrix.md": "# Traceability Matrix\n\n本文件由 Stage 6 维护。\n",
     "test_example_records.md": "# Test Example Records\n\n本文件由 Stage 6 维护。\n",
 }
+DEFAULT_GENERATED_TEST = (
+    '"""Auto-generated placeholder test file for codex-tdd-devflow."""\n\n'
+    "def test_placeholder_generated_case():\n"
+    "    assert True\n"
+)
 
 STAGE_REQUIRED_FIELDS = {
     0: ["api_candidates", "biz_status_codes", "required_case_codes", "risk_assessment", "semantic_gap_report"],
@@ -588,6 +594,7 @@ def ensure_scaffold(paths: Paths, force: bool = False) -> None:
         paths.scaffold / "logs",
         paths.scaffold / "docs",
         paths.scaffold / "semantic",
+        paths.scaffold / "tests" / "generated",
     ]
     for folder in base_dirs:
         folder.mkdir(parents=True, exist_ok=True)
@@ -638,6 +645,8 @@ def ensure_scaffold(paths: Paths, force: bool = False) -> None:
 
     for doc_name, content in DEFAULT_DOCS.items():
         ensure_text(paths.scaffold / "docs" / doc_name, content, force)
+
+    ensure_text(paths.scaffold / "tests" / "generated" / "test_generated_specs.py", DEFAULT_GENERATED_TEST, force)
 
 
 def default_prompt(stage: int) -> str:
@@ -1279,7 +1288,7 @@ def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
         "stage": 4,
         "generated_at": now_iso(),
         "generated_cases": generated_cases,
-        "generated_test_files": ["deprecated/tests_scaffold/generated/test_generated_specs.py"],
+        "generated_test_files": [GENERATED_TEST_FILE],
         "coverage_by_event": coverage_by_event,
     }
 
@@ -1419,7 +1428,7 @@ def _upsert_case_registry(paths: Paths) -> dict[str, Any]:
             "case_id": case_id,
             "event_id": event_id,
             "api_refs": api_refs if isinstance(api_refs, list) else [],
-            "test_file": "deprecated/tests_scaffold/generated/test_generated_specs.py",
+            "test_file": GENERATED_TEST_FILE,
             "test_name": test_name,
             "test_type": "api",
             "enabled": True,

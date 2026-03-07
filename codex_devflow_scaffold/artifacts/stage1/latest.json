@@ -1,16 +1,4 @@
 {
   "stage": 1,
-  "generated_at": "2026-03-07T01:22:09.976316Z",
-  "implementation_tasks": [
-    "根据 stage0 候选 API 完成 serializer/view/urls 与权限接入",
-    "补充对应测试与业务状态码处理"
-  ],
-  "changed_files": [],
-  "notes": [
-    "Runner 当前生成的是执行计划模板，具体代码变更由开发会话执行",
-    "candidate={'api_key': 'POST /api/v1/drones', 'reason': '由 Stage0 按语义资源自动生成候选，需人工 review', 'risk': 'medium'}"
-  ],
-  "touched_entities": [
-    "drone"
-  ]
+  "initialized": true
 }
