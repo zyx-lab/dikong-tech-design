@@ -26,6 +26,16 @@
   - RESOURCE_NOT_FOUND -> 对象不存在或被逻辑删除
   - PERMISSION_DENIED -> 访问者无认证或无权限
 
+## 本轮增补（2026-03-08，迭代16）
+- 本轮聚焦 API: DELETE /api/v1/media-files/{id}
+- 删除模型语义: 以 `media_files.id` 定位对象，执行逻辑删除（`is_deleted=true`、`deleted_at=now`）。
+- 一致性约束: 不做物理删除，保留与 `flight_record` 的追溯关系。
+- 权限约束: `destroy` 走 `media_file.manage_media_file`，与 `view_media_file` 分离。
+- 业务码映射:
+  - SUCCESS -> 删除动作完成
+  - RESOURCE_NOT_FOUND -> 目标不存在或已删除
+  - PERMISSION_DENIED -> 无认证或无删除权限
+
 
 <!-- stage6_round_context::media_file::GET /api/v1/media-files/{id} -->
 ## Stage6 同步上下文（可追溯）
@@ -54,6 +64,35 @@
     "apps/media_file/views.py",
     "apps/media_file/urls.py",
     "apps/media_file/tests.py"
+  ]
+}
+```
+
+
+<!-- stage6_round_context::media_file::DELETE /api/v1/media-files/{id} -->
+## Stage6 同步上下文（可追溯）
+```json
+{
+  "generated_at": "2026-03-08T12:29:57.254159Z",
+  "entity": "media_file",
+  "focus_api_keys": [
+    "DELETE /api/v1/media-files/{id}"
+  ],
+  "stage0_reason": "总体设计已定义 media_files 采用逻辑删除（is_deleted/deleted_at），当前缺少单条媒体的删除入口。补齐该基础接口后，外部可自行组合“查询详情->执行删除->再次查询校验”流程，无需编排型接口。",
+  "source_artifacts": [
+    "codex_devflow_scaffold/artifacts/stage0/latest.json",
+    "codex_devflow_scaffold/artifacts/stage2/latest.json",
+    "codex_devflow_scaffold/artifacts/stage4/latest.json",
+    "codex_devflow_scaffold/artifacts/stage5/latest.json"
+  ],
+  "related_paths": [
+    "apps/access/management/commands/seed_role_permissions.py",
+    "apps/media_file/models.py",
+    "apps/media_file/tests.py",
+    "apps/media_file/views.py",
+    "apps/media_file/migrations/0002_add_manage_media_file_permission.py",
+    "apps/media_file/serializers.py",
+    "apps/media_file/urls.py"
   ]
 }
 ```

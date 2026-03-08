@@ -23,6 +23,17 @@ Table media_files {
 // 权限语义：需具备 media_file.view_media_file；未认证/无权限返回 PERMISSION_DENIED。
 // 说明：本轮仅补对象级读取语义，不引入新的数据表字段。
 
+// 本轮增补（2026-03-08，迭代16）
+// focus_api: DELETE /api/v1/media-files/{id}
+// destroy 语义：按 media_files.id 执行逻辑删除，更新 is_deleted=true 与 deleted_at。
+// 权限语义：需具备 media_file.manage_media_file；未认证/无权限返回 PERMISSION_DENIED。
+// 返回语义：SUCCESS=删除成功；RESOURCE_NOT_FOUND=记录不存在或已删除。
+
 // stage6_round_context::media_file::GET /api/v1/media-files/{id}
 // trace_context: {"generated_at":"2026-03-08T11:48:36.944441Z","entity":"media_file","focus_api_keys":["GET /api/v1/media-files/{id}"],"stage0_reason":"在已具备媒体列表检索后，补齐按媒体ID读取详情的基础只读接口，供外部系统先列表筛选再精确拉取单条媒体元数据，保持接口简单且可组合。","source_artifacts":["codex_devflow_scaffold/artifacts/stage0/latest.json","codex_devflow_scaffold/artifacts/stage2/latest.json","codex_devflow_scaffold/artifacts/stage4/latest.json","codex_devflow_scaffold/artifacts/stage5/latest.json"],"related_paths":["apps/access/management/commands/seed_role_permissions.py","apps/api_v1/urls.py","apps/api_v1/views.py","config/settings.py","apps/media_file/","apps/media_file/models.py","apps/media_file/serializers.py","apps/media_file/views.py","apps/media_file/urls.py","apps/media_file/tests.py"]}
+// note: non-destructive stage6 append, no test evidence embedding
+
+
+// stage6_round_context::media_file::DELETE /api/v1/media-files/{id}
+// trace_context: {"generated_at":"2026-03-08T12:29:57.254159Z","entity":"media_file","focus_api_keys":["DELETE /api/v1/media-files/{id}"],"stage0_reason":"总体设计已定义 media_files 采用逻辑删除（is_deleted/deleted_at），当前缺少单条媒体的删除入口。补齐该基础接口后，外部可自行组合“查询详情->执行删除->再次查询校验”流程，无需编排型接口。","source_artifacts":["codex_devflow_scaffold/artifacts/stage0/latest.json","codex_devflow_scaffold/artifacts/stage2/latest.json","codex_devflow_scaffold/artifacts/stage4/latest.json","codex_devflow_scaffold/artifacts/stage5/latest.json"],"related_paths":["apps/access/management/commands/seed_role_permissions.py","apps/media_file/models.py","apps/media_file/tests.py","apps/media_file/views.py","apps/media_file/migrations/0002_add_manage_media_file_permission.py","apps/media_file/serializers.py","apps/media_file/urls.py"]}
 // note: non-destructive stage6 append, no test evidence embedding

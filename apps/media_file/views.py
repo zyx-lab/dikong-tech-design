@@ -1,4 +1,6 @@
-from rest_framework import mixins, viewsets
+from django.utils import timezone
+from rest_framework import mixins, status, viewsets
+from rest_framework.response import Response
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.api_v1.business_response import BusinessApiResponseMixin
@@ -11,6 +13,7 @@ class MediaFileViewSet(
     PermissionMapMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
+    mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     """媒体文件业务接口（V1）。"""
@@ -18,11 +21,12 @@ class MediaFileViewSet(
     queryset = MediaFile.objects.select_related("flight_record", "flight_record__mission", "flight_record__drone").all().order_by("-id")
     serializer_class = MediaFileReadSerializer
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "head", "options"]
+    http_method_names = ["get", "delete", "head", "options"]
 
     permission_map = {
         "list": "media_file.view_media_file",
         "retrieve": "media_file.view_media_file",
+        "destroy": "media_file.manage_media_file",
     }
 
     def get_queryset(self):
@@ -73,3 +77,30 @@ class MediaFileViewSet(
         # 2) 记录不存在或已逻辑删除：business_code=RESOURCE_NOT_FOUND（HTTP 404）；
         # 3) 未认证或无查看权限：business_code=PERMISSION_DENIED（HTTP 401/403）。
         return super().retrieve(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按 media_file_id 逻辑删除媒体文件”的基础写操作能力。
+        # 该接口只做单条删除，不做批量删除或回收站恢复；外部系统可自行组合业务流程。
+        #
+        # 边界与返回语义：
+        # 1) 有删除权限且记录存在（且未删除）：标记 is_deleted=true 并写入 deleted_at，
+        #    返回 business_code=SUCCESS（HTTP 200）；
+        # 2) 记录不存在或已逻辑删除：business_code=RESOURCE_NOT_FOUND（HTTP 404）；
+        # 3) 未认证或无删除权限：business_code=PERMISSION_DENIED（HTTP 401/403）。
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(
+            {
+                "id": instance.id,
+                "is_deleted": True,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def perform_destroy(self, instance):
+        # 设计约束：
+        # media_files 采用逻辑删除，不做物理删除，避免破坏飞行记录与媒体审计追溯链路。
+        instance.is_deleted = True
+        instance.deleted_at = timezone.now()
+        instance.save(update_fields=["is_deleted", "deleted_at"])

@@ -48,6 +48,25 @@
   - `test_retrieve_media_file_without_auth_should_return_permission_denied`
   - `test_retrieve_media_file_without_permission_should_return_permission_denied`
 
+## 本轮增补（2026-03-08，迭代16）
+- 新增对象级删除 API: DELETE /api/v1/media-files/{id}
+- 业务价值: 补齐媒体文件生命周期的基础删除能力，外部系统可自行组合“查询详情 -> 执行删除 -> 再次查询校验”流程。
+- 实现位置: `MediaFileViewSet.destroy` / `perform_destroy`。
+- 实现策略:
+  - 采用逻辑删除，不做物理删除；
+  - 删除时仅更新 `is_deleted` 与 `deleted_at`。
+- 权限与业务码:
+  - 权限码: `media_file.manage_media_file`
+  - SUCCESS: 删除成功（HTTP 200）
+  - RESOURCE_NOT_FOUND: 记录不存在或已删除（HTTP 404）
+  - PERMISSION_DENIED: 未认证或无权限（HTTP 401/403）
+- 项目内回归沉淀:
+  - `test_delete_media_file_should_return_success_and_soft_delete`
+  - `test_delete_media_file_not_found_should_return_resource_not_found`
+  - `test_delete_media_file_deleted_should_return_resource_not_found`
+  - `test_delete_media_file_without_auth_should_return_permission_denied`
+  - `test_delete_media_file_without_permission_should_return_permission_denied`
+
 
 <!-- stage6_round_context::media_file::GET /api/v1/media-files/{id} -->
 ## Stage6 同步上下文（可追溯）
@@ -76,6 +95,35 @@
     "apps/media_file/views.py",
     "apps/media_file/urls.py",
     "apps/media_file/tests.py"
+  ]
+}
+```
+
+
+<!-- stage6_round_context::media_file::DELETE /api/v1/media-files/{id} -->
+## Stage6 同步上下文（可追溯）
+```json
+{
+  "generated_at": "2026-03-08T12:29:57.254159Z",
+  "entity": "media_file",
+  "focus_api_keys": [
+    "DELETE /api/v1/media-files/{id}"
+  ],
+  "stage0_reason": "总体设计已定义 media_files 采用逻辑删除（is_deleted/deleted_at），当前缺少单条媒体的删除入口。补齐该基础接口后，外部可自行组合“查询详情->执行删除->再次查询校验”流程，无需编排型接口。",
+  "source_artifacts": [
+    "codex_devflow_scaffold/artifacts/stage0/latest.json",
+    "codex_devflow_scaffold/artifacts/stage2/latest.json",
+    "codex_devflow_scaffold/artifacts/stage4/latest.json",
+    "codex_devflow_scaffold/artifacts/stage5/latest.json"
+  ],
+  "related_paths": [
+    "apps/access/management/commands/seed_role_permissions.py",
+    "apps/media_file/models.py",
+    "apps/media_file/tests.py",
+    "apps/media_file/views.py",
+    "apps/media_file/migrations/0002_add_manage_media_file_permission.py",
+    "apps/media_file/serializers.py",
+    "apps/media_file/urls.py"
   ]
 }
 ```

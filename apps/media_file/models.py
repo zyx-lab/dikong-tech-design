@@ -35,6 +35,7 @@ class MediaFile(models.Model):
         default_permissions = ()
         permissions = [
             ("view_media_file", "可查看媒体文件"),
+            ("manage_media_file", "可管理媒体文件"),
         ]
 
     def __str__(self):

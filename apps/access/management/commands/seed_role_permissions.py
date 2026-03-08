@@ -69,6 +69,7 @@ GROUP_MATRIX = {
         "mission.manage_mission": ScopeType.ALL,
         "flight_record.view_flight_record": ScopeType.ALL,
         "media_file.view_media_file": ScopeType.ALL,
+        "media_file.manage_media_file": ScopeType.ALL,
     },
     "cap_business_admin": {
         "drone.view_drone": ScopeType.ALL,
@@ -81,6 +82,7 @@ GROUP_MATRIX = {
         "mission.manage_mission": ScopeType.ALL,
         "flight_record.view_flight_record": ScopeType.ALL,
         "media_file.view_media_file": ScopeType.ALL,
+        "media_file.manage_media_file": ScopeType.ALL,
     },
     "cap_drone_viewer": {
         "drone.view_drone": ScopeType.ALL,

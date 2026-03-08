@@ -232,3 +232,63 @@ class MediaFileApiTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
+    def test_delete_media_file_should_return_success_and_soft_delete(self):
+        self._grant_permission("media_file.manage_media_file")
+        self.client.force_authenticate(self.viewer_user)
+        flight_record = self._create_flight_record()
+        media_file = self._create_media_file(flight_record=flight_record, file_name="IMG_DELETE_OK.JPG")
+
+        response = self.client.delete(f"/api/v1/media-files/{media_file.id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["id"], media_file.id)
+        self.assertTrue(response.data["is_deleted"])
+
+        media_file.refresh_from_db()
+        self.assertTrue(media_file.is_deleted)
+        self.assertIsNotNone(media_file.deleted_at)
+
+    def test_delete_media_file_not_found_should_return_resource_not_found(self):
+        self._grant_permission("media_file.manage_media_file")
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.delete("/api/v1/media-files/999999")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_delete_media_file_deleted_should_return_resource_not_found(self):
+        self._grant_permission("media_file.manage_media_file")
+        self.client.force_authenticate(self.viewer_user)
+        flight_record = self._create_flight_record()
+        media_file = self._create_media_file(
+            flight_record=flight_record,
+            file_name="IMG_DELETE_ALREADY.JPG",
+            is_deleted=True,
+        )
+
+        response = self.client.delete(f"/api/v1/media-files/{media_file.id}")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_delete_media_file_without_auth_should_return_permission_denied(self):
+        flight_record = self._create_flight_record()
+        media_file = self._create_media_file(flight_record=flight_record, file_name="IMG_DELETE_NOAUTH.JPG")
+
+        response = self.client.delete(f"/api/v1/media-files/{media_file.id}")
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_delete_media_file_without_permission_should_return_permission_denied(self):
+        flight_record = self._create_flight_record()
+        media_file = self._create_media_file(flight_record=flight_record, file_name="IMG_DELETE_FORBIDDEN.JPG")
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.delete(f"/api/v1/media-files/{media_file.id}")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
