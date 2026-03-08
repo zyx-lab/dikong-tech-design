@@ -134,3 +134,46 @@
   ]
 }
 ```
+
+
+<!-- stage6_round_context::media_file::POST /api/v1/media-files -->
+## Stage6 同步上下文（可追溯）
+```json
+{
+  "generated_at": "2026-03-08T13:12:10.606036Z",
+  "entity": "media_file",
+  "focus_api_keys": [
+    "POST /api/v1/media-files"
+  ],
+  "stage0_reason": "总体设计已定义 media_files 为飞行记录关联的核心实体；当前已具备 GET 列表/详情与 DELETE 逻辑删除，但缺少基础写入入口。补齐 POST 后，外部系统可用“创建媒体元数据->查询->删除”组合业务流，无需新增编排型接口。",
+  "source_artifacts": [
+    "codex_devflow_scaffold/artifacts/stage0/latest.json",
+    "codex_devflow_scaffold/artifacts/stage2/latest.json",
+    "codex_devflow_scaffold/artifacts/stage4/latest.json",
+    "codex_devflow_scaffold/artifacts/stage5/latest.json"
+  ],
+  "related_paths": [
+    "apps/media_file/serializers.py",
+    "apps/media_file/tests.py",
+    "apps/media_file/views.py",
+    "apps/media_file/models.py",
+    "apps/media_file/urls.py"
+  ]
+}
+```
+
+## 本轮增补（2026-03-08，迭代17）
+- 本轮聚焦 API: POST /api/v1/media-files
+- 写入语义:
+  - 创建一条媒体文件主记录，核心输入为 `flight_record`、`media_type`、`file_name`、`file_url`。
+  - 创建时固定写入 `is_deleted=false`、`deleted_at=null`，保持新建即有效。
+- 权限语义:
+  - 需要 `media_file.manage_media_file` 权限。
+  - 未认证或无权限时返回 `PERMISSION_DENIED`。
+- 返回业务码语义:
+  - SUCCESS: 创建成功（HTTP 201）。
+  - INVALID_PARAMS: 必填字段缺失或字段不可写（HTTP 400）。
+  - PERMISSION_DENIED: 未认证或无创建权限（HTTP 401/403）。
+- 本轮业务码覆盖更新:
+  - 已覆盖: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
+  - 仍未覆盖: STATE_CONFLICT, IDEMPOTENT_DUPLICATE

@@ -3,9 +3,10 @@ from rest_framework import mixins, status, viewsets
 from rest_framework.response import Response
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
+from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin
 from apps.media_file.models import MediaFile
-from apps.media_file.serializers import MediaFileReadSerializer
+from apps.media_file.serializers import MediaFileReadSerializer, MediaFileWriteSerializer
 
 
 class MediaFileViewSet(
@@ -13,21 +14,27 @@ class MediaFileViewSet(
     PermissionMapMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     """媒体文件业务接口（V1）。"""
 
     queryset = MediaFile.objects.select_related("flight_record", "flight_record__mission", "flight_record__drone").all().order_by("-id")
-    serializer_class = MediaFileReadSerializer
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "delete", "head", "options"]
+    http_method_names = ["get", "post", "delete", "head", "options"]
 
     permission_map = {
         "list": "media_file.view_media_file",
         "retrieve": "media_file.view_media_file",
+        "create": "media_file.manage_media_file",
         "destroy": "media_file.manage_media_file",
     }
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return MediaFileWriteSerializer
+        return MediaFileReadSerializer
 
     def get_queryset(self):
         queryset = super().get_queryset().filter(is_deleted=False)
@@ -77,6 +84,30 @@ class MediaFileViewSet(
         # 2) 记录不存在或已逻辑删除：business_code=RESOURCE_NOT_FOUND（HTTP 404）；
         # 3) 未认证或无查看权限：business_code=PERMISSION_DENIED（HTTP 401/403）。
         return super().retrieve(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        # 业务作用：
+        # 创建媒体文件主记录（media_files），用于沉淀飞行记录下的照片/视频元数据，
+        # 作为后续“媒体列表检索 -> 详情读取 -> 逻辑删除”链路的起点能力。
+        #
+        # 适用边界：
+        # 1) 本接口只写入媒体元数据，不负责文件上传、转码、分发、归档；
+        # 2) 默认写入未删除状态（is_deleted=false, deleted_at=null）；
+        # 3) 返回统一携带 business_code/business_detail_code。
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        media_file = serializer.save(is_deleted=False, deleted_at=None)
+
+        read_serializer = MediaFileReadSerializer(media_file, context={"request": request})
+        log_action(
+            request=request,
+            action="MEDIA_FILE_CREATE",
+            target_type="media_file",
+            target_id=media_file.id,
+            after_data=dict(read_serializer.data),
+        )
+        headers = self.get_success_headers(read_serializer.data)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
     def destroy(self, request, *args, **kwargs):
         # 业务作用：

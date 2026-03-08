@@ -22,3 +22,25 @@ class MediaFileReadSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = fields
+
+
+class MediaFileWriteSerializer(serializers.ModelSerializer):
+    def validate(self, attrs):
+        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
+        if unknown_fields:
+            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
+        return attrs
+
+    class Meta:
+        model = MediaFile
+        fields = [
+            "flight_record",
+            "media_type",
+            "file_name",
+            "file_url",
+            "thumbnail_url",
+            "file_size",
+            "latitude",
+            "longitude",
+            "captured_at",
+        ]

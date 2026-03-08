@@ -96,3 +96,45 @@
   ]
 }
 ```
+
+
+<!-- stage6_round_context::media_file::POST /api/v1/media-files -->
+## Stage6 同步上下文（可追溯）
+```json
+{
+  "generated_at": "2026-03-08T13:12:10.606036Z",
+  "entity": "media_file",
+  "focus_api_keys": [
+    "POST /api/v1/media-files"
+  ],
+  "stage0_reason": "总体设计已定义 media_files 为飞行记录关联的核心实体；当前已具备 GET 列表/详情与 DELETE 逻辑删除，但缺少基础写入入口。补齐 POST 后，外部系统可用“创建媒体元数据->查询->删除”组合业务流，无需新增编排型接口。",
+  "source_artifacts": [
+    "codex_devflow_scaffold/artifacts/stage0/latest.json",
+    "codex_devflow_scaffold/artifacts/stage2/latest.json",
+    "codex_devflow_scaffold/artifacts/stage4/latest.json",
+    "codex_devflow_scaffold/artifacts/stage5/latest.json"
+  ],
+  "related_paths": [
+    "apps/media_file/serializers.py",
+    "apps/media_file/tests.py",
+    "apps/media_file/views.py",
+    "apps/media_file/models.py",
+    "apps/media_file/urls.py"
+  ]
+}
+```
+
+## 本轮增补（2026-03-08，迭代17）
+- 本轮聚焦 API: POST /api/v1/media-files
+- 创建模型语义:
+  - 通过媒体写模型创建 `media_files` 记录，输入字段限定在业务白名单；
+  - 创建后立即进入可读状态（`is_deleted=false`），不引入额外状态机。
+- 关系语义:
+  - 可选关联 `flight_record`，用于把媒体记录挂接到飞行记录主链路；
+  - 不改变既有 `flight_record -> media_files` 一对多关系。
+- 权限语义:
+  - 创建动作与删除动作同属 `media_file.manage_media_file` 写权限域。
+- 业务码映射:
+  - SUCCESS -> 创建成功
+  - INVALID_PARAMS -> 字段缺失/字段不可写
+  - PERMISSION_DENIED -> 未认证或无创建权限

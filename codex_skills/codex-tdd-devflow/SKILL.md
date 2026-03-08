@@ -51,6 +51,8 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py case-web --host
 - 向用户请求决策前，必须先给出“可决策摘要”：`current_stage`、`reason`、`decision_id`、`allowed_actions`、`approve/reject/goto_stage` 的后续影响、关键产物要点与风险（如 `semantic_review` / `test_generation` / 回归结果）。
 - 每次门禁摘要必须给出 `recommended_decision`（`approve/reject/goto_stage`，若为 `goto_stage` 必须含 `recommended_target_stage`）与 `recommended_reason`，并明确写出“输入 `continue` 将执行推荐决策”。
 - 当处于 `waiting_decision` 且用户输入 `continue` 时，视为用户明确授权执行 `recommended_decision`；当前 session 可据此执行对应 `decide --apply`。
+- continue 空转防护规则：当 `recommended_decision=goto_stage` 且 `recommended_target_stage == current_stage` 时，`continue` 必须执行“同阶段重跑”而非仅写决策（可实现为 `decide --goto-stage <stage> --apply --auto --allow-auto-continue`，或 `decide --goto-stage <stage> --apply` 后立即 `run-auto`）。
+- continue 后置校验规则：执行 `continue` 后若出现“`current_stage` 未变化 且 `status=idle` 且未生成新门禁”的状态，视为疑似空转；必须自动补一次 `run-auto`，再输出结果。
 - 当不处于 `waiting_decision`（`pending.active=false`）且用户输入 `continue` 时，视为用户明确授权执行 `run-auto` 继续流程。
 - 向用户请求决策前，必须补充“决策信息清单（按阶段）”：
   - Stage0：候选 API 列表、每个候选的选择理由（语义来源/去重依据）、风险等级、`approve` 后将进入的下一阶段。
@@ -61,7 +63,7 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py case-web --host
 
 标准步骤：
 1. 执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py gate`（会直接输出可读摘要）
-2. 等待用户回复（`approve/reject/goto_stage/run_stage8/continue` 或要求先做 Stage3/4 语义筛选）；若当前为 `waiting_decision` 且用户输入 `continue`，则按摘要中的 `recommended_decision` 自动执行；若当前不在门禁态且用户输入 `continue`，则执行 `run-auto`
+2. 等待用户回复（`approve/reject/goto_stage/run_stage8/continue` 或要求先做 Stage3/4 语义筛选）；若当前为 `waiting_decision` 且用户输入 `continue`，则按摘要中的 `recommended_decision` 自动执行（命中“同阶段 goto”时必须触发同阶段重跑，禁止空转）；若当前不在门禁态且用户输入 `continue`，则执行 `run-auto`
 3. Stage0 非 bootstrap 轮次：每次重新进入 Stage0 时，必须先由当前 Codex session 基于“最新业务文档 + 本会话用户指令”重写 `codex_devflow_scaffold/cases/session_api_candidates.jsonl`（不可复用旧提名），再由 Runner 读取并提名待开发 API
 3.1 Stage0 提名前必须做去重校验：候选 `api_key` 只要命中 `api_registry` 或“当前代码实时扫描已观测 API”，都视为无效候选（防止重复提名上一轮已实现接口）
 4. 每次提名 API 后，当前 Codex session 必须先在项目代码中核查该接口是否已正确实现（路由/视图/序列化/权限/业务码）；若未实现或实现不符合语义，必须先完成实现再继续后续阶段
@@ -185,6 +187,14 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approv
 - 任何 `waiting_decision` 门禁点，若用户未明确授权，不得自动执行后续决策命令（含 `decide` / `run-auto` / `resume --auto`）。
 - continue 决策规则：`waiting_decision` 时用户发送 `continue`，视为“明确授权执行 recommended_decision”；该行为不视为越权自动决策。
 - continue 续跑规则：非 `waiting_decision` 状态下用户发送 `continue`，视为“明确授权执行 `run-auto`”。
+- continue 同阶段重跑规则：若推荐动作为 `goto_stage N` 且当前阶段已是 `N`（常见于 Stage6 自愈复检），`continue` 必须直接触发 `N` 的再次执行（通过 `run-auto` 或等效 `decide --apply --auto`），禁止只做“goto 后停在 idle”。
+- 跨阶段通用自愈规则：当门禁 `reason` 属于“当前 session 可自动修复”的类型时，必须先在当前阶段自动修复并重跑本阶段，成功后再决定是否展示门禁；禁止把可自愈问题直接抛给用户做 `goto_stage`。
+- 自愈重试上限规则：同一 `decision_reason` 连续出现时，需在每次重跑间产生可追溯变更（代码/用例/文档/产物至少一项）。若连续 2 次无实质变更仍阻断，才允许请求用户决策，并在摘要中明确“已执行的自愈动作 + 失败原因”。
+- 阶段自愈动作矩阵（最低要求）：
+  - Stage2 `stage2_not_ready_for_stage3_candidate_unimplemented`：必须执行“实现缺失候选 API（业务码+中文注释+项目内测试）-> 运行相关测试 -> 重跑 Stage2”。
+  - Stage3 语义阻断：必须先补齐/修正业务事件语义（含 `api_refs`、`expected_business_codes`）并重跑 Stage3。
+  - Stage4 语义或可追溯阻断：必须先修正 `session_case_candidates.jsonl` 与 `generated_test_files` 对齐本轮 focus API，再重跑 Stage4。
+  - Stage6 文档/结算阻断：必须先同步实体四件套业务正文并复检，再决定是否门禁。
 - 任何门禁提问都必须给出有助于决策的明确信息，不得只输出“请 approve/reject”而不附上下文与影响说明。
 - 门禁摘要必须明确回答三个问题：为什么是这个候选（或事件/用例）、当前回归状态如何（不适用则写 `N/A`）、用户本次决策会带来什么后果。
 - 门禁摘要字段采用“按阶段适用”规则：只要是该阶段必须字段就必须给值；不适用字段必须显式写 `N/A`。不是每个阶段都涉及测试用例或测试执行结果。

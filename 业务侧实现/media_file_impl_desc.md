@@ -127,3 +127,48 @@
   ]
 }
 ```
+
+
+<!-- stage6_round_context::media_file::POST /api/v1/media-files -->
+## Stage6 同步上下文（可追溯）
+```json
+{
+  "generated_at": "2026-03-08T13:12:10.606036Z",
+  "entity": "media_file",
+  "focus_api_keys": [
+    "POST /api/v1/media-files"
+  ],
+  "stage0_reason": "总体设计已定义 media_files 为飞行记录关联的核心实体；当前已具备 GET 列表/详情与 DELETE 逻辑删除，但缺少基础写入入口。补齐 POST 后，外部系统可用“创建媒体元数据->查询->删除”组合业务流，无需新增编排型接口。",
+  "source_artifacts": [
+    "codex_devflow_scaffold/artifacts/stage0/latest.json",
+    "codex_devflow_scaffold/artifacts/stage2/latest.json",
+    "codex_devflow_scaffold/artifacts/stage4/latest.json",
+    "codex_devflow_scaffold/artifacts/stage5/latest.json"
+  ],
+  "related_paths": [
+    "apps/media_file/serializers.py",
+    "apps/media_file/tests.py",
+    "apps/media_file/views.py",
+    "apps/media_file/models.py",
+    "apps/media_file/urls.py"
+  ]
+}
+```
+
+## 本轮增补（2026-03-08，迭代17）
+- 新增写入 API: POST /api/v1/media-files
+- 业务价值: 补齐媒体实体的基础创建能力，外部系统可组合“创建 -> 列表查询 -> 详情读取 -> 逻辑删除”完整链路，无需编排型接口。
+- 实现位置: `MediaFileViewSet.create` + `MediaFileWriteSerializer`。
+- 请求语义:
+  - 必填字段为 `media_type`、`file_name`、`file_url`；
+  - `flight_record` 可选，用于绑定飞行记录上下文；
+  - 非白名单字段会按参数错误拒绝。
+- 返回语义:
+  - SUCCESS/OK: 创建成功并返回媒体记录快照（含 `business_code`、`business_detail_code`）。
+  - INVALID_PARAMS/VALIDATION_ERROR: 参数缺失或字段不可写。
+  - PERMISSION_DENIED: 未认证或无 `media_file.manage_media_file` 权限。
+- 项目内回归沉淀:
+  - `test_create_media_file_should_return_success`
+  - `test_create_media_file_invalid_params_should_return_invalid_params`
+  - `test_create_media_file_without_auth_should_return_permission_denied`
+  - `test_create_media_file_without_permission_should_return_permission_denied`

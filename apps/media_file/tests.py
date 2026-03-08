@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.access.models import EmploymentStatus, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, StaffType, StaffTypeGroup
+from apps.access.models import AuditLog, EmploymentStatus, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, StaffType, StaffTypeGroup
 from apps.drone.models import Drone, DroneStatus
 from apps.flight_record.models import FlightRecord, FlightRecordStatus
 from apps.media_file.models import MediaFile, MediaType
@@ -129,6 +129,95 @@ class MediaFileApiTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "OK")
         self.assertIn("results", response.data)
         self.assertEqual(len(response.data["results"]), 2)
+
+    def test_create_media_file_should_return_success(self):
+        self._grant_permission("media_file.manage_media_file")
+        self.client.force_authenticate(self.viewer_user)
+        flight_record = self._create_flight_record()
+
+        response = self.client.post(
+            "/api/v1/media-files",
+            {
+                "flight_record": flight_record.id,
+                "media_type": MediaType.PHOTO,
+                "file_name": "IMG_CREATE_OK.JPG",
+                "file_url": "https://example.com/IMG_CREATE_OK.JPG",
+                "thumbnail_url": "https://example.com/thumb/IMG_CREATE_OK.JPG",
+                "file_size": 4096,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["file_name"], "IMG_CREATE_OK.JPG")
+        self.assertFalse(response.data["is_deleted"])
+
+        media_file = MediaFile.objects.get(id=response.data["id"])
+        self.assertEqual(media_file.flight_record_id, flight_record.id)
+        self.assertFalse(media_file.is_deleted)
+        self.assertIsNone(media_file.deleted_at)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="MEDIA_FILE_CREATE",
+                target_type="media_file",
+                target_id=str(media_file.id),
+            ).exists()
+        )
+
+    def test_create_media_file_invalid_params_should_return_invalid_params(self):
+        self._grant_permission("media_file.manage_media_file")
+        self.client.force_authenticate(self.viewer_user)
+        flight_record = self._create_flight_record()
+
+        response = self.client.post(
+            "/api/v1/media-files",
+            {
+                "flight_record": flight_record.id,
+                "media_type": MediaType.PHOTO,
+                "file_url": "https://example.com/IMG_MISSING_NAME.JPG",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("file_name", response.data)
+
+    def test_create_media_file_without_auth_should_return_permission_denied(self):
+        flight_record = self._create_flight_record()
+
+        response = self.client.post(
+            "/api/v1/media-files",
+            {
+                "flight_record": flight_record.id,
+                "media_type": MediaType.PHOTO,
+                "file_name": "IMG_CREATE_NOAUTH.JPG",
+                "file_url": "https://example.com/IMG_CREATE_NOAUTH.JPG",
+            },
+            format="json",
+        )
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_create_media_file_without_permission_should_return_permission_denied(self):
+        flight_record = self._create_flight_record()
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.post(
+            "/api/v1/media-files",
+            {
+                "flight_record": flight_record.id,
+                "media_type": MediaType.PHOTO,
+                "file_name": "IMG_CREATE_FORBIDDEN.JPG",
+                "file_url": "https://example.com/IMG_CREATE_FORBIDDEN.JPG",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
 
     def test_list_media_files_with_filter_should_return_filtered_results(self):
         self._grant_permission("media_file.view_media_file")
