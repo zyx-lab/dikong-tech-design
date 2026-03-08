@@ -18,6 +18,11 @@ INSTALLED_APPS = [
     "apps.access",
     "apps.api_v1",
     "apps.drone",
+    "apps.drone_assignment",
+    "apps.route",
+    "apps.mission",
+    "apps.flight_record",
+    "apps.media_file",
     "drf_spectacular",
 ]
 

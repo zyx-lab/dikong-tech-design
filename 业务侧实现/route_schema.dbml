@@ -1,0 +1,23 @@
+// updated_at: 2026-03-08T07:52:00Z
+// entity: route
+// 历史保留 + 本轮增补：当前轮新增 GET /api/v1/routes/{id}，不改 routes 表结构
+// 当前轮接口语义：按 route 主键读取详情，返回 SUCCESS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
+
+Table routes {
+  id bigint [pk, increment, note: 'ID']
+  name varchar(100) [not null, note: '航线名称']
+  route_type int [not null, note: '航线类型扩展位(0=待扩展)']
+  drone_type_id bigint [note: '适用无人机类型 ID']
+  total_distance decimal(12,2) [note: '航线总长度(米)']
+  estimated_duration int [note: '预计飞行时长(秒)']
+  waypoint_count int [note: '航点数量']
+  creator_name varchar(50) [not null, note: '创建人姓名']
+  status int [not null, note: '状态(0=禁用,1=正常)']
+  created_at timestamp [not null, note: '创建时间']
+  updated_at timestamp [not null, note: '更新时间']
+}
+
+
+// stage6_round_context::route::GET /api/v1/routes/{id}
+// trace_context: {"generated_at":"2026-03-08T07:38:38.976856Z","entity":"route","focus_api_keys":["GET /api/v1/routes/{id}"],"stage0_reason":"在已具备 POST/GET 列表基础上，补齐航线详情读取能力，供任务编排前按 route_id 精确拉取航线主数据；接口保持只读、单一职责、可组合。","source_artifacts":["codex_devflow_scaffold/artifacts/stage0/latest.json","codex_devflow_scaffold/artifacts/stage2/latest.json","codex_devflow_scaffold/artifacts/stage4/latest.json","codex_devflow_scaffold/artifacts/stage5/latest.json"],"related_paths":["apps/access/management/commands/seed_role_permissions.py","apps/api_v1/urls.py","apps/api_v1/views.py","apps/drone/urls.py","config/settings.py","apps/route/","apps/route/models.py","apps/route/serializers.py","apps/route/views.py","apps/route/urls.py","apps/route/tests.py"]}
+// note: non-destructive stage6 append, no test evidence embedding

@@ -41,6 +41,7 @@ PostgreSQL
 **业务规则**：
 1. `serial_no` 全局唯一。  
 2. 已退役（`RETIRED`）状态不可逆。
+3. `DELETE /api/v1/drones/{id}` 仅允许空 body；若存在 `ACTIVE` 分配关系，返回 `STATE_CONFLICT` 并拒绝删除。
 
 ---
 
@@ -85,3 +86,30 @@ PostgreSQL
 1. 模型：`apps/drone/models.py`  
 2. 序列化与校验：`apps/drone/serializers.py`  
 3. 接口：`apps/drone/views.py`
+
+---
+
+## 5. 业务响应码字典（Business API）
+
+说明：业务 API 响应体包含 `business_code`（主业务码）与 `business_detail_code`（细分原因码）。
+
+| business_code | 典型 HTTP | 语义 |
+| ------ | ------ | ------ |
+| SUCCESS | 200 / 201 | 业务处理成功 |
+| INVALID_PARAMS | 400 | 请求参数校验失败 |
+| PERMISSION_DENIED | 401 / 403 | 身份或权限不足 |
+| RESOURCE_NOT_FOUND | 404 | 目标资源不存在 |
+| STATE_CONFLICT | 409 | 状态机冲突（如 RETIRED 不可逆） |
+| IDEMPOTENT_DUPLICATE | 409 | 幂等重复提交（如唯一键冲突） |
+
+| business_detail_code | 语义 |
+| ------ | ------ |
+| OK | 成功 |
+| NOT_AUTHENTICATED | 未登录或认证信息缺失 |
+| FORBIDDEN | 已登录但无权限 |
+| NOT_FOUND | 资源不存在 |
+| VALIDATION_ERROR | 参数校验失败 |
+| STATE_CONFLICT | 业务状态冲突 |
+| DUPLICATE_REQUEST | 幂等重复请求 |
+
+当前实现中，`POST /api/v1/drones`、`DELETE /api/v1/drones/{id}` 与状态动作接口均返回 `business_code + business_detail_code`。

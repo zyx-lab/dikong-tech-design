@@ -1,0 +1,28 @@
+// generated_at: 2026-03-08T11:18:06.896282Z
+// entity: media_file
+
+Table media_files {
+  id bigint [pk, increment, note: 'ID']
+  flight_record bigint [note: 'flight_record.FlightRecord']
+  media_type text [not null, note: '媒体类型']
+  file_name varchar(255) [not null, note: '文件名']
+  file_url varchar(500) [not null, note: '文件URL']
+  thumbnail_url varchar(500) [not null, note: '缩略图URL']
+  file_size bigint [note: '文件大小（字节）']
+  latitude text [note: '拍摄位置-纬度']
+  longitude text [note: '拍摄位置-经度']
+  captured_at timestamp [note: '拍摄时间']
+  is_deleted boolean [not null, note: '是否已删除']
+  deleted_at timestamp [note: '删除时间']
+  created_at timestamp [not null, note: '创建时间']
+}
+
+// 本轮增补（2026-03-08）
+// focus_api: GET /api/v1/media-files/{id}
+// retrieve 语义：按 media_files.id 读取单条详情；is_deleted=true 记录按 RESOURCE_NOT_FOUND 返回。
+// 权限语义：需具备 media_file.view_media_file；未认证/无权限返回 PERMISSION_DENIED。
+// 说明：本轮仅补对象级读取语义，不引入新的数据表字段。
+
+// stage6_round_context::media_file::GET /api/v1/media-files/{id}
+// trace_context: {"generated_at":"2026-03-08T11:48:36.944441Z","entity":"media_file","focus_api_keys":["GET /api/v1/media-files/{id}"],"stage0_reason":"在已具备媒体列表检索后，补齐按媒体ID读取详情的基础只读接口，供外部系统先列表筛选再精确拉取单条媒体元数据，保持接口简单且可组合。","source_artifacts":["codex_devflow_scaffold/artifacts/stage0/latest.json","codex_devflow_scaffold/artifacts/stage2/latest.json","codex_devflow_scaffold/artifacts/stage4/latest.json","codex_devflow_scaffold/artifacts/stage5/latest.json"],"related_paths":["apps/access/management/commands/seed_role_permissions.py","apps/api_v1/urls.py","apps/api_v1/views.py","config/settings.py","apps/media_file/","apps/media_file/models.py","apps/media_file/serializers.py","apps/media_file/views.py","apps/media_file/urls.py","apps/media_file/tests.py"]}
+// note: non-destructive stage6 append, no test evidence embedding

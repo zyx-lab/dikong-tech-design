@@ -5,8 +5,9 @@ from rest_framework.views import APIView
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 
+from apps.api_v1.business_response import BusinessApiResponseMixin
 
-class ApiV1RootView(APIView):
+class ApiV1RootView(BusinessApiResponseMixin, APIView):
     """业务 API 入口（对外开放平面）。"""
 
     permission_classes = [AllowAny]
@@ -22,12 +23,15 @@ class ApiV1RootView(APIView):
                     "health": reverse("api-v1-health", request=request),
                     "drones": reverse("drone-list", request=request),
                     "drone_assignments": reverse("drone-assignment-list", request=request),
+                    "routes": reverse("route-list", request=request),
+                    "missions": reverse("mission-list", request=request),
+                    "media_files": reverse("media-file-list", request=request),
                 },
             }
         )
 
 
-class ApiV1HealthView(APIView):
+class ApiV1HealthView(BusinessApiResponseMixin, APIView):
     """业务平面健康检查。"""
 
     permission_classes = [AllowAny]

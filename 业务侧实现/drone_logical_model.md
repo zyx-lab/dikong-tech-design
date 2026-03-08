@@ -69,6 +69,7 @@ PostgreSQL
 约束：
 1. `(drone_id, staff_id)` 在 `status='ACTIVE'` 条件下唯一。  
 2. 取消分配采用软失效（更新为 `INACTIVE`），不做物理删除。
+3. 无人机删除接口（`DELETE /api/v1/drones/{id}`）在存在 `ACTIVE` 分配关系时返回 `STATE_CONFLICT`，不执行删除。
 
 ---
 
@@ -87,3 +88,29 @@ erDiagram
 1. 模型定义：`apps/drone/models.py`  
 2. 迁移文件：`apps/drone/migrations/0001_initial.py`  
 3. 业务接口：`/api/v1/drones*`、`/api/v1/drone-assignments*`
+
+---
+
+## 5. 接口响应逻辑模型（补充）
+
+业务 API 统一响应契约：
+
+```json
+{
+  "business_code": "SUCCESS|INVALID_PARAMS|PERMISSION_DENIED|RESOURCE_NOT_FOUND|STATE_CONFLICT|IDEMPOTENT_DUPLICATE",
+  "business_detail_code": "OK|NOT_AUTHENTICATED|FORBIDDEN|NOT_FOUND|VALIDATION_ERROR|STATE_CONFLICT|DUPLICATE_REQUEST",
+  "...": "原有业务字段"
+}
+```
+
+状态码与业务码映射：
+1. 成功（200/201） -> `SUCCESS`
+2. 参数错误（400） -> `INVALID_PARAMS`
+3. 权限拒绝（401/403） -> `PERMISSION_DENIED`
+4. 资源不存在（404） -> `RESOURCE_NOT_FOUND`
+5. 状态冲突（409） -> `STATE_CONFLICT`
+6. 幂等重复（409） -> `IDEMPOTENT_DUPLICATE`
+
+删除接口补充：
+1. `DELETE /api/v1/drones/{id}` 成功返回 200 + `SUCCESS`。
+2. DELETE 请求体非空返回 400 + `INVALID_PARAMS`。

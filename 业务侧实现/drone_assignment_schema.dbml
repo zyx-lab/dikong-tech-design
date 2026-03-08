@@ -1,0 +1,53 @@
+// ============================================================
+// 低空智能巡检平台 - drone_assignment 实体（当前实现）
+// 数据库：PostgreSQL
+// 说明：本文件聚焦分配关系实体，关联表以 ref 方式引用
+// ============================================================
+
+Project low_altitude_drone_assignment_current {
+  database_type: 'PostgreSQL'
+  Note: '当前实现：无人机-飞手分配关系（创建/查询/取消）'
+}
+
+// ============================================================
+// 0. external refs 外部引用表（DBML 占位）
+// 说明：以下表不属于本文件聚焦的实体落地范围，仅用于让 ref 可解析。
+// ============================================================
+Table drones [note: '无人机台账（占位，仅用于解析 drone_id 引用）'] {
+  id bigserial [pk, note: 'id 主键']
+}
+
+Table staff_profiles [note: '权限/人员域外部表（占位，仅用于解析 staff_id 引用）'] {
+  id bigserial [pk, note: 'id 主键']
+}
+
+Table drone_assignments [note: '无人机与飞手分配关系'] {
+  id bigserial [pk, note: '主键']
+  drone_id bigint [not null, ref: > drones.id, note: '无人机ID']
+  staff_id bigint [not null, ref: > staff_profiles.id, note: '飞手staff_profile ID']
+  status varchar(16) [not null, default: 'ACTIVE', note: 'ACTIVE/INACTIVE']
+  start_at timestamp [not null, default: `now()`, note: '生效时间']
+  end_at timestamp [note: '失效时间']
+  created_by_staff_id bigint [note: '操作人staff_id']
+  created_at timestamp [not null, default: `now()`, note: '创建时间']
+  updated_at timestamp [not null, default: `now()`, note: '更新时间']
+
+  indexes {
+    (drone_id, staff_id, status) [name: 'idx_drone_staff_status']
+  }
+}
+
+// 真实约束（以 migration 为准）：
+// uniq_active_drone_staff_assignment:
+// unique(drone_id, staff_id) where status='ACTIVE'
+
+// 业务规则（接口层）：
+// 1) 仅允许为 pilot_operator 且在职人员创建分配
+// 2) RETIRED 无人机不可创建分配
+// 3) cancel 动作幂等：INACTIVE 再次 cancel 仍返回成功态
+// 4) reactivate 动作支持 INACTIVE->ACTIVE；ACTIVE 再次 reactivate 幂等成功
+// 5) reactivate 请求体必须为空；非空返回 INVALID_PARAMS
+
+// 业务响应契约（非数据库字段）：
+// business_code: SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND / STATE_CONFLICT / IDEMPOTENT_DUPLICATE
+// business_detail_code: OK / VALIDATION_ERROR / NOT_AUTHENTICATED / FORBIDDEN / NOT_FOUND / DUPLICATE_REQUEST

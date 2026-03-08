@@ -8,7 +8,7 @@
 ## 1. 设计范围
 
 已包含：
-1. 无人机台账：新增、编辑、查询、状态变更（启用/停用/维护/退役）。
+1. 无人机台账：新增、编辑、删除、查询、状态变更（启用/停用/维护/退役）。
 2. 分配关系：创建分配、查询分配、取消分配。
 3. 权限链路：`StaffType -> Group -> Permission + Scope`。
 4. 飞手可见范围：按分配关系生效（`ASSIGNED`）。
@@ -70,7 +70,7 @@
 ### 4.1 权限码
 
 1. `drone.view_drone`：查看无人机
-2. `drone.manage_drone`：新增/编辑无人机基础信息
+2. `drone.manage_drone`：新增/编辑/删除无人机基础信息
 3. `drone.change_drone_status`：变更无人机状态
 4. `drone.manage_drone_assignment`：管理分配关系
 
@@ -123,14 +123,19 @@
 3. `GET /api/v1/drones/{id}`
 - 无人机详情
 
-4. `PATCH /api/v1/drones/{id}`
+4. `DELETE /api/v1/drones/{id}`
+- 删除无人机（DELETE 请求体必须为空）
+- 若存在 `ACTIVE` 分配关系，返回 `409 + STATE_CONFLICT`
+
+5. `PATCH /api/v1/drones/{id}`
 - 编辑基础信息（不允许直接改 `status`）
 
-5. `POST /api/v1/drones/{id}/enable`
-6. `POST /api/v1/drones/{id}/disable`
-7. `POST /api/v1/drones/{id}/maintenance`
-8. `POST /api/v1/drones/{id}/retire`
+6. `POST /api/v1/drones/{id}/enable`
+7. `POST /api/v1/drones/{id}/disable`
+8. `POST /api/v1/drones/{id}/maintenance`
+9. `POST /api/v1/drones/{id}/retire`
 - 状态动作接口
+- 响应统一携带 `business_code` 与 `business_detail_code` 字段（见 6.3）
 
 ### 6.2 分配关系 `/api/v1/drone-assignments`
 
@@ -145,6 +150,32 @@
 
 4. `POST /api/v1/drone-assignments/{id}/cancel`
 - 取消分配（写入 `INACTIVE + end_at`）
+- 响应统一携带 `business_code` 与 `business_detail_code` 字段（见 6.3）
+
+### 6.3 响应契约（business_code + business_detail_code）
+
+业务 API 响应统一补充字段：`business_code`（主业务码）与 `business_detail_code`（细分原因码）。
+
+1. 成功类：`SUCCESS`（常见 HTTP：200/201）
+2. 参数错误：`INVALID_PARAMS`（HTTP 400）
+3. 权限拒绝：`PERMISSION_DENIED`（HTTP 401/403）
+4. 资源不存在：`RESOURCE_NOT_FOUND`（HTTP 404）
+5. 状态冲突：`STATE_CONFLICT`（HTTP 409）
+6. 幂等重复：`IDEMPOTENT_DUPLICATE`（HTTP 409）
+
+细分码示例：
+1. 成功：`OK`
+2. 未登录：`NOT_AUTHENTICATED`
+3. 鉴权拒绝：`FORBIDDEN`
+4. 资源不存在：`NOT_FOUND`
+5. 参数校验：`VALIDATION_ERROR`
+6. 状态冲突：`STATE_CONFLICT`
+7. 重复请求：`DUPLICATE_REQUEST`
+
+本轮落地重点：
+1. `POST /api/v1/drones` 重复提交（唯一键冲突）返回 `409 + IDEMPOTENT_DUPLICATE`。
+2. `POST /api/v1/drones/{id}/enable` 在 `RETIRED` 状态下返回 `409 + STATE_CONFLICT`。
+3. `DELETE /api/v1/drones/{id}` 按业务规则返回 `SUCCESS/INVALID_PARAMS/PERMISSION_DENIED/RESOURCE_NOT_FOUND/STATE_CONFLICT`。
 
 ---
 
@@ -156,6 +187,7 @@
 4. 已退役无人机不可创建分配关系。
 5. 相同无人机与飞手不得重复存在 `ACTIVE` 分配。
 6. 取消分配重复提交保持幂等（返回 200 + 当前状态）。
+7. 删除无人机时，若存在 `ACTIVE` 分配关系则拒绝删除并返回 `STATE_CONFLICT`。
 
 ---
 
@@ -164,8 +196,9 @@
 1. `DRONE_CREATE`
 2. `DRONE_UPDATE`
 3. `DRONE_STATUS_CHANGE`
-4. `DRONE_ASSIGNMENT_CREATE`
-5. `DRONE_ASSIGNMENT_CANCEL`
+4. `DRONE_DELETE`
+5. `DRONE_ASSIGNMENT_CREATE`
+6. `DRONE_ASSIGNMENT_CANCEL`
 
 统一记录：
 1. `target_type` / `target_id`

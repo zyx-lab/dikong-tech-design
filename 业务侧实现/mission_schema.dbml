@@ -1,0 +1,20 @@
+// updated_at: 2026-03-08T08:24:00Z
+// entity: mission
+// 历史保留 + 当前轮增补：当前轮新增 GET /api/v1/missions/{id}（详情读取），missions 表结构不新增字段
+// 当前轮接口语义：按 mission 主键读取详情，返回 SUCCESS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
+
+Table missions {
+  id bigint [pk, increment, note: 'ID']
+  name varchar(100) [not null, note: '任务名称']
+  route_id bigint [not null, note: '航线ID（FK: route.Route）']
+  route_name varchar(100) [not null, note: '航线名称（冗余）']
+  drone_id bigint [not null, note: '无人机ID（FK: drone.Drone）']
+  drone_name varchar(100) [not null, note: '无人机名称（冗余）']
+  pilot_id bigint [not null, note: '飞手ID（FK: access.StaffProfile）']
+  pilot_name varchar(50) [not null, note: '飞手姓名（冗余）']
+  scheduled_at timestamp [note: '计划执行时间']
+  remark varchar(500) [not null, note: '任务备注']
+  status int [not null, note: '任务状态(0待执行/1执行中/2已暂停/3已完成/4已取消/5执行失败)']
+  created_at timestamp [not null, note: '创建时间']
+  updated_at timestamp [not null, note: '更新时间']
+}

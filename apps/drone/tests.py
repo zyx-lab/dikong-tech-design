@@ -4,7 +4,8 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.access.models import AuditLog, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, StaffType, StaffTypeGroup
-from apps.drone.models import Drone, DroneAssignment, DroneAssignmentStatus, DroneStatus
+from apps.drone.models import Drone, DroneStatus
+from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
 
 User = get_user_model()
 
@@ -175,7 +176,8 @@ class DroneApiWriteTests(TestCase):
         self.assertEqual(drone.status, DroneStatus.RETIRED)
 
         enable_response = self.client.post(f"/api/v1/drones/{drone.id}/enable")
-        self.assertEqual(enable_response.status_code, 400)
+        self.assertEqual(enable_response.status_code, 409)
+        self.assertEqual(enable_response.data["business_code"], "STATE_CONFLICT")
         self.assertIn("RETIRED", enable_response.data["detail"])
 
         retire_again_response = self.client.post(f"/api/v1/drones/{drone.id}/retire")
@@ -187,6 +189,77 @@ class DroneApiWriteTests(TestCase):
             AuditLog.objects.filter(action="DRONE_STATUS_CHANGE", target_type="drone", target_id=str(drone.id)).count(),
             2,
         )
+
+    def test_delete_should_remove_drone_and_write_audit_log(self):
+        self._grant_permissions(["drone.manage_drone"])
+        drone = Drone.objects.create(
+            code="DJ-0103",
+            name="无人机-删除",
+            model="Matrice 300",
+            serial_no="SN-103",
+            status=DroneStatus.DISABLED,
+            created_by_staff_id=self.staff.id,
+        )
+
+        response = self.client.delete(f"/api/v1/drones/{drone.id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertFalse(Drone.objects.filter(id=drone.id).exists())
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="DRONE_DELETE",
+                target_type="drone",
+                target_id=str(drone.id),
+            ).exists()
+        )
+
+    def test_delete_with_body_should_return_invalid_params(self):
+        self._grant_permissions(["drone.manage_drone"])
+        drone = Drone.objects.create(
+            code="DJ-0104",
+            name="无人机-删除参数",
+            model="Matrice 300",
+            serial_no="SN-104",
+            status=DroneStatus.DISABLED,
+            created_by_staff_id=self.staff.id,
+        )
+
+        response = self.client.delete(f"/api/v1/drones/{drone.id}", {"unexpected": True}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertTrue(Drone.objects.filter(id=drone.id).exists())
+
+    def test_delete_with_active_assignment_should_return_state_conflict(self):
+        self._grant_permissions(["drone.manage_drone"])
+        drone = Drone.objects.create(
+            code="DJ-0105",
+            name="无人机-删除冲突",
+            model="Matrice 300",
+            serial_no="SN-105",
+            status=DroneStatus.DISABLED,
+            created_by_staff_id=self.staff.id,
+        )
+
+        pilot_type = StaffType.objects.create(code="pilot_operator", name="飞手操作员", status=1)
+        pilot_user = User.objects.create_user(username="pilot_del_conflict", password="pass1234", status=1)
+        pilot_staff = StaffProfile.objects.create(
+            user=pilot_user,
+            staff_no="P-DEL-01",
+            name="飞手删除冲突",
+            employment_status=1,
+            staff_type=pilot_type,
+        )
+        DroneAssignment.objects.create(
+            drone=drone,
+            staff=pilot_staff,
+            status=DroneAssignmentStatus.ACTIVE,
+            created_by_staff_id=self.staff.id,
+        )
+
+        response = self.client.delete(f"/api/v1/drones/{drone.id}")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
+        self.assertTrue(Drone.objects.filter(id=drone.id).exists())
 
 
 class PilotAssignedScopeTests(TestCase):
@@ -245,52 +318,34 @@ class PilotAssignedScopeTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
 
-class DroneAssignmentApiTests(TestCase):
+class DroneHistoryApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-
-        self.dispatcher_type = StaffType.objects.create(code="dispatcher", name="任务调度员", status=1)
-        self.dispatcher_user = User.objects.create_user(username="dispatcher_a", password="pass1234", status=1)
-        self.dispatcher_staff = StaffProfile.objects.create(
-            user=self.dispatcher_user,
-            staff_no="D-200",
-            name="调度员A",
+        self.viewer_type = StaffType.objects.create(code="viewer_history", name="历史查看员", status=1)
+        self.viewer_user = User.objects.create_user(username="history_viewer", password="pass1234", status=1)
+        self.viewer_staff = StaffProfile.objects.create(
+            user=self.viewer_user,
+            staff_no="H-001",
+            name="历史查看员A",
             employment_status=1,
-            staff_type=self.dispatcher_type,
+            staff_type=self.viewer_type,
         )
 
         self.pilot_type = StaffType.objects.create(code="pilot_operator", name="飞手操作员", status=1)
-        self.pilot_user = User.objects.create_user(username="pilot_b", password="pass1234", status=1)
+        self.pilot_user = User.objects.create_user(username="history_pilot", password="pass1234", status=1)
         self.pilot_staff = StaffProfile.objects.create(
             user=self.pilot_user,
-            staff_no="P-200",
-            name="飞手B",
+            staff_no="HP-001",
+            name="历史飞手A",
             employment_status=1,
             staff_type=self.pilot_type,
         )
 
-        self.route_type = StaffType.objects.create(code="route_planner", name="航线规划员", status=1)
-        self.route_user = User.objects.create_user(username="planner_a", password="pass1234", status=1)
-        self.route_staff = StaffProfile.objects.create(
-            user=self.route_user,
-            staff_no="R-200",
-            name="规划员A",
-            employment_status=1,
-            staff_type=self.route_type,
-        )
-
-        self.drone = Drone.objects.create(
-            code="DJ-A-01",
-            name="调度分配测试机",
-            model="Matrice 300",
-            serial_no="A-SN-1",
-            status=DroneStatus.ENABLED,
-        )
-
-        group = Group.objects.create(name="无人机分配管理组")
-        perm = Permission.objects.get(content_type__app_label="drone", codename="manage_drone_assignment")
+    def _grant_view_permission(self):
+        group = Group.objects.create(name="无人机历史查看组")
+        perm = Permission.objects.get(content_type__app_label="drone", codename="view_drone")
         group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.dispatcher_type, group=group, status=ScopeStatus.ACTIVE)
+        StaffTypeGroup.objects.create(staff_type=self.viewer_type, group=group, status=ScopeStatus.ACTIVE)
         GroupPermissionScope.objects.create(
             group=group,
             permission=perm,
@@ -298,49 +353,258 @@ class DroneAssignmentApiTests(TestCase):
             status=ScopeStatus.ACTIVE,
         )
 
-        self.client.force_authenticate(self.dispatcher_user)
+    def test_history_should_return_assignments(self):
+        self._grant_view_permission()
+        self.client.force_authenticate(self.viewer_user)
 
-    def test_create_and_cancel_assignment_should_write_audit_logs(self):
-        create_response = self.client.post(
-            "/api/v1/drone-assignments",
-            {"drone": self.drone.id, "staff": self.pilot_staff.id},
-            format="json",
+        drone = Drone.objects.create(
+            code="DJ-HIS-01",
+            name="历史测试机",
+            model="Matrice 4T",
+            serial_no="HIS-SN-01",
+            status=DroneStatus.ENABLED,
         )
-        self.assertEqual(create_response.status_code, 201)
-        assignment_id = create_response.data["id"]
-
-        assignment = DroneAssignment.objects.get(id=assignment_id)
-        self.assertEqual(assignment.status, DroneAssignmentStatus.ACTIVE)
-
-        cancel_response = self.client.post(f"/api/v1/drone-assignments/{assignment_id}/cancel")
-        self.assertEqual(cancel_response.status_code, 200)
-        assignment.refresh_from_db()
-        self.assertEqual(assignment.status, DroneAssignmentStatus.INACTIVE)
-        self.assertIsNotNone(assignment.end_at)
-
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="DRONE_ASSIGNMENT_CREATE",
-                target_type="drone_assignment",
-                target_id=str(assignment_id),
-            ).exists()
+        DroneAssignment.objects.create(
+            drone=drone,
+            staff=self.pilot_staff,
+            status=DroneAssignmentStatus.ACTIVE,
+            created_by_staff_id=self.viewer_staff.id,
         )
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="DRONE_ASSIGNMENT_CANCEL",
-                target_type="drone_assignment",
-                target_id=str(assignment_id),
-            ).exists()
+        DroneAssignment.objects.create(
+            drone=drone,
+            staff=self.pilot_staff,
+            status=DroneAssignmentStatus.INACTIVE,
+            created_by_staff_id=self.viewer_staff.id,
         )
 
-    def test_assignment_should_reject_non_pilot_staff(self):
-        response = self.client.post(
-            "/api/v1/drone-assignments",
-            {"drone": self.drone.id, "staff": self.route_staff.id},
-            format="json",
+        response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/history")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["drone_id"], drone.id)
+        self.assertEqual(response.data["count"], 2)
+        self.assertEqual(len(response.data["results"]), 2)
+        self.assertEqual({item["status"] for item in response.data["results"]}, {"ACTIVE", "INACTIVE"})
+
+    def test_history_without_auth_should_return_permission_denied(self):
+        drone = Drone.objects.create(
+            code="DJ-HIS-02",
+            name="历史测试机2",
+            model="Matrice 4T",
+            serial_no="HIS-SN-02",
+            status=DroneStatus.ENABLED,
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("staff", response.data)
+        response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/history")
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_history_not_found_should_return_resource_not_found(self):
+        self._grant_view_permission()
+        self.client.force_authenticate(self.viewer_user)
+        response = self.client.get("/api/v1/drones/999999/assignments/history")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+
+class DroneActiveAssignmentsApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.viewer_type = StaffType.objects.create(code="viewer_active", name="当前分配查看员", status=1)
+        self.viewer_user = User.objects.create_user(username="active_viewer", password="pass1234", status=1)
+        self.viewer_staff = StaffProfile.objects.create(
+            user=self.viewer_user,
+            staff_no="A-001",
+            name="当前分配查看员A",
+            employment_status=1,
+            staff_type=self.viewer_type,
+        )
+
+        self.pilot_type = StaffType.objects.create(code="pilot_operator", name="飞手操作员", status=1)
+        self.pilot_user = User.objects.create_user(username="active_pilot", password="pass1234", status=1)
+        self.pilot_staff = StaffProfile.objects.create(
+            user=self.pilot_user,
+            staff_no="AP-001",
+            name="当前分配飞手A",
+            employment_status=1,
+            staff_type=self.pilot_type,
+        )
+
+    def _grant_view_permission(self):
+        group = Group.objects.create(name="无人机当前分配查看组")
+        perm = Permission.objects.get(content_type__app_label="drone", codename="view_drone")
+        group.permissions.add(perm)
+        StaffTypeGroup.objects.create(staff_type=self.viewer_type, group=group, status=ScopeStatus.ACTIVE)
+        GroupPermissionScope.objects.create(
+            group=group,
+            permission=perm,
+            scope_type=ScopeType.ALL,
+            status=ScopeStatus.ACTIVE,
+        )
+
+    def test_active_assignments_should_only_return_active_records(self):
+        self._grant_view_permission()
+        self.client.force_authenticate(self.viewer_user)
+
+        drone = Drone.objects.create(
+            code="DJ-ACT-01",
+            name="当前分配测试机",
+            model="Matrice 4T",
+            serial_no="ACT-SN-01",
+            status=DroneStatus.ENABLED,
+        )
+        DroneAssignment.objects.create(
+            drone=drone,
+            staff=self.pilot_staff,
+            status=DroneAssignmentStatus.ACTIVE,
+            created_by_staff_id=self.viewer_staff.id,
+        )
+        DroneAssignment.objects.create(
+            drone=drone,
+            staff=self.pilot_staff,
+            status=DroneAssignmentStatus.INACTIVE,
+            created_by_staff_id=self.viewer_staff.id,
+        )
+
+        response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/active")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["drone_id"], drone.id)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["results"][0]["status"], "ACTIVE")
+
+    def test_active_assignments_without_auth_should_return_permission_denied(self):
+        drone = Drone.objects.create(
+            code="DJ-ACT-02",
+            name="当前分配测试机2",
+            model="Matrice 4T",
+            serial_no="ACT-SN-02",
+            status=DroneStatus.ENABLED,
+        )
+        response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/active")
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_active_assignments_not_found_should_return_resource_not_found(self):
+        self._grant_view_permission()
+        self.client.force_authenticate(self.viewer_user)
+        response = self.client.get("/api/v1/drones/999999/assignments/active")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+
+class DroneLatestAssignmentApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.viewer_type = StaffType.objects.create(code="viewer_latest", name="最近分配查看员", status=1)
+        self.viewer_user = User.objects.create_user(username="latest_viewer", password="pass1234", status=1)
+        self.viewer_staff = StaffProfile.objects.create(
+            user=self.viewer_user,
+            staff_no="L-001",
+            name="最近分配查看员A",
+            employment_status=1,
+            staff_type=self.viewer_type,
+        )
+
+        self.pilot_type = StaffType.objects.create(code="pilot_latest", name="最近分配飞手", status=1)
+        self.pilot_user = User.objects.create_user(username="latest_pilot", password="pass1234", status=1)
+        self.pilot_staff = StaffProfile.objects.create(
+            user=self.pilot_user,
+            staff_no="LP-001",
+            name="最近分配飞手A",
+            employment_status=1,
+            staff_type=self.pilot_type,
+        )
+
+    def _grant_view_permission(self):
+        group = Group.objects.create(name="无人机最近分配查看组")
+        perm = Permission.objects.get(content_type__app_label="drone", codename="view_drone")
+        group.permissions.add(perm)
+        StaffTypeGroup.objects.create(staff_type=self.viewer_type, group=group, status=ScopeStatus.ACTIVE)
+        GroupPermissionScope.objects.create(
+            group=group,
+            permission=perm,
+            scope_type=ScopeType.ALL,
+            status=ScopeStatus.ACTIVE,
+        )
+
+    def test_latest_assignment_should_return_latest_record(self):
+        self._grant_view_permission()
+        self.client.force_authenticate(self.viewer_user)
+
+        drone = Drone.objects.create(
+            code="DJ-LATEST-01",
+            name="最近分配测试机",
+            model="Matrice 4T",
+            serial_no="LATEST-SN-01",
+            status=DroneStatus.ENABLED,
+        )
+        DroneAssignment.objects.create(
+            drone=drone,
+            staff=self.pilot_staff,
+            status=DroneAssignmentStatus.ACTIVE,
+            created_by_staff_id=self.viewer_staff.id,
+        )
+        latest_assignment = DroneAssignment.objects.create(
+            drone=drone,
+            staff=self.pilot_staff,
+            status=DroneAssignmentStatus.INACTIVE,
+            created_by_staff_id=self.viewer_staff.id,
+        )
+
+        response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/latest")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["drone_id"], drone.id)
+        self.assertTrue(response.data["has_record"])
+        self.assertIsNotNone(response.data["result"])
+        self.assertEqual(response.data["result"]["id"], latest_assignment.id)
+        self.assertEqual(response.data["result"]["status"], "INACTIVE")
+
+    def test_latest_assignment_should_return_null_when_no_record(self):
+        self._grant_view_permission()
+        self.client.force_authenticate(self.viewer_user)
+        drone = Drone.objects.create(
+            code="DJ-LATEST-02",
+            name="最近分配测试机2",
+            model="Matrice 4T",
+            serial_no="LATEST-SN-02",
+            status=DroneStatus.ENABLED,
+        )
+        response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/latest")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["drone_id"], drone.id)
+        self.assertFalse(response.data["has_record"])
+        self.assertIsNone(response.data["result"])
+
+    def test_latest_assignment_without_auth_should_return_permission_denied(self):
+        drone = Drone.objects.create(
+            code="DJ-LATEST-03",
+            name="最近分配测试机3",
+            model="Matrice 4T",
+            serial_no="LATEST-SN-03",
+            status=DroneStatus.ENABLED,
+        )
+        response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/latest")
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_latest_assignment_not_found_should_return_resource_not_found(self):
+        self._grant_view_permission()
+        self.client.force_authenticate(self.viewer_user)
+        response = self.client.get("/api/v1/drones/999999/assignments/latest")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
 
 
 class BusinessAdminApiTests(TestCase):
@@ -367,8 +631,14 @@ class BusinessAdminApiTests(TestCase):
         )
 
         group = Group.objects.create(name="业务管理员权限组")
-        for codename in ("view_drone", "manage_drone", "change_drone_status", "manage_drone_assignment"):
-            perm = Permission.objects.get(content_type__app_label="drone", codename=codename)
+        permission_specs = [
+            ("drone", "view_drone"),
+            ("drone", "manage_drone"),
+            ("drone", "change_drone_status"),
+            ("drone_assignment", "manage_drone_assignment"),
+        ]
+        for app_label, codename in permission_specs:
+            perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
             group.permissions.add(perm)
             GroupPermissionScope.objects.create(
                 group=group,
