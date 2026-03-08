@@ -49,6 +49,9 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py case-web --host
 - 进入 `waiting_decision` 后，只允许先执行 `gate` 并展示摘要，然后停止等待用户明确指令。
 - 未收到用户明确指令前，禁止执行 `decide`、`run-auto`、`resume --auto`。例外：Stage3/Stage4 语义自动收敛可由当前 session 在门禁前自动执行（仅更新语义产物，不做决策动作）。
 - 向用户请求决策前，必须先给出“可决策摘要”：`current_stage`、`reason`、`decision_id`、`allowed_actions`、`approve/reject/goto_stage` 的后续影响、关键产物要点与风险（如 `semantic_review` / `test_generation` / 回归结果）。
+- 每次门禁摘要必须给出 `recommended_decision`（`approve/reject/goto_stage`，若为 `goto_stage` 必须含 `recommended_target_stage`）与 `recommended_reason`，并明确写出“输入 `continue` 将执行推荐决策”。
+- 当处于 `waiting_decision` 且用户输入 `continue` 时，视为用户明确授权执行 `recommended_decision`；当前 session 可据此执行对应 `decide --apply`。
+- 当不处于 `waiting_decision`（`pending.active=false`）且用户输入 `continue` 时，视为用户明确授权执行 `run-auto` 继续流程。
 - 向用户请求决策前，必须补充“决策信息清单（按阶段）”：
   - Stage0：候选 API 列表、每个候选的选择理由（语义来源/去重依据）、风险等级、`approve` 后将进入的下一阶段。
   - Stage3：本轮 session 选择保留的测试事件（`selected_event_ids`）、被剔除事件、事件对应业务状态码与语义理由。
@@ -58,7 +61,7 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py case-web --host
 
 标准步骤：
 1. 执行 `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py gate`（会直接输出可读摘要）
-2. 等待用户明确回复（`approve/reject/goto_stage/run_stage8` 或要求先做 Stage3/4 语义筛选）
+2. 等待用户回复（`approve/reject/goto_stage/run_stage8/continue` 或要求先做 Stage3/4 语义筛选）；若当前为 `waiting_decision` 且用户输入 `continue`，则按摘要中的 `recommended_decision` 自动执行；若当前不在门禁态且用户输入 `continue`，则执行 `run-auto`
 3. Stage0 非 bootstrap 轮次：每次重新进入 Stage0 时，必须先由当前 Codex session 基于“最新业务文档 + 本会话用户指令”重写 `codex_devflow_scaffold/cases/session_api_candidates.jsonl`（不可复用旧提名），再由 Runner 读取并提名待开发 API
 3.1 Stage0 提名前必须做去重校验：候选 `api_key` 只要命中 `api_registry` 或“当前代码实时扫描已观测 API”，都视为无效候选（防止重复提名上一轮已实现接口）
 4. 每次提名 API 后，当前 Codex session 必须先在项目代码中核查该接口是否已正确实现（路由/视图/序列化/权限/业务码）；若未实现或实现不符合语义，必须先完成实现再继续后续阶段
@@ -140,6 +143,7 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approv
 - API 面校验规则：Stage2/Stage3 必须对比“本轮 focus API + 基线已存在 API”与当前扫描结果；若出现本轮引入的未提名新增接口，必须在当前阶段自动收敛（改路由/改 mixin）后再允许进入 Stage4。
 - Stage2 漂移自愈规则：当 Stage2 扫描发现 `missing_online`（注册表有但当前代码扫描不可观测）时，当前 session/Runner 必须先按“代码扫描结果为准”自动收敛 `api_registry`（清理陈旧项并重算漂移），把产物修复到 Stage3 可接受状态；仅当自动修复后仍存在 unresolved `missing_online` 时才允许门禁阻断。
 - Stage2 候选补实现规则：当 Stage2 发现 `missing_candidate_apis`（本轮候选 API 仍不可观测）时，当前 Codex session 必须在 Stage2 内直接补实现该候选 API（含业务码、中文注释、项目内测试）并重跑 Stage2；仅在自动补实现尝试后仍不可观测时，才允许向用户展示 Stage2 阻断门禁。
+- Stage2 进入即自愈规则：每次进入 Stage2，必须按“扫描 -> 识别 `missing_candidate_apis` -> 自动补实现（业务码、中文注释、项目内测试）-> 重扫验证”的顺序执行；在该顺序未完成前，禁止直接产出 Stage2 阻断门禁。
 - Stage 4 测试覆盖码来源于 Stage 0 的 `required_case_codes`。
 - Stage 6 会校验“触达实体四件套”与权限文档影响；若发现不一致，必须先由当前 session 基于上下文自动同步并复检，复检仍失败才阻断在 Stage6（不自动回退 Stage1）。
 - 责任归属：业务侧四件套文档同步由当前 Codex session 负责；Runner 负责触发检查与记录自动同步结果。
@@ -147,12 +151,13 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approv
 - Stage6 自动同步规则：若 Stage6 检查到文档/结算一致性缺口，当前 Codex session 必须先基于上下文自动完成同步修复（实体四件套、必要结算文档）并在 Stage6 内复检；仅当自动修复后仍失败，才向用户展示 Stage6 阻断门禁。
 - Stage6 文档编写规则：实体四件套正文必须由当前 Codex session 基于“本轮业务语义 + 代码实现 + 可追溯产物”撰写；禁止机械模板粘贴或仅写占位提示。
 - Stage6 文档增补规则：实体四件套应采用“增补本轮内容”而非覆盖旧轮内容；需保留历史轮次语义，并新增“本轮 API/业务码/可追溯来源”段落。
-- Stage6 非破坏同步规则：Runner 自动同步仅允许“非破坏式增补”（append metadata / context），禁止整文件覆盖已有业务正文。
+- Stage6 非破坏同步规则：Runner/Session 自动同步仅允许“非破坏式增补业务正文”（追加本轮业务语义段落），禁止整文件覆盖已有业务正文。
 - Stage6 去硬编码规则：禁止在 Runner 自动同步逻辑中硬编码业务结论、字段语义、事件/用例描述；业务正文必须由当前 session 基于上下文语义生成。
 - Stage6 证据可追溯规则：实体文档禁止写不可追溯的测试证据（如孤立测试函数名列表）；若需引用证据，必须指向可定位产物路径（如 stage artifact 文件）。
 - Stage6 首次实体建档规则：若某实体为首次出现（`业务侧实现/` 下不存在该实体四件套），当前 session 必须在本轮创建完整四件套（`{entity}_data_dictionary.md`、`{entity}_impl_desc.md`、`{entity}_logical_model.md`、`{entity}_schema.dbml`）后才可通过 Stage6。
 - Stage6 语义新鲜度规则：文档同步检查不能只看“文件存在或曾被修改”；必须校验“本轮触达实体文档在本轮时间窗内有更新”且“文档包含本轮 focus API 的语义引用”。任一不满足都视为未同步，必须在 Stage6 自动修复并复检。
-- Stage6 语义正文校验规则：`Stage6 同步上下文（可追溯）` / `trace_context` 仅算元数据，不计入业务正文语义；门禁必须在“剔除 trace 块后的正文”中检查本轮 focus API 引用，否则一律阻断。
+- Stage6 文档同步上下文格式规则：进行实体四件套同步时，禁止新增 `Stage6 同步上下文（可追溯）`、`trace_context` 或任何 JSON 格式上下文块；仅允许写业务语义正文与可追溯路径引用（纯文本/Markdown）。
+- Stage6 语义正文校验规则：历史文档中若已存在 `Stage6 同步上下文（可追溯）` / `trace_context`，仅按遗留元数据忽略处理；门禁必须在剔除该类块后的正文中检查本轮 focus API 引用，否则一律阻断。
 - Stage6 同后缀参考规则：编写 `{entity}_data_dictionary.md|{entity}_impl_desc.md|{entity}_logical_model.md|{entity}_schema.dbml` 时，必须先参考 `业务侧实现/` 下同后缀既有文档的结构与粒度，保持风格一致。
 - Stage6 实体审核规则：Stage6 门禁摘要必须展示“语义推断实体、用户覆写实体、最终实体”；默认以 session 语义推断为主，用户审核覆写仅用于纠偏。
 - Stage6 commit 审核规则：Stage6 必须先生成“待提交 commit 审核信息”（commit message、拟 `git add` 文件清单、排除文件清单）并展示给用户；未经用户明确审核批准，禁止执行 `git add` / `git commit`。
@@ -178,6 +183,8 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approv
 - 会话自动收敛原则：若当前门禁阻断原因属于“可由当前 Codex session 自动修复的同步问题”（如 Stage4 case/api_refs 与本轮 focus API 错配、generated tests 与 case 不一致），必须先由 session 自动完成修复（改 `session_case_candidates.jsonl`、改 `generated_test_files`、必要时执行 `stage4-semantic --sync-session-cases` 并重跑当前 Stage）后，再向用户请求 approve。
 - Stage4 自动修正规则：当出现 `stage4_not_ready_for_stage5_traceability_failed` 时，当前 session 不应直接把 `reject/goto_stage` 甩给用户；应先自动完成“本轮 focus API 对齐 + 语义重审 + 当前 Stage 重跑”，仅在自动修复仍失败时才向用户展示阻断并说明失败原因。
 - 任何 `waiting_decision` 门禁点，若用户未明确授权，不得自动执行后续决策命令（含 `decide` / `run-auto` / `resume --auto`）。
+- continue 决策规则：`waiting_decision` 时用户发送 `continue`，视为“明确授权执行 recommended_decision”；该行为不视为越权自动决策。
+- continue 续跑规则：非 `waiting_decision` 状态下用户发送 `continue`，视为“明确授权执行 `run-auto`”。
 - 任何门禁提问都必须给出有助于决策的明确信息，不得只输出“请 approve/reject”而不附上下文与影响说明。
 - 门禁摘要必须明确回答三个问题：为什么是这个候选（或事件/用例）、当前回归状态如何（不适用则写 `N/A`）、用户本次决策会带来什么后果。
 - 门禁摘要字段采用“按阶段适用”规则：只要是该阶段必须字段就必须给值；不适用字段必须显式写 `N/A`。不是每个阶段都涉及测试用例或测试执行结果。
@@ -191,6 +198,9 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approv
 
 ## 门禁摘要最小清单（按阶段）
 
+- 全阶段通用（必含）：
+  - `recommended_decision`、`recommended_reason`、（如适用）`recommended_target_stage`
+  - “输入 `continue` 将执行推荐决策”的提示
 - Stage0（候选 API 审核）：
   - 必含：候选 API、选择理由（含去重/来源）、风险等级、approve/reject/goto_stage 影响。
   - 若候选属于编排型接口，必须补充“不可由基础接口组合替代”的理由；否则应改为基础接口候选。
@@ -219,7 +229,7 @@ python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approv
   - 目标状态（面向 Stage2）：实现任务可执行（`implementation_tasks` 非空且覆盖接口实现关键项），并已区分“已确认字段”和“待定字段（占位实现 + 文档待定项）”。
   - 失败处理：回到 Stage0 重做任务拆解输入。
 - Stage2：
-  - 目标状态（面向 Stage3）：扫描结果可用于判断候选 API 观测状态，且 `missing_online` 漂移已在 Stage2 自动收敛或被证明已解决（无 unresolved 漂移项）。
+  - 目标状态（面向 Stage3）：扫描结果可用于判断候选 API 观测状态，且 `missing_online` 漂移已在 Stage2 自动收敛或被证明已解决（无 unresolved 漂移项），并且 `missing_candidate_apis=0`（缺失候选 API 已在 Stage2 内补实现或验证可观测）。
   - 失败处理：若是 unresolved `missing_online`，优先留在 Stage2 继续自动修复 registry/扫描一致性；若是 Stage0 候选 API 仍不可观测，优先在 Stage2 直接补实现并重跑，仍失败再门禁阻断。
 - Stage3：
   - 目标状态（面向 Stage4）：把输入处理到 Stage4 可接受状态（Stage4-ready）：
