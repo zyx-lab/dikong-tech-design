@@ -1,8 +1,0 @@
-{
-  "schema_version": 1,
-  "type": "object",
-  "required": [
-    "intervention_summary",
-    "recommendations"
-  ]
-}

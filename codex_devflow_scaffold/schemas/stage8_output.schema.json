@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "type": "object",
-  "required": [
-    "decision",
-    "reasoning",
-    "actions"
-  ]
-}
