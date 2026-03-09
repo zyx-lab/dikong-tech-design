@@ -29,8 +29,8 @@ Table flight_records {
 // 业务码: SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
 
 // stage6_doc_sync::flight_record::schema.dbml::start
-// focus_api_keys: PATCH /api/v1/flight-records/{id}
-// business_events: EVT-001 更新飞行记录
+// focus_api_keys: POST /api/v1/flight-records/{id}/complete
+// business_events: EVT-001 完成飞行记录
 // required_codes: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
 // permission_boundary: 代码权限码: view_flight_record (可查看飞行记录), manage_flight_record (可新增与编辑飞行记录)
 // stage6_doc_sync::flight_record::schema.dbml::end

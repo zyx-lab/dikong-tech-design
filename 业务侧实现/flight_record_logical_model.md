@@ -36,6 +36,6 @@
 - 业务动作: N/A
 - 状态机: N/A
 - 业务约束: N/A
-- 事件闭环: EVT-001->PATCH /api/v1/flight-records/{id}
+- 事件闭环: EVT-001->POST /api/v1/flight-records/{id}/complete
 - 权限边界: 代码权限码: view_flight_record (可查看飞行记录), manage_flight_record (可新增与编辑飞行记录)
 <!-- stage6_doc_sync::flight_record::logical_model.md::end -->

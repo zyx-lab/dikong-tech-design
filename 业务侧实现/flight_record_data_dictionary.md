@@ -64,10 +64,10 @@
 
 <!-- stage6_doc_sync::flight_record::data_dictionary.md::start -->
 ## Stage6 本轮同步
-- 关联 API: PATCH /api/v1/flight-records/{id}
-- 提名依据: 当前 flight_record 已具备创建、列表和详情能力，但缺少基础编辑入口，调用方无法修正机场、飞行时间、图片视频数量或异常终止状态等执行结果数据。补齐 PATCH 后，飞行记录才能形成最小可维护闭环。
-- 业务事件: EVT-001 更新飞行记录
-- 业务码覆盖: 目标=SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE; 已覆盖=SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, INVALID_PARAMS; 缺口=STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- 测试沉淀: 生成用例数: 4, 已执行用例数: 4, 已沉淀到项目测试: 4, 待沉淀 case: N/A, 失败 case: N/A
-- 证据文件: apps/flight_record/serializers.py, apps/flight_record/tests.py, apps/flight_record/views.py, apps/flight_record/models.py, apps/flight_record/urls.py
+- 关联 API: POST /api/v1/flight-records/{id}/complete
+- 提名依据: flight_record 已有 IN_PROGRESS、COMPLETED、ABORTED 三种状态枚举，但当前只有通用 PATCH，缺少把飞行中记录显式闭环为已完成的基础动作入口。先补齐 complete，才能让飞行记录状态流转从元数据修正升级为更清晰的业务动作接口。
+- 业务事件: EVT-001 完成飞行记录
+- 业务码覆盖: 目标=SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE; 已覆盖=SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, INVALID_PARAMS; 缺口=IDEMPOTENT_DUPLICATE
+- 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
+- 证据文件: apps/flight_record/tests.py, apps/flight_record/views.py, apps/flight_record/models.py, apps/flight_record/serializers.py, apps/flight_record/urls.py
 <!-- stage6_doc_sync::flight_record::data_dictionary.md::end -->

@@ -1,11 +1,12 @@
 from django.db import transaction
 from rest_framework import mixins, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import log_action
-from apps.api_v1.business_response import BusinessApiResponseMixin
-from apps.flight_record.models import FlightRecord
+from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.flight_record.models import FlightRecord, FlightRecordStatus
 from apps.flight_record.serializers import FlightRecordReadSerializer, FlightRecordWriteSerializer
 
 
@@ -29,12 +30,16 @@ class FlightRecordViewSet(
         "retrieve": "flight_record.view_flight_record",
         "create": "flight_record.manage_flight_record",
         "partial_update": "flight_record.manage_flight_record",
+        "complete": "flight_record.manage_flight_record",
     }
 
     def get_serializer_class(self):
         if self.action in {"create", "partial_update"}:
             return FlightRecordWriteSerializer
         return FlightRecordReadSerializer
+
+    def _record_payload(self, record: FlightRecord) -> dict:
+        return dict(FlightRecordReadSerializer(record, context={"request": self.request}).data)
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -136,6 +141,67 @@ class FlightRecordViewSet(
 
         read_serializer = FlightRecordReadSerializer(record, context={"request": request})
         return Response(read_serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def complete(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按 flight_record_id 完成飞行记录”的基础状态流转入口（POST /api/v1/flight-records/{id}/complete），
+        # 用于将飞行中的记录显式置为已完成。
+        #
+        # 适用边界：
+        # 1) 仅处理 flight_record.status 自身流转，不承担任务状态联动、媒体归档或统计编排；
+        # 2) 请求体必须为空；
+        # 3) 已完成记录重复 complete 按幂等成功返回；
+        # 4) 已异常终止记录不允许 complete，返回状态冲突。
+        if request.data:
+            return Response(
+                {
+                    "business_code": BusinessCode.INVALID_PARAMS,
+                    "detail": "complete 请求不支持提交 body 参数",
+                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        record = self.get_object()
+        before_payload = self._record_payload(record)
+
+        if record.status == FlightRecordStatus.COMPLETED:
+            log_action(
+                request=request,
+                action="FLIGHT_RECORD_COMPLETE",
+                target_type="flight_record",
+                target_id=record.id,
+                before_data=before_payload,
+                after_data=before_payload,
+            )
+            return Response(before_payload, status=status.HTTP_200_OK)
+
+        if record.status == FlightRecordStatus.ABORTED:
+            return Response(
+                {
+                    "business_code": BusinessCode.STATE_CONFLICT,
+                    "business_detail_code": "STATE_CONFLICT",
+                    "detail": "当前飞行记录状态不允许完成",
+                    "flight_record_id": record.id,
+                    "status": record.status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        record.status = FlightRecordStatus.COMPLETED
+        record.save(update_fields=["status", "updated_at"])
+        after_payload = self._record_payload(record)
+        log_action(
+            request=request,
+            action="FLIGHT_RECORD_COMPLETE",
+            target_type="flight_record",
+            target_id=record.id,
+            before_data=before_payload,
+            after_data=after_payload,
+        )
+        return Response(after_payload, status=status.HTTP_200_OK)
 
     @transaction.atomic
     def perform_update(self, serializer):
