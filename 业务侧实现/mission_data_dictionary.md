@@ -8,7 +8,8 @@
 - 历史增补 API: GET /api/v1/missions
 - 历史增补 API: GET /api/v1/missions/{id}
 - 当前轮增补 API: PATCH /api/v1/missions/{id}
-- 业务目的：任务实体提供“创建 + 查询 + 局部更新”的基础能力，供外部系统按需组合调度流程。
+- 本轮增补 API: POST /api/v1/missions/{id}/cancel
+- 业务目的：任务实体提供“创建 + 查询 + 局部更新 + 取消”的基础能力，供外部系统按需组合调度流程。
 
 ## 字段定义（来自模型代码）
 - id: type=BigAutoField; constraints=PK; verbose=ID
@@ -46,6 +47,14 @@
 - 无权限：`business_code=PERMISSION_DENIED`
 - 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
 
+## 本轮 cancel 响应语义
+- 接口：`POST /api/v1/missions/{id}/cancel`
+- 成功响应：返回取消后的 mission 对象，并携带 `business_code=SUCCESS`
+- 参数非法：请求体非空，返回 `business_code=INVALID_PARAMS`
+- 无权限：`business_code=PERMISSION_DENIED`
+- 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
+- 状态冲突：已完成、已取消或已失败任务再次取消，返回 `business_code=STATE_CONFLICT`
+
 ## 业务状态码覆盖
 - POST /api/v1/missions：
   - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
@@ -59,9 +68,12 @@
 - PATCH /api/v1/missions/{id}：
   - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
   - 缺口：STATE_CONFLICT, IDEMPOTENT_DUPLICATE
+- POST /api/v1/missions/{id}/cancel：
+  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT
+  - 缺口：IDEMPOTENT_DUPLICATE
 
 ## 权限码
-- mission.manage_mission：创建与局部更新任务（POST/PATCH）
+- mission.manage_mission：创建、局部更新与取消任务（POST/PATCH/cancel）
 - mission.view_mission：查看任务列表与详情（GET）
 
 ## 证据文件
@@ -71,3 +83,13 @@
 - apps/mission/tests.py
 - apps/mission/urls.py
 - apps/api_v1/business_response.py
+
+<!-- stage6_doc_sync::mission::data_dictionary.md::start -->
+## Stage6 本轮同步
+- 关联 API: POST /api/v1/missions/{id}/cancel
+- 提名依据: 总体模型已定义 mission 存在待执行、执行中、已暂停、已完成、已取消、执行失败等状态，但当前代码只有创建、读取与局部编辑，没有任何状态流转接口。先补齐 cancel，可形成最小任务生命周期闭环，并与现有“详情读取供执行/取消前确认快照”的文档语义对齐。
+- 业务事件: EVT-001 取消任务
+- 业务码覆盖: 目标=SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE; 已覆盖=SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, INVALID_PARAMS; 缺口=IDEMPOTENT_DUPLICATE
+- 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
+- 证据文件: apps/mission/tests.py, apps/mission/views.py, apps/mission/models.py, apps/mission/serializers.py, apps/mission/urls.py
+<!-- stage6_doc_sync::mission::data_dictionary.md::end -->

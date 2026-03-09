@@ -1,8 +1,10 @@
-// updated_at: 2026-03-09T09:30:00+08:00
+// updated_at: 2026-03-09T11:30:00+08:00
 // entity: mission
-// 历史保留 + 当前轮增补：当前轮新增 PATCH /api/v1/missions/{id}（局部更新），missions 表结构不新增字段
-// 当前轮接口语义：按 mission 主键局部更新 name/route/drone/pilot/scheduled_at/remark
-// 当前轮业务码：SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
+// 历史保留 + 当前轮增补：当前轮新增 PATCH /api/v1/missions/{id}（局部更新）与 POST /api/v1/missions/{id}/cancel（取消）
+// 当前轮接口语义：
+// 1) PATCH 按 mission 主键局部更新 name/route/drone/pilot/scheduled_at/remark
+// 2) cancel 将 PENDING/RUNNING/PAUSED 流转到 CANCELED，请求体必须为空
+// 当前轮业务码：SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND / STATE_CONFLICT
 
 Table missions {
   id bigint [pk, increment, note: 'ID']
@@ -19,3 +21,16 @@ Table missions {
   created_at timestamp [not null, note: '创建时间']
   updated_at timestamp [not null, note: '更新时间']
 }
+
+// 本轮增补（2026-03-09）
+// focus_api: POST /api/v1/missions/{id}/cancel
+// cancel 语义：按 missions.id 取消单条任务，仅更新 status=CANCELED。
+// 状态边界：仅允许 PENDING/RUNNING/PAUSED 取消；COMPLETED/CANCELED/FAILED 返回 STATE_CONFLICT。
+// 输入边界：cancel 请求不支持提交 body 参数，非空请求体返回 INVALID_PARAMS。
+
+// stage6_doc_sync::mission::schema.dbml::start
+// focus_api_keys: POST /api/v1/missions/{id}/cancel
+// business_events: EVT-001 取消任务
+// required_codes: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
+// permission_boundary: 代码权限码: view_mission (可查看任务), manage_mission (可新增与编辑任务)
+// stage6_doc_sync::mission::schema.dbml::end

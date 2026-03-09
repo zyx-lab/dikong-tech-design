@@ -55,3 +55,37 @@
 - codex_devflow_scaffold/artifacts/stage2/latest.json
 - codex_devflow_scaffold/artifacts/stage4/latest.json
 - codex_devflow_scaffold/artifacts/stage5/latest.json
+
+## 本轮增补（2026-03-09）
+### 迭代 E：POST /api/v1/missions/{id}/cancel
+- 业务目的：补齐任务的基础取消入口，让调度侧能够显式终止未完成任务，形成“创建 -> 查询 -> 编辑 -> 取消”的最小任务生命周期闭环。
+- 设计边界：
+  - 只处理单条 mission 的状态流转，不承担无人机回收、飞行记录补录、媒体归档或其他跨实体编排。
+  - 请求体必须为空；取消动作的输入仅由路径参数 `id` 决定。
+  - 仅允许取消 `PENDING`、`RUNNING`、`PAUSED` 任务；`COMPLETED`、`CANCELED`、`FAILED` 再次取消返回状态冲突。
+- 权限要求：调用方需具备 `mission.manage_mission`。
+- 响应语义：
+  - SUCCESS / OK：取消成功，返回最新任务快照，且 `status=CANCELED`
+  - INVALID_PARAMS / VALIDATION_ERROR：请求体非空
+  - RESOURCE_NOT_FOUND / NOT_FOUND：任务不存在
+  - STATE_CONFLICT / STATE_CONFLICT：当前状态不允许取消
+  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无取消权限
+- 审计语义：
+  - 成功取消后写入 `MISSION_CANCEL` 审计日志，保留 before/after 快照。
+- 项目内回归沉淀：
+  - `test_cancel_mission_should_return_success`
+  - `test_cancel_mission_with_body_should_return_invalid_params`
+  - `test_cancel_mission_state_conflict_should_return_state_conflict`
+  - `test_cancel_mission_not_found_should_return_resource_not_found`
+  - `test_cancel_mission_without_auth_should_return_permission_denied`
+  - `test_cancel_mission_without_permission_should_return_permission_denied`
+
+<!-- stage6_doc_sync::mission::impl_desc.md::start -->
+## Stage6 本轮同步
+- 本轮 focus API: POST /api/v1/missions/{id}/cancel
+- 本轮实现目标: 总体模型已定义 mission 存在待执行、执行中、已暂停、已完成、已取消、执行失败等状态，但当前代码只有创建、读取与局部编辑，没有任何状态流转接口。先补齐 cancel，可形成最小任务生命周期闭环，并与现有“详情读取供执行/取消前确认快照”的文档语义对齐。
+- 业务事件: EVT-001 取消任务
+- 业务约束: N/A
+- 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
+- 关键文件: apps/mission/tests.py, apps/mission/views.py, apps/mission/models.py, apps/mission/serializers.py, apps/mission/urls.py
+<!-- stage6_doc_sync::mission::impl_desc.md::end -->

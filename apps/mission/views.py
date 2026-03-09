@@ -1,11 +1,12 @@
 from django.db import transaction
 from rest_framework import mixins, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import log_action
-from apps.api_v1.business_response import BusinessApiResponseMixin
-from apps.mission.models import Mission
+from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.mission.models import Mission, MissionStatus
 from apps.mission.serializers import MissionReadSerializer, MissionWriteSerializer
 
 
@@ -29,12 +30,16 @@ class MissionViewSet(
         "retrieve": "mission.view_mission",
         "create": "mission.manage_mission",
         "partial_update": "mission.manage_mission",
+        "cancel": "mission.manage_mission",
     }
 
     def get_serializer_class(self):
         if self.action in {"create", "partial_update"}:
             return MissionWriteSerializer
         return MissionReadSerializer
+
+    def _mission_payload(self, mission: Mission) -> dict:
+        return dict(MissionReadSerializer(mission, context={"request": self.request}).data)
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -88,6 +93,55 @@ class MissionViewSet(
         # 业务码字段 business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
         return super().retrieve(request, *args, **kwargs)
 
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def cancel(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按 mission_id 取消任务”的基础状态流转入口（POST /api/v1/missions/{id}/cancel），
+        # 用于将待执行、执行中或已暂停任务显式置为已取消。
+        #
+        # 适用边界：
+        # 1) 仅处理 mission.status 自身流转，不承担无人机回收、飞行记录补录或其他跨实体编排；
+        # 2) 请求体必须为空，避免把取消动作扩展成编排型接口；
+        # 3) 已完成、已取消或已失败任务不允许再次取消，返回状态冲突。
+        if request.data:
+            return Response(
+                {
+                    "business_code": BusinessCode.INVALID_PARAMS,
+                    "detail": "cancel 请求不支持提交 body 参数",
+                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mission = self.get_object()
+        before_payload = self._mission_payload(mission)
+
+        if mission.status in {MissionStatus.COMPLETED, MissionStatus.CANCELED, MissionStatus.FAILED}:
+            return Response(
+                {
+                    "business_code": BusinessCode.STATE_CONFLICT,
+                    "business_detail_code": "STATE_CONFLICT",
+                    "detail": "当前任务状态不允许取消",
+                    "mission_id": mission.id,
+                    "status": mission.status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        mission.status = MissionStatus.CANCELED
+        mission.save(update_fields=["status", "updated_at"])
+        after_payload = self._mission_payload(mission)
+        log_action(
+            request=request,
+            action="MISSION_CANCEL",
+            target_type="mission",
+            target_id=mission.id,
+            before_data=before_payload,
+            after_data=after_payload,
+        )
+        return Response(after_payload, status=status.HTTP_200_OK)
+
     def partial_update(self, request, *args, **kwargs):
         # 业务作用：
         # 提供任务的最小可组合更新入口（PATCH /api/v1/missions/{id}），
@@ -102,7 +156,7 @@ class MissionViewSet(
     @transaction.atomic
     def perform_create(self, serializer):
         mission = serializer.save()
-        mission_payload = dict(MissionReadSerializer(mission, context={"request": self.request}).data)
+        mission_payload = self._mission_payload(mission)
         log_action(
             request=self.request,
             action="MISSION_CREATE",
@@ -115,9 +169,9 @@ class MissionViewSet(
     @transaction.atomic
     def perform_update(self, serializer):
         mission = self.get_object()
-        before_payload = dict(MissionReadSerializer(mission, context={"request": self.request}).data)
+        before_payload = self._mission_payload(mission)
         mission = serializer.save()
-        after_payload = dict(MissionReadSerializer(mission, context={"request": self.request}).data)
+        after_payload = self._mission_payload(mission)
         log_action(
             request=self.request,
             action="MISSION_UPDATE",
