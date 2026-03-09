@@ -1,13 +1,14 @@
 # mission 数据字典
 
-- updated_at: 2026-03-08T08:24:00Z
+- updated_at: 2026-03-09T09:30:00+08:00
 - entity: mission
 
 ## 业务定位
 - 历史 API: POST /api/v1/missions
 - 历史增补 API: GET /api/v1/missions
-- 当前轮增补 API: GET /api/v1/missions/{id}
-- 业务目的：任务实体提供“创建 + 列表读取 + 详情读取”基础能力，供外部系统按需组合调度流程。
+- 历史增补 API: GET /api/v1/missions/{id}
+- 当前轮增补 API: PATCH /api/v1/missions/{id}
+- 业务目的：任务实体提供“创建 + 查询 + 局部更新”的基础能力，供外部系统按需组合调度流程。
 
 ## 字段定义（来自模型代码）
 - id: type=BigAutoField; constraints=PK; verbose=ID
@@ -25,15 +26,23 @@
 - updated_at: type=DateTimeField(auto_now); constraints=NOT NULL; verbose=更新时间
 
 ## 序列化读写边界
-- MissionWriteSerializer（POST 写入）：
+- MissionWriteSerializer（POST/PATCH 写入）：
   - 可写字段：`name`, `route`, `drone`, `pilot`, `scheduled_at`, `remark`
+  - 不可写字段：`status` 及其他未声明字段（返回 `INVALID_PARAMS`）
   - 关键校验：route 必须 ACTIVE、drone 必须 ENABLED、pilot 必须在职且类型为 `pilot_operator`
 - MissionReadSerializer（GET 返回）：
   - 返回字段：`id`, `name`, `route`, `route_name`, `drone`, `drone_name`, `pilot`, `pilot_name`, `scheduled_at`, `remark`, `status`, `created_at`, `updated_at`
 
-## 详情读取响应语义（当前轮）
+## 详情读取响应语义（历史增补）
 - 接口：`GET /api/v1/missions/{id}`
 - 成功响应：返回单条 mission 对象，并携带 `business_code=SUCCESS`
+- 无权限：`business_code=PERMISSION_DENIED`
+- 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
+
+## 当前轮 PATCH 响应语义
+- 接口：`PATCH /api/v1/missions/{id}`
+- 成功响应：返回更新后的 mission 对象，并携带 `business_code=SUCCESS`
+- 参数非法：`business_code=INVALID_PARAMS`（detail code: `VALIDATION_ERROR`）
 - 无权限：`business_code=PERMISSION_DENIED`
 - 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
 
@@ -47,10 +56,13 @@
 - GET /api/v1/missions/{id}：
   - 已覆盖：SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
   - 缺口：INVALID_PARAMS, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
+- PATCH /api/v1/missions/{id}：
+  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
+  - 缺口：STATE_CONFLICT, IDEMPOTENT_DUPLICATE
 
 ## 权限码
-- mission.manage_mission：创建任务（POST）
-- mission.view_mission：查看任务列表/详情（GET）
+- mission.manage_mission：创建与局部更新任务（POST/PATCH）
+- mission.view_mission：查看任务列表与详情（GET）
 
 ## 证据文件
 - apps/mission/models.py

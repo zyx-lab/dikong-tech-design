@@ -1,7 +1,8 @@
-// updated_at: 2026-03-08T08:24:00Z
+// updated_at: 2026-03-09T09:30:00+08:00
 // entity: mission
-// 历史保留 + 当前轮增补：当前轮新增 GET /api/v1/missions/{id}（详情读取），missions 表结构不新增字段
-// 当前轮接口语义：按 mission 主键读取详情，返回 SUCCESS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
+// 历史保留 + 当前轮增补：当前轮新增 PATCH /api/v1/missions/{id}（局部更新），missions 表结构不新增字段
+// 当前轮接口语义：按 mission 主键局部更新 name/route/drone/pilot/scheduled_at/remark
+// 当前轮业务码：SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
 
 Table missions {
   id bigint [pk, increment, note: 'ID']

@@ -15,22 +15,24 @@ class MissionViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
     viewsets.GenericViewSet,
 ):
     """任务业务接口（V1）。"""
 
     queryset = Mission.objects.select_related("route", "drone", "pilot").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "head", "options"]
+    http_method_names = ["get", "post", "patch", "head", "options"]
 
     permission_map = {
         "list": "mission.view_mission",
         "retrieve": "mission.view_mission",
         "create": "mission.manage_mission",
+        "partial_update": "mission.manage_mission",
     }
 
     def get_serializer_class(self):
-        if self.action == "create":
+        if self.action in {"create", "partial_update"}:
             return MissionWriteSerializer
         return MissionReadSerializer
 
@@ -86,6 +88,17 @@ class MissionViewSet(
         # 业务码字段 business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
         return super().retrieve(request, *args, **kwargs)
 
+    def partial_update(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供任务的最小可组合更新入口（PATCH /api/v1/missions/{id}），
+        # 仅更新请求体中明确给出的字段，避免一次性整体替换任务快照。
+        #
+        # 适用边界：
+        # 1) 允许更新任务基础属性（如 name/scheduled_at/remark）及可重绑定资源（route/drone/pilot）；
+        # 2) 不承担任务状态流转编排（开始/暂停/完成/取消），状态字段在此接口不可写；
+        # 3) 成功返回最新任务快照，业务码由统一响应层补齐。
+        return super().partial_update(request, *args, **kwargs)
+
     @transaction.atomic
     def perform_create(self, serializer):
         mission = serializer.save()
@@ -96,5 +109,21 @@ class MissionViewSet(
             target_type="mission",
             target_id=mission.id,
             after_data=mission_payload,
+        )
+        return mission
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        mission = self.get_object()
+        before_payload = dict(MissionReadSerializer(mission, context={"request": self.request}).data)
+        mission = serializer.save()
+        after_payload = dict(MissionReadSerializer(mission, context={"request": self.request}).data)
+        log_action(
+            request=self.request,
+            action="MISSION_UPDATE",
+            target_type="mission",
+            target_id=mission.id,
+            before_data=before_payload,
+            after_data=after_payload,
         )
         return mission

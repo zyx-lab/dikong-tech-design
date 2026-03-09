@@ -148,6 +148,87 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
 
+    def test_patch_mission_should_return_success(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        mission = self._create_mission(name="待更新任务", status=MissionStatus.PENDING)
+
+        response = self.client.patch(
+            f"/api/v1/missions/{mission.id}",
+            {
+                "name": "更新后任务",
+                "remark": "调整执行窗口",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["name"], "更新后任务")
+        self.assertEqual(response.data["remark"], "调整执行窗口")
+
+        mission.refresh_from_db()
+        self.assertEqual(mission.name, "更新后任务")
+        self.assertEqual(mission.remark, "调整执行窗口")
+
+    def test_patch_mission_with_status_should_return_invalid_params(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        mission = self._create_mission(name="状态字段更新测试", status=MissionStatus.PENDING)
+
+        response = self.client.patch(
+            f"/api/v1/missions/{mission.id}",
+            {"status": MissionStatus.RUNNING},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("status", response.data)
+
+    def test_patch_mission_not_found_should_return_resource_not_found(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+
+        response = self.client.patch(
+            "/api/v1/missions/999999",
+            {"name": "不存在任务"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_patch_mission_without_auth_should_return_permission_denied(self):
+        mission = self._create_mission(name="未认证更新任务")
+
+        response = self.client.patch(
+            f"/api/v1/missions/{mission.id}",
+            {"remark": "未认证请求"},
+            format="json",
+        )
+
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_patch_mission_without_permission_should_return_permission_denied(self):
+        mission = self._create_mission(name="无权限更新任务")
+        self.client.force_authenticate(self.dispatcher_user)
+
+        response = self.client.patch(
+            f"/api/v1/missions/{mission.id}",
+            {"remark": "无权限请求"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
     def test_list_missions_should_return_success(self):
         self._grant_permission("mission.view_mission")
         self.client.force_authenticate(self.dispatcher_user)

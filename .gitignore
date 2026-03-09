@@ -11,3 +11,4 @@ db.sqlite3.bak.*
 .lsp/
 .clj-kondo/
 逻辑设计/*.dbdiagram
+codex_devflow_scaffold
