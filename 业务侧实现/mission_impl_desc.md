@@ -107,11 +107,38 @@
   - `test_start_mission_without_auth_should_return_permission_denied`
   - `test_start_mission_without_permission_should_return_permission_denied`
 
+## 本轮增补（2026-03-09，迭代 8）
+### 迭代 G：POST /api/v1/missions/{id}/pause
+- 业务目的：补齐任务挂起入口，让调度侧能够把执行中的任务显式置为已暂停，形成“创建 -> 启动 -> 暂停 -> 恢复/取消/完成”的状态流转基础。
+- 设计边界：
+  - 只处理单条 mission 的状态流转，不承担飞行记录创建、无人机回收、媒体归档或其他跨实体编排。
+  - 请求体必须为空；暂停动作的输入仅由路径参数 `id` 决定。
+  - 仅允许 `RUNNING -> PAUSED`。
+  - 已处于 `PAUSED` 的任务重复 pause 按幂等成功处理。
+  - `PENDING`、`COMPLETED`、`CANCELED`、`FAILED` 不允许 pause，返回状态冲突。
+- 权限要求：调用方需具备 `mission.manage_mission`。
+- 响应语义：
+  - SUCCESS / OK：暂停成功，或重复暂停已暂停任务的幂等成功
+  - INVALID_PARAMS / VALIDATION_ERROR：请求体非空
+  - RESOURCE_NOT_FOUND / NOT_FOUND：任务不存在
+  - STATE_CONFLICT / STATE_CONFLICT：当前状态不允许暂停
+  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无暂停权限
+- 审计语义：
+  - 成功暂停后写入 `MISSION_PAUSE` 审计日志；幂等重复暂停也保留审计轨迹。
+- 项目内回归沉淀：
+  - `test_pause_mission_should_return_success`
+  - `test_pause_paused_mission_should_be_idempotent_success`
+  - `test_pause_mission_with_body_should_return_invalid_params`
+  - `test_pause_mission_state_conflict_should_return_state_conflict`
+  - `test_pause_mission_not_found_should_return_resource_not_found`
+  - `test_pause_mission_without_auth_should_return_permission_denied`
+  - `test_pause_mission_without_permission_should_return_permission_denied`
+
 <!-- stage6_doc_sync::mission::impl_desc.md::start -->
 ## Stage6 本轮同步
-- 本轮 focus API: POST /api/v1/missions/{id}/start
-- 本轮实现目标: mission 现在已有创建、查询、局部更新和取消，但仍缺少进入执行中的基础入口，任务状态机无法从 PENDING 真正流转到 RUNNING。先补齐 start，才能让任务生命周期具备可执行语义，并为后续 pause/complete/fail 等状态动作打基础。
-- 业务事件: EVT-001 启动任务
+- 本轮 focus API: POST /api/v1/missions/{id}/pause
+- 本轮实现目标: mission 现在已有创建、查询、局部更新、启动和取消，但仍缺少把执行中任务挂起的基础入口，状态机无法进入 PAUSED。先补齐 pause，才能让任务状态机覆盖运行中的中断场景，并为后续 resume/complete/fail 等动作打基础。
+- 业务事件: EVT-001 暂停任务
 - 业务约束: N/A
 - 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
 - 关键文件: apps/mission/tests.py, apps/mission/views.py, apps/mission/models.py, apps/mission/serializers.py, apps/mission/urls.py

@@ -9,7 +9,7 @@
 - 历史增补 API: GET /api/v1/missions/{id}
 - 当前轮增补 API: PATCH /api/v1/missions/{id}
 - 本轮增补 API: POST /api/v1/missions/{id}/cancel
-- 业务目的：任务实体提供“创建 + 查询 + 局部更新 + 启动 + 取消”的基础能力，供外部系统按需组合调度流程。
+- 业务目的：任务实体提供“创建 + 查询 + 局部更新 + 启动 + 暂停 + 取消”的基础能力，供外部系统按需组合调度流程。
 
 ## 字段定义（来自模型代码）
 - id: type=BigAutoField; constraints=PK; verbose=ID
@@ -64,6 +64,15 @@
 - 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
 - 状态冲突：`PAUSED`、`COMPLETED`、`CANCELED`、`FAILED` 任务 start 返回 `business_code=STATE_CONFLICT`
 
+## 本轮 pause 响应语义
+- 接口：`POST /api/v1/missions/{id}/pause`
+- 成功响应：返回暂停后的 mission 对象，并携带 `business_code=SUCCESS`
+- 幂等成功：已处于 `PAUSED` 的任务重复 pause 仍返回 `SUCCESS`
+- 参数非法：请求体非空，返回 `business_code=INVALID_PARAMS`
+- 无权限：`business_code=PERMISSION_DENIED`
+- 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
+- 状态冲突：`PENDING`、`COMPLETED`、`CANCELED`、`FAILED` 任务 pause 返回 `business_code=STATE_CONFLICT`
+
 ## 业务状态码覆盖
 - POST /api/v1/missions：
   - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
@@ -83,9 +92,12 @@
 - POST /api/v1/missions/{id}/start：
   - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT
   - 缺口：IDEMPOTENT_DUPLICATE
+- POST /api/v1/missions/{id}/pause：
+  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT
+  - 缺口：IDEMPOTENT_DUPLICATE
 
 ## 权限码
-- mission.manage_mission：创建、局部更新、启动与取消任务（POST/PATCH/start/cancel）
+- mission.manage_mission：创建、局部更新、启动、暂停与取消任务（POST/PATCH/start/pause/cancel）
 - mission.view_mission：查看任务列表与详情（GET）
 
 ## 证据文件
@@ -98,9 +110,9 @@
 
 <!-- stage6_doc_sync::mission::data_dictionary.md::start -->
 ## Stage6 本轮同步
-- 关联 API: POST /api/v1/missions/{id}/start
-- 提名依据: mission 现在已有创建、查询、局部更新和取消，但仍缺少进入执行中的基础入口，任务状态机无法从 PENDING 真正流转到 RUNNING。先补齐 start，才能让任务生命周期具备可执行语义，并为后续 pause/complete/fail 等状态动作打基础。
-- 业务事件: EVT-001 启动任务
+- 关联 API: POST /api/v1/missions/{id}/pause
+- 提名依据: mission 现在已有创建、查询、局部更新、启动和取消，但仍缺少把执行中任务挂起的基础入口，状态机无法进入 PAUSED。先补齐 pause，才能让任务状态机覆盖运行中的中断场景，并为后续 resume/complete/fail 等动作打基础。
+- 业务事件: EVT-001 暂停任务
 - 业务码覆盖: 目标=SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE; 已覆盖=SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, INVALID_PARAMS; 缺口=IDEMPOTENT_DUPLICATE
 - 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
 - 证据文件: apps/mission/tests.py, apps/mission/views.py, apps/mission/models.py, apps/mission/serializers.py, apps/mission/urls.py
