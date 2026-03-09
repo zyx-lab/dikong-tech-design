@@ -134,11 +134,38 @@
   - `test_pause_mission_without_auth_should_return_permission_denied`
   - `test_pause_mission_without_permission_should_return_permission_denied`
 
+## 本轮增补（2026-03-09，迭代 9）
+### 迭代 H：POST /api/v1/missions/{id}/resume
+- 业务目的：补齐任务恢复入口，让调度侧能够把已暂停任务显式恢复为执行中，形成“启动 -> 暂停 -> 恢复”的最小中断恢复闭环。
+- 设计边界：
+  - 只处理单条 mission 的状态流转，不承担飞行记录创建、无人机回收、媒体归档或其他跨实体编排。
+  - 请求体必须为空；恢复动作的输入仅由路径参数 `id` 决定。
+  - 仅允许 `PAUSED -> RUNNING`。
+  - 已处于 `RUNNING` 的任务重复 resume 按幂等成功处理。
+  - `PENDING`、`COMPLETED`、`CANCELED`、`FAILED` 不允许 resume，返回状态冲突。
+- 权限要求：调用方需具备 `mission.manage_mission`。
+- 响应语义：
+  - SUCCESS / OK：恢复成功，或重复恢复执行中任务的幂等成功
+  - INVALID_PARAMS / VALIDATION_ERROR：请求体非空
+  - RESOURCE_NOT_FOUND / NOT_FOUND：任务不存在
+  - STATE_CONFLICT / STATE_CONFLICT：当前状态不允许恢复
+  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无恢复权限
+- 审计语义：
+  - 成功恢复后写入 `MISSION_RESUME` 审计日志；幂等重复恢复也保留审计轨迹。
+- 项目内回归沉淀：
+  - `test_resume_mission_should_return_success`
+  - `test_resume_running_mission_should_be_idempotent_success`
+  - `test_resume_mission_with_body_should_return_invalid_params`
+  - `test_resume_mission_state_conflict_should_return_state_conflict`
+  - `test_resume_mission_not_found_should_return_resource_not_found`
+  - `test_resume_mission_without_auth_should_return_permission_denied`
+  - `test_resume_mission_without_permission_should_return_permission_denied`
+
 <!-- stage6_doc_sync::mission::impl_desc.md::start -->
 ## Stage6 本轮同步
-- 本轮 focus API: POST /api/v1/missions/{id}/pause
-- 本轮实现目标: mission 现在已有创建、查询、局部更新、启动和取消，但仍缺少把执行中任务挂起的基础入口，状态机无法进入 PAUSED。先补齐 pause，才能让任务状态机覆盖运行中的中断场景，并为后续 resume/complete/fail 等动作打基础。
-- 业务事件: EVT-001 暂停任务
+- 本轮 focus API: POST /api/v1/missions/{id}/resume
+- 本轮实现目标: mission 现在已有创建、查询、局部更新、启动、暂停和取消，但仍缺少把已暂停任务恢复为执行中的基础入口，状态机无法从 PAUSED 回到 RUNNING。先补齐 resume，才能让任务状态机具备最小的中断恢复闭环。
+- 业务事件: EVT-001 恢复任务
 - 业务约束: N/A
 - 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
 - 关键文件: apps/mission/tests.py, apps/mission/views.py, apps/mission/models.py, apps/mission/serializers.py, apps/mission/urls.py

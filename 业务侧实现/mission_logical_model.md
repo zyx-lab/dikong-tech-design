@@ -32,6 +32,7 @@
 - 更新入口（当前轮增补）：PATCH /api/v1/missions/{id}
 - 启动入口（本轮增补）：POST /api/v1/missions/{id}/start
 - 暂停入口（本轮增补）：POST /api/v1/missions/{id}/pause
+- 恢复入口（本轮增补）：POST /api/v1/missions/{id}/resume
 - 取消入口（本轮增补）：POST /api/v1/missions/{id}/cancel
 - 删除入口：N/A
 
@@ -72,6 +73,19 @@
   - 成功暂停后写入 `MISSION_PAUSE` 审计日志。
 
 ## 本轮增补（2026-03-09）
+- 本轮聚焦 API: `POST /api/v1/missions/{id}/resume`
+- 状态流转语义：
+  - 允许 `PAUSED -> RUNNING`
+  - `RUNNING -> RUNNING` 按幂等成功处理
+  - `PENDING`、`COMPLETED`、`CANCELED`、`FAILED` 不允许 resume，返回 `STATE_CONFLICT`
+- 输入边界：
+  - 请求体必须为空，不接受额外编排参数。
+- 作用边界：
+  - 仅变更 `missions.status`，不自动处理飞行记录创建、无人机回收或其他跨实体联动。
+- 审计语义：
+  - 成功恢复后写入 `MISSION_RESUME` 审计日志。
+
+## 本轮增补（2026-03-09）
 - 本轮聚焦 API: `POST /api/v1/missions/{id}/cancel`
 - 状态流转语义：
   - 允许 `PENDING -> CANCELED`
@@ -91,6 +105,6 @@
 - 业务动作: N/A
 - 状态机: N/A
 - 业务约束: N/A
-- 事件闭环: EVT-001->POST /api/v1/missions/{id}/pause
+- 事件闭环: EVT-001->POST /api/v1/missions/{id}/resume
 - 权限边界: 代码权限码: view_mission (可查看任务), manage_mission (可新增与编辑任务)
 <!-- stage6_doc_sync::mission::logical_model.md::end -->
