@@ -30,6 +30,7 @@ class MissionViewSet(
         "retrieve": "mission.view_mission",
         "create": "mission.manage_mission",
         "partial_update": "mission.manage_mission",
+        "start": "mission.manage_mission",
         "cancel": "mission.manage_mission",
     }
 
@@ -135,6 +136,67 @@ class MissionViewSet(
         log_action(
             request=request,
             action="MISSION_CANCEL",
+            target_type="mission",
+            target_id=mission.id,
+            before_data=before_payload,
+            after_data=after_payload,
+        )
+        return Response(after_payload, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def start(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按 mission_id 启动任务”的基础状态流转入口（POST /api/v1/missions/{id}/start），
+        # 用于将待执行任务显式置为执行中。
+        #
+        # 适用边界：
+        # 1) 仅处理 mission.status 自身流转，不承担飞行记录创建、无人机回收或其他跨实体编排；
+        # 2) 请求体必须为空；
+        # 3) 已执行中的任务重复 start 按幂等成功返回；
+        # 4) 已暂停、已完成、已取消、已失败任务不允许 start，返回状态冲突。
+        if request.data:
+            return Response(
+                {
+                    "business_code": BusinessCode.INVALID_PARAMS,
+                    "detail": "start 请求不支持提交 body 参数",
+                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mission = self.get_object()
+        before_payload = self._mission_payload(mission)
+
+        if mission.status == MissionStatus.RUNNING:
+            log_action(
+                request=request,
+                action="MISSION_START",
+                target_type="mission",
+                target_id=mission.id,
+                before_data=before_payload,
+                after_data=before_payload,
+            )
+            return Response(before_payload, status=status.HTTP_200_OK)
+
+        if mission.status in {MissionStatus.PAUSED, MissionStatus.COMPLETED, MissionStatus.CANCELED, MissionStatus.FAILED}:
+            return Response(
+                {
+                    "business_code": BusinessCode.STATE_CONFLICT,
+                    "business_detail_code": "STATE_CONFLICT",
+                    "detail": "当前任务状态不允许启动",
+                    "mission_id": mission.id,
+                    "status": mission.status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        mission.status = MissionStatus.RUNNING
+        mission.save(update_fields=["status", "updated_at"])
+        after_payload = self._mission_payload(mission)
+        log_action(
+            request=request,
+            action="MISSION_START",
             target_type="mission",
             target_id=mission.id,
             before_data=before_payload,
