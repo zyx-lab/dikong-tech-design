@@ -31,6 +31,7 @@ class FlightRecordViewSet(
         "create": "flight_record.manage_flight_record",
         "partial_update": "flight_record.manage_flight_record",
         "complete": "flight_record.manage_flight_record",
+        "abort": "flight_record.manage_flight_record",
     }
 
     def get_serializer_class(self):
@@ -196,6 +197,67 @@ class FlightRecordViewSet(
         log_action(
             request=request,
             action="FLIGHT_RECORD_COMPLETE",
+            target_type="flight_record",
+            target_id=record.id,
+            before_data=before_payload,
+            after_data=after_payload,
+        )
+        return Response(after_payload, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def abort(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按 flight_record_id 异常终止飞行记录”的基础状态流转入口（POST /api/v1/flight-records/{id}/abort），
+        # 用于将飞行中的记录显式置为异常终止。
+        #
+        # 适用边界：
+        # 1) 仅处理 flight_record.status 自身流转，不承担任务状态联动、媒体归档或统计编排；
+        # 2) 请求体必须为空；
+        # 3) 已异常终止记录重复 abort 按幂等成功返回；
+        # 4) 已完成记录不允许 abort，返回状态冲突。
+        if request.data:
+            return Response(
+                {
+                    "business_code": BusinessCode.INVALID_PARAMS,
+                    "detail": "abort 请求不支持提交 body 参数",
+                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        record = self.get_object()
+        before_payload = self._record_payload(record)
+
+        if record.status == FlightRecordStatus.ABORTED:
+            log_action(
+                request=request,
+                action="FLIGHT_RECORD_ABORT",
+                target_type="flight_record",
+                target_id=record.id,
+                before_data=before_payload,
+                after_data=before_payload,
+            )
+            return Response(before_payload, status=status.HTTP_200_OK)
+
+        if record.status == FlightRecordStatus.COMPLETED:
+            return Response(
+                {
+                    "business_code": BusinessCode.STATE_CONFLICT,
+                    "business_detail_code": "STATE_CONFLICT",
+                    "detail": "当前飞行记录状态不允许异常终止",
+                    "flight_record_id": record.id,
+                    "status": record.status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        record.status = FlightRecordStatus.ABORTED
+        record.save(update_fields=["status", "updated_at"])
+        after_payload = self._record_payload(record)
+        log_action(
+            request=request,
+            action="FLIGHT_RECORD_ABORT",
             target_type="flight_record",
             target_id=record.id,
             before_data=before_payload,

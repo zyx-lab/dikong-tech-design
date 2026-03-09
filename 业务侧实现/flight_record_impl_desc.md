@@ -45,9 +45,9 @@
 
 <!-- stage6_doc_sync::flight_record::impl_desc.md::start -->
 ## Stage6 本轮同步
-- 本轮 focus API: POST /api/v1/flight-records/{id}/complete
-- 本轮实现目标: flight_record 已有 IN_PROGRESS、COMPLETED、ABORTED 三种状态枚举，但当前只有通用 PATCH，缺少把飞行中记录显式闭环为已完成的基础动作入口。先补齐 complete，才能让飞行记录状态流转从元数据修正升级为更清晰的业务动作接口。
-- 业务事件: EVT-001 完成飞行记录
+- 本轮 focus API: POST /api/v1/flight-records/{id}/abort
+- 本轮实现目标: flight_record 在补齐 complete 后，仍缺少把飞行中记录显式落到 ABORTED 的基础动作入口。补齐 abort 后，flight_record 的显式状态动作才同时覆盖正常结束和异常结束两条主路径。
+- 业务事件: EVT-001 异常终止飞行记录
 - 业务约束: N/A
 - 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
 - 关键文件: apps/flight_record/tests.py, apps/flight_record/views.py, apps/flight_record/models.py, apps/flight_record/serializers.py, apps/flight_record/urls.py

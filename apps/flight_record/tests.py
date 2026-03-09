@@ -488,3 +488,96 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
+    def test_abort_flight_record_should_return_success(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
+
+        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["status"], FlightRecordStatus.ABORTED)
+
+        record.refresh_from_db()
+        self.assertEqual(record.status, FlightRecordStatus.ABORTED)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="FLIGHT_RECORD_ABORT",
+                target_type="flight_record",
+                target_id=str(record.id),
+            ).exists()
+        )
+
+    def test_abort_aborted_flight_record_should_be_idempotent_success(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record(status=FlightRecordStatus.ABORTED)
+
+        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["status"], FlightRecordStatus.ABORTED)
+
+    def test_abort_flight_record_with_body_should_return_invalid_params(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
+
+        response = self.client.post(
+            f"/api/v1/flight-records/{record.id}/abort",
+            {"unexpected": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        record.refresh_from_db()
+        self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
+
+    def test_abort_flight_record_state_conflict_should_return_state_conflict(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record(status=FlightRecordStatus.COMPLETED)
+
+        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
+        self.assertEqual(response.data["business_detail_code"], "STATE_CONFLICT")
+        record.refresh_from_db()
+        self.assertEqual(record.status, FlightRecordStatus.COMPLETED)
+
+    def test_abort_flight_record_not_found_should_return_resource_not_found(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.post("/api/v1/flight-records/999999/abort")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_abort_flight_record_without_auth_should_return_permission_denied(self):
+        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
+
+        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
+
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_abort_flight_record_without_permission_should_return_permission_denied(self):
+        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
