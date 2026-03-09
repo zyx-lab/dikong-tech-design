@@ -122,9 +122,9 @@
 
 <!-- stage6_doc_sync::mission::data_dictionary.md::start -->
 ## Stage6 本轮同步
-- 关联 API: POST /api/v1/missions/{id}/resume
-- 提名依据: mission 现在已有创建、查询、局部更新、启动、暂停和取消，但仍缺少把已暂停任务恢复为执行中的基础入口，状态机无法从 PAUSED 回到 RUNNING。先补齐 resume，才能让任务状态机具备最小的中断恢复闭环。
-- 业务事件: EVT-001 恢复任务
+- 关联 API: POST /api/v1/missions/{id}/complete
+- 提名依据: mission 现在已有创建、查询、局部更新、启动、暂停、恢复和取消，但仍缺少把执行中任务闭环为已完成的基础入口，状态机无法从 RUNNING 落到 COMPLETED。先补齐 complete，才能让任务生命周期具备最小完成闭环。
+- 业务事件: EVT-001 完成任务
 - 业务码覆盖: 目标=SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE; 已覆盖=SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, INVALID_PARAMS; 缺口=IDEMPOTENT_DUPLICATE
 - 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
 - 证据文件: apps/mission/tests.py, apps/mission/views.py, apps/mission/models.py, apps/mission/serializers.py, apps/mission/urls.py
