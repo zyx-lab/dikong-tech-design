@@ -68,92 +68,13 @@
   - `test_delete_media_file_without_permission_should_return_permission_denied`
 
 
-<!-- stage6_round_context::media_file::GET /api/v1/media-files/{id} -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T11:48:36.944441Z",
-  "entity": "media_file",
-  "focus_api_keys": [
-    "GET /api/v1/media-files/{id}"
-  ],
-  "stage0_reason": "在已具备媒体列表检索后，补齐按媒体ID读取详情的基础只读接口，供外部系统先列表筛选再精确拉取单条媒体元数据，保持接口简单且可组合。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/access/management/commands/seed_role_permissions.py",
-    "apps/api_v1/urls.py",
-    "apps/api_v1/views.py",
-    "config/settings.py",
-    "apps/media_file/",
-    "apps/media_file/models.py",
-    "apps/media_file/serializers.py",
-    "apps/media_file/views.py",
-    "apps/media_file/urls.py",
-    "apps/media_file/tests.py"
-  ]
-}
-```
 
 
-<!-- stage6_round_context::media_file::DELETE /api/v1/media-files/{id} -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T12:29:57.254159Z",
-  "entity": "media_file",
-  "focus_api_keys": [
-    "DELETE /api/v1/media-files/{id}"
-  ],
-  "stage0_reason": "总体设计已定义 media_files 采用逻辑删除（is_deleted/deleted_at），当前缺少单条媒体的删除入口。补齐该基础接口后，外部可自行组合“查询详情->执行删除->再次查询校验”流程，无需编排型接口。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/access/management/commands/seed_role_permissions.py",
-    "apps/media_file/models.py",
-    "apps/media_file/tests.py",
-    "apps/media_file/views.py",
-    "apps/media_file/migrations/0002_add_manage_media_file_permission.py",
-    "apps/media_file/serializers.py",
-    "apps/media_file/urls.py"
-  ]
-}
-```
 
 
-<!-- stage6_round_context::media_file::POST /api/v1/media-files -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T13:12:10.606036Z",
-  "entity": "media_file",
-  "focus_api_keys": [
-    "POST /api/v1/media-files"
-  ],
-  "stage0_reason": "总体设计已定义 media_files 为飞行记录关联的核心实体；当前已具备 GET 列表/详情与 DELETE 逻辑删除，但缺少基础写入入口。补齐 POST 后，外部系统可用“创建媒体元数据->查询->删除”组合业务流，无需新增编排型接口。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/media_file/serializers.py",
-    "apps/media_file/tests.py",
-    "apps/media_file/views.py",
-    "apps/media_file/models.py",
-    "apps/media_file/urls.py"
-  ]
-}
-```
+
+
+
 
 ## 本轮增补（2026-03-08，迭代17）
 - 新增写入 API: POST /api/v1/media-files
@@ -172,3 +93,35 @@
   - `test_create_media_file_invalid_params_should_return_invalid_params`
   - `test_create_media_file_without_auth_should_return_permission_denied`
   - `test_create_media_file_without_permission_should_return_permission_denied`
+
+## 本轮增补（2026-03-09）
+- 新增写入 API: PATCH /api/v1/media-files/{id}
+- 业务价值: 补齐媒体文件元数据的基础编辑入口，允许调用方在不触碰上传/删除链路的前提下修正文件名、URL、拍摄位置、媒体类型和归属飞行记录。
+- 实现位置: `MediaFileViewSet.partial_update` + `perform_update`，复用 `MediaFileWriteSerializer` 白名单。
+- 请求语义:
+  - 仅允许局部更新 `flight_record`、`media_type`、`file_name`、`file_url`、`thumbnail_url`、`file_size`、`latitude`、`longitude`、`captured_at`。
+  - PATCH 请求体必须至少包含一个可写字段；空 body 直接返回参数错误。
+  - 已逻辑删除记录不参与更新，统一按资源不存在处理。
+- 返回语义:
+  - SUCCESS/OK: 更新成功并返回最新媒体记录快照。
+  - INVALID_PARAMS/VALIDATION_ERROR: 空请求体、字段校验失败或提交了不可写字段。
+  - RESOURCE_NOT_FOUND/NOT_FOUND: 目标记录不存在或已逻辑删除。
+  - PERMISSION_DENIED: 未认证或无 `media_file.manage_media_file` 权限。
+- 审计语义:
+  - 成功更新后写入 `MEDIA_FILE_UPDATE` 审计日志，保留 before/after 快照。
+- 项目内回归沉淀:
+  - `test_patch_media_file_should_return_success`
+  - `test_patch_media_file_empty_body_should_return_invalid_params`
+  - `test_patch_media_file_not_found_should_return_resource_not_found`
+  - `test_patch_media_file_without_auth_should_return_permission_denied`
+  - `test_patch_media_file_without_permission_should_return_permission_denied`
+
+<!-- stage6_doc_sync::media_file::impl_desc.md::start -->
+## Stage6 本轮同步
+- 本轮 focus API: PATCH /api/v1/media-files/{id}
+- 本轮实现目标: 当前 media_file 已具备列表、详情、创建与逻辑删除能力，但缺少基础编辑入口，调用方无法修正媒体文件名、URL、拍摄位置、归属飞行记录等元数据。补齐 PATCH 后，媒体实体才能形成最小可维护闭环。
+- 业务事件: EVT-001 更新媒体文件
+- 业务约束: N/A
+- 测试沉淀: 生成用例数: 4, 已执行用例数: 4, 已沉淀到项目测试: 4, 待沉淀 case: N/A, 失败 case: N/A
+- 关键文件: apps/media_file/tests.py, apps/media_file/views.py, apps/media_file/models.py, apps/media_file/serializers.py, apps/media_file/urls.py
+<!-- stage6_doc_sync::media_file::impl_desc.md::end -->

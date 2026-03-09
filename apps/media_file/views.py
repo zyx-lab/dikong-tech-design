@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.response import Response
@@ -15,6 +16,7 @@ class MediaFileViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
@@ -22,19 +24,23 @@ class MediaFileViewSet(
 
     queryset = MediaFile.objects.select_related("flight_record", "flight_record__mission", "flight_record__drone").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "delete", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     permission_map = {
         "list": "media_file.view_media_file",
         "retrieve": "media_file.view_media_file",
         "create": "media_file.manage_media_file",
+        "partial_update": "media_file.manage_media_file",
         "destroy": "media_file.manage_media_file",
     }
 
     def get_serializer_class(self):
-        if self.action == "create":
+        if self.action in {"create", "partial_update"}:
             return MediaFileWriteSerializer
         return MediaFileReadSerializer
+
+    def _media_file_payload(self, media_file: MediaFile) -> dict:
+        return dict(MediaFileReadSerializer(media_file, context={"request": self.request}).data)
 
     def get_queryset(self):
         queryset = super().get_queryset().filter(is_deleted=False)
@@ -109,6 +115,35 @@ class MediaFileViewSet(
         headers = self.get_success_headers(read_serializer.data)
         return Response(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
+    def partial_update(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按 media_file_id 局部更新媒体元数据”的基础接口（PATCH /api/v1/media-files/{id}），
+        # 允许外部系统修正文件名、URL、拍摄位置、媒体类型以及归属飞行记录等字段。
+        #
+        # 适用边界：
+        # 1) 仅更新单条 media_file 自身元数据，不承担文件上传、转码、逻辑删除恢复或批量编排；
+        # 2) PATCH 请求体必须至少包含一个可写字段；
+        # 3) 已逻辑删除记录不参与更新，统一按资源不存在处理。
+        if not request.data:
+            return Response(
+                {
+                    "business_code": "INVALID_PARAMS",
+                    "detail": "PATCH 请求至少包含一个可写字段",
+                    "errors": {"body": "请至少提交一个可写字段"},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        media_file = self.perform_update(serializer)
+
+        if getattr(instance, "_prefetched_objects_cache", None):
+            instance._prefetched_objects_cache = {}
+
+        return Response(self._media_file_payload(media_file), status=status.HTTP_200_OK)
+
     def destroy(self, request, *args, **kwargs):
         # 业务作用：
         # 提供“按 media_file_id 逻辑删除媒体文件”的基础写操作能力。
@@ -135,3 +170,19 @@ class MediaFileViewSet(
         instance.is_deleted = True
         instance.deleted_at = timezone.now()
         instance.save(update_fields=["is_deleted", "deleted_at"])
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        media_file = self.get_object()
+        before_payload = self._media_file_payload(media_file)
+        media_file = serializer.save()
+        after_payload = self._media_file_payload(media_file)
+        log_action(
+            request=self.request,
+            action="MEDIA_FILE_UPDATE",
+            target_type="media_file",
+            target_id=media_file.id,
+            before_data=before_payload,
+            after_data=after_payload,
+        )
+        return media_file

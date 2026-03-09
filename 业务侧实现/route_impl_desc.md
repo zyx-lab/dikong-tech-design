@@ -20,7 +20,6 @@
   - SUCCESS / OK：查询成功，返回分页 `results`
   - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无查看权限
 
-## 当前轮增补
 ### 迭代 C：GET /api/v1/routes/{id}
 - 业务目的：提供“按 route_id 精确读取航线详情”的基础能力，供调度或任务模块在引用前校验目标航线。
 - 设计边界：只读详情接口，不承担创建、更新、删除，也不引入编排行为。
@@ -31,10 +30,36 @@
   - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无查看权限
   - RESOURCE_NOT_FOUND / ROUTE_NOT_FOUND：`id` 不存在或已不可见
 
+### 迭代 D：DELETE /api/v1/routes/{id}
+- 业务目的：补齐航线台账删除入口，让外部系统能完成“创建 -> 查询 -> 删除/停用”的最小生命周期闭环。
+- 设计边界：
+  - 只处理单条 route 删除，不做任务解绑、批量清理或调度编排。
+  - DELETE 请求体必须为空；非空按 `INVALID_PARAMS` 处理。
+  - 若 route 已被 mission 引用，则不物理删除，改为置为 `DISABLED(0)` 并返回成功。
+  - 若 route 未被 mission 引用，则物理删除 route，并同步删除其下属 waypoints。
+- 关键业务码：
+  - SUCCESS / OK：删除成功，或已引用航线被禁用成功
+  - INVALID_PARAMS / VALIDATION_ERROR：DELETE 请求携带 body
+  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无删除权限
+  - RESOURCE_NOT_FOUND / NOT_FOUND：`id` 不存在
+
+## 当前轮增补
+### 迭代 E：PATCH /api/v1/routes/{id}
+- 业务目的：补齐航线台账的基础编辑入口，让外部系统能修正 route 名称、适配机型、总里程、预计时长等主记录元数据。
+- 设计边界：
+  - 只更新单条 route 主记录，不承担航点重排、任务解绑、状态流转或删除恢复。
+  - PATCH 请求体必须至少包含一个可写字段。
+  - `status`、`creator_name` 等生命周期/审计字段不可写；未知字段按 `INVALID_PARAMS` 处理。
+- 关键业务码：
+  - SUCCESS / OK：局部更新成功
+  - INVALID_PARAMS / VALIDATION_ERROR：空 body 或包含不可写字段
+  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无编辑权限
+  - RESOURCE_NOT_FOUND / NOT_FOUND：`id` 不存在
+
 ## 本轮实现文件
-- apps/route/views.py（`retrieve` 动作）
-- apps/route/serializers.py（`RouteReadSerializer`）
-- apps/route/tests.py（详情成功/无权限/不存在用例）
+- apps/route/views.py（`partial_update` 动作）
+- apps/route/serializers.py（`RouteWriteSerializer` / `RouteReadSerializer`）
+- apps/route/tests.py（更新场景用例）
 
 ## 可追溯产物
 - Stage0 候选：`codex_devflow_scaffold/artifacts/stage0/latest.json`
@@ -51,34 +76,12 @@
 - apps/api_v1/urls.py
 - apps/api_v1/business_response.py
 
-<!-- stage6_round_context::route::GET /api/v1/routes/{id} -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T07:38:38.976856Z",
-  "entity": "route",
-  "focus_api_keys": [
-    "GET /api/v1/routes/{id}"
-  ],
-  "stage0_reason": "在已具备 POST/GET 列表基础上，补齐航线详情读取能力，供任务编排前按 route_id 精确拉取航线主数据；接口保持只读、单一职责、可组合。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/access/management/commands/seed_role_permissions.py",
-    "apps/api_v1/urls.py",
-    "apps/api_v1/views.py",
-    "apps/drone/urls.py",
-    "config/settings.py",
-    "apps/route/",
-    "apps/route/models.py",
-    "apps/route/serializers.py",
-    "apps/route/views.py",
-    "apps/route/urls.py",
-    "apps/route/tests.py"
-  ]
-}
-```
+<!-- stage6_doc_sync::route::impl_desc.md::start -->
+## Stage6 本轮同步
+- 本轮 focus API: PATCH /api/v1/routes/{id}
+- 本轮实现目标: 在 route 已具备创建、列表、详情与删除能力的基础上，补齐主记录局部更新入口，让外部系统可修正航线台账元数据，形成完整的最小维护闭环。
+- 业务事件: EVT-001 更新航线
+- 业务约束: PATCH 仅允许更新 route 主记录可写字段；不承担状态流转、航点编排与任务解绑。
+- 测试沉淀: 生成用例数: N/A, 已执行用例数: N/A, 已沉淀到项目测试: N/A, 待沉淀 case: N/A, 失败 case: N/A
+- 关键文件: apps/route/tests.py, apps/route/views.py, apps/route/models.py, apps/route/serializers.py, apps/route/urls.py
+<!-- stage6_doc_sync::route::impl_desc.md::end -->

@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.access.models import EmploymentStatus, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, StaffType, StaffTypeGroup
+from apps.access.models import AuditLog, EmploymentStatus, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, StaffType, StaffTypeGroup
 from apps.drone.models import Drone, DroneStatus
 from apps.flight_record.models import FlightRecord, FlightRecordStatus
 from apps.mission.models import Mission, MissionStatus
@@ -285,6 +285,113 @@ class FlightRecordApiTests(TestCase):
         self.client.force_authenticate(self.viewer_user)
 
         response = self.client.get(f"/api/v1/flight-records/{record.id}")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
+    def test_patch_flight_record_should_return_success(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
+        new_end_time = record.end_time + timedelta(minutes=5)
+
+        response = self.client.patch(
+            f"/api/v1/flight-records/{record.id}",
+            {
+                "airport_name": "深圳宝安机场",
+                "end_time": new_end_time.isoformat(),
+                "photo_count": 16,
+                "status": FlightRecordStatus.COMPLETED,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["airport_name"], "深圳宝安机场")
+        self.assertEqual(response.data["photo_count"], 16)
+        self.assertEqual(response.data["status"], FlightRecordStatus.COMPLETED)
+        record.refresh_from_db()
+        self.assertEqual(record.airport_name, "深圳宝安机场")
+        self.assertEqual(record.photo_count, 16)
+        self.assertEqual(record.status, FlightRecordStatus.COMPLETED)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="FLIGHT_RECORD_UPDATE",
+                target_type="flight_record",
+                target_id=str(record.id),
+            ).exists()
+        )
+
+    def test_patch_flight_record_empty_body_should_return_invalid_params(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record()
+
+        response = self.client.patch(
+            f"/api/v1/flight-records/{record.id}",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+
+    def test_patch_flight_record_invalid_params_should_return_invalid_params(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record()
+
+        response = self.client.patch(
+            f"/api/v1/flight-records/{record.id}",
+            {"end_time": "2026-03-08T07:00:00+08:00"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("end_time", response.data)
+
+    def test_patch_flight_record_not_found_should_return_resource_not_found(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.patch(
+            "/api/v1/flight-records/999999",
+            {"airport_name": "不存在"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_patch_flight_record_without_auth_should_return_permission_denied(self):
+        record = self._create_flight_record()
+
+        response = self.client.patch(
+            f"/api/v1/flight-records/{record.id}",
+            {"airport_name": "无权限修改"},
+            format="json",
+        )
+
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_patch_flight_record_without_permission_should_return_permission_denied(self):
+        record = self._create_flight_record()
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.patch(
+            f"/api/v1/flight-records/{record.id}",
+            {"airport_name": "无权限修改"},
+            format="json",
+        )
+
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})

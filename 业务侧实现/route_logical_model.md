@@ -21,46 +21,36 @@
 ## 生命周期入口
 - 创建入口（历史）：POST /api/v1/routes
 - 查询入口（历史增补）：GET /api/v1/routes
-- 详情入口（当前轮增补）：GET /api/v1/routes/{id}
-- 更新入口：N/A
-- 删除入口：N/A
+- 详情入口（历史增补）：GET /api/v1/routes/{id}
+- 更新入口（当前轮增补）：PATCH /api/v1/routes/{id}
+- 删除入口（历史增补）：DELETE /api/v1/routes/{id}
 
 ## 当前轮业务语义
-- `GET /api/v1/routes/{id}` 仅做“按主键读取”，不引入状态流转与跨实体副作用。
-- 成功路径：返回 route 当前快照，业务码 `SUCCESS`。
+- `PATCH /api/v1/routes/{id}` 仅允许局部更新 route 主记录元数据，不承担航点重排、任务解绑、状态流转或删除恢复。
+- 成功路径：返回 route 最新快照，业务码 `SUCCESS`。
 - 失败路径：
   - 无权限：`PERMISSION_DENIED`
   - 目标 route 不存在：`RESOURCE_NOT_FOUND`
+  - 请求体为空或包含不可写字段：`INVALID_PARAMS`
 
+## 更新语义边界（PATCH /api/v1/routes/{id}）
+- PATCH 请求体必须至少包含一个可写字段。
+- 仅允许修改 `name`、`route_type`、`drone_type_id`、`total_distance`、`estimated_duration`、`waypoint_count`。
+- `status`、`creator_name` 等生命周期/审计字段不可通过 PATCH 改写。
+- 更新接口只处理 route 自身台账元数据，不承担航点编排或任务侧联动。
 
-<!-- stage6_round_context::route::GET /api/v1/routes/{id} -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T07:38:38.976856Z",
-  "entity": "route",
-  "focus_api_keys": [
-    "GET /api/v1/routes/{id}"
-  ],
-  "stage0_reason": "在已具备 POST/GET 列表基础上，补齐航线详情读取能力，供任务编排前按 route_id 精确拉取航线主数据；接口保持只读、单一职责、可组合。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/access/management/commands/seed_role_permissions.py",
-    "apps/api_v1/urls.py",
-    "apps/api_v1/views.py",
-    "apps/drone/urls.py",
-    "config/settings.py",
-    "apps/route/",
-    "apps/route/models.py",
-    "apps/route/serializers.py",
-    "apps/route/views.py",
-    "apps/route/urls.py",
-    "apps/route/tests.py"
-  ]
-}
-```
+## 删除语义边界（DELETE /api/v1/routes/{id}）
+- DELETE 请求体必须为空；若携带 body，返回 `INVALID_PARAMS`。
+- 若 route 已被 mission 引用，则保留主记录并将 `status` 置为 `DISABLED(0)`。
+- 若 route 未被 mission 引用，则物理删除 route 主记录，并同步删除其下属 waypoints。
+- 删除接口只处理 route 自身生命周期，不承担任务解绑或跨实体编排。
+
+<!-- stage6_doc_sync::route::logical_model.md::start -->
+## Stage6 本轮同步
+- 业务目标: N/A
+- 业务动作: N/A
+- 状态机: N/A
+- 业务约束: N/A
+- 事件闭环: EVT-001->PATCH /api/v1/routes/{id}
+- 权限边界: 代码权限码: view_route (可查看航线), manage_route (可新增与编辑航线)
+<!-- stage6_doc_sync::route::logical_model.md::end -->

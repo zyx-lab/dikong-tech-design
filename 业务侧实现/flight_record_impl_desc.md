@@ -3,16 +3,16 @@
 - generated_at: 2026-03-08T09:24:39.176004Z
 
 ## 本轮实现目标
-- 总体设计已定义 flight_records 实体，当前业务平面尚无飞行记录读取能力；先补齐按记录ID读取详情的基础只读接口，供外部系统在媒体检索与任务复盘前拉取执行快照。
+- 当前 flight_record 已具备创建、列表与详情能力，但缺少基础编辑入口；补齐 `PATCH /api/v1/flight-records/{id}` 后，调用方可修正飞行结果元数据，形成最小可维护闭环。
 
 ## API 行为范围
-- 本轮聚焦 API: GET /api/v1/flight-records/{id}
+- 本轮聚焦 API: PATCH /api/v1/flight-records/{id}
 - 唯一性约束字段: flight_no
 - 默认状态: status=FlightRecordStatus.IN_PROGRESS
 
 ## 关键业务码
-- 已覆盖业务码: SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
-- 未覆盖目标码: INVALID_PARAMS, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
+- 已覆盖业务码: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
+- 未覆盖目标码: STATE_CONFLICT, IDEMPOTENT_DUPLICATE
 
 ## 可追溯来源
 - codex_devflow_scaffold/artifacts/stage0/latest.json
@@ -31,67 +31,24 @@
 - apps/flight_record/urls.py
 - apps/flight_record/tests.py
 
-## 本轮增补（POST /api/v1/flight-records）
-- 接口作用: POST /api/v1/flight-records 用于写入飞行记录，补齐 flight_record 实体的基础创建入口。
-- 请求边界: 仅处理 flight_record 资源本身字段，不做任务/媒体等跨实体编排。
-- 响应语义: 成功返回 `SUCCESS`；参数校验失败返回 `INVALID_PARAMS`；权限不足返回 `PERMISSION_DENIED`。
+## 本轮增补（PATCH /api/v1/flight-records/{id}）
+- 接口作用: PATCH /api/v1/flight-records/{id} 用于局部修正飞行记录主数据。
+- 请求边界:
+  - 仅处理 flight_record 自身可写字段；
+  - 不做媒体文件编排、级联删除或跨实体状态流转；
+  - PATCH 请求体必须至少包含一个可写字段。
+- 响应语义:
+  - 成功返回 `SUCCESS`
+  - 参数校验失败返回 `INVALID_PARAMS`
+  - 权限不足返回 `PERMISSION_DENIED`
+  - 资源不存在返回 `RESOURCE_NOT_FOUND`
 
-
-<!-- stage6_round_context::flight_record::GET /api/v1/flight-records -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T10:16:51.849636Z",
-  "entity": "flight_record",
-  "focus_api_keys": [
-    "GET /api/v1/flight-records"
-  ],
-  "stage0_reason": "在已具备按ID读取飞行记录详情后，补齐飞行记录列表查询这一基础只读接口，供外部系统先筛选记录再按ID拉取详情，形成可组合的复盘检索链路。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/access/management/commands/seed_role_permissions.py",
-    "apps/api_v1/urls.py",
-    "config/settings.py",
-    "apps/flight_record/",
-    "apps/flight_record/models.py",
-    "apps/flight_record/serializers.py",
-    "apps/flight_record/views.py",
-    "apps/flight_record/urls.py",
-    "apps/flight_record/tests.py"
-  ]
-}
-```
-
-
-<!-- stage6_round_context::flight_record::POST /api/v1/flight-records -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T15:58:25.980661Z",
-  "entity": "flight_record",
-  "focus_api_keys": [
-    "POST /api/v1/flight-records"
-  ],
-  "stage0_reason": "总体设计已定义 flight_records 为任务执行后的核心记录实体，当前仅有列表/详情读取，缺少基础写入入口。补齐 POST 后，外部系统可组合“创建飞行记录 -> 关联媒体创建 -> 查询复盘”链路，无需编排型接口。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/access/management/commands/seed_role_permissions.py",
-    "apps/flight_record/models.py",
-    "apps/flight_record/serializers.py",
-    "apps/flight_record/tests.py",
-    "apps/flight_record/views.py",
-    "apps/flight_record/migrations/0002_alter_flightrecord_options.py",
-    "apps/flight_record/urls.py"
-  ]
-}
-```
+<!-- stage6_doc_sync::flight_record::impl_desc.md::start -->
+## Stage6 本轮同步
+- 本轮 focus API: PATCH /api/v1/flight-records/{id}
+- 本轮实现目标: 当前 flight_record 已具备创建、列表和详情能力，但缺少基础编辑入口，调用方无法修正机场、飞行时间、图片视频数量或异常终止状态等执行结果数据。补齐 PATCH 后，飞行记录才能形成最小可维护闭环。
+- 业务事件: EVT-001 更新飞行记录
+- 业务约束: N/A
+- 测试沉淀: 生成用例数: 4, 已执行用例数: 4, 已沉淀到项目测试: 4, 待沉淀 case: N/A, 失败 case: N/A
+- 关键文件: apps/flight_record/serializers.py, apps/flight_record/tests.py, apps/flight_record/views.py, apps/flight_record/models.py, apps/flight_record/urls.py
+<!-- stage6_doc_sync::flight_record::impl_desc.md::end -->

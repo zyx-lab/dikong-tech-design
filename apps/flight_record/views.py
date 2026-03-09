@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.response import Response
 
@@ -14,22 +15,24 @@ class FlightRecordViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
     viewsets.GenericViewSet,
 ):
     """飞行记录业务接口（V1）。"""
 
     queryset = FlightRecord.objects.select_related("mission", "drone", "pilot").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "head", "options"]
+    http_method_names = ["get", "post", "patch", "head", "options"]
 
     permission_map = {
         "list": "flight_record.view_flight_record",
         "retrieve": "flight_record.view_flight_record",
         "create": "flight_record.manage_flight_record",
+        "partial_update": "flight_record.manage_flight_record",
     }
 
     def get_serializer_class(self):
-        if self.action == "create":
+        if self.action in {"create", "partial_update"}:
             return FlightRecordWriteSerializer
         return FlightRecordReadSerializer
 
@@ -103,3 +106,49 @@ class FlightRecordViewSet(
         # 3) 未认证或无查看权限：business_code=PERMISSION_DENIED（HTTP 401/403）。
         # 业务码字段 business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
         return super().retrieve(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按 flight_record_id 局部更新飞行记录主数据”的基础接口（PATCH /api/v1/flight-records/{id}），
+        # 允许外部系统修正机场、飞行时间、图片视频数量、绑定关系与结果状态等执行结果元数据。
+        #
+        # 适用边界：
+        # 1) 仅更新单条 flight_record 自身字段，不承担媒体文件编排、删除或跨实体状态流转；
+        # 2) PATCH 请求体必须至少包含一个可写字段；
+        # 3) 成功返回最新 flight_record 快照，业务码由统一响应层补齐。
+        if not request.data:
+            return Response(
+                {
+                    "business_code": "INVALID_PARAMS",
+                    "detail": "PATCH 请求至少包含一个可写字段",
+                    "errors": {"body": "请至少提交一个可写字段"},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        record = self.perform_update(serializer)
+
+        if getattr(instance, "_prefetched_objects_cache", None):
+            instance._prefetched_objects_cache = {}
+
+        read_serializer = FlightRecordReadSerializer(record, context={"request": request})
+        return Response(read_serializer.data, status=status.HTTP_200_OK)
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        record = self.get_object()
+        before_payload = dict(FlightRecordReadSerializer(record, context={"request": self.request}).data)
+        record = serializer.save()
+        after_payload = dict(FlightRecordReadSerializer(record, context={"request": self.request}).data)
+        log_action(
+            request=self.request,
+            action="FLIGHT_RECORD_UPDATE",
+            target_type="flight_record",
+            target_id=record.id,
+            before_data=before_payload,
+            after_data=after_payload,
+        )
+        return record

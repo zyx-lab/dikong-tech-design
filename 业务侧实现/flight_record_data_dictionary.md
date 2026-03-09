@@ -4,8 +4,11 @@
 - entity: flight_record
 
 ## 业务定位
-- 关联 API: GET /api/v1/flight-records/{id}
-- 业务目的: 总体设计已定义 flight_records 实体，当前业务平面尚无飞行记录读取能力；先补齐按记录ID读取详情的基础只读接口，供外部系统在媒体检索与任务复盘前拉取执行快照。
+- 历史 API: POST /api/v1/flight-records
+- 历史增补 API: GET /api/v1/flight-records
+- 历史增补 API: GET /api/v1/flight-records/{id}
+- 当前轮增补 API: PATCH /api/v1/flight-records/{id}
+- 业务目的: 当前 flight_record 已具备创建、列表与详情能力，但缺少基础编辑入口；补齐 PATCH 后，调用方可修正飞行结果元数据，形成最小可维护闭环。
 
 ## 字段定义（来自模型代码）
 - id: type=BigAutoField; constraints=pk; verbose=ID
@@ -29,14 +32,19 @@
 
 ## 序列化读写边界
 - FlightRecordReadSerializer: id, flight_no, mission, mission_name, route_name, airport_name, drone, drone_name, pilot, pilot_name, start_time, end_time, flight_duration, photo_count, video_count, status, created_at, updated_at
+- FlightRecordWriteSerializer:
+  - 允许字段: `flight_no`, `mission`, `drone`, `pilot`, `start_time`, `end_time`, `flight_duration`, `photo_count`, `video_count`, `status`, `airport_name`
+  - 不可写字段: `mission_name`, `route_name`, `drone_name`, `pilot_name`, `created_at`, `updated_at`
+  - 约束: `end_time` 不能早于 `start_time`；若同时给出 `mission` 与 `drone/pilot`，绑定关系必须一致
 
 ## 业务状态码覆盖
-- 已覆盖: SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
+- 已覆盖: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
 - 目标集合: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- 当前缺口: INVALID_PARAMS, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
+- 当前缺口: STATE_CONFLICT, IDEMPOTENT_DUPLICATE
 
 ## 权限码
 - view_flight_record: 可查看飞行记录
+- manage_flight_record: 可新增与编辑飞行记录
 
 ## 证据文件
 - apps/access/management/commands/seed_role_permissions.py
@@ -49,67 +57,17 @@
 - apps/flight_record/urls.py
 - apps/flight_record/tests.py
 
-## 本轮增补（POST /api/v1/flight-records）
-- 关联 API: POST /api/v1/flight-records
-- 写入语义: 创建飞行记录主数据，返回业务码 `SUCCESS`；参数缺失/非法返回 `INVALID_PARAMS`；无权限返回 `PERMISSION_DENIED`。
-- 约束说明: `flight_no` 仍保持唯一约束；创建接口不承担跨实体编排，只提供基础可组合写入能力。
+## 本轮增补（PATCH /api/v1/flight-records/{id}）
+- 关联 API: PATCH /api/v1/flight-records/{id}
+- 写入语义: 局部更新飞行记录主数据，成功返回 `SUCCESS`；空 body 或参数非法返回 `INVALID_PARAMS`；无权限返回 `PERMISSION_DENIED`；资源不存在返回 `RESOURCE_NOT_FOUND`。
+- 约束说明: PATCH 只更新单条 flight_record 自身可写字段，不承担媒体文件编排、级联删除或跨实体状态流转。
 
-
-<!-- stage6_round_context::flight_record::GET /api/v1/flight-records -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T10:16:51.849636Z",
-  "entity": "flight_record",
-  "focus_api_keys": [
-    "GET /api/v1/flight-records"
-  ],
-  "stage0_reason": "在已具备按ID读取飞行记录详情后，补齐飞行记录列表查询这一基础只读接口，供外部系统先筛选记录再按ID拉取详情，形成可组合的复盘检索链路。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/access/management/commands/seed_role_permissions.py",
-    "apps/api_v1/urls.py",
-    "config/settings.py",
-    "apps/flight_record/",
-    "apps/flight_record/models.py",
-    "apps/flight_record/serializers.py",
-    "apps/flight_record/views.py",
-    "apps/flight_record/urls.py",
-    "apps/flight_record/tests.py"
-  ]
-}
-```
-
-
-<!-- stage6_round_context::flight_record::POST /api/v1/flight-records -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T15:58:25.980661Z",
-  "entity": "flight_record",
-  "focus_api_keys": [
-    "POST /api/v1/flight-records"
-  ],
-  "stage0_reason": "总体设计已定义 flight_records 为任务执行后的核心记录实体，当前仅有列表/详情读取，缺少基础写入入口。补齐 POST 后，外部系统可组合“创建飞行记录 -> 关联媒体创建 -> 查询复盘”链路，无需编排型接口。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/access/management/commands/seed_role_permissions.py",
-    "apps/flight_record/models.py",
-    "apps/flight_record/serializers.py",
-    "apps/flight_record/tests.py",
-    "apps/flight_record/views.py",
-    "apps/flight_record/migrations/0002_alter_flightrecord_options.py",
-    "apps/flight_record/urls.py"
-  ]
-}
-```
+<!-- stage6_doc_sync::flight_record::data_dictionary.md::start -->
+## Stage6 本轮同步
+- 关联 API: PATCH /api/v1/flight-records/{id}
+- 提名依据: 当前 flight_record 已具备创建、列表和详情能力，但缺少基础编辑入口，调用方无法修正机场、飞行时间、图片视频数量或异常终止状态等执行结果数据。补齐 PATCH 后，飞行记录才能形成最小可维护闭环。
+- 业务事件: EVT-001 更新飞行记录
+- 业务码覆盖: 目标=SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE; 已覆盖=SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, INVALID_PARAMS; 缺口=STATE_CONFLICT, IDEMPOTENT_DUPLICATE
+- 测试沉淀: 生成用例数: 4, 已执行用例数: 4, 已沉淀到项目测试: 4, 待沉淀 case: N/A, 失败 case: N/A
+- 证据文件: apps/flight_record/serializers.py, apps/flight_record/tests.py, apps/flight_record/views.py, apps/flight_record/models.py, apps/flight_record/urls.py
+<!-- stage6_doc_sync::flight_record::data_dictionary.md::end -->

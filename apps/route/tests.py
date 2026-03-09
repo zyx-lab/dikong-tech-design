@@ -3,8 +3,20 @@ from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.access.models import AuditLog, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, StaffType, StaffTypeGroup
+from apps.access.models import (
+    AuditLog,
+    EmploymentStatus,
+    GroupPermissionScope,
+    ScopeStatus,
+    ScopeType,
+    StaffProfile,
+    StaffType,
+    StaffTypeGroup,
+)
+from apps.drone.models import Drone, DroneStatus
+from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route, RouteStatus, RouteType
+from apps.waypoint.models import Waypoint
 
 User = get_user_model()
 
@@ -13,13 +25,29 @@ class RouteApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.staff_type = StaffType.objects.create(code="route_admin_test", name="航线管理员", status=1)
+        self.pilot_staff_type = StaffType.objects.create(code="route_pilot_test", name="飞手", status=1)
         self.user = User.objects.create_user(username="route_admin", password="pass1234", status=1)
+        self.pilot_user = User.objects.create_user(username="route_pilot", password="pass1234", status=1)
         self.staff = StaffProfile.objects.create(
             user=self.user,
             staff_no="R-001",
             name="航线管理员A",
             employment_status=1,
             staff_type=self.staff_type,
+        )
+        self.pilot_staff = StaffProfile.objects.create(
+            user=self.pilot_user,
+            staff_no="P-001",
+            name="飞手A",
+            employment_status=EmploymentStatus.ACTIVE,
+            staff_type=self.pilot_staff_type,
+        )
+        self.drone = Drone.objects.create(
+            code="ROUTE-DRN-001",
+            name="航线测试机",
+            model="M300",
+            serial_no="ROUTE-SN-001",
+            status=DroneStatus.ENABLED,
         )
 
     def _grant_permission(self, permission_code: str, with_scope: bool = True):
@@ -42,6 +70,27 @@ class RouteApiTests(TestCase):
             route_type=route_type,
             status=status,
             creator_name=self.staff.name,
+        )
+
+    def _create_waypoint(self, route: Route, *, sequence: int = 1) -> Waypoint:
+        return Waypoint.objects.create(
+            route=route,
+            sequence=sequence,
+            latitude="22.54321012",
+            longitude="113.98765432",
+            altitude="120.50",
+        )
+
+    def _create_mission(self, route: Route, *, name: str = "引用航线任务", status: int = MissionStatus.PENDING) -> Mission:
+        return Mission.objects.create(
+            name=name,
+            route=route,
+            route_name=route.name,
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=self.pilot_staff,
+            pilot_name=self.pilot_staff.name,
+            status=status,
         )
 
     def test_create_route_should_return_success(self):
@@ -210,6 +259,203 @@ class RouteApiTests(TestCase):
         self.client.force_authenticate(self.user)
 
         response = self.client.get(f"/api/v1/routes/{route.id}")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
+    def test_patch_route_should_return_success(self):
+        self._grant_permission("route.manage_route")
+        self.client.force_authenticate(self.user)
+        route = self._create_route(name="待更新航线")
+
+        response = self.client.patch(
+            f"/api/v1/routes/{route.id}",
+            {
+                "name": "已更新航线",
+                "estimated_duration": 1800,
+                "total_distance": "3560.80",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["name"], "已更新航线")
+        self.assertEqual(response.data["estimated_duration"], 1800)
+        self.assertEqual(response.data["total_distance"], "3560.80")
+        route.refresh_from_db()
+        self.assertEqual(route.name, "已更新航线")
+        self.assertEqual(route.estimated_duration, 1800)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="ROUTE_UPDATE",
+                target_type="route",
+                target_id=str(route.id),
+            ).exists()
+        )
+
+    def test_patch_route_empty_body_should_return_invalid_params(self):
+        self._grant_permission("route.manage_route")
+        self.client.force_authenticate(self.user)
+        route = self._create_route(name="空更新航线")
+
+        response = self.client.patch(
+            f"/api/v1/routes/{route.id}",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        route.refresh_from_db()
+        self.assertEqual(route.name, "空更新航线")
+
+    def test_patch_route_not_found_should_return_resource_not_found(self):
+        self._grant_permission("route.manage_route")
+        self.client.force_authenticate(self.user)
+
+        response = self.client.patch(
+            "/api/v1/routes/999999",
+            {"name": "不存在航线"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_patch_route_without_auth_should_return_permission_denied(self):
+        route = self._create_route(name="未认证更新航线")
+
+        response = self.client.patch(
+            f"/api/v1/routes/{route.id}",
+            {"name": "未认证更新后"},
+            format="json",
+        )
+
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_patch_route_without_permission_should_return_permission_denied(self):
+        route = self._create_route(name="无权限更新航线")
+        self.client.force_authenticate(self.user)
+
+        response = self.client.patch(
+            f"/api/v1/routes/{route.id}",
+            {"name": "无权限更新后"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
+    def test_delete_route_should_hard_delete_route_and_waypoints(self):
+        self._grant_permission("route.manage_route")
+        self.client.force_authenticate(self.user)
+        route = self._create_route(name="待物理删除航线")
+        self._create_waypoint(route, sequence=1)
+        self._create_waypoint(route, sequence=2)
+
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["delete_mode"], "hard")
+        self.assertEqual(response.data["deleted_waypoint_count"], 2)
+        self.assertFalse(Route.objects.filter(id=route.id).exists())
+        self.assertFalse(Waypoint.objects.filter(route_id=route.id).exists())
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="ROUTE_DELETE",
+                target_type="route",
+                target_id=str(route.id),
+            ).exists()
+        )
+
+    def test_delete_route_with_missions_should_disable_instead_of_hard_delete(self):
+        self._grant_permission("route.manage_route")
+        self.client.force_authenticate(self.user)
+        route = self._create_route(name="被任务引用航线", status=RouteStatus.ACTIVE)
+        self._create_mission(route)
+
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["delete_mode"], "disabled")
+        route.refresh_from_db()
+        self.assertEqual(route.status, RouteStatus.DISABLED)
+        self.assertTrue(Route.objects.filter(id=route.id).exists())
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="ROUTE_DELETE",
+                target_type="route",
+                target_id=str(route.id),
+            ).exists()
+        )
+
+    def test_delete_route_already_disabled_with_missions_should_be_idempotent(self):
+        self._grant_permission("route.manage_route")
+        self.client.force_authenticate(self.user)
+        route = self._create_route(name="已禁用引用航线", status=RouteStatus.DISABLED)
+        self._create_mission(route, name="引用禁用航线任务")
+
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["delete_mode"], "disabled")
+        route.refresh_from_db()
+        self.assertEqual(route.status, RouteStatus.DISABLED)
+
+    def test_delete_route_with_body_should_return_invalid_params(self):
+        self._grant_permission("route.manage_route")
+        self.client.force_authenticate(self.user)
+        route = self._create_route(name="删除参数校验航线")
+
+        response = self.client.delete(
+            f"/api/v1/routes/{route.id}",
+            {"unexpected": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertTrue(Route.objects.filter(id=route.id).exists())
+
+    def test_delete_route_not_found_should_return_resource_not_found(self):
+        self._grant_permission("route.manage_route")
+        self.client.force_authenticate(self.user)
+
+        response = self.client.delete("/api/v1/routes/999999")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_delete_route_without_auth_should_return_permission_denied(self):
+        route = self._create_route(name="删除未认证航线")
+
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_delete_route_without_permission_should_return_permission_denied(self):
+        route = self._create_route(name="删除无权限航线")
+        self.client.force_authenticate(self.user)
+
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
+
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})

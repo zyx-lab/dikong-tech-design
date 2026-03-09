@@ -381,3 +381,106 @@ class MediaFileApiTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
+    def test_patch_media_file_should_return_success(self):
+        self._grant_permission("media_file.manage_media_file")
+        self.client.force_authenticate(self.viewer_user)
+        flight_record = self._create_flight_record()
+        next_flight_record = self._create_flight_record()
+        media_file = self._create_media_file(flight_record=flight_record, file_name="IMG_PATCH_OLD.JPG")
+
+        response = self.client.patch(
+            f"/api/v1/media-files/{media_file.id}",
+            {
+                "flight_record": next_flight_record.id,
+                "media_type": MediaType.VIDEO,
+                "file_name": "IMG_PATCH_NEW.MP4",
+                "file_url": "https://example.com/IMG_PATCH_NEW.MP4",
+                "thumbnail_url": "https://example.com/thumb/IMG_PATCH_NEW.MP4",
+                "file_size": 8192,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["flight_record"], next_flight_record.id)
+        self.assertEqual(response.data["media_type"], MediaType.VIDEO)
+        self.assertEqual(response.data["file_name"], "IMG_PATCH_NEW.MP4")
+        self.assertEqual(response.data["file_size"], 8192)
+        media_file.refresh_from_db()
+        self.assertEqual(media_file.flight_record_id, next_flight_record.id)
+        self.assertEqual(media_file.media_type, MediaType.VIDEO)
+        self.assertEqual(media_file.file_name, "IMG_PATCH_NEW.MP4")
+        self.assertEqual(media_file.file_url, "https://example.com/IMG_PATCH_NEW.MP4")
+        self.assertEqual(media_file.thumbnail_url, "https://example.com/thumb/IMG_PATCH_NEW.MP4")
+        self.assertEqual(media_file.file_size, 8192)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="MEDIA_FILE_UPDATE",
+                target_type="media_file",
+                target_id=str(media_file.id),
+            ).exists()
+        )
+
+    def test_patch_media_file_empty_body_should_return_invalid_params(self):
+        self._grant_permission("media_file.manage_media_file")
+        self.client.force_authenticate(self.viewer_user)
+        flight_record = self._create_flight_record()
+        media_file = self._create_media_file(flight_record=flight_record, file_name="IMG_PATCH_EMPTY.JPG")
+
+        response = self.client.patch(
+            f"/api/v1/media-files/{media_file.id}",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        media_file.refresh_from_db()
+        self.assertEqual(media_file.file_name, "IMG_PATCH_EMPTY.JPG")
+
+    def test_patch_media_file_not_found_should_return_resource_not_found(self):
+        self._grant_permission("media_file.manage_media_file")
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.patch(
+            "/api/v1/media-files/999999",
+            {"file_name": "IMG_PATCH_NOT_FOUND.JPG"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_patch_media_file_without_auth_should_return_permission_denied(self):
+        flight_record = self._create_flight_record()
+        media_file = self._create_media_file(flight_record=flight_record, file_name="IMG_PATCH_NOAUTH.JPG")
+
+        response = self.client.patch(
+            f"/api/v1/media-files/{media_file.id}",
+            {"file_name": "IMG_PATCH_DENIED.JPG"},
+            format="json",
+        )
+
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_patch_media_file_without_permission_should_return_permission_denied(self):
+        flight_record = self._create_flight_record()
+        media_file = self._create_media_file(flight_record=flight_record, file_name="IMG_PATCH_FORBIDDEN.JPG")
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.patch(
+            f"/api/v1/media-files/{media_file.id}",
+            {"file_name": "IMG_PATCH_DENIED.JPG"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})

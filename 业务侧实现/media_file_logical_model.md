@@ -14,7 +14,7 @@
 
 ## 生命周期入口
 - 创建入口: N/A
-- 更新入口: N/A
+- 更新入口: PATCH /api/v1/media-files/{id}
 
 ## 本轮增补（2026-03-08）
 - 本轮聚焦 API: GET /api/v1/media-files/{id}
@@ -37,92 +37,13 @@
   - PERMISSION_DENIED -> 无认证或无删除权限
 
 
-<!-- stage6_round_context::media_file::GET /api/v1/media-files/{id} -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T11:48:36.944441Z",
-  "entity": "media_file",
-  "focus_api_keys": [
-    "GET /api/v1/media-files/{id}"
-  ],
-  "stage0_reason": "在已具备媒体列表检索后，补齐按媒体ID读取详情的基础只读接口，供外部系统先列表筛选再精确拉取单条媒体元数据，保持接口简单且可组合。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/access/management/commands/seed_role_permissions.py",
-    "apps/api_v1/urls.py",
-    "apps/api_v1/views.py",
-    "config/settings.py",
-    "apps/media_file/",
-    "apps/media_file/models.py",
-    "apps/media_file/serializers.py",
-    "apps/media_file/views.py",
-    "apps/media_file/urls.py",
-    "apps/media_file/tests.py"
-  ]
-}
-```
 
 
-<!-- stage6_round_context::media_file::DELETE /api/v1/media-files/{id} -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T12:29:57.254159Z",
-  "entity": "media_file",
-  "focus_api_keys": [
-    "DELETE /api/v1/media-files/{id}"
-  ],
-  "stage0_reason": "总体设计已定义 media_files 采用逻辑删除（is_deleted/deleted_at），当前缺少单条媒体的删除入口。补齐该基础接口后，外部可自行组合“查询详情->执行删除->再次查询校验”流程，无需编排型接口。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/access/management/commands/seed_role_permissions.py",
-    "apps/media_file/models.py",
-    "apps/media_file/tests.py",
-    "apps/media_file/views.py",
-    "apps/media_file/migrations/0002_add_manage_media_file_permission.py",
-    "apps/media_file/serializers.py",
-    "apps/media_file/urls.py"
-  ]
-}
-```
 
 
-<!-- stage6_round_context::media_file::POST /api/v1/media-files -->
-## Stage6 同步上下文（可追溯）
-```json
-{
-  "generated_at": "2026-03-08T13:12:10.606036Z",
-  "entity": "media_file",
-  "focus_api_keys": [
-    "POST /api/v1/media-files"
-  ],
-  "stage0_reason": "总体设计已定义 media_files 为飞行记录关联的核心实体；当前已具备 GET 列表/详情与 DELETE 逻辑删除，但缺少基础写入入口。补齐 POST 后，外部系统可用“创建媒体元数据->查询->删除”组合业务流，无需新增编排型接口。",
-  "source_artifacts": [
-    "codex_devflow_scaffold/artifacts/stage0/latest.json",
-    "codex_devflow_scaffold/artifacts/stage2/latest.json",
-    "codex_devflow_scaffold/artifacts/stage4/latest.json",
-    "codex_devflow_scaffold/artifacts/stage5/latest.json"
-  ],
-  "related_paths": [
-    "apps/media_file/serializers.py",
-    "apps/media_file/tests.py",
-    "apps/media_file/views.py",
-    "apps/media_file/models.py",
-    "apps/media_file/urls.py"
-  ]
-}
-```
+
+
+
 
 ## 本轮增补（2026-03-08，迭代17）
 - 本轮聚焦 API: POST /api/v1/media-files
@@ -138,3 +59,31 @@
   - SUCCESS -> 创建成功
   - INVALID_PARAMS -> 字段缺失/字段不可写
   - PERMISSION_DENIED -> 未认证或无创建权限
+
+## 本轮增补（2026-03-09）
+- 本轮聚焦 API: PATCH /api/v1/media-files/{id}
+- 更新模型语义:
+  - 以 `media_files.id` 定位单条记录，对媒体元数据做局部更新；
+  - 更新范围限定在 `flight_record`、媒体类型、文件名/URL、拍摄位置、拍摄时间等白名单字段。
+- 一致性约束:
+  - 不开放逻辑删除状态恢复，不修改 `is_deleted`、`deleted_at`；
+  - `is_deleted=true` 的记录不参与更新，避免已删除数据重新暴露到活跃链路。
+- 权限约束:
+  - `partial_update` 走 `media_file.manage_media_file`，与创建、删除同属写权限域。
+- 审计语义:
+  - 成功更新后写入 `MEDIA_FILE_UPDATE`，保存 before/after 快照。
+- 业务码映射:
+  - SUCCESS -> 更新成功
+  - INVALID_PARAMS -> 空 body / 字段不可写 / 字段校验失败
+  - RESOURCE_NOT_FOUND -> 目标不存在或已逻辑删除
+  - PERMISSION_DENIED -> 未认证或无更新权限
+
+<!-- stage6_doc_sync::media_file::logical_model.md::start -->
+## Stage6 本轮同步
+- 业务目标: N/A
+- 业务动作: N/A
+- 状态机: N/A
+- 业务约束: N/A
+- 事件闭环: EVT-001->PATCH /api/v1/media-files/{id}
+- 权限边界: 代码权限码: view_media_file (可查看媒体文件), manage_media_file (可管理媒体文件)
+<!-- stage6_doc_sync::media_file::logical_model.md::end -->
