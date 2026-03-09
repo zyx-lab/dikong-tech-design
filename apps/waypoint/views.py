@@ -13,6 +13,7 @@ class WaypointViewSet(
     BusinessApiResponseMixin,
     PermissionMapMixin,
     mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
     viewsets.GenericViewSet,
 ):
@@ -24,6 +25,7 @@ class WaypointViewSet(
 
     permission_map = {
         "list": "waypoint.view_waypoint",
+        "retrieve": "waypoint.view_waypoint",
         "create": "waypoint.manage_waypoint",
     }
 
@@ -57,6 +59,17 @@ class WaypointViewSet(
         # 1) 有查看权限：HTTP 200 + business_code=SUCCESS；
         # 2) 未认证或无权限：HTTP 401/403 + business_code=PERMISSION_DENIED。
         return super().list(request, *args, **kwargs)
+
+    def retrieve(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按航点 ID 精确读取”的基础接口（GET /api/v1/waypoints/{id}），
+        # 让外部系统在写入后可做单条核验或按 ID 进行后续业务编排。
+        #
+        # 设计边界：
+        # 1) 只做单条读取，不承担状态流转、编辑、删除等动作；
+        # 2) 不新增业务编排语义，仅暴露最小读能力；
+        # 3) 成功/失败均由统一响应层补齐 business_code/business_detail_code。
+        return super().retrieve(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         # 业务作用：

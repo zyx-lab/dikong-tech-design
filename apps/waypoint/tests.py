@@ -220,6 +220,49 @@ class WaypointApiTests(TestCase):
         self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["sequence"], 2)
 
+    def test_retrieve_waypoint_should_return_success(self):
+        self._grant_permission("waypoint.view_waypoint")
+        self.client.force_authenticate(self.user)
+        waypoint = self._create_waypoint(route=self.route_active, sequence=3)
+
+        response = self.client.get(f"/api/v1/waypoints/{waypoint.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["id"], waypoint.id)
+        self.assertEqual(response.data["route"], self.route_active.id)
+        self.assertEqual(response.data["sequence"], 3)
+
+    def test_retrieve_waypoint_not_found_should_return_resource_not_found(self):
+        self._grant_permission("waypoint.view_waypoint")
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get("/api/v1/waypoints/999999")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_retrieve_waypoint_without_auth_should_return_permission_denied(self):
+        waypoint = self._create_waypoint(route=self.route_active, sequence=4)
+
+        response = self.client.get(f"/api/v1/waypoints/{waypoint.id}")
+
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_retrieve_waypoint_without_permission_should_return_permission_denied(self):
+        waypoint = self._create_waypoint(route=self.route_active, sequence=5)
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get(f"/api/v1/waypoints/{waypoint.id}")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
     def test_list_waypoints_without_auth_should_return_permission_denied(self):
         response = self.client.get("/api/v1/waypoints")
         self.assertIn(response.status_code, (401, 403))
