@@ -87,10 +87,10 @@
 
 <!-- stage6_doc_sync::route::data_dictionary.md::start -->
 ## Stage6 本轮同步
-- 关联 API: PATCH /api/v1/routes/{id}
-- 提名依据: 当前 route 已具备创建、列表、详情与删除能力，但缺少基础编辑入口，调用方无法修正航线名称、预计时长、适配机型等台账元数据。补齐 PATCH 后，route 才具备完整的最小可维护生命周期。
-- 业务事件: EVT-001 更新航线
+- 关联 API: POST /api/v1/routes/{id}/enable
+- 提名依据: route 当前在被 mission 引用时执行 DELETE 只会软禁用为 DISABLED，但没有任何恢复入口，导致可引用航线会进入不可逆停用状态。补齐 enable 后，route 的软禁用路径才形成可恢复的最小闭环。
+- 业务事件: EVT-001 启用航线
 - 业务码覆盖: 目标=SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE; 已覆盖=SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, INVALID_PARAMS; 缺口=STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- 测试沉淀: 生成用例数: N/A, 已执行用例数: N/A, 已沉淀到项目测试: N/A, 待沉淀 case: N/A, 失败 case: N/A
+- 测试沉淀: 生成用例数: 4, 已执行用例数: 4, 已沉淀到项目测试: 4, 待沉淀 case: N/A, 失败 case: N/A
 - 证据文件: apps/route/tests.py, apps/route/views.py, apps/route/models.py, apps/route/serializers.py, apps/route/urls.py
 <!-- stage6_doc_sync::route::data_dictionary.md::end -->

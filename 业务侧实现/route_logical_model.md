@@ -51,6 +51,6 @@
 - 业务动作: N/A
 - 状态机: N/A
 - 业务约束: N/A
-- 事件闭环: EVT-001->PATCH /api/v1/routes/{id}
+- 事件闭环: EVT-001->POST /api/v1/routes/{id}/enable
 - 权限边界: 代码权限码: view_route (可查看航线), manage_route (可新增与编辑航线)
 <!-- stage6_doc_sync::route::logical_model.md::end -->

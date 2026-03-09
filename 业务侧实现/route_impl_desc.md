@@ -78,10 +78,10 @@
 
 <!-- stage6_doc_sync::route::impl_desc.md::start -->
 ## Stage6 本轮同步
-- 本轮 focus API: PATCH /api/v1/routes/{id}
-- 本轮实现目标: 在 route 已具备创建、列表、详情与删除能力的基础上，补齐主记录局部更新入口，让外部系统可修正航线台账元数据，形成完整的最小维护闭环。
-- 业务事件: EVT-001 更新航线
-- 业务约束: PATCH 仅允许更新 route 主记录可写字段；不承担状态流转、航点编排与任务解绑。
-- 测试沉淀: 生成用例数: N/A, 已执行用例数: N/A, 已沉淀到项目测试: N/A, 待沉淀 case: N/A, 失败 case: N/A
+- 本轮 focus API: POST /api/v1/routes/{id}/enable
+- 本轮实现目标: route 当前在被 mission 引用时执行 DELETE 只会软禁用为 DISABLED，但没有任何恢复入口，导致可引用航线会进入不可逆停用状态。补齐 enable 后，route 的软禁用路径才形成可恢复的最小闭环。
+- 业务事件: EVT-001 启用航线
+- 业务约束: N/A
+- 测试沉淀: 生成用例数: 4, 已执行用例数: 4, 已沉淀到项目测试: 4, 待沉淀 case: N/A, 失败 case: N/A
 - 关键文件: apps/route/tests.py, apps/route/views.py, apps/route/models.py, apps/route/serializers.py, apps/route/urls.py
 <!-- stage6_doc_sync::route::impl_desc.md::end -->

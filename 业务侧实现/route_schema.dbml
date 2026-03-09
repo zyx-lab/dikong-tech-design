@@ -18,8 +18,8 @@ Table routes {
 }
 
 // stage6_doc_sync::route::schema.dbml::start
-// focus_api_keys: PATCH /api/v1/routes/{id}
-// business_events: EVT-001 更新航线
+// focus_api_keys: POST /api/v1/routes/{id}/enable
+// business_events: EVT-001 启用航线
 // required_codes: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
 // permission_boundary: 代码权限码: view_route (可查看航线), manage_route (可新增与编辑航线)
 // stage6_doc_sync::route::schema.dbml::end

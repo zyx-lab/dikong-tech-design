@@ -1,10 +1,11 @@
 from django.db import transaction
 from rest_framework import mixins, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import IdentityService, log_action
-from apps.api_v1.business_response import BusinessApiResponseMixin
+from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
 from apps.mission.models import Mission
 from apps.route.models import Route, RouteStatus
 from apps.route.serializers import RouteReadSerializer, RouteWriteSerializer
@@ -32,6 +33,7 @@ class RouteViewSet(
         "retrieve": "route.view_route",
         "create": "route.manage_route",
         "partial_update": "route.manage_route",
+        "enable": "route.manage_route",
         "destroy": "route.manage_route",
     }
 
@@ -122,6 +124,54 @@ class RouteViewSet(
             instance._prefetched_objects_cache = {}
 
         return Response(self._route_payload(route), status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def enable(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按 route_id 启用航线”的基础状态流转入口（POST /api/v1/routes/{id}/enable），
+        # 用于把被禁用的航线显式恢复为正常状态。
+        #
+        # 适用边界：
+        # 1) 仅处理 route.status 自身流转，不承担航点重排、任务解绑或批量恢复编排；
+        # 2) 请求体必须为空；
+        # 3) 已处于 ACTIVE 的航线重复 enable 按幂等成功返回。
+        if request.data:
+            return Response(
+                {
+                    "business_code": BusinessCode.INVALID_PARAMS,
+                    "detail": "enable 请求不支持提交 body 参数",
+                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        route = self.get_object()
+        before_payload = self._route_payload(route)
+
+        if route.status == RouteStatus.ACTIVE:
+            log_action(
+                request=request,
+                action="ROUTE_ENABLE",
+                target_type="route",
+                target_id=route.id,
+                before_data=before_payload,
+                after_data=before_payload,
+            )
+            return Response(before_payload, status=status.HTTP_200_OK)
+
+        route.status = RouteStatus.ACTIVE
+        route.save(update_fields=["status", "updated_at"])
+        after_payload = self._route_payload(route)
+        log_action(
+            request=request,
+            action="ROUTE_ENABLE",
+            target_type="route",
+            target_id=route.id,
+            before_data=before_payload,
+            after_data=after_payload,
+        )
+        return Response(after_payload, status=status.HTTP_200_OK)
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
