@@ -38,6 +38,23 @@ class WaypointApiTests(TestCase):
             status=ScopeStatus.ACTIVE,
         )
 
+    def _create_waypoint(
+        self,
+        *,
+        route: Route,
+        sequence: int,
+        latitude: str = "22.28612345",
+        longitude: str = "113.56781234",
+        altitude: str = "120.50",
+    ) -> Waypoint:
+        return Waypoint.objects.create(
+            route=route,
+            sequence=sequence,
+            latitude=latitude,
+            longitude=longitude,
+            altitude=altitude,
+        )
+
     def test_create_waypoint_should_return_success(self):
         self._grant_permission("waypoint.manage_waypoint")
         self.client.force_authenticate(self.user)
@@ -170,6 +187,49 @@ class WaypointApiTests(TestCase):
             },
             format="json",
         )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
+    def test_list_waypoints_should_return_success(self):
+        self._grant_permission("waypoint.view_waypoint")
+        self.client.force_authenticate(self.user)
+        self._create_waypoint(route=self.route_active, sequence=1)
+        self._create_waypoint(route=self.route_active, sequence=2, latitude="22.28612346")
+
+        response = self.client.get("/api/v1/waypoints")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertIn("results", response.data)
+        self.assertEqual(len(response.data["results"]), 2)
+
+    def test_list_waypoints_with_filter_should_return_filtered_results(self):
+        self._grant_permission("waypoint.view_waypoint")
+        self.client.force_authenticate(self.user)
+        self._create_waypoint(route=self.route_active, sequence=1)
+        self._create_waypoint(route=self.route_active, sequence=2)
+
+        response = self.client.get(
+            "/api/v1/waypoints",
+            {"route_id": self.route_active.id, "sequence": 2},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["results"][0]["sequence"], 2)
+
+    def test_list_waypoints_without_auth_should_return_permission_denied(self):
+        response = self.client.get("/api/v1/waypoints")
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_list_waypoints_without_permission_should_return_permission_denied(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get("/api/v1/waypoints")
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
