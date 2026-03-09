@@ -68,6 +68,7 @@ GROUP_MATRIX = {
         "mission.view_mission": ScopeType.ALL,
         "mission.manage_mission": ScopeType.ALL,
         "flight_record.view_flight_record": ScopeType.ALL,
+        "flight_record.manage_flight_record": ScopeType.ALL,
         "media_file.view_media_file": ScopeType.ALL,
         "media_file.manage_media_file": ScopeType.ALL,
     },
@@ -81,6 +82,7 @@ GROUP_MATRIX = {
         "mission.view_mission": ScopeType.ALL,
         "mission.manage_mission": ScopeType.ALL,
         "flight_record.view_flight_record": ScopeType.ALL,
+        "flight_record.manage_flight_record": ScopeType.ALL,
         "media_file.view_media_file": ScopeType.ALL,
         "media_file.manage_media_file": ScopeType.ALL,
     },
@@ -91,6 +93,7 @@ GROUP_MATRIX = {
         "drone_assignment.manage_drone_assignment": ScopeType.ALL,
         "mission.manage_mission": ScopeType.ALL,
         "flight_record.view_flight_record": ScopeType.ALL,
+        "flight_record.manage_flight_record": ScopeType.ALL,
         "media_file.view_media_file": ScopeType.ALL,
     },
     "cap_drone_assigned_viewer": {

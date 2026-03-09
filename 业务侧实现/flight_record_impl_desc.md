@@ -31,6 +31,11 @@
 - apps/flight_record/urls.py
 - apps/flight_record/tests.py
 
+## 本轮增补（POST /api/v1/flight-records）
+- 接口作用: POST /api/v1/flight-records 用于写入飞行记录，补齐 flight_record 实体的基础创建入口。
+- 请求边界: 仅处理 flight_record 资源本身字段，不做任务/媒体等跨实体编排。
+- 响应语义: 成功返回 `SUCCESS`；参数校验失败返回 `INVALID_PARAMS`；权限不足返回 `PERMISSION_DENIED`。
+
 
 <!-- stage6_round_context::flight_record::GET /api/v1/flight-records -->
 ## Stage6 同步上下文（可追溯）
@@ -58,6 +63,35 @@
     "apps/flight_record/views.py",
     "apps/flight_record/urls.py",
     "apps/flight_record/tests.py"
+  ]
+}
+```
+
+
+<!-- stage6_round_context::flight_record::POST /api/v1/flight-records -->
+## Stage6 同步上下文（可追溯）
+```json
+{
+  "generated_at": "2026-03-08T15:58:25.980661Z",
+  "entity": "flight_record",
+  "focus_api_keys": [
+    "POST /api/v1/flight-records"
+  ],
+  "stage0_reason": "总体设计已定义 flight_records 为任务执行后的核心记录实体，当前仅有列表/详情读取，缺少基础写入入口。补齐 POST 后，外部系统可组合“创建飞行记录 -> 关联媒体创建 -> 查询复盘”链路，无需编排型接口。",
+  "source_artifacts": [
+    "codex_devflow_scaffold/artifacts/stage0/latest.json",
+    "codex_devflow_scaffold/artifacts/stage2/latest.json",
+    "codex_devflow_scaffold/artifacts/stage4/latest.json",
+    "codex_devflow_scaffold/artifacts/stage5/latest.json"
+  ],
+  "related_paths": [
+    "apps/access/management/commands/seed_role_permissions.py",
+    "apps/flight_record/models.py",
+    "apps/flight_record/serializers.py",
+    "apps/flight_record/tests.py",
+    "apps/flight_record/views.py",
+    "apps/flight_record/migrations/0002_alter_flightrecord_options.py",
+    "apps/flight_record/urls.py"
   ]
 }
 ```

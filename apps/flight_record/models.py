@@ -55,8 +55,8 @@ class FlightRecord(models.Model):
         default_permissions = ()
         permissions = [
             ("view_flight_record", "可查看飞行记录"),
+            ("manage_flight_record", "可新增与编辑飞行记录"),
         ]
 
     def __str__(self):
         return f"{self.id}-{self.flight_no}"
-

@@ -1,9 +1,11 @@
-from rest_framework import mixins, viewsets
+from rest_framework import mixins, status, viewsets
+from rest_framework.response import Response
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
+from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin
 from apps.flight_record.models import FlightRecord
-from apps.flight_record.serializers import FlightRecordReadSerializer
+from apps.flight_record.serializers import FlightRecordReadSerializer, FlightRecordWriteSerializer
 
 
 class FlightRecordViewSet(
@@ -11,19 +13,25 @@ class FlightRecordViewSet(
     PermissionMapMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
     viewsets.GenericViewSet,
 ):
     """飞行记录业务接口（V1）。"""
 
     queryset = FlightRecord.objects.select_related("mission", "drone", "pilot").all().order_by("-id")
-    serializer_class = FlightRecordReadSerializer
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "head", "options"]
+    http_method_names = ["get", "post", "head", "options"]
 
     permission_map = {
         "list": "flight_record.view_flight_record",
         "retrieve": "flight_record.view_flight_record",
+        "create": "flight_record.manage_flight_record",
     }
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return FlightRecordWriteSerializer
+        return FlightRecordReadSerializer
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -58,6 +66,30 @@ class FlightRecordViewSet(
         # 2) 未认证或无查看权限：business_code=PERMISSION_DENIED（HTTP 401/403）。
         # 业务码字段 business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
         return super().list(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        # 业务作用：
+        # 创建一条飞行记录主数据，作为“任务执行结果沉淀 -> 媒体归档 -> 复盘查询”的基础起点能力。
+        # 外部系统可在创建后继续组合媒体写入、统计分析、详情查询等后续流程。
+        #
+        # 适用边界：
+        # 1) 本接口只创建单条 flight_record，不承担任务状态编排或批量导入；
+        # 2) 可选绑定 mission/drone/pilot，若绑定则会自动回填冗余名称字段；
+        # 3) 响应统一携带 business_code/business_detail_code。
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        record = serializer.save()
+
+        read_serializer = FlightRecordReadSerializer(record, context={"request": request})
+        log_action(
+            request=request,
+            action="FLIGHT_RECORD_CREATE",
+            target_type="flight_record",
+            target_id=record.id,
+            after_data=dict(read_serializer.data),
+        )
+        headers = self.get_success_headers(read_serializer.data)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
     def retrieve(self, request, *args, **kwargs):
         # 业务作用：

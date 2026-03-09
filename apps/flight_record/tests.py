@@ -97,6 +97,116 @@ class FlightRecordApiTests(TestCase):
             status=status,
         )
 
+    def test_create_flight_record_should_return_success(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.post(
+            "/api/v1/flight-records",
+            {
+                "flight_no": "YJ202603080999",
+                "mission": self.mission.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_staff.id,
+                "airport_name": "珠海金湾机场",
+                "start_time": "2026-03-08T08:00:00+08:00",
+                "end_time": "2026-03-08T08:18:20+08:00",
+                "photo_count": 20,
+                "video_count": 4,
+                "status": FlightRecordStatus.COMPLETED,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["flight_no"], "YJ202603080999")
+        self.assertEqual(response.data["mission"], self.mission.id)
+        self.assertEqual(response.data["drone"], self.drone.id)
+        self.assertEqual(response.data["pilot"], self.pilot_staff.id)
+        self.assertEqual(response.data["mission_name"], self.mission.name)
+        self.assertEqual(response.data["drone_name"], self.drone.name)
+        self.assertEqual(response.data["pilot_name"], self.pilot_staff.name)
+        self.assertEqual(response.data["status"], FlightRecordStatus.COMPLETED)
+
+    def test_create_flight_record_invalid_params_should_return_invalid_params(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.post(
+            "/api/v1/flight-records",
+            {
+                "mission": self.mission.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_staff.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("flight_no", response.data)
+
+    def test_create_flight_record_duplicate_should_return_idempotent_duplicate(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        self._create_flight_record()
+        existing_no = FlightRecord.objects.order_by("-id").first().flight_no
+
+        response = self.client.post(
+            "/api/v1/flight-records",
+            {
+                "flight_no": existing_no,
+                "mission": self.mission.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_staff.id,
+                "status": FlightRecordStatus.IN_PROGRESS,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
+        self.assertEqual(response.data["business_detail_code"], "DUPLICATE_REQUEST")
+
+    def test_create_flight_record_without_auth_should_return_permission_denied(self):
+        response = self.client.post(
+            "/api/v1/flight-records",
+            {
+                "flight_no": "YJ202603081111",
+                "mission": self.mission.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_staff.id,
+                "status": FlightRecordStatus.IN_PROGRESS,
+            },
+            format="json",
+        )
+
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_create_flight_record_without_permission_should_return_permission_denied(self):
+        self.client.force_authenticate(self.viewer_user)
+
+        response = self.client.post(
+            "/api/v1/flight-records",
+            {
+                "flight_no": "YJ202603081222",
+                "mission": self.mission.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_staff.id,
+                "status": FlightRecordStatus.IN_PROGRESS,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
     def test_list_flight_records_should_return_success(self):
         self._grant_permission("flight_record.view_flight_record")
         self.client.force_authenticate(self.viewer_user)
