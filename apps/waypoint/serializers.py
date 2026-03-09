@@ -19,7 +19,7 @@ class WaypointReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class WaypointWriteSerializer(serializers.ModelSerializer):
+class WaypointCreateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
         if unknown_fields:
@@ -38,6 +38,35 @@ class WaypointWriteSerializer(serializers.ModelSerializer):
         model = Waypoint
         fields = [
             "route",
+            "sequence",
+            "latitude",
+            "longitude",
+            "altitude",
+        ]
+
+
+class WaypointPatchSerializer(serializers.ModelSerializer):
+    def validate(self, attrs):
+        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
+        if unknown_fields:
+            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
+
+        if not attrs:
+            raise serializers.ValidationError({"non_field_errors": ["至少提供一个可更新字段"]})
+
+        route = self.instance.route
+        if route.status != RouteStatus.ACTIVE:
+            raise serializers.ValidationError({"non_field_errors": ["仅允许更新状态为正常的航线下航点"]})
+
+        sequence = attrs.get("sequence", self.instance.sequence)
+        if Waypoint.objects.filter(route=route, sequence=sequence).exclude(pk=self.instance.pk).exists():
+            raise serializers.ValidationError({"sequence": "同一航线下航点序号不能重复"})
+
+        return attrs
+
+    class Meta:
+        model = Waypoint
+        fields = [
             "sequence",
             "latitude",
             "longitude",

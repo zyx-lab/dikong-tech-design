@@ -191,6 +191,113 @@ class WaypointApiTests(TestCase):
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
 
+    def test_patch_waypoint_should_return_success(self):
+        self._grant_permission("waypoint.manage_waypoint")
+        self.client.force_authenticate(self.user)
+        waypoint = self._create_waypoint(route=self.route_active, sequence=6)
+
+        response = self.client.patch(
+            f"/api/v1/waypoints/{waypoint.id}",
+            {
+                "sequence": 7,
+                "latitude": "22.28612399",
+                "altitude": "125.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["id"], waypoint.id)
+        self.assertEqual(response.data["sequence"], 7)
+        self.assertEqual(response.data["latitude"], "22.28612399")
+        self.assertEqual(response.data["altitude"], "125.00")
+
+        waypoint.refresh_from_db()
+        self.assertEqual(waypoint.sequence, 7)
+        self.assertEqual(str(waypoint.latitude), "22.28612399")
+        self.assertEqual(str(waypoint.altitude), "125.00")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="WAYPOINT_UPDATE",
+                target_type="waypoint",
+                target_id=str(waypoint.id),
+            ).exists()
+        )
+
+    def test_patch_waypoint_with_duplicate_sequence_should_return_idempotent_duplicate(self):
+        self._grant_permission("waypoint.manage_waypoint")
+        self.client.force_authenticate(self.user)
+        self._create_waypoint(route=self.route_active, sequence=8)
+        waypoint = self._create_waypoint(route=self.route_active, sequence=9)
+
+        response = self.client.patch(
+            f"/api/v1/waypoints/{waypoint.id}",
+            {"sequence": 8},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
+        self.assertEqual(response.data["business_detail_code"], "DUPLICATE_REQUEST")
+        self.assertIn("sequence", response.data)
+
+    def test_patch_waypoint_with_unknown_field_should_return_invalid_params(self):
+        self._grant_permission("waypoint.manage_waypoint")
+        self.client.force_authenticate(self.user)
+        waypoint = self._create_waypoint(route=self.route_active, sequence=10)
+
+        response = self.client.patch(
+            f"/api/v1/waypoints/{waypoint.id}",
+            {"route": self.route_disabled.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("route", response.data)
+
+    def test_patch_waypoint_not_found_should_return_resource_not_found(self):
+        self._grant_permission("waypoint.manage_waypoint")
+        self.client.force_authenticate(self.user)
+
+        response = self.client.patch(
+            "/api/v1/waypoints/999999",
+            {"sequence": 11},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_patch_waypoint_without_auth_should_return_permission_denied(self):
+        waypoint = self._create_waypoint(route=self.route_active, sequence=12)
+
+        response = self.client.patch(
+            f"/api/v1/waypoints/{waypoint.id}",
+            {"sequence": 13},
+            format="json",
+        )
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_patch_waypoint_without_permission_should_return_permission_denied(self):
+        self.client.force_authenticate(self.user)
+        waypoint = self._create_waypoint(route=self.route_active, sequence=14)
+
+        response = self.client.patch(
+            f"/api/v1/waypoints/{waypoint.id}",
+            {"sequence": 15},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
     def test_list_waypoints_should_return_success(self):
         self._grant_permission("waypoint.view_waypoint")
         self.client.force_authenticate(self.user)

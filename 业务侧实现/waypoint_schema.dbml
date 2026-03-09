@@ -3,6 +3,7 @@
 // list_api: GET /api/v1/waypoints
 // read_api: GET /api/v1/waypoints/{id}
 // write_api: POST /api/v1/waypoints
+// patch_api: PATCH /api/v1/waypoints/{id}
 
 Table waypoints {
   id bigint [pk, increment, note: 'ID']
@@ -13,8 +14,3 @@ Table waypoints {
   altitude text [not null, note: '飞行高度（米）']
   created_at timestamp [not null, note: '创建时间']
 }
-
-
-// stage6_round_context::waypoint::GET /api/v1/waypoints/{id}
-// trace_context: {"generated_at":"2026-03-09T05:24:48.563067Z","entity":"waypoint","focus_api_keys":["GET /api/v1/waypoints/{id}"],"stage0_reason":"在已具备 POST /api/v1/waypoints 与 GET /api/v1/waypoints 的基础上，补齐单条航点读取能力，支持外部在创建后按 ID 精确校验与后续流程编排。该接口为基础读能力，不引入编排型语义，符合最小可组合设计原则。","source_artifacts":["codex_devflow_scaffold/artifacts/stage0/latest.json","codex_devflow_scaffold/artifacts/stage2/latest.json","codex_devflow_scaffold/artifacts/stage4/latest.json","codex_devflow_scaffold/artifacts/stage5/latest.json"],"related_paths":["apps/waypoint/tests.py","apps/waypoint/views.py","apps/waypoint/models.py","apps/waypoint/serializers.py","apps/waypoint/urls.py"]}
-// note: non-destructive stage6 append, no test evidence embedding
