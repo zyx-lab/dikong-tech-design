@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     "apps.drone",
     "apps.drone_assignment",
     "apps.route",
+    "apps.waypoint",
     "apps.mission",
     "apps.flight_record",
     "apps.media_file",

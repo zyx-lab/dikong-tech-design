@@ -1,0 +1,12 @@
+// generated_at: 2026-03-09T02:39:31.679337Z
+// entity: waypoint
+
+Table waypoints {
+  id bigint [pk, increment, note: 'ID']
+  route bigint [not null, note: 'route.Route']
+  sequence text [not null, note: '航点序号']
+  latitude text [not null, note: '纬度']
+  longitude text [not null, note: '经度']
+  altitude text [not null, note: '飞行高度（米）']
+  created_at timestamp [not null, note: '创建时间']
+}

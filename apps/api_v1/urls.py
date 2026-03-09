@@ -8,6 +8,7 @@ urlpatterns = [
     path("", include("apps.drone.urls")),
     path("", include("apps.drone_assignment.urls")),
     path("", include("apps.route.urls")),
+    path("", include("apps.waypoint.urls")),
     path("", include("apps.mission.urls")),
     path("", include("apps.flight_record.urls")),
     path("", include("apps.media_file.urls")),
