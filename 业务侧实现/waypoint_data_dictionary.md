@@ -4,8 +4,8 @@
 - entity: waypoint
 
 ## 业务定位
-- 关联 API: POST /api/v1/waypoints, GET /api/v1/waypoints, GET /api/v1/waypoints/{id}, PATCH /api/v1/waypoints/{id}
-- 业务目的: waypoint 作为 route 的子实体，提供最小可组合能力：POST 创建、GET 查询、PATCH 局部修正，外部可按业务流程自由组合。
+- 关联 API: POST /api/v1/waypoints, GET /api/v1/waypoints, GET /api/v1/waypoints/{id}, PATCH /api/v1/waypoints/{id}, DELETE /api/v1/waypoints/{id}
+- 业务目的: waypoint 作为 route 的子实体，提供最小可组合能力：POST 创建、GET 查询、PATCH 局部修正、DELETE 删除，外部可按业务流程自由组合。
 
 ## 字段定义（来自模型代码）
 - id: type=BigAutoField; constraints=pk; verbose=ID
@@ -38,6 +38,14 @@
 - 边界约束: 不允许通过该接口修改所属航线；同一航线下 `sequence` 仍需保持唯一。
 - 成功语义: HTTP 200，`business_code=SUCCESS`，`business_detail_code=OK`。
 - 参数异常: HTTP 400，`business_code=INVALID_PARAMS`，`business_detail_code=VALIDATION_ERROR`。
+- 资源不存在: HTTP 404，`business_code=RESOURCE_NOT_FOUND`，`business_detail_code=NOT_FOUND`。
+- 权限失败: HTTP 401/403，`business_code=PERMISSION_DENIED`，`business_detail_code` 为权限细分码。
+
+## 本轮语义增补（DELETE /api/v1/waypoints/{id}）
+- 接口定位: 按航点 ID 删除单条航点，补齐 waypoint 的基础维护闭环能力。
+- 边界约束: 仅支持单条删除；不承担批量删除、跨航线迁移、历史归档等编排行为。
+- 关联副作用: 删除后同步回写 route.waypoint_count，保持航线冗余计数字段与实际数据一致。
+- 成功语义: HTTP 200，`business_code=SUCCESS`，`business_detail_code=OK`，返回 `id` 与 `deleted=true`。
 - 资源不存在: HTTP 404，`business_code=RESOURCE_NOT_FOUND`，`business_detail_code=NOT_FOUND`。
 - 权限失败: HTTP 401/403，`business_code=PERMISSION_DENIED`，`business_detail_code` 为权限细分码。
 

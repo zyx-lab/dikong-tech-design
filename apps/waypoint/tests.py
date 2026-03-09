@@ -298,6 +298,61 @@ class WaypointApiTests(TestCase):
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
 
+    def test_delete_waypoint_should_return_success_and_delete(self):
+        self._grant_permission("waypoint.manage_waypoint")
+        self.client.force_authenticate(self.user)
+        waypoint = self._create_waypoint(route=self.route_active, sequence=16)
+        self.route_active.waypoint_count = 1
+        self.route_active.save(update_fields=["waypoint_count", "updated_at"])
+
+        response = self.client.delete(f"/api/v1/waypoints/{waypoint.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["id"], waypoint.id)
+        self.assertTrue(response.data["deleted"])
+
+        self.assertFalse(Waypoint.objects.filter(id=waypoint.id).exists())
+        self.route_active.refresh_from_db()
+        self.assertEqual(self.route_active.waypoint_count, 0)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="WAYPOINT_DELETE",
+                target_type="waypoint",
+                target_id=str(waypoint.id),
+            ).exists()
+        )
+
+    def test_delete_waypoint_not_found_should_return_resource_not_found(self):
+        self._grant_permission("waypoint.manage_waypoint")
+        self.client.force_authenticate(self.user)
+
+        response = self.client.delete("/api/v1/waypoints/999999")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_delete_waypoint_without_auth_should_return_permission_denied(self):
+        waypoint = self._create_waypoint(route=self.route_active, sequence=17)
+
+        response = self.client.delete(f"/api/v1/waypoints/{waypoint.id}")
+
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_delete_waypoint_without_permission_should_return_permission_denied(self):
+        self.client.force_authenticate(self.user)
+        waypoint = self._create_waypoint(route=self.route_active, sequence=18)
+
+        response = self.client.delete(f"/api/v1/waypoints/{waypoint.id}")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
     def test_list_waypoints_should_return_success(self):
         self._grant_permission("waypoint.view_waypoint")
         self.client.force_authenticate(self.user)

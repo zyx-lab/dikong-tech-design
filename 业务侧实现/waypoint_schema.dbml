@@ -4,6 +4,7 @@
 // read_api: GET /api/v1/waypoints/{id}
 // write_api: POST /api/v1/waypoints
 // patch_api: PATCH /api/v1/waypoints/{id}
+// delete_api: DELETE /api/v1/waypoints/{id}
 
 Table waypoints {
   id bigint [pk, increment, note: 'ID']

@@ -16,19 +16,21 @@ class WaypointViewSet(
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
     mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     """航点业务接口（V1）。"""
 
     queryset = Waypoint.objects.select_related("route").all().order_by("route_id", "sequence", "id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     permission_map = {
         "list": "waypoint.view_waypoint",
         "retrieve": "waypoint.view_waypoint",
         "create": "waypoint.manage_waypoint",
         "partial_update": "waypoint.manage_waypoint",
+        "destroy": "waypoint.manage_waypoint",
     }
 
     def get_serializer_class(self):
@@ -112,6 +114,20 @@ class WaypointViewSet(
         read_serializer = WaypointReadSerializer(waypoint, context={"request": request})
         return Response(read_serializer.data, status=status.HTTP_200_OK)
 
+    def destroy(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按航点 ID 删除航点”的最小基础写接口（DELETE /api/v1/waypoints/{id}），
+        # 让外部系统可组合出“创建 -> 校验 -> 修正 -> 删除”的完整维护闭环。
+        #
+        # 适用边界：
+        # 1) 本接口只处理单条航点删除，不承担批量删除、历史归档、跨航线重排等编排能力；
+        # 2) 删除后会同步回写 route.waypoint_count，保证航线冗余计数字段与实际数据一致；
+        # 3) 成功/失败响应统一包含 business_code/business_detail_code（SUCCESS、RESOURCE_NOT_FOUND、PERMISSION_DENIED）。
+        waypoint = self.get_object()
+        waypoint_id = waypoint.id
+        self.perform_destroy(waypoint)
+        return Response({"id": waypoint_id, "deleted": True}, status=status.HTTP_200_OK)
+
     @transaction.atomic
     def perform_create(self, serializer):
         waypoint = serializer.save()
@@ -146,3 +162,23 @@ class WaypointViewSet(
             after_data=after_payload,
         )
         return waypoint
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        route = instance.route
+        before_payload = dict(WaypointReadSerializer(instance, context={"request": self.request}).data)
+        waypoint_id = instance.id
+        instance.delete()
+
+        # 航点删除后同步更新航线的 waypoint_count，避免路由台账中的冗余计数漂移。
+        route.waypoint_count = Waypoint.objects.filter(route_id=route.id).count()
+        route.save(update_fields=["waypoint_count", "updated_at"])
+
+        log_action(
+            request=self.request,
+            action="WAYPOINT_DELETE",
+            target_type="waypoint",
+            target_id=waypoint_id,
+            before_data=before_payload,
+            after_data={"id": waypoint_id, "deleted": True},
+        )
