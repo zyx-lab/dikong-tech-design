@@ -105,6 +105,6 @@
 - 业务动作: N/A
 - 状态机: N/A
 - 业务约束: N/A
-- 事件闭环: EVT-001->POST /api/v1/missions/{id}/complete
+- 事件闭环: EVT-001->POST /api/v1/missions/{id}/fail
 - 权限边界: 代码权限码: view_mission (可查看任务), manage_mission (可新增与编辑任务)
 <!-- stage6_doc_sync::mission::logical_model.md::end -->

@@ -163,9 +163,9 @@
 
 <!-- stage6_doc_sync::mission::impl_desc.md::start -->
 ## Stage6 本轮同步
-- 本轮 focus API: POST /api/v1/missions/{id}/complete
-- 本轮实现目标: mission 现在已有创建、查询、局部更新、启动、暂停、恢复和取消，但仍缺少把执行中任务闭环为已完成的基础入口，状态机无法从 RUNNING 落到 COMPLETED。先补齐 complete，才能让任务生命周期具备最小完成闭环。
-- 业务事件: EVT-001 完成任务
+- 本轮 focus API: POST /api/v1/missions/{id}/fail
+- 本轮实现目标: mission 现在已有创建、查询、局部更新、启动、暂停、恢复、完成和取消，但仍缺少把执行中的异常终止显式落到 FAILED 的基础入口，状态机缺少失败闭环。补齐 fail 后，mission 的核心状态流转才覆盖成功结束和失败结束两条主路径。
+- 业务事件: EVT-001 失败任务
 - 业务约束: N/A
 - 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
 - 关键文件: apps/mission/tests.py, apps/mission/views.py, apps/mission/models.py, apps/mission/serializers.py, apps/mission/urls.py

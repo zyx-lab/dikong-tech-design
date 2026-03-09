@@ -34,6 +34,7 @@ class MissionViewSet(
         "pause": "mission.manage_mission",
         "resume": "mission.manage_mission",
         "complete": "mission.manage_mission",
+        "fail": "mission.manage_mission",
         "cancel": "mission.manage_mission",
     }
 
@@ -383,6 +384,67 @@ class MissionViewSet(
         log_action(
             request=request,
             action="MISSION_COMPLETE",
+            target_type="mission",
+            target_id=mission.id,
+            before_data=before_payload,
+            after_data=after_payload,
+        )
+        return Response(after_payload, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def fail(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按 mission_id 标记任务失败”的基础状态流转入口（POST /api/v1/missions/{id}/fail），
+        # 用于将执行中的任务显式置为执行失败。
+        #
+        # 适用边界：
+        # 1) 仅处理 mission.status 自身流转，不承担飞行记录补录、无人机回收或其他跨实体编排；
+        # 2) 请求体必须为空；
+        # 3) 已失败任务重复 fail 按幂等成功返回；
+        # 4) 待执行、已暂停、已完成、已取消任务不允许 fail，返回状态冲突。
+        if request.data:
+            return Response(
+                {
+                    "business_code": BusinessCode.INVALID_PARAMS,
+                    "detail": "fail 请求不支持提交 body 参数",
+                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mission = self.get_object()
+        before_payload = self._mission_payload(mission)
+
+        if mission.status == MissionStatus.FAILED:
+            log_action(
+                request=request,
+                action="MISSION_FAIL",
+                target_type="mission",
+                target_id=mission.id,
+                before_data=before_payload,
+                after_data=before_payload,
+            )
+            return Response(before_payload, status=status.HTTP_200_OK)
+
+        if mission.status in {MissionStatus.PENDING, MissionStatus.PAUSED, MissionStatus.COMPLETED, MissionStatus.CANCELED}:
+            return Response(
+                {
+                    "business_code": BusinessCode.STATE_CONFLICT,
+                    "business_detail_code": "STATE_CONFLICT",
+                    "detail": "当前任务状态不允许标记失败",
+                    "mission_id": mission.id,
+                    "status": mission.status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        mission.status = MissionStatus.FAILED
+        mission.save(update_fields=["status", "updated_at"])
+        after_payload = self._mission_payload(mission)
+        log_action(
+            request=request,
+            action="MISSION_FAIL",
             target_type="mission",
             target_id=mission.id,
             before_data=before_payload,

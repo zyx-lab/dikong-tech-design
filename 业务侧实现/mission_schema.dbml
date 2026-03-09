@@ -50,8 +50,8 @@ Table missions {
 // 输入边界：cancel 请求不支持提交 body 参数，非空请求体返回 INVALID_PARAMS。
 
 // stage6_doc_sync::mission::schema.dbml::start
-// focus_api_keys: POST /api/v1/missions/{id}/complete
-// business_events: EVT-001 完成任务
+// focus_api_keys: POST /api/v1/missions/{id}/fail
+// business_events: EVT-001 失败任务
 // required_codes: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
 // permission_boundary: 代码权限码: view_mission (可查看任务), manage_mission (可新增与编辑任务)
 // stage6_doc_sync::mission::schema.dbml::end

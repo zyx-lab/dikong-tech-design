@@ -760,3 +760,96 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
+    def test_fail_mission_should_return_success(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        mission = self._create_mission(name="待失败任务", status=MissionStatus.RUNNING)
+
+        response = self.client.post(f"/api/v1/missions/{mission.id}/fail")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["status"], MissionStatus.FAILED)
+
+        mission.refresh_from_db()
+        self.assertEqual(mission.status, MissionStatus.FAILED)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="MISSION_FAIL",
+                target_type="mission",
+                target_id=str(mission.id),
+            ).exists()
+        )
+
+    def test_fail_failed_mission_should_be_idempotent_success(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        mission = self._create_mission(name="已失败任务", status=MissionStatus.FAILED)
+
+        response = self.client.post(f"/api/v1/missions/{mission.id}/fail")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["status"], MissionStatus.FAILED)
+
+    def test_fail_mission_with_body_should_return_invalid_params(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        mission = self._create_mission(name="失败请求体任务", status=MissionStatus.RUNNING)
+
+        response = self.client.post(
+            f"/api/v1/missions/{mission.id}/fail",
+            {"unexpected": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        mission.refresh_from_db()
+        self.assertEqual(mission.status, MissionStatus.RUNNING)
+
+    def test_fail_mission_state_conflict_should_return_state_conflict(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        mission = self._create_mission(name="已暂停任务", status=MissionStatus.PAUSED)
+
+        response = self.client.post(f"/api/v1/missions/{mission.id}/fail")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
+        self.assertEqual(response.data["business_detail_code"], "STATE_CONFLICT")
+        mission.refresh_from_db()
+        self.assertEqual(mission.status, MissionStatus.PAUSED)
+
+    def test_fail_mission_not_found_should_return_resource_not_found(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+
+        response = self.client.post("/api/v1/missions/999999/fail")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+
+    def test_fail_mission_without_auth_should_return_permission_denied(self):
+        mission = self._create_mission(name="未认证失败任务", status=MissionStatus.RUNNING)
+
+        response = self.client.post(f"/api/v1/missions/{mission.id}/fail")
+
+        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+
+    def test_fail_mission_without_permission_should_return_permission_denied(self):
+        mission = self._create_mission(name="无权限失败任务", status=MissionStatus.RUNNING)
+        self.client.force_authenticate(self.dispatcher_user)
+
+        response = self.client.post(f"/api/v1/missions/{mission.id}/fail")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
