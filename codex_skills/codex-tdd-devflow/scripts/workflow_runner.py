@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import contextlib
+import fcntl
 import fnmatch
 import hashlib
 import json
@@ -392,6 +394,10 @@ DEFAULT_STATE: dict[str, Any] = {
     "status": "idle",
     "current_stage": 0,
     "running_iteration": 1,
+    "running_stage": None,
+    "running_started_at": "",
+    "running_pid": None,
+    "running_trigger_source": "",
     "stage0_replan_required": False,
     "stage0_entered_at": "",
     "stage0_last_replan_at": "",
@@ -627,6 +633,7 @@ STAGE_REQUIRED_FIELDS = {
         "registry_updates",
         "docs_updates",
         "entity_review",
+        "business_doc_sync",
         "doc_sync_autofix",
         "commit_review",
         "settlement_commit_message",
@@ -725,6 +732,10 @@ class Paths:
     def project_rules(self) -> Path:
         return self.config_dir / PROJECT_RULES_FILENAME
 
+    @property
+    def workflow_lock(self) -> Path:
+        return self.scaffold / "runtime" / "workflow.lock"
+
     def stage_input(self, stage: int) -> Path:
         return self.scaffold / "inputs" / f"stage{stage}.json"
 
@@ -784,11 +795,26 @@ def read_json(path: Path, default: Any = None) -> Any:
         return json.load(fh)
 
 
-def write_json(path: Path, payload: Any) -> None:
+def _atomic_write_bytes(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=False, indent=2)
-        fh.write("\n")
+    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with tmp_path.open("wb") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+
+
+def write_json(path: Path, payload: Any) -> None:
+    data = json.dumps(payload, ensure_ascii=False, indent=2)
+    _atomic_write_bytes(path, (data + "\n").encode("utf-8"))
 
 
 def read_jsonl(path: Path) -> list[Any]:
@@ -808,8 +834,7 @@ def read_jsonl(path: Path) -> list[Any]:
 
 
 def write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    _atomic_write_bytes(path, text.encode("utf-8"))
 
 
 def ensure_json(path: Path, payload: Any, force: bool) -> None:
@@ -3192,12 +3217,102 @@ def load_state(paths: Paths) -> dict[str, Any]:
     state = read_json(paths.state)
     if not isinstance(state, dict):
         raise WorkflowError("state.json 不存在或格式错误，请先执行 init")
-    return state
+    normalized = copy.deepcopy(DEFAULT_STATE)
+    normalized.update(state)
+    return normalized
 
 
 def save_state(paths: Paths, state: dict[str, Any]) -> None:
     state["updated_at"] = now_iso()
     write_json(paths.state, state)
+
+
+@contextlib.contextmanager
+def workflow_file_lock(paths: Paths, exclusive: bool):
+    lock_path = paths.workflow_lock
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+    with lock_path.open("a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), mode)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _safe_pid(value: Any) -> int | None:
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def _pid_is_alive(pid: int | None) -> bool:
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _running_stage_from_state(state: dict[str, Any]) -> int:
+    running_stage = state.get("running_stage")
+    if running_stage in STAGES:
+        return int(running_stage)
+    current_stage = state.get("current_stage")
+    if current_stage in STAGES:
+        return int(current_stage)
+    return 0
+
+
+def _clear_running_state(state: dict[str, Any]) -> None:
+    state["running_stage"] = None
+    state["running_started_at"] = ""
+    state["running_pid"] = None
+    state["running_trigger_source"] = ""
+
+
+def _mark_state_running(state: dict[str, Any], stage: int, trigger_source: str) -> None:
+    state["status"] = "running"
+    state["current_stage"] = stage
+    state["running_stage"] = stage
+    state["running_started_at"] = now_iso()
+    state["running_pid"] = os.getpid()
+    state["running_trigger_source"] = trigger_source
+
+
+def recover_stale_running_state(paths: Paths) -> dict[str, Any]:
+    with workflow_file_lock(paths, exclusive=True):
+        state = load_state(paths)
+        if state.get("status") != "running":
+            return {"recovered": False, "reason": "not_running", "state": state}
+
+        pid = _safe_pid(state.get("running_pid"))
+        if _pid_is_alive(pid):
+            return {"recovered": False, "reason": "pid_alive", "state": state}
+
+        stage = _running_stage_from_state(state)
+        started_at = str(state.get("running_started_at", "")).strip()
+        trigger_source = str(state.get("running_trigger_source", "")).strip()
+        state["status"] = "idle"
+        state["current_stage"] = stage
+        _clear_running_state(state)
+        event_id = append_event(
+            paths,
+            "stale_running_recovered",
+            {
+                "stage": stage,
+                "running_started_at": started_at,
+                "running_pid": pid,
+                "trigger_source": trigger_source or "unknown",
+            },
+        )
+        state["last_event_id"] = event_id
+        save_state(paths, state)
+        return {"recovered": True, "reason": "pid_not_alive", "state": state}
 
 
 def approval_mode(spec: dict[str, Any]) -> str:
@@ -3718,6 +3833,19 @@ def build_stage_brief(stage: int, artifact: dict[str, Any] | None) -> dict[str, 
     return brief
 
 
+def build_running_stage_brief(state: dict[str, Any]) -> dict[str, Any]:
+    stage = _running_stage_from_state(state)
+    return {
+        "logical_stage": logical_stage_for_internal(stage),
+        "stage_name": logical_stage_name(stage),
+        "status": "running",
+        "running_started_at": str(state.get("running_started_at", "")).strip(),
+        "trigger_source": str(state.get("running_trigger_source", "")).strip(),
+        "latest_completed_stage": state.get("last_completed_stage"),
+        "artifact_snapshot": "suppressed_while_stage_running",
+    }
+
+
 def recommend_pending_action(
     pending: dict[str, Any] | None,
     artifact: dict[str, Any] | None,
@@ -3880,15 +4008,16 @@ def recommend_pending_action(
     }
 
 
-def build_status_brief_payload(paths: Paths) -> dict[str, Any]:
+def _build_status_brief_payload_unlocked(paths: Paths) -> dict[str, Any]:
     state = load_state(paths)
     pending = read_json(paths.pending, DEFAULT_PENDING)
     readiness = build_onboarding_readiness(paths)
-    try:
-        internal_stage = int(state.get("current_stage", 0))
-    except (TypeError, ValueError):
-        internal_stage = 0
-    artifact = read_json(paths.stage_artifact(internal_stage), None) if internal_stage in STAGES else None
+    internal_stage = _running_stage_from_state(state)
+    if state.get("status") == "running":
+        stage_brief = build_running_stage_brief(state)
+    else:
+        artifact = read_json(paths.stage_artifact(internal_stage), None) if internal_stage in STAGES else None
+        stage_brief = build_stage_brief(internal_stage, artifact if isinstance(artifact, dict) else None)
     payload: dict[str, Any] = {
         "status": state.get("status"),
         "iteration": int(state.get("running_iteration", 1)),
@@ -3896,7 +4025,7 @@ def build_status_brief_payload(paths: Paths) -> dict[str, Any]:
         "stage_name": logical_stage_name(internal_stage),
         "internal_stage": internal_stage,
         "decision_pending": bool(state.get("status") == "waiting_decision"),
-        "stage_brief": build_stage_brief(internal_stage, artifact if isinstance(artifact, dict) else None),
+        "stage_brief": stage_brief,
         "project_rules": build_project_rules_payload(paths, internal_stage),
         "config_readiness": build_config_readiness_brief(readiness),
     }
@@ -3909,11 +4038,17 @@ def build_status_brief_payload(paths: Paths) -> dict[str, Any]:
     return payload
 
 
-def build_gate_brief_payload(paths: Paths) -> dict[str, Any]:
+def build_status_brief_payload(paths: Paths) -> dict[str, Any]:
+    recover_stale_running_state(paths)
+    with workflow_file_lock(paths, exclusive=False):
+        return _build_status_brief_payload_unlocked(paths)
+
+
+def _build_gate_brief_payload_unlocked(paths: Paths) -> dict[str, Any]:
     state = load_state(paths)
     pending = read_json(paths.pending, DEFAULT_PENDING)
     if state.get("status") != "waiting_decision" or not isinstance(pending, dict):
-        return build_status_brief_payload(paths)
+        return _build_status_brief_payload_unlocked(paths)
 
     stage = int(pending.get("stage", state.get("current_stage", 0)))
     artifact_path = paths.stage_artifact(stage)
@@ -3939,6 +4074,12 @@ def build_gate_brief_payload(paths: Paths) -> dict[str, Any]:
     }
 
 
+def build_gate_brief_payload(paths: Paths) -> dict[str, Any]:
+    recover_stale_running_state(paths)
+    with workflow_file_lock(paths, exclusive=False):
+        return _build_gate_brief_payload_unlocked(paths)
+
+
 def print_json(payload: Any) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -3962,7 +4103,7 @@ def tail_events(paths: Paths, limit: int = 5) -> list[dict[str, Any]]:
     return events
 
 
-def build_gate_review_payload(paths: Paths, include_events: bool = True) -> dict[str, Any]:
+def _build_gate_review_payload_unlocked(paths: Paths, include_events: bool = True) -> dict[str, Any]:
     _refresh_waiting_stage4_pending_if_resolved(paths, trigger_source="gate_payload")
     state = load_state(paths)
     pending = read_json(paths.pending, DEFAULT_PENDING)
@@ -3970,7 +4111,7 @@ def build_gate_review_payload(paths: Paths, include_events: bool = True) -> dict
     pending_stage = None
     if isinstance(pending, dict) and pending.get("stage") in STAGES:
         pending_stage = int(pending["stage"])
-    current_stage = int(state.get("current_stage", 0)) if state.get("current_stage") in STAGES else 0
+    current_stage = _running_stage_from_state(state)
     effective_stage = pending_stage if pending_stage is not None else current_stage
 
     payload: dict[str, Any] = {
@@ -3991,24 +4132,41 @@ def build_gate_review_payload(paths: Paths, include_events: bool = True) -> dict
         stage = int(state["current_stage"])
 
     if stage is not None:
-        artifact_path = paths.stage_artifact(stage)
-        artifact = read_json(artifact_path, None)
-        recommendation = recommend_pending_action(pending if isinstance(pending, dict) else None, artifact if isinstance(artifact, dict) else None)
-        payload["review"] = {
-            "stage": stage,
-            "logical_stage": logical_stage_for_internal(stage),
-            "stage_name": logical_stage_name(stage),
-            "artifact_path": rel_path(paths, artifact_path),
-            "artifact_summary": summarize_stage_artifact(stage, artifact if isinstance(artifact, dict) else None, paths=paths),
-            "stage_brief": build_stage_brief(stage, artifact if isinstance(artifact, dict) else None),
-            "decision_actions": display_action_names(pending.get("allowed_actions", [])) if isinstance(pending, dict) else [],
-            "approval_mode": approval_mode(read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)),
-            "recommended_decision": recommendation.get("recommended_decision", ""),
-            "recommended_reason": recommendation.get("recommended_reason", ""),
-            "recommended_target_stage": recommendation.get("recommended_target_stage"),
-            "recommended_target_logical_stage": recommendation.get("recommended_target_logical_stage"),
-            "continue_hint": "输入 continue 将执行推荐动作",
-        }
+        if state.get("status") == "running" and pending_stage is None:
+            payload["review"] = {
+                "stage": stage,
+                "logical_stage": logical_stage_for_internal(stage),
+                "stage_name": logical_stage_name(stage),
+                "artifact_path": None,
+                "artifact_summary": {"available": False, "reason": "suppressed_while_stage_running"},
+                "stage_brief": build_running_stage_brief(state),
+                "decision_actions": [],
+                "approval_mode": approval_mode(read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)),
+                "recommended_decision": "",
+                "recommended_reason": "当前阶段正在执行中，待完成后再读取稳定产物",
+                "recommended_target_stage": None,
+                "recommended_target_logical_stage": None,
+                "continue_hint": "阶段运行中，等待本次执行结束",
+            }
+        else:
+            artifact_path = paths.stage_artifact(stage)
+            artifact = read_json(artifact_path, None)
+            recommendation = recommend_pending_action(pending if isinstance(pending, dict) else None, artifact if isinstance(artifact, dict) else None)
+            payload["review"] = {
+                "stage": stage,
+                "logical_stage": logical_stage_for_internal(stage),
+                "stage_name": logical_stage_name(stage),
+                "artifact_path": rel_path(paths, artifact_path),
+                "artifact_summary": summarize_stage_artifact(stage, artifact if isinstance(artifact, dict) else None, paths=paths),
+                "stage_brief": build_stage_brief(stage, artifact if isinstance(artifact, dict) else None),
+                "decision_actions": display_action_names(pending.get("allowed_actions", [])) if isinstance(pending, dict) else [],
+                "approval_mode": approval_mode(read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)),
+                "recommended_decision": recommendation.get("recommended_decision", ""),
+                "recommended_reason": recommendation.get("recommended_reason", ""),
+                "recommended_target_stage": recommendation.get("recommended_target_stage"),
+                "recommended_target_logical_stage": recommendation.get("recommended_target_logical_stage"),
+                "continue_hint": "输入 continue 将执行推荐动作",
+            }
     else:
         payload["review"] = {
             "stage": None,
@@ -4029,6 +4187,12 @@ def build_gate_review_payload(paths: Paths, include_events: bool = True) -> dict
     if include_events:
         payload["recent_events"] = tail_events(paths, limit=6)
     return payload
+
+
+def build_gate_review_payload(paths: Paths, include_events: bool = True) -> dict[str, Any]:
+    recover_stale_running_state(paths)
+    with workflow_file_lock(paths, exclusive=True):
+        return _build_gate_review_payload_unlocked(paths, include_events=include_events)
 
 
 def ensure_scaffold(paths: Paths, force: bool = False, preset: str = "generic") -> None:
@@ -7378,6 +7542,10 @@ def evaluate_stage_contract(paths: Paths, stage: int, artifact: dict[str, Any]) 
         entity_review = artifact.get("entity_review", {})
         commit_review = artifact.get("commit_review", {})
         semantic_unsynced = doc_sync.get("semantic_unsynced_entities", {}) if isinstance(doc_sync, dict) else {}
+        final_entities = entity_review.get("final_entities", []) if isinstance(entity_review, dict) else []
+        focus_api_keys = entity_review.get("focus_api_keys", []) if isinstance(entity_review, dict) else []
+        final_entity_count = len(final_entities) if isinstance(final_entities, list) else 0
+        focus_api_count = len(focus_api_keys) if isinstance(focus_api_keys, list) else 0
         contract["details"] = {
             "business_doc_sync_passed": passed,
             "entity_review_mode": (
@@ -7385,11 +7553,8 @@ def evaluate_stage_contract(paths: Paths, stage: int, artifact: dict[str, Any]) 
                 if isinstance(entity_review, dict)
                 else "unknown"
             ),
-            "entity_review_final_count": (
-                len(entity_review.get("final_entities", []))
-                if isinstance(entity_review, dict) and isinstance(entity_review.get("final_entities"), list)
-                else 0
-            ),
+            "entity_review_final_count": final_entity_count,
+            "focus_api_count": focus_api_count,
             "doc_sync_autofix_attempted": bool(auto_fix.get("attempted", False)) if isinstance(auto_fix, dict) else False,
             "doc_sync_autofix_updated_docs": (
                 len(auto_fix.get("updated_docs", []))
@@ -7407,6 +7572,18 @@ def evaluate_stage_contract(paths: Paths, stage: int, artifact: dict[str, Any]) 
                 else 0
             ),
         }
+        if focus_api_count > 0 and final_entity_count <= 0:
+            contract.update(
+                {
+                    "status": "blocked",
+                    "reason": "stage6_not_ready_for_stage0_no_touched_entities_for_doc_sync",
+                    "blocking": True,
+                    "ready_for_next_stage": False,
+                    "recommended_fix_stage": 6,
+                    "allowed_actions": ["reject", "goto_stage"],
+                }
+            )
+            return contract
         if not passed:
             contract.update(
                 {
@@ -7456,6 +7633,81 @@ def evaluate_stage_contract(paths: Paths, stage: int, artifact: dict[str, Any]) 
     return contract
 
 
+def refresh_stage_contract(paths: Paths, stage: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    artifact = read_json(paths.stage_artifact(stage), None)
+    if not isinstance(artifact, dict):
+        raise WorkflowError(f"stage{stage} artifact 不存在或格式错误，无法校验阶段契约")
+    missing = validate_stage_artifact(stage, artifact)
+    if missing:
+        raise WorkflowError(f"stage{stage} artifact 缺少字段，无法进入下一阶段: {missing}")
+    contract = evaluate_stage_contract(paths, stage, artifact)
+    if artifact.get("stage_contract") != contract:
+        artifact = copy.deepcopy(artifact)
+        artifact["stage_contract"] = contract
+        write_json(paths.stage_artifact(stage), artifact)
+    return artifact, contract
+
+
+def ensure_stage_entry_ready(paths: Paths, spec: dict[str, Any], state: dict[str, Any], stage: int) -> None:
+    if stage == 0:
+        return
+
+    if stage == 7:
+        artifact, _ = refresh_stage_contract(paths, 5)
+        regression = artifact.get("regression_summary", {})
+        return_code = _safe_int(regression.get("return_code", 1) if isinstance(regression, dict) else 1, 1)
+        threshold = int(spec.get("stage5_failure_threshold", 2))
+        failures = int(state.get("stage5_consecutive_failures", 0))
+        if return_code == 0 or failures < threshold:
+            raise WorkflowError("stage7 前置条件不满足：stage5 尚未达到失败干预阈值")
+        return
+
+    previous_stage_map = {
+        1: 0,
+        2: 1,
+        3: 2,
+        4: 3,
+        5: 4,
+        6: 5,
+        8: 7,
+    }
+    previous_stage = previous_stage_map.get(stage)
+    if previous_stage is None:
+        return
+
+    _, contract = refresh_stage_contract(paths, previous_stage)
+    if not bool(contract.get("ready_for_next_stage", False)):
+        raise WorkflowError(
+            f"stage{stage} 前置 stage{previous_stage} 产物未通过复核: {contract.get('reason', 'unknown')}"
+        )
+
+
+def ensure_transition_ready(
+    paths: Paths,
+    spec: dict[str, Any],
+    state: dict[str, Any],
+    pending_stage: int,
+    next_stage: int,
+    action: str,
+) -> None:
+    if action not in {"approve", "run_stage8"}:
+        return
+
+    if action == "run_stage8":
+        ensure_stage_entry_ready(paths, spec, state, 8)
+        return
+
+    _, contract = refresh_stage_contract(paths, pending_stage)
+    if not bool(contract.get("ready_for_next_stage", False)):
+        raise WorkflowError(
+            f"stage{pending_stage} 当前产物未通过复核，不能推进到 stage{next_stage}: "
+            f"{contract.get('reason', 'unknown')}"
+        )
+
+    if next_stage in STAGES and next_stage != 0:
+        ensure_stage_entry_ready(paths, spec, state, next_stage)
+
+
 def gate_for_stage(spec: dict[str, Any], stage: int) -> dict[str, Any] | None:
     policy = spec.get("gate_policy", {})
     gate = policy.get(str(stage))
@@ -7486,40 +7738,51 @@ def clear_pending(paths: Paths) -> None:
 def run_one_stage(
     paths: Paths, spec: dict[str, Any], state: dict[str, Any], stage: int, trigger_source: str = "manual"
 ) -> str:
-    if state.get("status") == "waiting_decision":
-        raise WorkflowError("当前处于等待决策状态，请先执行 resume")
+    recover_stale_running_state(paths)
 
-    if stage not in STAGES:
-        raise WorkflowError("stage 必须在 0-8")
+    with workflow_file_lock(paths, exclusive=True):
+        state = load_state(paths)
+        if state.get("status") == "running":
+            raise WorkflowError("当前已有阶段在执行中，请等待其完成后再继续")
+        if state.get("status") == "waiting_decision":
+            raise WorkflowError("当前处于等待决策状态，请先执行 resume")
 
-    if int(state.get("current_stage", 0)) != stage:
-        raise WorkflowError(f"当前阶段为 {state.get('current_stage')}，不能直接执行 stage {stage}")
+        if stage not in STAGES:
+            raise WorkflowError("stage 必须在 0-8")
 
-    ensure_runtime_config_ready(paths, spec)
-    ensure_semantic_directories_for_stage(paths, stage)
+        if int(state.get("current_stage", 0)) != stage:
+            raise WorkflowError(f"当前阶段为 {state.get('current_stage')}，不能直接执行 stage {stage}")
 
-    state["status"] = "running"
-    save_state(paths, state)
+        ensure_runtime_config_ready(paths, spec)
+        ensure_semantic_directories_for_stage(paths, stage)
+        ensure_stage_entry_ready(paths, spec, state, stage)
 
-    append_event(paths, "stage_started", {"stage": stage, "trigger_source": trigger_source})
+        _mark_state_running(state, stage, trigger_source)
+        save_state(paths, state)
+        append_event(paths, "stage_started", {"stage": stage, "trigger_source": trigger_source})
+
     start = time.perf_counter()
     try:
         result = execute_stage(paths, spec, state, stage)
     except Exception as exc:
         duration_ms = int((time.perf_counter() - start) * 1000)
-        append_event(
-            paths,
-            "stage_failed",
-            {
-                "stage": stage,
-                "error": str(exc),
-                "failure_type": exc.__class__.__name__,
-                "duration_ms": duration_ms,
-                "trigger_source": trigger_source,
-            },
-        )
-        state["status"] = "idle"
-        save_state(paths, state)
+        with workflow_file_lock(paths, exclusive=True):
+            failed_state = load_state(paths)
+            failed_state["status"] = "idle"
+            failed_state["current_stage"] = stage
+            _clear_running_state(failed_state)
+            append_event(
+                paths,
+                "stage_failed",
+                {
+                    "stage": stage,
+                    "error": str(exc),
+                    "failure_type": exc.__class__.__name__,
+                    "duration_ms": duration_ms,
+                    "trigger_source": trigger_source,
+                },
+            )
+            save_state(paths, failed_state)
         raise
 
     duration_ms = int((time.perf_counter() - start) * 1000)
@@ -7530,123 +7793,129 @@ def run_one_stage(
     artifact_missing = validate_stage_artifact(stage, result.artifact)
     if artifact_missing:
         raise WorkflowError(f"Stage {stage} 产物缺少字段: {artifact_missing}")
-
-    write_json(paths.stage_artifact(stage), result.artifact)
-    write_json(
-        paths.stage_input(stage),
-        build_stage_input_payload(paths, stage),
-    )
-
-    event_id = append_event(
-        paths,
-        "stage_completed",
-        {
-            "stage": stage,
-            "next_stage": result.next_stage,
-            "gate": result.gate,
-            "duration_ms": duration_ms,
-            "trigger_source": trigger_source,
-        },
-    )
-
-    state["last_completed_stage"] = stage
-    state["last_event_id"] = event_id
-    if stage == 0 and isinstance(result.artifact, dict):
-        semantic_gap_report = result.artifact.get("semantic_gap_report", {})
-        api_candidates = result.artifact.get("api_candidates", [])
-        replan_blocking = bool(result.artifact.get("session_api_replan_blocking", False))
-        semantic_blocking = isinstance(semantic_gap_report, dict) and bool(semantic_gap_report.get("blocking"))
-        has_candidates = isinstance(api_candidates, list) and bool(api_candidates)
-        if has_candidates and not semantic_blocking and not replan_blocking:
-            state["stage0_replan_required"] = False
-            state["stage0_last_replan_at"] = str(result.artifact.get("session_api_candidate_mtime", "")).strip()
-
-    gate_policy = gate_for_stage(spec, stage) if result.gate else None
-    if stage == 3 and result.gate and not gate_policy:
-        gate_policy = {
-            "reason": "stage3_semantic_event_review_required",
-            "allowed_actions": ["approve", "reject", "goto_stage"],
-            "next_stage_on_approve": 4,
-            "fallback_stage": 2,
-        }
-    if stage == 4 and result.gate and not gate_policy:
-        gate_policy = {
-            "reason": "stage4_semantic_review_required",
-            "allowed_actions": ["approve", "reject", "goto_stage"],
-            "next_stage_on_approve": 5,
-            "fallback_stage": 3,
-        }
-    if stage == 0 and isinstance(result.artifact, dict):
-        semantic_gap = result.artifact.get("semantic_gap_report", {})
-        api_candidates = result.artifact.get("api_candidates", [])
-        replan_blocking = bool(result.artifact.get("session_api_replan_blocking", False))
-        if isinstance(semantic_gap, dict) and semantic_gap.get("blocking"):
-            gate_policy = {
-                "reason": "stage0_semantic_gap_blocking",
-                "allowed_actions": ["reject", "goto_stage"],
-                "next_stage_on_approve": 0,
-                "fallback_stage": 0,
-            }
-        elif replan_blocking:
-            gate_policy = {
-                "reason": "stage0_session_replan_required",
-                "allowed_actions": ["reject", "goto_stage"],
-                "next_stage_on_approve": 0,
-                "fallback_stage": 0,
-            }
-        elif isinstance(api_candidates, list) and not api_candidates:
-            gate_policy = {
-                "reason": "stage0_no_candidate_blocking",
-                "allowed_actions": ["reject", "goto_stage"],
-                "next_stage_on_approve": 0,
-                "fallback_stage": 0,
-            }
-
-    contract_blocking = bool(isinstance(stage_contract, dict) and stage_contract.get("blocking", False))
-    if contract_blocking:
-        recommended_fix_stage = _safe_int(
-            stage_contract.get("recommended_fix_stage", stage) if isinstance(stage_contract, dict) else stage,
-            stage,
+    with workflow_file_lock(paths, exclusive=True):
+        write_json(paths.stage_artifact(stage), result.artifact)
+        write_json(
+            paths.stage_input(stage),
+            build_stage_input_payload(paths, stage),
         )
-        allowed_actions = stage_contract.get("allowed_actions", []) if isinstance(stage_contract, dict) else []
-        normalized_actions = [str(item).strip() for item in allowed_actions if str(item).strip()]
-        if not normalized_actions:
-            normalized_actions = ["reject", "goto_stage"]
-        gate_policy = {
-            "reason": str(stage_contract.get("reason", "stage_contract_blocking")),
-            "allowed_actions": normalized_actions,
-            "next_stage_on_approve": stage,
-            "fallback_stage": recommended_fix_stage,
-        }
 
-    if gate_policy:
-        pending = set_pending(paths, stage, gate_policy)
-        state["status"] = "waiting_decision"
-        save_state(paths, state)
-        append_event(
+        event_id = append_event(
             paths,
-            "decision_required",
+            "stage_completed",
             {
-                "decision_id": pending["decision_id"],
                 "stage": stage,
-                "allowed_actions": pending["allowed_actions"],
+                "next_stage": result.next_stage,
+                "gate": result.gate,
+                "duration_ms": duration_ms,
+                "trigger_source": trigger_source,
             },
         )
-        return "waiting_decision"
 
-    clear_pending(paths)
-    state["status"] = "idle"
-    state["current_stage"] = result.next_stage
-    save_state(paths, state)
-    return "idle"
+        state["last_completed_stage"] = stage
+        state["last_event_id"] = event_id
+        if stage == 0 and isinstance(result.artifact, dict):
+            semantic_gap_report = result.artifact.get("semantic_gap_report", {})
+            api_candidates = result.artifact.get("api_candidates", [])
+            replan_blocking = bool(result.artifact.get("session_api_replan_blocking", False))
+            semantic_blocking = isinstance(semantic_gap_report, dict) and bool(semantic_gap_report.get("blocking"))
+            has_candidates = isinstance(api_candidates, list) and bool(api_candidates)
+            if has_candidates and not semantic_blocking and not replan_blocking:
+                state["stage0_replan_required"] = False
+                state["stage0_last_replan_at"] = str(result.artifact.get("session_api_candidate_mtime", "")).strip()
+
+        gate_policy = gate_for_stage(spec, stage) if result.gate else None
+        if stage == 3 and result.gate and not gate_policy:
+            gate_policy = {
+                "reason": "stage3_semantic_event_review_required",
+                "allowed_actions": ["approve", "reject", "goto_stage"],
+                "next_stage_on_approve": 4,
+                "fallback_stage": 2,
+            }
+        if stage == 4 and result.gate and not gate_policy:
+            gate_policy = {
+                "reason": "stage4_semantic_review_required",
+                "allowed_actions": ["approve", "reject", "goto_stage"],
+                "next_stage_on_approve": 5,
+                "fallback_stage": 3,
+            }
+        if stage == 0 and isinstance(result.artifact, dict):
+            semantic_gap = result.artifact.get("semantic_gap_report", {})
+            api_candidates = result.artifact.get("api_candidates", [])
+            replan_blocking = bool(result.artifact.get("session_api_replan_blocking", False))
+            if isinstance(semantic_gap, dict) and semantic_gap.get("blocking"):
+                gate_policy = {
+                    "reason": "stage0_semantic_gap_blocking",
+                    "allowed_actions": ["reject", "goto_stage"],
+                    "next_stage_on_approve": 0,
+                    "fallback_stage": 0,
+                }
+            elif replan_blocking:
+                gate_policy = {
+                    "reason": "stage0_session_replan_required",
+                    "allowed_actions": ["reject", "goto_stage"],
+                    "next_stage_on_approve": 0,
+                    "fallback_stage": 0,
+                }
+            elif isinstance(api_candidates, list) and not api_candidates:
+                gate_policy = {
+                    "reason": "stage0_no_candidate_blocking",
+                    "allowed_actions": ["reject", "goto_stage"],
+                    "next_stage_on_approve": 0,
+                    "fallback_stage": 0,
+                }
+
+        contract_blocking = bool(isinstance(stage_contract, dict) and stage_contract.get("blocking", False))
+        if contract_blocking:
+            recommended_fix_stage = _safe_int(
+                stage_contract.get("recommended_fix_stage", stage) if isinstance(stage_contract, dict) else stage,
+                stage,
+            )
+            allowed_actions = stage_contract.get("allowed_actions", []) if isinstance(stage_contract, dict) else []
+            normalized_actions = [str(item).strip() for item in allowed_actions if str(item).strip()]
+            if not normalized_actions:
+                normalized_actions = ["reject", "goto_stage"]
+            gate_policy = {
+                "reason": str(stage_contract.get("reason", "stage_contract_blocking")),
+                "allowed_actions": normalized_actions,
+                "next_stage_on_approve": stage,
+                "fallback_stage": recommended_fix_stage,
+            }
+
+        if gate_policy:
+            pending = set_pending(paths, stage, gate_policy)
+            state["status"] = "waiting_decision"
+            _clear_running_state(state)
+            save_state(paths, state)
+            append_event(
+                paths,
+                "decision_required",
+                {
+                    "decision_id": pending["decision_id"],
+                    "stage": stage,
+                    "allowed_actions": pending["allowed_actions"],
+                },
+            )
+            return "waiting_decision"
+
+        clear_pending(paths)
+        state["status"] = "idle"
+        state["current_stage"] = result.next_stage
+        _clear_running_state(state)
+        save_state(paths, state)
+        return "idle"
 
 
 def run_auto(paths: Paths) -> str:
+    recover_stale_running_state(paths)
     spec = read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)
-    state = load_state(paths)
 
     while True:
+        with workflow_file_lock(paths, exclusive=False):
+            state = load_state(paths)
         status = state.get("status")
+        if status == "running":
+            return "running"
         if status == "waiting_decision":
             return "waiting_decision"
         if status in {"completed", "aborted", "rolled_back"}:
@@ -7654,7 +7923,8 @@ def run_auto(paths: Paths) -> str:
 
         current_stage = int(state.get("current_stage", 0))
         result = run_one_stage(paths, spec, state, current_stage, trigger_source="run_auto")
-        state = load_state(paths)
+        with workflow_file_lock(paths, exclusive=False):
+            state = load_state(paths)
 
         if result == "waiting_decision":
             return "waiting_decision"
@@ -7913,67 +8183,71 @@ def _refresh_waiting_stage4_pending_if_resolved(paths: Paths, trigger_source: st
 
 
 def resume(paths: Paths, auto_continue: bool) -> str:
+    recover_stale_running_state(paths)
     spec = read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)
-    state = load_state(paths)
-
-    if state.get("status") != "waiting_decision":
-        raise WorkflowError("当前不在等待决策状态")
     started = time.perf_counter()
+    with workflow_file_lock(paths, exclusive=True):
+        state = load_state(paths)
+        if state.get("status") != "waiting_decision":
+            raise WorkflowError("当前不在等待决策状态")
 
-    pending = read_json(paths.pending, None)
-    pending_errors = validate_pending_decision(pending if isinstance(pending, dict) else None)
-    if pending_errors:
-        raise WorkflowError(f"pending.json 校验失败: {pending_errors}")
+        pending = read_json(paths.pending, None)
+        pending_errors = validate_pending_decision(pending if isinstance(pending, dict) else None)
+        if pending_errors:
+            raise WorkflowError(f"pending.json 校验失败: {pending_errors}")
 
-    decision = read_json(paths.decision, None)
-    if not isinstance(decision, dict):
-        raise WorkflowError("decision.json 不存在或格式错误")
+        decision = read_json(paths.decision, None)
+        if not isinstance(decision, dict):
+            raise WorkflowError("decision.json 不存在或格式错误")
 
-    decision_errors = validate_decision_input(decision, pending)
-    if decision_errors:
-        raise WorkflowError(f"decision.json 校验失败: {decision_errors}")
+        decision_errors = validate_decision_input(decision, pending)
+        if decision_errors:
+            raise WorkflowError(f"decision.json 校验失败: {decision_errors}")
 
-    action = decision["action"]
-    enforce_stage6_commit_decision(paths, pending, decision, action)
-    ensure_stage3_semantic_gate_ready(paths, pending, action)
-    ensure_stage4_semantic_gate_ready(paths, pending, action)
-    next_stage = int(state.get("current_stage", 0))
+        action = decision["action"]
+        enforce_stage6_commit_decision(paths, pending, decision, action)
+        ensure_stage3_semantic_gate_ready(paths, pending, action)
+        ensure_stage4_semantic_gate_ready(paths, pending, action)
+        next_stage = int(state.get("current_stage", 0))
 
-    if action == "approve":
-        next_stage = int(pending["next_stage_on_approve"])
-    elif action == "reject":
-        next_stage = int(pending["fallback_stage"])
-    elif action == "goto_stage":
-        next_stage = int(decision["next_stage"])
-    elif action == "run_stage8":
-        next_stage = 8
+        if action == "approve":
+            next_stage = int(pending["next_stage_on_approve"])
+        elif action == "reject":
+            next_stage = int(pending["fallback_stage"])
+        elif action == "goto_stage":
+            next_stage = int(decision["next_stage"])
+        elif action == "run_stage8":
+            next_stage = 8
 
-    clear_pending(paths)
-    write_json(paths.decision, DEFAULT_DECISION)
+        ensure_transition_ready(paths, spec, state, int(pending.get("stage", -1)), next_stage, action)
 
-    state["status"] = "idle"
-    state["current_stage"] = next_stage
-    if next_stage == 0:
-        state["stage0_replan_required"] = True
-        state["stage0_entered_at"] = now_iso()
-    pending_stage = int(pending.get("stage", -1))
-    if should_increment_iteration_on_decision(pending_stage, next_stage, action):
-        state["running_iteration"] = int(state.get("running_iteration", 1)) + 1
+        clear_pending(paths)
+        write_json(paths.decision, DEFAULT_DECISION)
 
-    duration_ms = int((time.perf_counter() - started) * 1000)
-    event_id = append_event(
-        paths,
-        "decision_applied",
-        {
-            "decision_id": decision["decision_id"],
-            "action": action,
-            "next_stage": next_stage,
-            "duration_ms": duration_ms,
-            "trigger_source": "resume",
-        },
-    )
-    state["last_event_id"] = event_id
-    save_state(paths, state)
+        state["status"] = "idle"
+        state["current_stage"] = next_stage
+        _clear_running_state(state)
+        if next_stage == 0:
+            state["stage0_replan_required"] = True
+            state["stage0_entered_at"] = now_iso()
+        pending_stage = int(pending.get("stage", -1))
+        if should_increment_iteration_on_decision(pending_stage, next_stage, action):
+            state["running_iteration"] = int(state.get("running_iteration", 1)) + 1
+
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        event_id = append_event(
+            paths,
+            "decision_applied",
+            {
+                "decision_id": decision["decision_id"],
+                "action": action,
+                "next_stage": next_stage,
+                "duration_ms": duration_ms,
+                "trigger_source": "resume",
+            },
+        )
+        state["last_event_id"] = event_id
+        save_state(paths, state)
 
     if auto_continue:
         return run_auto(paths)
@@ -8009,8 +8283,10 @@ def cmd_check_config(args: argparse.Namespace, paths: Paths) -> int:
 def cmd_status(args: argparse.Namespace, paths: Paths) -> int:
     ensure_scaffold(paths, force=False)
     if args.json:
-        state = load_state(paths)
-        pending = read_json(paths.pending, DEFAULT_PENDING)
+        recover_stale_running_state(paths)
+        with workflow_file_lock(paths, exclusive=False):
+            state = load_state(paths)
+            pending = read_json(paths.pending, DEFAULT_PENDING)
         print_json(
             {
                 "state": state,

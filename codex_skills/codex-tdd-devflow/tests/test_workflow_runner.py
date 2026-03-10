@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -432,6 +433,169 @@ class WorkflowRunnerStage6DocSyncTests(unittest.TestCase):
                 ]
             ),
         )
+
+
+class WorkflowRunnerRuntimeGuardTests(unittest.TestCase):
+    def _make_paths(self):
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        root = Path(tempdir.name)
+        scaffold = root / "codex_devflow_scaffold"
+        paths = workflow_runner.Paths(root=root, scaffold=scaffold)
+        workflow_runner.ensure_scaffold(paths, force=True)
+        return paths
+
+    def test_build_status_hides_stage_artifact_while_stage_is_running(self):
+        paths = self._make_paths()
+        workflow_runner.write_json(
+            paths.stage_artifact(5),
+            {
+                "stage": 5,
+                "executed_cases": 9,
+                "failed_cases": [],
+                "project_internal_suite": {"return_code": 0},
+                "project_test_sink": {"status": "ready", "unmatched_case_ids": []},
+                "regression_summary": {"return_code": 0},
+                "stage_contract": {"status": "ready", "ready_for_next_stage": True},
+            },
+        )
+        state = workflow_runner.load_state(paths)
+        state["status"] = "running"
+        state["current_stage"] = 5
+        state["running_stage"] = 5
+        state["running_pid"] = os.getpid()
+        state["running_started_at"] = "2026-03-10T00:00:00Z"
+        state["running_trigger_source"] = "run_auto"
+        state["last_completed_stage"] = 4
+        workflow_runner.save_state(paths, state)
+
+        payload = workflow_runner.build_status_brief_payload(paths)
+
+        self.assertEqual(payload["status"], "running")
+        self.assertEqual(payload["internal_stage"], 5)
+        self.assertEqual(payload["stage_brief"]["status"], "running")
+        self.assertEqual(payload["stage_brief"]["artifact_snapshot"], "suppressed_while_stage_running")
+        self.assertNotIn("return_code", payload["stage_brief"])
+
+    def test_build_status_recovers_stale_running_when_pid_is_gone(self):
+        paths = self._make_paths()
+        state = workflow_runner.load_state(paths)
+        state["status"] = "running"
+        state["current_stage"] = 5
+        state["running_stage"] = 5
+        state["running_pid"] = 999999
+        state["running_started_at"] = "2026-03-10T00:00:00Z"
+        state["running_trigger_source"] = "run_auto"
+        workflow_runner.save_state(paths, state)
+
+        with mock.patch.object(workflow_runner, "_pid_is_alive", return_value=False):
+            payload = workflow_runner.build_status_brief_payload(paths)
+
+        reloaded = workflow_runner.load_state(paths)
+        self.assertEqual(payload["status"], "idle")
+        self.assertEqual(reloaded["status"], "idle")
+        self.assertIsNone(reloaded["running_stage"])
+        self.assertIsNone(reloaded["running_pid"])
+
+    def test_resume_approve_revalidates_stage6_doc_sync_before_advancing(self):
+        paths = self._make_paths()
+        state = workflow_runner.load_state(paths)
+        state["status"] = "waiting_decision"
+        state["current_stage"] = 6
+        workflow_runner.save_state(paths, state)
+        pending = workflow_runner.set_pending(
+            paths,
+            6,
+            {
+                "reason": "stage6_final_gate",
+                "allowed_actions": ["approve", "reject", "goto_stage"],
+                "next_stage_on_approve": 0,
+                "fallback_stage": 6,
+            },
+        )
+        workflow_runner.write_json(
+            paths.decision,
+            {
+                "schema_version": 1,
+                "decision_id": pending["decision_id"],
+                "action": "approve",
+                "reason": "test",
+                "timestamp": workflow_runner.now_iso(),
+            },
+        )
+        workflow_runner.write_json(
+            paths.stage_artifact(6),
+            {
+                "stage": 6,
+                "registry_updates": {"api_registry_count": 1, "case_registry_count": 1},
+                "docs_updates": [],
+                "entity_review": {
+                    "final_entities": ["route"],
+                    "focus_api_keys": ["POST /api/v1/routes/{id}/disable"],
+                },
+                "business_doc_sync": {"passed": False, "semantic_unsynced_entities": {"route": ["docs_not_updated_this_round"]}},
+                "doc_sync_autofix": {"attempted": True, "updated_docs": []},
+                "commit_review": {"needs_user_review": False, "suggested_git_add_files": []},
+                "settlement_commit_message": "stage6 blocked",
+                "stage_contract": {"status": "ready", "ready_for_next_stage": True},
+            },
+        )
+
+        with self.assertRaisesRegex(workflow_runner.WorkflowError, "stage6 当前产物未通过复核"):
+            workflow_runner.resume(paths, auto_continue=False)
+
+        reloaded = workflow_runner.load_state(paths)
+        self.assertEqual(reloaded["status"], "waiting_decision")
+        self.assertEqual(reloaded["current_stage"], 6)
+
+    def test_run_one_stage_refuses_to_enter_stage6_when_stage5_is_not_ready(self):
+        paths = self._make_paths()
+        state = workflow_runner.load_state(paths)
+        state["current_stage"] = 6
+        workflow_runner.save_state(paths, state)
+        workflow_runner.write_json(
+            paths.stage_artifact(5),
+            {
+                "stage": 5,
+                "executed_cases": 1,
+                "failed_cases": ["CASE-001"],
+                "project_internal_suite": {"return_code": 0},
+                "project_test_sink": {"status": "ready", "unmatched_case_ids": []},
+                "regression_summary": {"return_code": 1, "consecutive_failures": 1},
+                "stage_contract": {"status": "ready", "ready_for_next_stage": True},
+            },
+        )
+
+        with (
+            mock.patch.object(workflow_runner, "ensure_runtime_config_ready"),
+            mock.patch.object(workflow_runner, "ensure_semantic_directories_for_stage"),
+            mock.patch.object(workflow_runner, "execute_stage") as execute_stage,
+            self.assertRaisesRegex(workflow_runner.WorkflowError, "前置 stage5 产物未通过复核"),
+        ):
+            workflow_runner.run_one_stage(paths, workflow_runner.DEFAULT_WORKFLOW_SPEC, state, 6)
+
+        self.assertFalse(execute_stage.called)
+
+    def test_stage6_contract_blocks_when_focus_api_exists_but_no_entity_was_selected(self):
+        paths = self._make_paths()
+        contract = workflow_runner.evaluate_stage_contract(
+            paths,
+            6,
+            {
+                "stage": 6,
+                "registry_updates": {"api_registry_count": 1, "case_registry_count": 1},
+                "docs_updates": [],
+                "entity_review": {"final_entities": [], "focus_api_keys": ["POST /api/v1/routes/{id}/disable"]},
+                "business_doc_sync": {"passed": True, "semantic_unsynced_entities": {}},
+                "doc_sync_autofix": {"attempted": True, "updated_docs": []},
+                "commit_review": {"review_status": "approved_skip_commit"},
+                "settlement_commit_message": "stage6 settlement",
+                "stage_contract": {"status": "ready", "ready_for_next_stage": True},
+            },
+        )
+
+        self.assertEqual(contract["reason"], "stage6_not_ready_for_stage0_no_touched_entities_for_doc_sync")
+        self.assertFalse(contract["ready_for_next_stage"])
 
 
 if __name__ == "__main__":
