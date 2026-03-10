@@ -103,16 +103,17 @@ Stage0 到 Stage4 共同遵守：
 
 主要动作：
 
-- 生成 `business_events`
+- 从 `cases/session_event_candidates.jsonl` 同步 `business_events`
 - 对齐 `api_refs`
 - 透传 Stage0 已确认的 `entity`
 - 对齐 `expected_business_codes`
 
 约束：
 
-- 默认按“一 API 一业务事件”收敛
+- 业务事件必须由当前 Codex session 结合当前实现生成
 - 业务事件必须结合当前实现确认真实边界
 - 优先沿用 Stage0 已显式声明的业务码
+- runner 只做 traceability / gate 校验，不生成业务事件
 
 ## Stage3 测试资产
 
@@ -122,15 +123,15 @@ Stage0 到 Stage4 共同遵守：
 
 主要动作：
 
-- 生成或收敛测试用例
+- 从 `cases/session_case_candidates.jsonl` 收敛测试用例
 - 对齐 `case -> event -> api`
 - 检查 generated tests 是否就绪
 
 约束：
 
-- 没有 session case 时，自动按业务事件生成最小 case
 - case 设计必须对照当前代码和当前测试现状
-- 不要求用户先手工补 case 才能继续
+- runner 不再自动补齐最小 case
+- 没有有效 session case 时，Stage3 直接阻塞在 gate
 
 主要输出：
 

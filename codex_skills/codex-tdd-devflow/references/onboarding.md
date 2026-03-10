@@ -235,11 +235,19 @@ codex_devflow_scaffold/
 - 可以人工 override，但那是例外流程
 - `entity` 应由业务语义理解得出，而不是路径规则推断
 
+### `cases/session_event_candidates.jsonl`
+
+用途：
+
+- Stage2 业务事件输入
+- 默认由当前 Codex session 结合当前实现生成和刷新
+- 属于会话产物，不是人工维护配置
+
 ### `cases/session_case_candidates.jsonl`
 
 用途：
 
-- Stage3 / Stage4 case 输入
+- Stage3 case 输入
 - 默认由当前 Codex session 生成和刷新
 - 属于会话产物，不是人工维护配置
 

@@ -16,6 +16,184 @@ sys.modules[MODULE_SPEC.name] = workflow_runner
 MODULE_SPEC.loader.exec_module(workflow_runner)
 
 
+class WorkflowRunnerSemanticFlowTests(unittest.TestCase):
+    def _make_paths(self):
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        root = Path(tempdir.name)
+        scaffold = root / "codex_devflow_scaffold"
+        paths = workflow_runner.Paths(root=root, scaffold=scaffold)
+        workflow_runner.ensure_scaffold(paths, force=True)
+        return paths
+
+    def test_run_auto_keeps_stage3_gate_artifact_read_only(self):
+        paths = self._make_paths()
+        artifact = {
+            "stage": 3,
+            "business_event_candidates": [
+                {
+                    "event_id": "EVT-001",
+                    "title": "Session event",
+                    "api_refs": ["POST /api/v1/routes"],
+                    "expected_business_codes": ["SUCCESS"],
+                }
+            ],
+            "business_events": [
+                {
+                    "event_id": "EVT-001",
+                    "title": "Session event",
+                    "api_refs": ["POST /api/v1/routes"],
+                    "expected_business_codes": ["SUCCESS"],
+                }
+            ],
+            "focus_api_keys": ["POST /api/v1/routes"],
+            "progress_snapshot": {},
+            "semantic_context": {},
+            "semantic_review": {"status": "pending"},
+            "editor_notes": [],
+        }
+        workflow_runner.write_json(paths.stage_artifact(3), artifact)
+        workflow_runner.set_pending(
+            paths,
+            3,
+            {
+                "reason": "stage3_semantic_event_review_required",
+                "allowed_actions": ["approve", "reject", "goto_stage"],
+                "next_stage_on_approve": 4,
+                "fallback_stage": 2,
+            },
+        )
+        state = workflow_runner.load_state(paths)
+        state["status"] = "waiting_decision"
+        state["current_stage"] = 3
+        workflow_runner.save_state(paths, state)
+
+        before = workflow_runner.read_json(paths.stage_artifact(3), {})
+        result = workflow_runner.run_auto(paths)
+        after = workflow_runner.read_json(paths.stage_artifact(3), {})
+
+        self.assertEqual(result, "waiting_decision")
+        self.assertEqual(before, after)
+
+    def test_run_auto_keeps_stage4_gate_artifact_read_only(self):
+        paths = self._make_paths()
+        artifact = {
+            "stage": 4,
+            "business_events": [
+                {
+                    "event_id": "EVT-001",
+                    "title": "Session event",
+                    "api_refs": ["POST /api/v1/routes"],
+                    "expected_business_codes": ["SUCCESS"],
+                }
+            ],
+            "candidate_cases": [
+                {
+                    "case_id": "CASE-001",
+                    "event_id": "EVT-001",
+                    "api_refs": ["POST /api/v1/routes"],
+                    "expected_business_code": "SUCCESS",
+                    "preconditions": ["have fixture"],
+                    "steps": ["call api"],
+                }
+            ],
+            "generated_cases": [],
+            "generated_test_files": [],
+            "coverage_by_event": [],
+            "traceability_check": {"status": "ok", "reason": "stage4_case_traceability_ok"},
+            "semantic_review": {"status": "pending"},
+            "test_generation": {"status": "missing"},
+        }
+        workflow_runner.write_json(paths.stage_artifact(4), artifact)
+        workflow_runner.set_pending(
+            paths,
+            4,
+            {
+                "reason": "stage4_semantic_review_required",
+                "allowed_actions": ["approve", "reject", "goto_stage"],
+                "next_stage_on_approve": 5,
+                "fallback_stage": 3,
+            },
+        )
+        state = workflow_runner.load_state(paths)
+        state["status"] = "waiting_decision"
+        state["current_stage"] = 4
+        workflow_runner.save_state(paths, state)
+
+        before = workflow_runner.read_json(paths.stage_artifact(4), {})
+        result = workflow_runner.run_auto(paths)
+        after = workflow_runner.read_json(paths.stage_artifact(4), {})
+
+        self.assertEqual(result, "waiting_decision")
+        self.assertEqual(before, after)
+
+    def test_stage3_blocks_when_session_event_candidates_are_missing(self):
+        paths = self._make_paths()
+        workflow_runner.write_json(
+            paths.stage_artifact(0),
+            {
+                "api_candidates": [
+                    {
+                        "entity": "route",
+                        "api_key": "POST /api/v1/routes",
+                        "expected_business_codes": ["SUCCESS", "INVALID_PARAMS"],
+                    }
+                ],
+                "required_case_codes": ["SUCCESS", "INVALID_PARAMS"],
+            },
+        )
+        workflow_runner.write_json(paths.stage_artifact(2), {"scanned_apis": ["POST /api/v1/routes"]})
+
+        result = workflow_runner.stage3(paths, workflow_runner.DEFAULT_WORKFLOW_SPEC)
+        contract = workflow_runner.evaluate_stage_contract(paths, 3, result.artifact)
+
+        self.assertEqual(result.artifact["business_event_candidates"], [])
+        self.assertEqual(result.artifact["business_events"], [])
+        self.assertEqual(contract["reason"], "stage3_not_ready_for_stage4_no_business_events")
+        self.assertTrue(contract["blocking"])
+        self.assertIn("session_event_candidates.jsonl", result.artifact["semantic_review"]["reason"])
+
+    def test_stage4_blocks_when_session_case_candidates_are_missing(self):
+        paths = self._make_paths()
+        workflow_runner.write_json(
+            paths.stage_artifact(0),
+            {
+                "api_candidates": [
+                    {
+                        "entity": "route",
+                        "api_key": "POST /api/v1/routes",
+                        "expected_business_codes": ["SUCCESS", "INVALID_PARAMS"],
+                    }
+                ],
+                "required_case_codes": ["SUCCESS", "INVALID_PARAMS"],
+            },
+        )
+        workflow_runner.write_json(
+            paths.stage_artifact(3),
+            {
+                "business_events": [
+                    {
+                        "event_id": "EVT-001",
+                        "title": "Session event",
+                        "description": "Session-defined event",
+                        "entity": "route",
+                        "api_refs": ["POST /api/v1/routes"],
+                        "expected_business_codes": ["SUCCESS"],
+                    }
+                ]
+            },
+        )
+
+        result = workflow_runner.stage4(paths, workflow_runner.DEFAULT_WORKFLOW_SPEC)
+        contract = workflow_runner.evaluate_stage_contract(paths, 4, result.artifact)
+
+        self.assertEqual(result.artifact["candidate_cases"], [])
+        self.assertEqual(result.artifact["generated_cases"], [])
+        self.assertEqual(contract["reason"], "stage4_not_ready_for_stage5_no_candidate_cases")
+        self.assertTrue(contract["blocking"])
+        self.assertIn("Runner 不再补齐或生成默认 case", result.artifact["session_codegen_note"])
+
+
 class WorkflowRunnerStage5Tests(unittest.TestCase):
     def _make_paths(self, project_test_roots=None):
         tempdir = tempfile.TemporaryDirectory()

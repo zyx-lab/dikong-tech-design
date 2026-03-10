@@ -170,7 +170,8 @@ python3 codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --appro
 
 - `codex_devflow_scaffold/`: 状态、产物、门禁、决策、日志
 - `cases/session_api_candidates.jsonl`: Stage0 候选 API，会话级输入，默认由当前 Codex session 生成
-- `cases/session_case_candidates.jsonl`: Stage3/Stage4 用例输入，会话产物，默认由当前 Codex session 生成
+- `cases/session_event_candidates.jsonl`: Stage2 业务事件输入，会话产物，默认由当前 Codex session 生成
+- `cases/session_case_candidates.jsonl`: Stage3 测试用例输入，会话产物，默认由当前 Codex session 生成
 - `cases/session_entity_review.json`: Stage5 结算前调整 touched entities 的会话输入
 - `业务侧实现/`: 业务文档沉淀目录；每个实体对应四件套
 - `semantic/business_semantic_model.json`: 最小语义骨架，不再写死示例业务
@@ -181,8 +182,8 @@ python3 codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --appro
 
 - Stage0 `提名API`: 基于业务语义和当前代码提名本轮 focus API，并显式确认 `entity`
 - Stage1 `实现API`: 实现、修正、优化 API，并确认它在系统中可观测
-- Stage2 `业务事件`: 从 focus API 收敛最小业务事件
-- Stage3 `测试资产`: 生成或收敛最小可执行测试资产
+- Stage2 `业务事件`: 当前 Codex session 产出 `session_event_candidates.jsonl`，runner 只做校验和门禁
+- Stage3 `测试资产`: 当前 Codex session 产出 `session_case_candidates.jsonl` 与测试代码，runner 不兜底补 case
 - Stage4 `回归`: 运行 generated tests、项目内测试和全量回归
 - Stage5 `结算`: 校验业务文档同步状态、同步 registry 和 commit review
 - Stage6 `干预`: 主线失败时给出修复入口

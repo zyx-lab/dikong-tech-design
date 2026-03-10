@@ -75,6 +75,7 @@ DEFAULT_PERMISSION_CODE_DIRECTORIES = ("apps/access/",)
 GENERATED_TEST_FILENAME = "test_generated_specs.py"
 GENERATED_EVENT_NOTES_FILENAME = "business_events_zh.md"
 SESSION_CASE_FILENAME = "session_case_candidates.jsonl"
+SESSION_EVENT_FILENAME = "session_event_candidates.jsonl"
 SESSION_API_FILENAME = "session_api_candidates.jsonl"
 SESSION_ENTITY_REVIEW_FILENAME = "session_entity_review.json"
 STATIC_CONTROLS_FILENAME = "static_controls.json"
@@ -695,6 +696,10 @@ class Paths:
     @property
     def session_case_candidates(self) -> Path:
         return self.scaffold / "cases" / SESSION_CASE_FILENAME
+
+    @property
+    def session_event_candidates(self) -> Path:
+        return self.scaffold / "cases" / SESSION_EVENT_FILENAME
 
     @property
     def session_api_candidates(self) -> Path:
@@ -1742,10 +1747,7 @@ def stage4_semantic_test_required(spec: dict[str, Any]) -> bool:
 
 
 def stage4_case_design_mode(spec: dict[str, Any]) -> str:
-    mode = str(spec.get("stage4_case_design_mode", "session")).strip().lower()
-    if mode not in {"session", "runner"}:
-        return "session"
-    return mode
+    return "session"
 
 
 def semantic_directories(paths: Paths) -> dict[str, Path]:
@@ -1929,12 +1931,6 @@ def pluralize_entity_slug(entity: str) -> str:
     return f"{token}s"
 
 
-def normalize_action_slug(raw: str) -> str:
-    token = raw.strip().lower().replace("_", "-")
-    token = re.sub(r"[^a-z0-9-]+", "-", token).strip("-")
-    return token
-
-
 def normalize_business_code_list(raw: Any, allowed_codes: list[str] | None = None) -> list[str]:
     if isinstance(raw, str):
         values = [raw]
@@ -1959,31 +1955,6 @@ def normalize_business_code_list(raw: Any, allowed_codes: list[str] | None = Non
         if str(item).strip()
     }
     return [item for item in normalized if item in allowed]
-
-
-def stage0_candidate_api_keys(entity: str, actions: list[str]) -> list[str]:
-    plural = pluralize_entity_slug(entity)
-    base = f"/api/v1/{plural}"
-    candidates = [
-        f"POST {base}",
-        f"PATCH {base}/{{id}}",
-        f"PUT {base}/{{id}}",
-        f"DELETE {base}/{{id}}",
-    ]
-
-    action_slugs: list[str] = []
-    for action in actions:
-        slug = normalize_action_slug(action)
-        if slug:
-            action_slugs.append(slug)
-
-    for action in dedupe_keep_order(action_slugs):
-        if action in {"view", "create", "update"}:
-            continue
-        candidates.append(f"POST {base}/{{id}}/{action}")
-
-    return dedupe_keep_order([normalize_api_key(item) for item in candidates if item])
-
 
 def _normalize_stage0_session_api_candidate(
     paths: Paths,
@@ -3479,6 +3450,8 @@ def summarize_stage_artifact(stage: int, artifact: dict[str, Any] | None, paths:
                 "focus_api_keys",
                 "progress_snapshot",
                 "semantic_context",
+                "session_event_candidate_file",
+                "session_event_warnings",
                 "semantic_review",
                 "editor_notes",
             )
@@ -4116,6 +4089,9 @@ def ensure_scaffold(paths: Paths, force: bool = False, preset: str = "generic") 
     if force or not paths.session_case_candidates.exists():
         write_text(paths.session_case_candidates, "")
 
+    if force or not paths.session_event_candidates.exists():
+        write_text(paths.session_event_candidates, "")
+
     if force or not paths.session_api_candidates.exists():
         write_text(paths.session_api_candidates, "")
 
@@ -4325,6 +4301,7 @@ def analyze_recalc_graph(paths: Paths, changed_paths: list[str] | None = None) -
         "api_registry": [0, 2, 3, 4, 6],
         "case_registry": [4, 5, 6, 7, 8],
         "session_api_candidates": [0, 1, 2, 3, 4, 5, 6],
+        "session_event_candidates": [3, 4, 5, 6],
         "case_descriptions": [4, 5, 6],
         "session_case_candidates": [4, 5, 6],
         "business_docs": [0, 1, 3, 4, 6, 7, 8],
@@ -4342,6 +4319,7 @@ def analyze_recalc_graph(paths: Paths, changed_paths: list[str] | None = None) -
     api_registry_path = rel_path(paths, paths.api_registry)
     case_registry_path = rel_path(paths, paths.case_registry)
     session_api_candidates_path = rel_path(paths, paths.session_api_candidates)
+    session_event_candidates_path = rel_path(paths, paths.session_event_candidates)
     case_descriptions_path = rel_path(paths, paths.case_descriptions)
     session_case_candidates_path = rel_path(paths, paths.session_case_candidates)
     semantic_dirs = resolve_semantic_dir_names(paths)
@@ -4377,6 +4355,8 @@ def analyze_recalc_graph(paths: Paths, changed_paths: list[str] | None = None) -
             stages = graph["case_registry"]
         elif fnmatch.fnmatch(path, session_api_candidates_path):
             stages = graph["session_api_candidates"]
+        elif fnmatch.fnmatch(path, session_event_candidates_path):
+            stages = graph["session_event_candidates"]
         elif fnmatch.fnmatch(path, case_descriptions_path):
             stages = graph["case_descriptions"]
         elif fnmatch.fnmatch(path, session_case_candidates_path):
@@ -4428,22 +4408,6 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
 
     missing = validate_semantic_model(model if isinstance(model, dict) else {})
     missing_dirs = missing_semantic_directories(paths)
-    resources = model.get("resources", []) if isinstance(model, dict) else []
-    resource_entities: list[str] = []
-    for resource in resources:
-        normalized = normalize_entity_name(str(resource))
-        if normalized:
-            resource_entities.append(normalized)
-    resource_entities = dedupe_keep_order(resource_entities)
-
-    actions = model.get("actions", []) if isinstance(model, dict) else []
-    action_tokens: list[str] = []
-    if isinstance(actions, list):
-        for action in actions:
-            token = str(action).strip()
-            if token:
-                action_tokens.append(token)
-
     blocking = bool(missing) or bool(missing_dirs)
     semantic_gap_report = {
         "blocking": blocking,
@@ -4472,22 +4436,6 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
         [normalize_api_key(item) for item in scanned_apis if isinstance(item, str) and normalize_api_key(item)]
     )
     observed_set = set(observed_api_keys)
-
-    candidate_pool: list[dict[str, str]] = []
-    for entity in resource_entities:
-        for api_key in stage0_candidate_api_keys(entity, action_tokens):
-            candidate_pool.append({"entity": entity, "api_key": api_key})
-
-    skipped_existing = 0
-    seen_keys: set[str] = set()
-    for item in candidate_pool:
-        api_key = normalize_api_key(item["api_key"])
-        if not api_key or api_key in seen_keys:
-            continue
-        seen_keys.add(api_key)
-        if api_key in existing_api_keys:
-            skipped_existing += 1
-            continue
 
     session_candidates, session_api_warnings = load_stage0_session_api_candidates(
         paths,
@@ -4601,8 +4549,6 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
         "commit_message": "stage-0(api-seed): generate next api candidate",
         "semantic_gap_report": semantic_gap_report,
         "api_registry_items": len(api_registry.get("items", [])),
-        "candidate_pool_size": len(candidate_pool),
-        "candidate_skipped_existing": skipped_existing,
         "candidate_source": candidate_source,
         "session_api_candidate_file": rel_path(paths, paths.session_api_candidates),
         "session_api_candidate_count": len(session_candidates),
@@ -4952,40 +4898,7 @@ def stage3_focus_api_items(
     stage2_artifact: dict[str, Any],
     semantic_model: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    stage0_items = stage0_candidate_api_items_from_artifact(stage0_artifact)
-    if stage0_items:
-        return stage0_items
-
-    stage2_keys = stage2_artifact.get("new_api_keys", []) if isinstance(stage2_artifact, dict) else []
-    stage2_normalized: list[str] = []
-    if isinstance(stage2_keys, list):
-        for item in stage2_keys:
-            if not isinstance(item, str):
-                continue
-            normalized = normalize_api_key(item)
-            if normalized:
-                stage2_normalized.append(normalized)
-    stage2_normalized = dedupe_keep_order(stage2_normalized)
-
-    bootstrap_mode = bool(stage2_artifact.get("bootstrap_mode", False)) if isinstance(stage2_artifact, dict) else False
-    if not stage2_normalized:
-        return []
-
-    fallback_entity = unambiguous_business_entity(paths, semantic_model)
-    fallback_source = "bootstrap_stage2_scan" if bootstrap_mode else "stage2_scan_fallback"
-    return [
-        {
-            "api_key": api_key,
-            "entity": fallback_entity,
-            "expected_business_codes": [],
-            "semantic_title": "",
-            "semantic_description": "",
-            "reason": "",
-            "risk": "",
-            "source": fallback_source,
-        }
-        for api_key in stage2_normalized
-    ]
+    return stage0_candidate_api_items_from_artifact(stage0_artifact)
 
 
 def should_increment_iteration_on_decision(pending_stage: int, next_stage: int, action: str) -> bool:
@@ -5066,115 +4979,6 @@ def stage3_required_case_codes(stage0_artifact: dict[str, Any]) -> list[str]:
     return ["SUCCESS", "INVALID_PARAMS"]
 
 
-def stage3_semantic_signal_text(
-    api_item: dict[str, Any],
-) -> str:
-    chunks: list[str] = []
-    for field in (
-        api_item.get("semantic_title", ""),
-        api_item.get("semantic_description", ""),
-        api_item.get("reason", ""),
-    ):
-        token = str(field).strip()
-        if token:
-            chunks.append(token)
-    return " ".join(chunks).lower()
-
-
-def stage3_expected_business_codes(
-    api_item: dict[str, Any],
-    semantic_context: dict[str, Any],
-    required_case_codes: list[str],
-) -> list[str]:
-    explicit_codes = normalize_business_code_list(
-        api_item.get("expected_business_codes", []),
-        allowed_codes=required_case_codes,
-    )
-    if explicit_codes:
-        return explicit_codes
-
-    available = set(required_case_codes)
-    codes: list[str] = []
-    signal_text = stage3_semantic_signal_text(api_item)
-    has_permission_semantics = bool(
-        semantic_context.get("permission_boundary", {}) if isinstance(semantic_context, dict) else {}
-    )
-
-    if "SUCCESS" in available:
-        codes.append("SUCCESS")
-    if "INVALID_PARAMS" in available:
-        codes.append("INVALID_PARAMS")
-    if "PERMISSION_DENIED" in available and (has_permission_semantics or "permission" in signal_text or "权限" in signal_text):
-        codes.append("PERMISSION_DENIED")
-    if "STATE_CONFLICT" in available and (
-        "状态" in signal_text
-        or "冲突" in signal_text
-        or "conflict" in signal_text
-        or "不可逆" in signal_text
-    ):
-        codes.append("STATE_CONFLICT")
-    if "IDEMPOTENT_DUPLICATE" in available and (
-        "幂等" in signal_text
-        or "重复" in signal_text
-        or "duplicate" in signal_text
-        or "idempotent" in signal_text
-    ):
-        codes.append("IDEMPOTENT_DUPLICATE")
-    if "RESOURCE_NOT_FOUND" in available and (
-        "不存在" in signal_text
-        or "未找到" in signal_text
-        or "not found" in signal_text
-        or "missing" in signal_text
-    ):
-        codes.append("RESOURCE_NOT_FOUND")
-
-    if codes:
-        return dedupe_keep_order(codes)
-
-    fallback = [code for code in required_case_codes if code in {"SUCCESS", "INVALID_PARAMS"}]
-    return fallback or required_case_codes[:1] or ["SUCCESS"]
-
-
-def stage3_event_candidates_for_api(
-    api_item: dict[str, Any],
-    semantic_context: dict[str, Any],
-    required_case_codes: list[str],
-    progress_snapshot: dict[str, Any],
-) -> list[dict[str, Any]]:
-    api_key = str(api_item.get("api_key", "")).strip()
-    entity = normalize_entity_name(str(api_item.get("entity", "")))
-    state_machine = semantic_context.get("state_machine", {}) if isinstance(semantic_context, dict) else {}
-    constraints = semantic_context.get("constraints", []) if isinstance(semantic_context, dict) else []
-    permissions = semantic_context.get("permission_boundary", {}) if isinstance(semantic_context, dict) else {}
-    entity_title = entity or "目标实体"
-    api_seen = api_key in set(progress_snapshot.get("implemented_candidate_apis", []))
-    progress_note = "已在当前扫描中观测到该 API" if api_seen else "当前扫描尚未观测到该 API"
-    expected_codes = stage3_expected_business_codes(api_item, semantic_context, required_case_codes)
-    semantic_title = str(api_item.get("semantic_title", "")).strip()
-    semantic_description = str(api_item.get("semantic_description", "")).strip()
-    title = semantic_title or f"{entity_title}语义闭环"
-
-    description_parts = [f"{progress_note}，围绕 {api_key} 验证 {entity_title} 的本轮业务语义闭环。"]
-    if semantic_description:
-        description_parts.append(semantic_description)
-    if isinstance(state_machine, dict) and state_machine.get("states", []):
-        description_parts.append(f"状态机: {state_machine.get('states', [])}")
-    if isinstance(constraints, list) and constraints:
-        description_parts.append(f"业务约束: {constraints[:3]}")
-    if isinstance(permissions, dict) and permissions:
-        description_parts.append(f"权限边界: {permissions}")
-
-    reasoning = "业务事件以 Stage0 显式语义和语义模型约束收敛，runner 不再按 HTTP/path 猜测测试码。"
-    return [
-        {
-            "title": title,
-            "description": " ".join(str(part).strip() for part in description_parts if str(part).strip()),
-            "expected_business_codes": expected_codes,
-            "reasoning_zh": reasoning,
-        }
-    ]
-
-
 def stage3(paths: Paths, spec: dict[str, Any]) -> StageResult:
     stage2_artifact = read_json(paths.stage_artifact(2), {})
     stage0_artifact = read_json(paths.stage_artifact(0), {})
@@ -5194,44 +4998,14 @@ def stage3(paths: Paths, spec: dict[str, Any]) -> StageResult:
         stage2_artifact if isinstance(stage2_artifact, dict) else {},
     )
     required_case_codes = stage3_required_case_codes(stage0_artifact if isinstance(stage0_artifact, dict) else {})
-
-    business_event_candidates: list[dict[str, Any]] = []
-    seq = 1
-    for item in focus_api_items:
-        api_key = str(item.get("api_key", "")).strip()
-        if not api_key:
-            continue
-        entity = normalize_entity_name(str(item.get("entity", "")))
-        semantic_context = stage3_semantic_context_for_entity(entity, semantic_model if isinstance(semantic_model, dict) else {})
-        for template in stage3_event_candidates_for_api(item, semantic_context, required_case_codes, progress):
-            business_event_candidates.append(
-                {
-                    "event_id": f"EVT-{seq:03d}",
-                    "title": str(template.get("title", f"业务事件 {seq}")),
-                    "api_refs": [api_key],
-                    "description": str(template.get("description", "由 Stage3 结合业务语义自动生成")),
-                    "expected_business_codes": template.get("expected_business_codes", []),
-                    "reasoning_zh": str(template.get("reasoning_zh", "")),
-                    "entity": entity,
-                }
-            )
-            seq += 1
-
-    if not business_event_candidates:
-        fallback_item = focus_api_items[0] if focus_api_items else {}
-        fallback_api = str(fallback_item.get("api_key", "")).strip()
-        fallback_refs = [fallback_api] if fallback_api else []
-        business_event_candidates = [
-            {
-                "event_id": "EVT-001",
-                "title": "候选 API 语义回归事件",
-                "api_refs": fallback_refs,
-                "description": "未识别到可细分事件模板，使用兜底语义事件。",
-                "expected_business_codes": required_case_codes[:2] or ["SUCCESS", "INVALID_PARAMS"],
-                "reasoning_zh": "兜底事件仅保留最小语义闭环，避免 runner 按接口形态过度猜测。",
-                "entity": normalize_entity_name(str(fallback_item.get("entity", ""))),
-            }
-        ]
+    state = read_json(paths.state, DEFAULT_STATE)
+    running_iteration = int(state.get("running_iteration", 1)) if isinstance(state, dict) else 1
+    business_event_candidates, session_event_warnings = load_session_event_candidates(
+        paths,
+        focus_api_items,
+        required_case_codes,
+        running_iteration,
+    )
 
     business_events = clone_case_rows(business_event_candidates)
     semantic_resources = semantic_model.get("resources", []) if isinstance(semantic_model, dict) else []
@@ -5252,10 +5026,16 @@ def stage3(paths: Paths, spec: dict[str, Any]) -> StageResult:
         "focus_api_keys": focus_api_keys,
         "progress_snapshot": progress,
         "semantic_context": semantic_context,
+        "session_event_candidate_file": rel_path(paths, paths.session_event_candidates),
+        "session_event_warnings": session_event_warnings,
         "semantic_review": {
             "status": "pending",
             "reviewer": "",
-            "reason": "等待当前 Codex session 结合业务语义审阅测试事件",
+            "reason": (
+                "等待当前 Codex session 从 session_event_candidates.jsonl 同步并审阅业务事件"
+                if business_event_candidates
+                else "session_event_candidates.jsonl 为空或无有效记录；需由当前 Codex session 先补齐业务事件候选"
+            ),
             "candidate_count": len(business_event_candidates),
             "selected_count": len(business_events),
             "selected_event_ids": [
@@ -6352,38 +6132,6 @@ def evaluate_project_test_sink(paths: Paths, generated_cases: list[dict[str, Any
         "checked_at": now_iso(),
     }
 
-
-def build_stage4_case_outline(api_refs: list[str], expected_business_code: str) -> dict[str, list[str]]:
-    first_ref = ""
-    for item in api_refs:
-        if isinstance(item, str) and item.strip():
-            first_ref = item.strip()
-            break
-
-    code = str(expected_business_code).strip().upper()
-    preconditions = ["准备账号、权限与必要业务数据。"]
-    if code == "PERMISSION_DENIED":
-        preconditions.append("使用未登录账号或无权限账号。")
-    elif code == "INVALID_PARAMS":
-        preconditions.append("准备一组违反接口约束的参数。")
-    elif code == "RESOURCE_NOT_FOUND":
-        preconditions.append("准备不存在的资源标识。")
-    elif code == "STATE_CONFLICT":
-        preconditions.append("先将资源置于冲突状态。")
-    elif code == "IDEMPOTENT_DUPLICATE":
-        preconditions.append("先完成一次成功请求，再重复提交相同请求。")
-    else:
-        preconditions.append("确保前置状态满足主流程。")
-
-    target = first_ref or "目标 API"
-    steps = [
-        f"调用 {target}。",
-        f"断言 business_code == {code}。",
-        "断言返回包含 business_detail_code。",
-    ]
-    return {"preconditions": preconditions, "steps": steps}
-
-
 def _normalize_str_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -6407,6 +6155,108 @@ def _stage4_event_lookup(events: list[dict[str, Any]]) -> dict[str, dict[str, An
     return lookup
 
 
+def _normalize_stage3_session_event_candidate(
+    raw: dict[str, Any],
+    idx: int,
+    running_iteration: int,
+    focus_lookup: dict[str, dict[str, Any]],
+    required_case_codes: list[str],
+) -> tuple[dict[str, Any] | None, str]:
+    if not isinstance(raw, dict):
+        return None, "not_object"
+
+    api_refs = dedupe_keep_order(
+        [
+            normalize_api_key(item)
+            for item in _normalize_str_list(raw.get("api_refs"))
+            if normalize_api_key(item)
+        ]
+    )
+    if not api_refs:
+        return None, "missing_api_refs"
+
+    normalized_refs = [api_ref for api_ref in api_refs if api_ref in focus_lookup]
+    if not normalized_refs:
+        return None, "api_refs_not_traceable_to_focus_api"
+
+    expected_codes = normalize_business_code_list(
+        raw.get("expected_business_codes", raw.get("business_codes", [])),
+        allowed_codes=required_case_codes,
+    )
+    if not expected_codes:
+        return None, "missing_expected_business_codes"
+
+    event_id = str(raw.get("event_id", "")).strip() or f"EVT-SESSION-I{running_iteration:03d}-{idx:03d}"
+    title = str(raw.get("title", "")).strip() or f"Session 业务事件 {idx}"
+    description = str(raw.get("description", raw.get("event_description_zh", ""))).strip()
+    reasoning = str(raw.get("reasoning_zh", raw.get("reason", ""))).strip()
+    entity = normalize_entity_name(str(raw.get("entity", "")))
+    if not entity:
+        ref_entities = dedupe_keep_order(
+            [
+                normalize_entity_name(str(focus_lookup.get(api_ref, {}).get("entity", "")))
+                for api_ref in normalized_refs
+                if normalize_entity_name(str(focus_lookup.get(api_ref, {}).get("entity", "")))
+            ]
+        )
+        if len(ref_entities) == 1:
+            entity = ref_entities[0]
+
+    return {
+        "event_id": event_id,
+        "title": title,
+        "api_refs": normalized_refs,
+        "description": description,
+        "expected_business_codes": expected_codes,
+        "reasoning_zh": reasoning,
+        "entity": entity,
+    }, ""
+
+
+def load_session_event_candidates(
+    paths: Paths,
+    focus_api_items: list[dict[str, Any]],
+    required_case_codes: list[str],
+    running_iteration: int,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    rows = read_jsonl(paths.session_event_candidates)
+    focus_lookup: dict[str, dict[str, Any]] = {}
+    for item in focus_api_items:
+        if not isinstance(item, dict):
+            continue
+        api_key = normalize_api_key(str(item.get("api_key", "")))
+        if api_key and api_key not in focus_lookup:
+            focus_lookup[api_key] = item
+
+    normalized: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    seen_event_ids: set[str] = set()
+
+    for idx, item in enumerate(rows, start=1):
+        candidate, warning = _normalize_stage3_session_event_candidate(
+            item,
+            idx,
+            running_iteration,
+            focus_lookup,
+            required_case_codes,
+        )
+        if not isinstance(candidate, dict):
+            warnings.append(f"line_{idx}: {warning or 'missing_required_fields'}")
+            continue
+
+        event_id = str(candidate.get("event_id", "")).strip()
+        base_event_id = event_id or f"EVT-SESSION-I{running_iteration:03d}-{idx:03d}"
+        seq = 1
+        while event_id in seen_event_ids or not event_id:
+            event_id = f"{base_event_id}-{seq:02d}"
+            seq += 1
+        candidate["event_id"] = event_id
+        seen_event_ids.add(event_id)
+        normalized.append(candidate)
+
+    return normalized, warnings
+
+
 def _normalize_session_case_candidate(
     raw: dict[str, Any],
     idx: int,
@@ -6417,10 +6267,12 @@ def _normalize_session_case_candidate(
         return None
 
     event_id = str(raw.get("event_id", "")).strip()
-    if not event_id and event_lookup:
-        event_id = next(iter(event_lookup.keys()))
+    if not event_id:
+        return None
 
     event_meta = event_lookup.get(event_id, {})
+    if not isinstance(event_meta, dict) or not event_meta:
+        return None
     api_refs = _normalize_str_list(raw.get("api_refs"))
     if not api_refs and isinstance(event_meta, dict):
         api_refs = _normalize_str_list(event_meta.get("api_refs"))
@@ -6449,8 +6301,9 @@ def _normalize_session_case_candidate(
 
     preconditions = _normalize_str_list(raw.get("preconditions"))
     steps = _normalize_str_list(raw.get("steps"))
+    if not preconditions or not steps:
+        return None
     tags = _normalize_str_list(raw.get("tags")) or ["session", "stage4"]
-    outline = build_stage4_case_outline(api_refs, expected_code)
 
     return {
         "case_id": case_id,
@@ -6460,8 +6313,8 @@ def _normalize_session_case_candidate(
         "event_description_zh": event_description or "由当前 Codex session 设计并录入。",
         "entity": entity,
         "api_refs": api_refs,
-        "preconditions": preconditions or _normalize_str_list(outline.get("preconditions")),
-        "steps": steps or _normalize_str_list(outline.get("steps")),
+        "preconditions": preconditions,
+        "steps": steps,
         "expected_business_code": expected_code,
         "tags": tags,
         "status": str(raw.get("status", "draft")).strip() or "draft",
@@ -6503,48 +6356,6 @@ def load_session_case_candidates(
     assign_case_test_names(normalized)
     return normalized, warnings
 
-
-def build_runner_stage4_candidate_cases(
-    normalized_events: list[dict[str, Any]],
-    required_codes: list[str],
-    running_iteration: int,
-) -> list[dict[str, Any]]:
-    candidate_cases: list[dict[str, Any]] = []
-    case_idx = 1
-    for event in normalized_events:
-        event_codes = event.get("expected_business_codes", [])
-        if not isinstance(event_codes, list):
-            event_codes = []
-        expected_codes = dedupe_keep_order([str(code).strip() for code in event_codes if str(code).strip()])
-        if not expected_codes:
-            expected_codes = list(required_codes)
-        entity = normalize_entity_name(str(event.get("entity", "")))
-        for code in expected_codes:
-            api_refs = event["api_refs"] if isinstance(event.get("api_refs"), list) else []
-            outline = build_stage4_case_outline(api_refs, code)
-            candidate_cases.append(
-                {
-                    "case_id": f"CASE-AUTO-I{running_iteration:03d}-{case_idx:03d}",
-                    "title": f"{event['event_id']} 自动生成用例 {code}",
-                    "event_id": event["event_id"],
-                    "event_title_zh": event["title"],
-                    "event_description_zh": event["description"],
-                    "entity": entity,
-                    "api_refs": api_refs,
-                    "preconditions": outline.get("preconditions", []),
-                    "steps": outline.get("steps", []),
-                    "expected_business_code": code,
-                    "tags": ["auto", "stage4"],
-                    "status": "draft",
-                    "owner": "workflow_runner",
-                    "updated_at": now_iso(),
-                }
-            )
-            case_idx += 1
-    assign_case_test_names(candidate_cases)
-    return candidate_cases
-
-
 def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
     stage0_artifact = read_json(paths.stage_artifact(0), {})
     stage3_artifact = read_json(paths.stage_artifact(3), {})
@@ -6557,21 +6368,6 @@ def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
     if not required_codes:
         required_codes = ["SUCCESS", "INVALID_PARAMS"]
 
-    fallback_api_refs: list[str] = []
-    fallback_entity = ""
-    if isinstance(stage0_artifact, dict):
-        stage0_candidates = stage0_artifact.get("api_candidates", [])
-        if isinstance(stage0_candidates, list):
-            for item in stage0_candidates:
-                if not isinstance(item, dict):
-                    continue
-                api_key = str(item.get("api_key", "")).strip()
-                if api_key:
-                    fallback_api_refs.append(api_key)
-                if not fallback_entity:
-                    fallback_entity = normalize_entity_name(str(item.get("entity", "")))
-    fallback_api_refs = dedupe_keep_order(fallback_api_refs)[:1]
-
     normalized_events: list[dict[str, Any]] = []
     if isinstance(events, list):
         for idx, event in enumerate(events, start=1):
@@ -6580,17 +6376,13 @@ def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
             event_id = str(event.get("event_id", f"EVT-{idx:03d}"))
             refs = event.get("api_refs", [])
             api_refs = [str(item) for item in refs if isinstance(item, str)] if isinstance(refs, list) else []
-            if not api_refs:
-                api_refs = list(fallback_api_refs)
             title = str(event.get("title", f"业务事件 {event_id}"))
-            description = str(event.get("description", "由 Stage4 生成测试时自动补全"))
+            description = str(event.get("description", ""))
             entity = normalize_entity_name(str(event.get("entity", "")))
             event_codes = event.get("expected_business_codes", [])
             if not isinstance(event_codes, list):
                 event_codes = []
             expected_codes = dedupe_keep_order([str(item).strip() for item in event_codes if str(item).strip()])
-            if not expected_codes:
-                expected_codes = list(required_codes)
             normalized_events.append(
                 {
                     "event_id": event_id,
@@ -6601,29 +6393,11 @@ def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
                     "expected_business_codes": expected_codes,
                 }
             )
-    if not normalized_events:
-        normalized_events = [
-            {
-                "event_id": "EVT-001",
-                "api_refs": list(fallback_api_refs),
-                "title": "默认业务事件",
-                "description": "未读取到 Stage3 业务事件，使用默认事件兜底。",
-                "entity": fallback_entity,
-                "expected_business_codes": list(required_codes),
-            }
-        ]
 
     state = read_json(paths.state, DEFAULT_STATE)
     running_iteration = int(state.get("running_iteration", 1)) if isinstance(state, dict) else 1
-    case_design_mode = stage4_case_design_mode(spec)
-    session_case_warnings: list[str] = []
-    if case_design_mode == "session":
-        candidate_cases, session_case_warnings = load_session_case_candidates(paths, normalized_events, running_iteration)
-        if not candidate_cases:
-            candidate_cases = build_runner_stage4_candidate_cases(normalized_events, required_codes, running_iteration)
-            session_case_warnings.append("session_case_candidates_empty:auto_generated_from_business_events")
-    else:
-        candidate_cases = build_runner_stage4_candidate_cases(normalized_events, required_codes, running_iteration)
+    case_design_mode = "session"
+    candidate_cases, session_case_warnings = load_session_case_candidates(paths, normalized_events, running_iteration)
 
     generated_cases = clone_case_rows(candidate_cases)
     _write_case_descriptions(paths, generated_cases)
@@ -6658,9 +6432,9 @@ def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
             "status": "pending",
             "reviewer": "",
             "reason": (
-                "session case 为空，已按业务事件自动生成最小测试用例；如需更高质量场景，请让当前 Codex session 重新生成 session case 产物后重跑。"
-                if case_design_mode == "session" and session_case_warnings
-                else "等待当前 Codex session 进行语义筛选（可读摘要见 gate 输出）"
+                "等待当前 Codex session 基于 session_case_candidates.jsonl 审阅测试资产"
+                if candidate_cases
+                else "session_case_candidates.jsonl 为空或无有效记录；需由当前 Codex session 先补齐 case 产物"
             ),
             "candidate_count": len(candidate_cases),
             "selected_count": len(generated_cases),
@@ -6671,7 +6445,7 @@ def stage4(paths: Paths, spec: dict[str, Any]) -> StageResult:
         },
         "session_codegen_note": (
             "测试代码需由当前 Codex session 生成并写入 generated_test_files。"
-            "若 session case 为空，Runner 会按业务事件自动补齐最小 case。"
+            "Runner 不再补齐或生成默认 case。"
             "断言必须覆盖 business_code 与 business_detail_code。"
             "Runner 仅校验命名覆盖、API 路径引用与业务码断言。"
         ),
@@ -7874,8 +7648,6 @@ def run_auto(paths: Paths) -> str:
     while True:
         status = state.get("status")
         if status == "waiting_decision":
-            _auto_apply_stage3_semantic_if_needed(paths, trigger_source="run_auto")
-            _auto_apply_stage4_semantic_if_needed(paths, trigger_source="run_auto")
             return "waiting_decision"
         if status in {"completed", "aborted", "rolled_back"}:
             return str(status)
@@ -7885,8 +7657,6 @@ def run_auto(paths: Paths) -> str:
         state = load_state(paths)
 
         if result == "waiting_decision":
-            _auto_apply_stage3_semantic_if_needed(paths, trigger_source="run_auto")
-            _auto_apply_stage4_semantic_if_needed(paths, trigger_source="run_auto")
             return "waiting_decision"
 
 
@@ -8066,154 +7836,6 @@ def ensure_stage4_semantic_gate_ready(paths: Paths, pending: dict[str, Any], act
     artifact["test_generation"] = test_generation
     artifact["traceability_check"] = traceability_check
     write_json(paths.stage_artifact(4), artifact)
-
-
-def _auto_apply_stage3_semantic_if_needed(paths: Paths, trigger_source: str) -> dict[str, Any]:
-    state = load_state(paths)
-    pending = read_json(paths.pending, DEFAULT_PENDING)
-    if state.get("status") != "waiting_decision":
-        return {"applied": False, "reason": "not_waiting_decision"}
-    if int(pending.get("stage", -1)) != 3:
-        return {"applied": False, "reason": "pending_stage_not_3"}
-
-    stage3_artifact = read_json(paths.stage_artifact(3), {})
-    if not isinstance(stage3_artifact, dict):
-        return {"applied": False, "reason": "stage3_artifact_invalid"}
-
-    semantic_review = stage3_artifact.get("semantic_review", {})
-    status = str(semantic_review.get("status", "")).strip().lower() if isinstance(semantic_review, dict) else ""
-    if status == "approved":
-        return {"applied": False, "reason": "already_approved"}
-
-    candidate_events = stage3_artifact.get("business_event_candidates", [])
-    if not isinstance(candidate_events, list) or not candidate_events:
-        return {"applied": False, "reason": "no_candidate_events"}
-
-    selected_ids: list[str] = []
-    business_events = stage3_artifact.get("business_events", [])
-    if isinstance(business_events, list):
-        for item in business_events:
-            if not isinstance(item, dict):
-                continue
-            event_id = str(item.get("event_id", "")).strip()
-            if event_id:
-                selected_ids.append(event_id)
-
-    if not selected_ids:
-        for item in candidate_events:
-            if not isinstance(item, dict):
-                continue
-            event_id = str(item.get("event_id", "")).strip()
-            if event_id:
-                selected_ids.append(event_id)
-
-    selected_ids = dedupe_keep_order(selected_ids)
-    if not selected_ids:
-        return {"applied": False, "reason": "no_selectable_event_ids"}
-
-    summary = apply_stage3_semantic_selection(
-        paths,
-        stage3_artifact,
-        selected_event_ids=selected_ids,
-        reason="auto stage3 semantic sync before gate review",
-        reviewer="codex_session_auto",
-    )
-    append_event(
-        paths,
-        "stage3_semantic_auto_synced",
-        {
-            "trigger_source": trigger_source,
-            "selected_count": summary.get("selected_count", 0),
-            "candidate_count": summary.get("candidate_count", 0),
-        },
-    )
-    return {"applied": True, "summary": summary}
-
-
-def _auto_apply_stage4_semantic_if_needed(paths: Paths, trigger_source: str) -> dict[str, Any]:
-    state = load_state(paths)
-    pending = read_json(paths.pending, DEFAULT_PENDING)
-    if state.get("status") != "waiting_decision":
-        return {"applied": False, "reason": "not_waiting_decision"}
-    if int(pending.get("stage", -1)) != 4:
-        return {"applied": False, "reason": "pending_stage_not_4"}
-
-    stage4_artifact = read_json(paths.stage_artifact(4), {})
-    if not isinstance(stage4_artifact, dict):
-        return {"applied": False, "reason": "stage4_artifact_invalid"}
-
-    semantic_review = stage4_artifact.get("semantic_review", {})
-    status = str(semantic_review.get("status", "")).strip().lower() if isinstance(semantic_review, dict) else ""
-    if status == "approved":
-        return {"applied": False, "reason": "already_approved"}
-
-    workflow_spec = read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)
-    case_design_mode = str(stage4_artifact.get("case_design_mode", "")).strip().lower()
-    if case_design_mode not in {"session", "runner"}:
-        case_design_mode = stage4_case_design_mode(workflow_spec if isinstance(workflow_spec, dict) else DEFAULT_WORKFLOW_SPEC)
-
-    if case_design_mode == "session":
-        running_iteration = int(state.get("running_iteration", 1))
-        business_events = stage4_artifact.get("business_events", [])
-        normalized_events = [item for item in business_events if isinstance(item, dict)]
-        synced_cases, warnings = load_session_case_candidates(paths, normalized_events, running_iteration)
-        if not synced_cases:
-            required_codes = stage4_artifact.get("required_case_codes", [])
-            normalized_codes = dedupe_keep_order([str(item).strip() for item in required_codes if str(item).strip()])
-            synced_cases = build_runner_stage4_candidate_cases(normalized_events, normalized_codes, running_iteration)
-            warnings.append("session_case_candidates_empty:auto_generated_from_business_events")
-        stage4_artifact["session_case_warnings"] = warnings
-        if synced_cases:
-            stage4_artifact["candidate_cases"] = synced_cases
-            stage4_artifact["generated_cases"] = clone_case_rows(synced_cases)
-            stage4_artifact["selection_updated_at"] = now_iso()
-        write_json(paths.stage_artifact(4), stage4_artifact)
-
-    candidate_cases = stage4_artifact.get("candidate_cases", [])
-    if not isinstance(candidate_cases, list) or not candidate_cases:
-        return {"applied": False, "reason": "no_candidate_cases"}
-
-    selected_ids: list[str] = []
-    existing_generated = stage4_artifact.get("generated_cases", [])
-    if isinstance(existing_generated, list):
-        for item in existing_generated:
-            if not isinstance(item, dict):
-                continue
-            case_id = str(item.get("case_id", "")).strip()
-            if case_id:
-                selected_ids.append(case_id)
-
-    if not selected_ids:
-        for item in candidate_cases:
-            if not isinstance(item, dict):
-                continue
-            case_id = str(item.get("case_id", "")).strip()
-            if case_id:
-                selected_ids.append(case_id)
-
-    selected_ids = dedupe_keep_order(selected_ids)
-    if not selected_ids:
-        return {"applied": False, "reason": "no_selectable_case_ids"}
-
-    summary = apply_stage4_semantic_selection(
-        paths,
-        stage4_artifact,
-        selected_case_ids=selected_ids,
-        reason="auto stage4 semantic sync before gate review",
-        reviewer="codex_session_auto",
-    )
-    append_event(
-        paths,
-        "stage4_semantic_auto_synced",
-        {
-            "trigger_source": trigger_source,
-            "selected_count": summary.get("selected_count", 0),
-            "candidate_count": summary.get("candidate_count", 0),
-        },
-    )
-    _refresh_waiting_stage4_pending_if_resolved(paths, trigger_source=trigger_source)
-    return {"applied": True, "summary": summary}
-
 
 def _refresh_waiting_stage4_pending_if_resolved(paths: Paths, trigger_source: str) -> dict[str, Any]:
     state = load_state(paths)
@@ -8424,6 +8046,42 @@ def cmd_stage3_semantic(args: argparse.Namespace, paths: Paths) -> int:
     if not isinstance(stage3_artifact, dict):
         raise WorkflowError("stage3 artifact 不存在或格式错误")
 
+    if args.sync_session_events:
+        stage0_artifact = read_json(paths.stage_artifact(0), {})
+        running_iteration = int(state.get("running_iteration", 1))
+        focus_api_items = stage3_artifact.get("focus_api_items", [])
+        normalized_focus_api_items = [item for item in focus_api_items if isinstance(item, dict)]
+        required_case_codes = stage3_required_case_codes(stage0_artifact if isinstance(stage0_artifact, dict) else {})
+        synced_events, warnings = load_session_event_candidates(
+            paths,
+            normalized_focus_api_items,
+            required_case_codes,
+            running_iteration,
+        )
+        stage3_artifact["session_event_candidate_file"] = rel_path(paths, paths.session_event_candidates)
+        stage3_artifact["session_event_warnings"] = warnings
+        stage3_artifact["business_event_candidates"] = synced_events
+        stage3_artifact["business_events"] = clone_case_rows(synced_events)
+        stage3_artifact["semantic_review"] = {
+            "status": "pending",
+            "reviewer": "",
+            "reason": (
+                "等待当前 Codex session 对同步后的业务事件进行筛选"
+                if synced_events
+                else "session_event_candidates.jsonl 为空或无有效记录；无法执行 Stage3 语义筛选"
+            ),
+            "candidate_count": len(synced_events),
+            "selected_count": len(synced_events),
+            "selected_event_ids": [
+                str(item.get("event_id", "")).strip()
+                for item in synced_events
+                if isinstance(item, dict) and str(item.get("event_id", "")).strip()
+            ],
+            "rejected_event_ids": [],
+            "updated_at": now_iso(),
+        }
+        write_json(paths.stage_artifact(3), stage3_artifact)
+
     candidate_events = stage3_artifact.get("business_event_candidates", [])
     candidate_ids: list[str] = []
     if isinstance(candidate_events, list):
@@ -8500,26 +8158,15 @@ def cmd_stage4_semantic(args: argparse.Namespace, paths: Paths) -> int:
     if not isinstance(stage4_artifact, dict):
         raise WorkflowError("stage4 artifact 不存在或格式错误")
 
-    workflow_spec = read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)
-    case_design_mode = str(stage4_artifact.get("case_design_mode", "")).strip().lower()
-    if case_design_mode not in {"session", "runner"}:
-        case_design_mode = stage4_case_design_mode(workflow_spec if isinstance(workflow_spec, dict) else DEFAULT_WORKFLOW_SPEC)
-
-    if args.sync_session_cases and case_design_mode == "session":
+    if args.sync_session_cases:
         running_iteration = int(state.get("running_iteration", 1))
         business_events = stage4_artifact.get("business_events", [])
         normalized_events = [item for item in business_events if isinstance(item, dict)]
         synced_cases, warnings = load_session_case_candidates(paths, normalized_events, running_iteration)
-        if not synced_cases:
-            required_codes = stage4_artifact.get("required_case_codes", [])
-            normalized_codes = dedupe_keep_order([str(item).strip() for item in required_codes if str(item).strip()])
-            synced_cases = build_runner_stage4_candidate_cases(normalized_events, normalized_codes, running_iteration)
-            warnings.append("session_case_candidates_empty:auto_generated_from_business_events")
         stage4_artifact["session_case_warnings"] = warnings
-        if synced_cases:
-            stage4_artifact["candidate_cases"] = synced_cases
-            stage4_artifact["generated_cases"] = clone_case_rows(synced_cases)
-            stage4_artifact["selection_updated_at"] = now_iso()
+        stage4_artifact["candidate_cases"] = synced_cases
+        stage4_artifact["generated_cases"] = clone_case_rows(synced_cases)
+        stage4_artifact["selection_updated_at"] = now_iso()
         write_json(paths.stage_artifact(4), stage4_artifact)
 
     candidate_cases = stage4_artifact.get("candidate_cases", [])
@@ -8858,6 +8505,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_stage3_semantic.add_argument("--keep-all", action="store_true", help="Keep all stage3 candidate events")
     p_stage3_semantic.add_argument("--max-events", type=int, help="Optional cap after semantic selection")
+    p_stage3_semantic.add_argument(
+        "--sync-session-events",
+        dest="sync_session_events",
+        action="store_true",
+        default=True,
+        help="Sync business_event_candidates from current session event artifact before semantic selection",
+    )
+    p_stage3_semantic.add_argument(
+        "--no-sync-session-events",
+        dest="sync_session_events",
+        action="store_false",
+        help="Do not sync business_event_candidates from session file",
+    )
     p_stage3_semantic.add_argument("--reason", help="Semantic review reason")
     p_stage3_semantic.add_argument("--reviewer", help="Semantic reviewer label")
     p_stage4_semantic = sub.add_parser("stage4-semantic", help="Apply stage4 semantic case selection in current session")
