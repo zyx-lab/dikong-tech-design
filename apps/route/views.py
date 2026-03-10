@@ -34,6 +34,7 @@ class RouteViewSet(
         "create": "route.manage_route",
         "partial_update": "route.manage_route",
         "enable": "route.manage_route",
+        "disable": "route.manage_route",
         "destroy": "route.manage_route",
     }
 
@@ -166,6 +167,54 @@ class RouteViewSet(
         log_action(
             request=request,
             action="ROUTE_ENABLE",
+            target_type="route",
+            target_id=route.id,
+            before_data=before_payload,
+            after_data=after_payload,
+        )
+        return Response(after_payload, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def disable(self, request, *args, **kwargs):
+        # 业务作用：
+        # 提供“按 route_id 禁用航线”的基础状态流转入口（POST /api/v1/routes/{id}/disable），
+        # 用于把正常航线显式置为禁用状态。
+        #
+        # 适用边界：
+        # 1) 仅处理 route.status 自身流转，不承担航点删除、任务解绑或批量停用编排；
+        # 2) 请求体必须为空；
+        # 3) 已处于 DISABLED 的航线重复 disable 按幂等成功返回。
+        if request.data:
+            return Response(
+                {
+                    "business_code": BusinessCode.INVALID_PARAMS,
+                    "detail": "disable 请求不支持提交 body 参数",
+                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        route = self.get_object()
+        before_payload = self._route_payload(route)
+
+        if route.status == RouteStatus.DISABLED:
+            log_action(
+                request=request,
+                action="ROUTE_DISABLE",
+                target_type="route",
+                target_id=route.id,
+                before_data=before_payload,
+                after_data=before_payload,
+            )
+            return Response(before_payload, status=status.HTTP_200_OK)
+
+        route.status = RouteStatus.DISABLED
+        route.save(update_fields=["status", "updated_at"])
+        after_payload = self._route_payload(route)
+        log_action(
+            request=request,
+            action="ROUTE_DISABLE",
             target_type="route",
             target_id=route.id,
             before_data=before_payload,

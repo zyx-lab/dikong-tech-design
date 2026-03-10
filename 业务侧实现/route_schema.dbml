@@ -34,10 +34,3 @@ Table routes {
   created_at timestamp [not null, note: '创建时间']
   updated_at timestamp [not null, note: '更新时间']
 }
-
-// stage6_doc_sync::route::schema.dbml::start
-// focus_api_keys: POST /api/v1/routes/{id}/enable
-// business_events: EVT-001 启用航线
-// required_codes: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-// permission_boundary: 代码权限码: view_route (可查看航线), manage_route (可新增与编辑航线)
-// stage6_doc_sync::route::schema.dbml::end
