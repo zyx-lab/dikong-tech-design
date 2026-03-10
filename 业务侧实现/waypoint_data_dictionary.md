@@ -1,65 +1,87 @@
-# waypoint 数据字典
+# 低空智能巡检平台 - 航点
 
-- generated_at: 2026-03-09T02:39:31.679337Z
-- entity: waypoint
+## 数据库
 
-## 业务定位
-- 关联 API: POST /api/v1/waypoints, GET /api/v1/waypoints, GET /api/v1/waypoints/{id}, PATCH /api/v1/waypoints/{id}, DELETE /api/v1/waypoints/{id}
-- 业务目的: waypoint 作为 route 的子实体，提供最小可组合能力：POST 创建、GET 查询、PATCH 局部修正、DELETE 删除，外部可按业务流程自由组合。
+PostgreSQL
 
-## 字段定义（来自模型代码）
-- id: type=BigAutoField; constraints=pk; verbose=ID
-- route: type=ForeignKey; constraints=N/A; verbose=route.Route
-- sequence: type=PositiveIntegerField; constraints=N/A; verbose=航点序号
-- latitude: type=DecimalField; constraints=N/A; verbose=纬度
-- longitude: type=DecimalField; constraints=N/A; verbose=经度
-- altitude: type=DecimalField; constraints=N/A; verbose=飞行高度（米）
-- created_at: type=DateTimeField; constraints=N/A; verbose=创建时间
+---
 
-## 序列化读写边界
-- WaypointReadSerializer: id, route, sequence, latitude, longitude, altitude, created_at
-- WaypointCreateSerializer: route, sequence, latitude, longitude, altitude
-- WaypointPatchSerializer: sequence, latitude, longitude, altitude
+## 文档格式说明
 
-## 业务状态码覆盖
-- 已覆盖: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, IDEMPOTENT_DUPLICATE
-- 目标集合: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- 当前缺口: STATE_CONFLICT
+本文档为 **数据字典** 类型文档，记录数据库表结构、字段定义、约束和业务规则。
 
-## 本轮语义增补（GET /api/v1/waypoints/{id}）
-- 接口定位: 按航点 ID 精确读取的只读入口，不承担编辑/删除/重排等编排行为。
-- 输入维度: 路径参数 `id`。
-- 成功语义: HTTP 200，`business_code=SUCCESS`，`business_detail_code=OK`。
-- 资源不存在语义: HTTP 404，`business_code=RESOURCE_NOT_FOUND`，`business_detail_code=NOT_FOUND`。
-- 权限失败语义: HTTP 401/403，`business_code=PERMISSION_DENIED`，`business_detail_code` 为权限细分码。
+### 更新本文档的指南（大模型用）
 
-## 本轮语义增补（PATCH /api/v1/waypoints/{id}）
-- 接口定位: 按航点 ID 做局部更新，仅允许修正 `sequence/latitude/longitude/altitude`。
-- 边界约束: 不允许通过该接口修改所属航线；同一航线下 `sequence` 仍需保持唯一。
-- 成功语义: HTTP 200，`business_code=SUCCESS`，`business_detail_code=OK`。
-- 参数异常: HTTP 400，`business_code=INVALID_PARAMS`，`business_detail_code=VALIDATION_ERROR`。
-- 资源不存在: HTTP 404，`business_code=RESOURCE_NOT_FOUND`，`business_detail_code=NOT_FOUND`。
-- 权限失败: HTTP 401/403，`business_code=PERMISSION_DENIED`，`business_detail_code` 为权限细分码。
+当需要更新此文档时，请遵循以下格式：
 
-## 本轮语义增补（DELETE /api/v1/waypoints/{id}）
-- 接口定位: 按航点 ID 删除单条航点，补齐 waypoint 的基础维护闭环能力。
-- 边界约束: 仅支持单条删除；不承担批量删除、跨航线迁移、历史归档等编排行为。
-- 关联副作用: 删除后同步回写 route.waypoint_count，保持航线冗余计数字段与实际数据一致。
-- 成功语义: HTTP 200，`business_code=SUCCESS`，`business_detail_code=OK`，返回 `id` 与 `deleted=true`。
-- 资源不存在: HTTP 404，`business_code=RESOURCE_NOT_FOUND`，`business_detail_code=NOT_FOUND`。
-- 权限失败: HTTP 401/403，`business_code=PERMISSION_DENIED`，`business_detail_code` 为权限细分码。
+```
+## N. {表名中文名}
 
-## 权限码
-- view_waypoint: 可查看航点
-- manage_waypoint: 可管理航点
+**说明**：{表用途简述}
 
-## 证据文件
-- apps/access/management/commands/seed_role_permissions.py
-- apps/api_v1/urls.py
-- config/settings.py
-- apps/waypoint/
-- apps/waypoint/models.py
-- apps/waypoint/serializers.py
-- apps/waypoint/views.py
-- apps/waypoint/urls.py
-- apps/waypoint/tests.py
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| {字段名} | {PostgreSQL类型} | {约束} | {默认值} | {字段说明} |
+
+**业务规则**：
+1. {规则1}
+2. {规则2}
+```
+
+---
+
+## 阅读说明
+
+本数据字典覆盖当前已落地的业务表：`waypoints`。
+
+---
+
+## 1. waypoints（航点表）
+
+**说明**：存储航点坐标信息，隶属于航线。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| route_id | bigint | FK, NOT NULL | - | 所属航线 ID |
+| sequence | int | NOT NULL | - | 航点序号 |
+| latitude | decimal(12,8) | NOT NULL | - | 纬度 |
+| longitude | decimal(12,8) | NOT NULL | - | 经度 |
+| altitude | decimal(10,2) | NOT NULL | - | 飞行高度（米） |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+
+**约束**：
+- 同一航线下 sequence 唯一
+
+**业务规则**：
+1. 创建/更新航点时所属航线必须为 ACTIVE 状态。
+2. 删除航点后自动更新 route.waypoint_count。
+
+---
+
+## 2. 与实现对应
+
+1. 模型：`apps/waypoint/models.py`
+2. 序列化与校验：`apps/waypoint/serializers.py`
+3. 接口：`apps/waypoint/views.py`
+
+---
+
+## 3. 业务响应码字典（Business API）
+
+说明：业务 API 响应体包含 `business_code`（主业务码）与 `business_detail_code`（细分原因码）。
+
+| business_code | 典型 HTTP | 语义 |
+| ------ | ------ | ------ |
+| SUCCESS | 200 / 201 | 业务处理成功 |
+| INVALID_PARAMS | 400 | 请求参数校验失败 |
+| PERMISSION_DENIED | 401 / 403 | 身份或权限不足 |
+| RESOURCE_NOT_FOUND | 404 | 目标资源不存在 |
+
+| business_detail_code | 语义 |
+| ------ | ------ |
+| OK | 成功 |
+| NOT_AUTHENTICATED | 未登录或认证信息缺失 |
+| FORBIDDEN | 已登录但无权限 |
+| NOT_FOUND | 资源不存在 |
+| VALIDATION_ERROR | 参数校验失败 |

@@ -1,87 +1,138 @@
-# route 实现说明
+# 航线实现说明
 
-- updated_at: 2026-03-08T07:52:00Z
+- generated_at: 2026-03-08T07:52:00Z
+- updated_at: 2026-03-09
 - entity: route
 
-## 历史实现（保留）
-### 迭代 A：POST /api/v1/routes
-- 业务目的：创建航线基础台账（`name/route_type/drone_type_id/...`），为后续任务编排提供可引用的航线资源。
-- 设计边界：只做“创建主记录”，不承载航点维护、调度编排、状态流转。
-- 关键业务码：
-  - SUCCESS / OK：创建成功
-  - INVALID_PARAMS / VALIDATION_ERROR：参数校验失败
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无创建权限
+## 数据库
 
-### 迭代 B：GET /api/v1/routes
-- 业务目的：补齐航线管理的基础只读查询入口，支持外部系统组合筛选后再进入任务编排。
-- 查询维度：`status`、`route_type`、`name(模糊匹配)`。
-- 设计边界：本接口只做列表读取，不新增更新/删除能力。
-- 关键业务码：
-  - SUCCESS / OK：查询成功，返回分页 `results`
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无查看权限
+PostgreSQL
 
-### 迭代 C：GET /api/v1/routes/{id}
-- 业务目的：提供“按 route_id 精确读取航线详情”的基础能力，供调度或任务模块在引用前校验目标航线。
-- 设计边界：只读详情接口，不承担创建、更新、删除，也不引入编排行为。
-- 请求语义：路径参数 `id` 为航线主键；调用方需具备 `route.view_route` 权限。
-- 响应语义：成功时返回单条航线详情对象（字段与 `RouteReadSerializer` 一致），并携带业务码状态。
-- 关键业务码：
-  - SUCCESS / OK：详情读取成功
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无查看权限
-  - RESOURCE_NOT_FOUND / ROUTE_NOT_FOUND：`id` 不存在或已不可见
+---
 
-### 迭代 D：DELETE /api/v1/routes/{id}
-- 业务目的：补齐航线台账删除入口，让外部系统能完成“创建 -> 查询 -> 删除/停用”的最小生命周期闭环。
-- 设计边界：
-  - 只处理单条 route 删除，不做任务解绑、批量清理或调度编排。
-  - DELETE 请求体必须为空；非空按 `INVALID_PARAMS` 处理。
-  - 若 route 已被 mission 引用，则不物理删除，改为置为 `DISABLED(0)` 并返回成功。
-  - 若 route 未被 mission 引用，则物理删除 route，并同步删除其下属 waypoints。
-- 关键业务码：
-  - SUCCESS / OK：删除成功，或已引用航线被禁用成功
-  - INVALID_PARAMS / VALIDATION_ERROR：DELETE 请求携带 body
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无删除权限
-  - RESOURCE_NOT_FOUND / NOT_FOUND：`id` 不存在
+## 文档格式说明
 
-## 当前轮增补
-### 迭代 E：PATCH /api/v1/routes/{id}
-- 业务目的：补齐航线台账的基础编辑入口，让外部系统能修正 route 名称、适配机型、总里程、预计时长等主记录元数据。
-- 设计边界：
-  - 只更新单条 route 主记录，不承担航点重排、任务解绑、状态流转或删除恢复。
-  - PATCH 请求体必须至少包含一个可写字段。
-  - `status`、`creator_name` 等生命周期/审计字段不可写；未知字段按 `INVALID_PARAMS` 处理。
-- 关键业务码：
-  - SUCCESS / OK：局部更新成功
-  - INVALID_PARAMS / VALIDATION_ERROR：空 body 或包含不可写字段
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无编辑权限
-  - RESOURCE_NOT_FOUND / NOT_FOUND：`id` 不存在
+本文档为 **实现描述** 类型文档，记录 API 实现、数据模型、审计动作等。
 
-## 本轮实现文件
-- apps/route/views.py（`partial_update` 动作）
-- apps/route/serializers.py（`RouteWriteSerializer` / `RouteReadSerializer`）
-- apps/route/tests.py（更新场景用例）
+### 更新本文档的指南（大模型用）
 
-## 可追溯产物
-- Stage0 候选：`codex_devflow_scaffold/artifacts/stage0/latest.json`
-- Stage2 扫描：`codex_devflow_scaffold/artifacts/stage2/latest.json`
-- Stage4 用例：`codex_devflow_scaffold/artifacts/stage4/latest.json`
-- Stage5 回归：`codex_devflow_scaffold/artifacts/stage5/latest.json`
+当需要更新此文档时，请遵循以下格式：
+
+```
+## N. {模块名}
+
+### N.X API / 功能名称
+- 功能：{功能描述}
+- 路径：{API路径}
+- 方法：{HTTP方法}
+- 权限：{所需权限}
+- 请求体：{请求格式}
+- 响应：{响应格式}
+- 业务码：{返回的业务码}
+```
+
+---
+
+## 数据模型
+
+### Route 表 (routes)
+
+| 字段 | 类型 | 说明 |
+|-----|------|------|
+| id | BigAutoField | 主键 |
+| name | CharField(100) | 航线名称 |
+| route_type | PositiveSmallIntegerField | 航线类型扩展位，默认0=待扩展 |
+| drone_type_id | BigIntegerField | 适用无人机类型 ID（可选） |
+| total_distance | DecimalField(12,2) | 航线总长度（米，可选） |
+| estimated_duration | PositiveIntegerField | 预计飞行时长（秒，可选） |
+| waypoint_count | PositiveIntegerField | 航点数量（可选） |
+| creator_name | CharField(50) | 创建人姓名 |
+| status | PositiveSmallIntegerField | 状态：0=禁用, 1=正常 |
+| created_at | DateTimeField | 创建时间 |
+| updated_at | DateTimeField | 更新时间 |
+
+### RouteStatus 枚举
+- DISABLED = 0, "禁用"
+- ACTIVE = 1, "正常"
+
+### RouteType 枚举
+- PENDING_EXTENSION = 0, "待扩展"
+
+---
+
+## API 实现 (/api/v1/routes)
+
+### 1. GET /api/v1/routes
+- 功能：航线列表查询
+- 筛选参数：status, route_type, name（模糊匹配）
+- 权限：route.view_route
+- 业务码：SUCCESS, PERMISSION_DENIED
+
+### 2. POST /api/v1/routes
+- 功能：创建航线
+- 必填：name
+- 可选：route_type, drone_type_id, total_distance, estimated_duration
+- 自动设置：status=ACTIVE, creator_name=当前用户姓名
+- 权限：route.manage_route
+- 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
+
+### 3. GET /api/v1/routes/{id}
+- 功能：航线详情
+- 权限：route.view_route
+- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 4. PATCH /api/v1/routes/{id}
+- 功能：局部更新航线
+- 可写字段：name, route_type, drone_type_id, total_distance, estimated_duration
+- 约束：PATCH 请求体必须至少包含一个可写字段，status 和 creator_name 不可写
+- 权限：route.manage_route
+- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 5. DELETE /api/v1/routes/{id}
+- 功能：删除航线
+- 约束：DELETE 请求体必须为空
+- 业务规则：
+  - 若航线已被任务引用，则不物理删除，改为置为 DISABLED，返回 deleted=true, delete_mode=disabled
+  - 若航线未被任务引用，则物理删除航线及其下属航点，返回 deleted=true, delete_mode=hard
+- 权限：route.manage_route
+- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 6. POST /api/v1/routes/{id}/enable
+- 功能：启用航线
+- 状态流转：DISABLED -> ACTIVE
+- 约束：请求体必须为空
+- 幂等：已处于 ACTIVE 的航线重复 enable 返回当前状态
+- 权限：route.manage_route
+- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 审计：ROUTE_ENABLE
+
+### 7. POST /api/v1/routes/{id}/disable
+- 功能：禁用航线
+- 状态流转：ACTIVE -> DISABLED
+- 约束：请求体必须为空
+- 幂等：已处于 DISABLED 的航线重复 disable 返回当前状态
+- 权限：route.manage_route
+- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 审计：ROUTE_DISABLE
+
+---
+
+## 审计动作
+
+- ROUTE_CREATE
+- ROUTE_UPDATE
+- ROUTE_DELETE
+- ROUTE_ENABLE
+- ROUTE_DISABLE
+
+---
 
 ## 关键实现文件
-- apps/route/views.py
-- apps/route/serializers.py
-- apps/route/models.py
-- apps/route/tests.py
-- apps/route/urls.py
-- apps/api_v1/urls.py
-- apps/api_v1/business_response.py
 
-<!-- stage6_doc_sync::route::impl_desc.md::start -->
-## Stage6 本轮同步
-- 本轮 focus API: POST /api/v1/routes/{id}/enable
-- 本轮实现目标: route 当前在被 mission 引用时执行 DELETE 只会软禁用为 DISABLED，但没有任何恢复入口，导致可引用航线会进入不可逆停用状态。补齐 enable 后，route 的软禁用路径才形成可恢复的最小闭环。
-- 业务事件: EVT-001 启用航线
-- 业务约束: N/A
-- 测试沉淀: 生成用例数: 4, 已执行用例数: 4, 已沉淀到项目测试: 4, 待沉淀 case: N/A, 失败 case: N/A
-- 关键文件: apps/route/tests.py, apps/route/views.py, apps/route/models.py, apps/route/serializers.py, apps/route/urls.py
-<!-- stage6_doc_sync::route::impl_desc.md::end -->
+- apps/route/models.py
+- apps/route/serializers.py
+- apps/route/views.py
+- apps/route/urls.py
+- apps/route/tests.py
+- apps/access/management/commands/seed_role_permissions.py
+- apps/api_v1/urls.py

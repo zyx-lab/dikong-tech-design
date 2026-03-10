@@ -1,3 +1,21 @@
+// ============================================================
+// 任务 Schema
+// 数据库：PostgreSQL
+// 文档类型：图表 (schema)
+// ============================================================
+
+// 文档格式说明：
+// 本文件为 DBML 格式的数据库图表文件。
+// 更新本文档时，请遵循以下格式：
+// ```
+// Table {表名} [note: '{表说明}'] {
+//   {字段名} {类型} [约束, note: '{字段说明}']
+//   indexes {
+//     {索引字段} [name: '{索引名}']
+//   }
+// }
+// ```
+
 // updated_at: 2026-03-09T12:25:00+08:00
 // entity: mission
 // 历史保留 + 当前轮增补：当前轮新增 PATCH /api/v1/missions/{id}（局部更新）、POST /api/v1/missions/{id}/start（启动）、POST /api/v1/missions/{id}/pause（暂停）、POST /api/v1/missions/{id}/resume（恢复）与 POST /api/v1/missions/{id}/cancel（取消）

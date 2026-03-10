@@ -1,54 +1,132 @@
-# flight record 实现说明
+# 飞行记录实现说明
 
 - generated_at: 2026-03-08T09:24:39.176004Z
+- updated_at: 2026-03-09
+- entity: flight_record
 
-## 本轮实现目标
-- 当前 flight_record 已具备创建、列表与详情能力，但缺少基础编辑入口；补齐 `PATCH /api/v1/flight-records/{id}` 后，调用方可修正飞行结果元数据，形成最小可维护闭环。
+## 数据库
 
-## API 行为范围
-- 本轮聚焦 API: PATCH /api/v1/flight-records/{id}
-- 唯一性约束字段: flight_no
-- 默认状态: status=FlightRecordStatus.IN_PROGRESS
+PostgreSQL
 
-## 关键业务码
-- 已覆盖业务码: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
-- 未覆盖目标码: STATE_CONFLICT, IDEMPOTENT_DUPLICATE
+---
 
-## 可追溯来源
-- codex_devflow_scaffold/artifacts/stage0/latest.json
-- codex_devflow_scaffold/artifacts/stage2/latest.json
-- codex_devflow_scaffold/artifacts/stage4/latest.json
-- codex_devflow_scaffold/artifacts/stage5/latest.json
+## 文档格式说明
+
+本文档为 **实现描述** 类型文档，记录 API 实现、数据模型、审计动作等。
+
+### 更新本文档的指南（大模型用）
+
+当需要更新此文档时，请遵循以下格式：
+
+```
+## N. {模块名}
+
+### N.X API / 功能名称
+- 功能：{功能描述}
+- 路径：{API路径}
+- 方法：{HTTP方法}
+- 权限：{所需权限}
+- 请求体：{请求格式}
+- 响应：{响应格式}
+- 业务码：{返回的业务码}
+```
+
+---
+
+## 数据模型
+
+### FlightRecord 表 (flight_records)
+
+| 字段 | 类型 | 说明 |
+|-----|------|------|
+| id | BigAutoField | 主键 |
+| flight_no | CharField(50) | 架次编号，唯一 |
+| mission | ForeignKey | 所属任务（可选） |
+| mission_name | CharField(100) | 任务名称（冗余） |
+| route_name | CharField(100) | 航线名称（冗余） |
+| airport_name | CharField(100) | 执行机场名称 |
+| drone | ForeignKey | 执行无人机（可选） |
+| drone_name | CharField(100) | 无人机名称（冗余） |
+| pilot | ForeignKey | 执行飞手（可选） |
+| pilot_name | CharField(50) | 飞手姓名（冗余） |
+| start_time | DateTimeField | 开始时间（可选） |
+| end_time | DateTimeField | 结束时间（可选） |
+| flight_duration | PositiveIntegerField | 飞行时长（秒，可选） |
+| photo_count | PositiveIntegerField | 拍摄照片数量，默认0 |
+| video_count | PositiveIntegerField | 录制视频数量，默认0 |
+| status | PositiveSmallIntegerField | 状态：0=飞行中, 1=已完成, 2=异常终止 |
+| created_at | DateTimeField | 创建时间 |
+| updated_at | DateTimeField | 更新时间 |
+
+### FlightRecordStatus 枚举
+- IN_PROGRESS = 0, "飞行中"
+- COMPLETED = 1, "已完成"
+- ABORTED = 2, "异常终止"
+
+---
+
+## API 实现 (/api/v1/flight-records)
+
+### 1. GET /api/v1/flight-records
+- 功能：飞行记录列表查询
+- 筛选参数：mission_id, drone_id, pilot_id, status, flight_no
+- 权限：flight_record.view_flight_record
+- 业务码：SUCCESS, PERMISSION_DENIED
+
+### 2. POST /api/v1/flight-records
+- 功能：创建飞行记录
+- 必填：flight_no
+- 可选：mission, drone, pilot, start_time, end_time, flight_duration, photo_count, video_count, airport_name
+- 权限：flight_record.manage_flight_record
+- 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
+
+### 3. GET /api/v1/flight-records/{id}
+- 功能：飞行记录详情
+- 权限：flight_record.view_flight_record
+- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 4. PATCH /api/v1/flight-records/{id}
+- 功能：局部更新飞行记录
+- 可写字段：mission, drone, pilot, start_time, end_time, flight_duration, photo_count, video_count, airport_name
+- 约束：PATCH 请求体必须至少包含一个可写字段
+- 权限：flight_record.manage_flight_record
+- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 5. POST /api/v1/flight-records/{id}/complete
+- 功能：完成飞行记录
+- 状态流转：IN_PROGRESS -> COMPLETED
+- 约束：请求体必须为空
+- 幂等：已完成记录重复 complete 返回当前状态
+- 权限：flight_record.manage_flight_record
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 审计：FLIGHT_RECORD_COMPLETE
+
+### 6. POST /api/v1/flight-records/{id}/abort
+- 功能：异常终止飞行记录
+- 状态流转：IN_PROGRESS -> ABORTED
+- 约束：请求体必须为空
+- 幂等：已异常终止记录重复 abort 返回当前状态
+- 权限：flight_record.manage_flight_record
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 审计：FLIGHT_RECORD_ABORT
+
+---
+
+## 审计动作
+
+- FLIGHT_RECORD_CREATE
+- FLIGHT_RECORD_UPDATE
+- FLIGHT_RECORD_COMPLETE
+- FLIGHT_RECORD_ABORT
+
+---
 
 ## 关键实现文件
-- apps/access/management/commands/seed_role_permissions.py
-- apps/api_v1/urls.py
-- config/settings.py
-- apps/flight_record/
+
 - apps/flight_record/models.py
 - apps/flight_record/serializers.py
 - apps/flight_record/views.py
 - apps/flight_record/urls.py
 - apps/flight_record/tests.py
-
-## 本轮增补（PATCH /api/v1/flight-records/{id}）
-- 接口作用: PATCH /api/v1/flight-records/{id} 用于局部修正飞行记录主数据。
-- 请求边界:
-  - 仅处理 flight_record 自身可写字段；
-  - 不做媒体文件编排、级联删除或跨实体状态流转；
-  - PATCH 请求体必须至少包含一个可写字段。
-- 响应语义:
-  - 成功返回 `SUCCESS`
-  - 参数校验失败返回 `INVALID_PARAMS`
-  - 权限不足返回 `PERMISSION_DENIED`
-  - 资源不存在返回 `RESOURCE_NOT_FOUND`
-
-<!-- stage6_doc_sync::flight_record::impl_desc.md::start -->
-## Stage6 本轮同步
-- 本轮 focus API: POST /api/v1/flight-records/{id}/abort
-- 本轮实现目标: flight_record 在补齐 complete 后，仍缺少把飞行中记录显式落到 ABORTED 的基础动作入口。补齐 abort 后，flight_record 的显式状态动作才同时覆盖正常结束和异常结束两条主路径。
-- 业务事件: EVT-001 异常终止飞行记录
-- 业务约束: N/A
-- 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
-- 关键文件: apps/flight_record/tests.py, apps/flight_record/views.py, apps/flight_record/models.py, apps/flight_record/serializers.py, apps/flight_record/urls.py
-<!-- stage6_doc_sync::flight_record::impl_desc.md::end -->
+- apps/access/management/commands/seed_role_permissions.py
+- apps/api_v1/urls.py

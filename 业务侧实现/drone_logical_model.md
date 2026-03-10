@@ -1,4 +1,7 @@
-# 低空智能巡检平台 - 无人机
+# 无人机逻辑模型
+
+- generated_at: 2026-03-08
+- entity: drone
 
 ## 数据库
 
@@ -6,111 +9,125 @@ PostgreSQL
 
 ---
 
-## 阅读说明
+## 文档格式说明
 
-1. 本文档只描述当前代码已落地的业务表结构。  
-2. 当前版本仅落地无人机管理域：`drones`、`drone_assignments`。  
-3. 任务、航线、飞行记录等属于后续扩展范围，不在本版“当前实现模型”内。
+本文档为 **逻辑模型** 类型文档，记录实体关系、状态机、生命周期、接口语义等。
 
----
+### 更新本文档的指南（大模型用）
 
-## 1. 表结构概览
+当需要更新此文档时，请遵循以下格式：
 
-| 序号 | 表名 | 中文名 | 说明 |
-| ---- | ---- | ---- | ---- |
-| 1 | drones | 无人机台账表 | 无人机基础信息与状态 |
-| 2 | drone_assignments | 无人机分配表 | 无人机与飞手的分配关系 |
+```
+## 实体主表
+- table: {表名}
+- 主键: {主键定义}
 
----
+## 状态机
+- {状态字段}: {状态值列表}
 
-## 2. 表结构详情
+## 关系与约束
+- {外键关系}
+- {业务约束}
 
-### 2.1 drones（无人机台账表）
+## 生命周期入口
+- {HTTP方法} {路径}: {功能描述}
 
-| 字段名 | 类型 | 约束 | 说明 |
-| ------ | ---- | ---- | ---- |
-| id | bigserial | PK | 主键 |
-| code | varchar(64) | NOT NULL, UNIQUE | 业务编码 |
-| name | varchar(128) | NOT NULL | 无人机名称 |
-| model | varchar(128) | NOT NULL | 型号 |
-| serial_no | varchar(128) | NOT NULL, UNIQUE | 出厂序列号 |
-| status | varchar(16) | NOT NULL, DEFAULT 'DISABLED' | 状态 |
-| org_id | bigint | NULL | 组织 ID（预留） |
-| created_by_staff_id | bigint | NULL | 创建人 staff ID（审计/OWN 预留） |
-| created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
-| updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
-
-`status` 枚举值：
-1. `ENABLED`：启用
-2. `DISABLED`：停用
-3. `MAINTENANCE`：维护中
-4. `RETIRED`：已退役
-
----
-
-### 2.2 drone_assignments（无人机分配表）
-
-| 字段名 | 类型 | 约束 | 说明 |
-| ------ | ---- | ---- | ---- |
-| id | bigserial | PK | 主键 |
-| drone_id | bigint | NOT NULL, FK -> drones.id | 无人机 ID |
-| staff_id | bigint | NOT NULL, FK -> staff_profiles.id | 飞手 staff ID |
-| status | varchar(16) | NOT NULL, DEFAULT 'ACTIVE' | 分配状态 |
-| start_at | timestamp | NOT NULL, DEFAULT now() | 分配生效时间 |
-| end_at | timestamp | NULL | 分配结束时间 |
-| created_by_staff_id | bigint | NULL | 操作人 staff ID |
-| created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
-| updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
-
-`status` 枚举值：
-1. `ACTIVE`：生效中
-2. `INACTIVE`：已失效
-
-约束：
-1. `(drone_id, staff_id)` 在 `status='ACTIVE'` 条件下唯一。  
-2. 取消分配采用软失效（更新为 `INACTIVE`），不做物理删除。
-3. 无人机删除接口（`DELETE /api/v1/drones/{id}`）在存在 `ACTIVE` 分配关系时返回 `STATE_CONFLICT`，不执行删除。
-
----
-
-## 3. 关系图（当前实现）
-
-```mermaid
-erDiagram
-    drones ||--o{ drone_assignments : "1:N"
-    staff_profiles ||--o{ drone_assignments : "1:N"
+## 接口语义
+### {API名称}
+- 功能：{功能描述}
+- 路径：{API路径}
+- 方法：{HTTP方法}
+- 状态流转：{状态变化}
+- 有效状态：{允许执行该操作的状态}
+- 无效状态：{禁止执行该操作的状态列表}
+- 业务码：{返回的业务码}
 ```
 
 ---
 
-## 4. 与代码对应关系
+## 实体主表
 
-1. 模型定义：`apps/drone/models.py`  
-2. 迁移文件：`apps/drone/migrations/0001_initial.py`  
-3. 业务接口：`/api/v1/drones*`、`/api/v1/drone-assignments*`
+| 表名 | 说明 |
+|------|------|
+| drones | 无人机台账表 |
+| drone_assignments | 无人机分配表 |
 
----
+### drones（无人机台账表）
+- 主键: id (BigAutoField)
+- 状态字段: status
 
-## 5. 接口响应逻辑模型（补充）
+### drone_assignments（无人机分配表）
+- 主键: id (BigAutoField)
+- 状态字段: status
 
-业务 API 统一响应契约：
+## 状态机
 
-```json
-{
-  "business_code": "SUCCESS|INVALID_PARAMS|PERMISSION_DENIED|RESOURCE_NOT_FOUND|STATE_CONFLICT|IDEMPOTENT_DUPLICATE",
-  "business_detail_code": "OK|NOT_AUTHENTICATED|FORBIDDEN|NOT_FOUND|VALIDATION_ERROR|STATE_CONFLICT|DUPLICATE_REQUEST",
-  "...": "原有业务字段"
-}
-```
+### drones.status
+| 值 | 含义 |
+|----|------|
+| ENABLED | 启用 |
+| DISABLED | 停用 |
+| MAINTENANCE | 维护中 |
+| RETIRED | 已退役 |
 
-状态码与业务码映射：
-1. 成功（200/201） -> `SUCCESS`
-2. 参数错误（400） -> `INVALID_PARAMS`
-3. 权限拒绝（401/403） -> `PERMISSION_DENIED`
-4. 资源不存在（404） -> `RESOURCE_NOT_FOUND`
-5. 状态冲突（409） -> `STATE_CONFLICT`
-6. 幂等重复（409） -> `IDEMPOTENT_DUPLICATE`
+### drone_assignments.status
+| 值 | 含义 |
+|----|------|
+| ACTIVE | 生效中 |
+| INACTIVE | 已失效 |
 
-删除接口补充：
-1. `DELETE /api/v1/drones/{id}` 成功返回 200 + `SUCCESS`。
-2. DELETE 请求体非空返回 400 + `INVALID_PARAMS`。
+## 关系与约束
+
+- drone_assignments.drone_id -> drones.id
+- drone_assignments.staff_id -> staff_profiles.id
+- 唯一约束：同一 (drone_id, staff_id) 在 ACTIVE 状态下唯一
+
+## 生命周期入口
+
+### 无人机 (/api/v1/drones)
+| 操作 | 路径 | 说明 |
+|-----|------|------|
+| 创建 | POST /api/v1/drones | 新增无人机 |
+| 列表 | GET /api/v1/drones | 无人机列表查询 |
+| 详情 | GET /api/v1/drones/{id} | 无人机详情 |
+| 更新 | PATCH /api/v1/drones/{id} | 局部更新无人机 |
+| 删除 | DELETE /api/v1/drones/{id} | 删除无人机 |
+| 启用 | POST /api/v1/drones/{id}/enable | 启用无人机 |
+| 停用 | POST /api/v1/drones/{id}/disable | 停用无人机 |
+| 维护 | POST /api/v1/drones/{id}/maintenance | 设置维护中 |
+| 退役 | POST /api/v1/drones/{id}/retire | 退役无人机 |
+
+### 分配关系 (/api/v1/drone-assignments)
+| 操作 | 路径 | 说明 |
+|-----|------|------|
+| 创建 | POST /api/v1/drone-assignments | 创建分配 |
+| 列表 | GET /api/v1/drone-assignments | 分配列表查询 |
+| 详情 | GET /api/v1/drone-assignments/{id} | 分配详情 |
+| 取消 | POST /api/v1/drone-assignments/{id}/cancel | 取消分配 |
+| 恢复 | POST /api/v1/drone-assignments/{id}/reactivate | 恢复分配 |
+
+## 接口语义
+
+### 启用无人机 POST /api/v1/drones/{id}/enable
+- 状态流转：DISABLED/MAINTENANCE -> ENABLED
+- 有效状态：DISABLED / MAINTENANCE
+- 无效状态：RETIRED
+- 业务码：SUCCESS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 退役无人机 POST /api/v1/drones/{id}/retire
+- 状态流转：任意 -> RETIRED
+- 有效状态：ENABLED / DISABLED / MAINTENANCE
+- 无效状态：（RETIRED 不可逆）
+- 业务码：SUCCESS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 取消分配 POST /api/v1/drone-assignments/{id}/cancel
+- 状态流转：ACTIVE -> INACTIVE
+- 有效状态：ACTIVE
+- 无效状态：INACTIVE
+- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 恢复分配 POST /api/v1/drone-assignments/{id}/reactivate
+- 状态流转：INACTIVE -> ACTIVE
+- 有效状态：INACTIVE
+- 无效状态：ACTIVE
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED

@@ -1,172 +1,178 @@
-# mission 实现说明
+# 任务实现说明
 
-- updated_at: 2026-03-09T09:30:00+08:00
+- generated_at: 2026-03-09T09:30:00+08:00
+- updated_at: 2026-03-09
 - entity: mission
 
-## 历史实现（保留）
-### 迭代 A：POST /api/v1/missions
-- 业务目的：创建任务主记录，建立任务与航线、无人机、飞手的执行关联。
-- 设计边界：仅创建任务，不负责执行启动、暂停、取消、完成等状态流转编排。
-- 关键业务码：
-  - SUCCESS / OK：创建成功
-  - INVALID_PARAMS / VALIDATION_ERROR：参数校验失败
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无创建权限
+## 数据库
 
-### 迭代 B：GET /api/v1/missions
-- 业务目的：提供任务列表只读查询，供外部系统按条件组合筛选。
-- 查询维度：`route_id`、`drone_id`、`pilot_id`、`status`。
-- 设计边界：仅列表读取，不承担任何状态变更。
-- 关键业务码：
-  - SUCCESS / OK：查询成功，返回分页 `results`
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无查看权限
+PostgreSQL
 
-### 迭代 C：GET /api/v1/missions/{id}
-- 业务目的：补齐“按 mission_id 精确读取任务详情”能力，供执行/取消等上层流程在动作前先读取任务当前快照。
-- 设计边界：只读详情接口，不引入任务状态机写操作，保持接口单一职责和可组合性。
-- 请求语义：路径参数 `id` 为任务主键；调用方需具备 `mission.view_mission` 权限。
-- 响应语义：成功返回单条任务详情（字段与 `MissionReadSerializer` 一致），并携带 `business_code` 与 `business_detail_code`。
-- 关键业务码：
-  - SUCCESS / OK：详情读取成功
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无查看权限
-  - RESOURCE_NOT_FOUND / NOT_FOUND：任务不存在
+---
 
-## 当前轮增补
-### 迭代 D：PATCH /api/v1/missions/{id}
-- 业务目的：提供 mission 的最小局部更新入口，让外部系统可基于“创建/读取 + 局部更新”组合业务流。
-- 设计边界：
-  - 仅支持局部更新，不做整对象替换；
-  - 仅更新 `name`、`route`、`drone`、`pilot`、`scheduled_at`、`remark`；
-  - 不承载任务状态流转，`status` 在该接口不可写。
-- 权限要求：调用方需具备 `mission.manage_mission`。
-- 响应语义：成功返回更新后的任务快照（`MissionReadSerializer` 字段集），并携带 `business_code` 与 `business_detail_code`。
-- 关键业务码：
-  - SUCCESS / OK：更新成功
-  - INVALID_PARAMS / VALIDATION_ERROR：请求体包含不可写字段或违反业务校验
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无更新权限
-  - RESOURCE_NOT_FOUND / NOT_FOUND：任务不存在
+## 文档格式说明
 
-## 当前轮关键实现文件
-- apps/mission/views.py
+本文档为 **实现描述** 类型文档，记录 API 实现、数据模型、审计动作等。
+
+### 更新本文档的指南（大模型用）
+
+当需要更新此文档时，请遵循以下格式：
+
+```
+## N. {模块名}
+
+### N.X API / 功能名称
+- 功能：{功能描述}
+- 路径：{API路径}
+- 方法：{HTTP方法}
+- 权限：{所需权限}
+- 请求体：{请求格式}
+- 响应：{响应格式}
+- 业务码：{返回的业务码}
+```
+
+---
+
+## 数据模型
+
+### Mission 表 (missions)
+
+| 字段 | 类型 | 说明 |
+|-----|------|------|
+| id | BigAutoField | 主键 |
+| name | CharField(100) | 任务名称 |
+| route | ForeignKey | 航线 |
+| route_name | CharField(100) | 航线名称（冗余） |
+| drone | ForeignKey | 无人机 |
+| drone_name | CharField(100) | 无人机名称（冗余） |
+| pilot | ForeignKey | 飞手 |
+| pilot_name | CharField(50) | 飞手姓名（冗余） |
+| scheduled_at | DateTimeField | 计划执行时间（可选） |
+| remark | CharField(500) | 任务备注 |
+| status | PositiveSmallIntegerField | 任务状态 |
+| created_at | DateTimeField | 创建时间 |
+| updated_at | DateTimeField | 更新时间 |
+
+### MissionStatus 枚举
+- PENDING = 0, "待执行"
+- RUNNING = 1, "执行中"
+- PAUSED = 2, "已暂停"
+- COMPLETED = 3, "已完成"
+- CANCELED = 4, "已取消"
+- FAILED = 5, "执行失败"
+
+---
+
+## API 实现 (/api/v1/missions)
+
+### 1. GET /api/v1/missions
+- 功能：任务列表查询
+- 筛选参数：route_id, drone_id, pilot_id, status
+- 权限：mission.view_mission
+- 业务码：SUCCESS, PERMISSION_DENIED
+
+### 2. POST /api/v1/missions
+- 功能：创建任务
+- 必填：name, route, drone, pilot
+- 可选：scheduled_at, remark
+- 自动填充：route_name, drone_name, pilot_name
+- 默认状态：status=PENDING
+- 权限：mission.manage_mission
+- 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
+
+### 3. GET /api/v1/missions/{id}
+- 功能：任务详情
+- 权限：mission.view_mission
+- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 4. PATCH /api/v1/missions/{id}
+- 功能：局部更新任务
+- 可写字段：name, route, drone, pilot, scheduled_at, remark
+- 约束：status 不可写（状态通过专用动作接口变更）
+- 权限：mission.manage_mission
+- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 5. POST /api/v1/missions/{id}/start
+- 功能：启动任务
+- 状态流转：PENDING -> RUNNING
+- 约束：请求体必须为空
+- 幂等：已 RUNNING 的任务重复 start 返回当前状态
+- 禁止状态：PAUSED, COMPLETED, CANCELED, FAILED
+- 权限：mission.manage_mission
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 审计：MISSION_START
+
+### 6. POST /api/v1/missions/{id}/pause
+- 功能：暂停任务
+- 状态流转：RUNNING -> PAUSED
+- 约束：请求体必须为空
+- 幂等：已 PAUSED 的任务重复 pause 返回当前状态
+- 禁止状态：PENDING, COMPLETED, CANCELED, FAILED
+- 权限：mission.manage_mission
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 审计：MISSION_PAUSE
+
+### 7. POST /api/v1/missions/{id}/resume
+- 功能：恢复任务
+- 状态流转：PAUSED -> RUNNING
+- 约束：请求体必须为空
+- 幂等：已 RUNNING 的任务重复 resume 返回当前状态
+- 禁止状态：PENDING, COMPLETED, CANCELED, FAILED
+- 权限：mission.manage_mission
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 审计：MISSION_RESUME
+
+### 8. POST /api/v1/missions/{id}/complete
+- 功能：完成任务
+- 状态流转：RUNNING -> COMPLETED
+- 约束：请求体必须为空
+- 幂等：已 COMPLETED 的任务重复 complete 返回当前状态
+- 禁止状态：PENDING, PAUSED, CANCELED, FAILED
+- 权限：mission.manage_mission
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 审计：MISSION_COMPLETE
+
+### 9. POST /api/v1/missions/{id}/fail
+- 功能：标记任务失败
+- 状态流转：RUNNING -> FAILED
+- 约束：请求体必须为空
+- 幂等：已 FAILED 的任务重复 fail 返回当前状态
+- 禁止状态：PENDING, PAUSED, COMPLETED, CANCELED
+- 权限：mission.manage_mission
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 审计：MISSION_FAIL
+
+### 10. POST /api/v1/missions/{id}/cancel
+- 功能：取消任务
+- 状态流转：PENDING/RUNNING/PAUSED -> CANCELED
+- 约束：请求体必须为空
+- 幂等：已 CANCELED 的任务重复 cancel 返回当前状态
+- 禁止状态：COMPLETED, CANCELED, FAILED
+- 权限：mission.manage_mission
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 审计：MISSION_CANCEL
+
+---
+
+## 审计动作
+
+- MISSION_CREATE
+- MISSION_UPDATE
+- MISSION_START
+- MISSION_PAUSE
+- MISSION_RESUME
+- MISSION_COMPLETE
+- MISSION_FAIL
+- MISSION_CANCEL
+
+---
+
+## 关键实现文件
+
+- apps/mission/models.py
 - apps/mission/serializers.py
+- apps/mission/views.py
+- apps/mission/urls.py
 - apps/mission/tests.py
-
-## 可追溯产物
-- codex_devflow_scaffold/artifacts/stage0/latest.json
-- codex_devflow_scaffold/artifacts/stage2/latest.json
-- codex_devflow_scaffold/artifacts/stage4/latest.json
-- codex_devflow_scaffold/artifacts/stage5/latest.json
-
-## 本轮增补（2026-03-09）
-### 迭代 E：POST /api/v1/missions/{id}/cancel
-- 业务目的：补齐任务的基础取消入口，让调度侧能够显式终止未完成任务，形成“创建 -> 查询 -> 编辑 -> 取消”的最小任务生命周期闭环。
-- 设计边界：
-  - 只处理单条 mission 的状态流转，不承担无人机回收、飞行记录补录、媒体归档或其他跨实体编排。
-  - 请求体必须为空；取消动作的输入仅由路径参数 `id` 决定。
-  - 仅允许取消 `PENDING`、`RUNNING`、`PAUSED` 任务；`COMPLETED`、`CANCELED`、`FAILED` 再次取消返回状态冲突。
-- 权限要求：调用方需具备 `mission.manage_mission`。
-- 响应语义：
-  - SUCCESS / OK：取消成功，返回最新任务快照，且 `status=CANCELED`
-  - INVALID_PARAMS / VALIDATION_ERROR：请求体非空
-  - RESOURCE_NOT_FOUND / NOT_FOUND：任务不存在
-  - STATE_CONFLICT / STATE_CONFLICT：当前状态不允许取消
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无取消权限
-- 审计语义：
-  - 成功取消后写入 `MISSION_CANCEL` 审计日志，保留 before/after 快照。
-- 项目内回归沉淀：
-  - `test_cancel_mission_should_return_success`
-  - `test_cancel_mission_with_body_should_return_invalid_params`
-  - `test_cancel_mission_state_conflict_should_return_state_conflict`
-  - `test_cancel_mission_not_found_should_return_resource_not_found`
-  - `test_cancel_mission_without_auth_should_return_permission_denied`
-  - `test_cancel_mission_without_permission_should_return_permission_denied`
-
-## 本轮增补（2026-03-09，迭代 7）
-### 迭代 F：POST /api/v1/missions/{id}/start
-- 业务目的：补齐任务进入执行中的基础入口，让调度侧能够把待执行任务显式启动，形成“创建 -> 查询 -> 编辑 -> 启动 -> 取消/完成”的状态流转基础。
-- 设计边界：
-  - 只处理单条 mission 的状态流转，不承担飞行记录创建、无人机回收、媒体归档或其他跨实体编排。
-  - 请求体必须为空；启动动作的输入仅由路径参数 `id` 决定。
-  - 仅允许 `PENDING -> RUNNING`。
-  - 已处于 `RUNNING` 的任务重复 start 按幂等成功处理。
-  - `PAUSED`、`COMPLETED`、`CANCELED`、`FAILED` 不允许 start，返回状态冲突。
-- 权限要求：调用方需具备 `mission.manage_mission`。
-- 响应语义：
-  - SUCCESS / OK：启动成功，或重复启动执行中任务的幂等成功
-  - INVALID_PARAMS / VALIDATION_ERROR：请求体非空
-  - RESOURCE_NOT_FOUND / NOT_FOUND：任务不存在
-  - STATE_CONFLICT / STATE_CONFLICT：当前状态不允许启动
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无启动权限
-- 审计语义：
-  - 成功启动后写入 `MISSION_START` 审计日志；幂等重复启动也保留审计轨迹。
-- 项目内回归沉淀：
-  - `test_start_mission_should_return_success`
-  - `test_start_running_mission_should_be_idempotent_success`
-  - `test_start_mission_with_body_should_return_invalid_params`
-  - `test_start_mission_state_conflict_should_return_state_conflict`
-  - `test_start_mission_not_found_should_return_resource_not_found`
-  - `test_start_mission_without_auth_should_return_permission_denied`
-  - `test_start_mission_without_permission_should_return_permission_denied`
-
-## 本轮增补（2026-03-09，迭代 8）
-### 迭代 G：POST /api/v1/missions/{id}/pause
-- 业务目的：补齐任务挂起入口，让调度侧能够把执行中的任务显式置为已暂停，形成“创建 -> 启动 -> 暂停 -> 恢复/取消/完成”的状态流转基础。
-- 设计边界：
-  - 只处理单条 mission 的状态流转，不承担飞行记录创建、无人机回收、媒体归档或其他跨实体编排。
-  - 请求体必须为空；暂停动作的输入仅由路径参数 `id` 决定。
-  - 仅允许 `RUNNING -> PAUSED`。
-  - 已处于 `PAUSED` 的任务重复 pause 按幂等成功处理。
-  - `PENDING`、`COMPLETED`、`CANCELED`、`FAILED` 不允许 pause，返回状态冲突。
-- 权限要求：调用方需具备 `mission.manage_mission`。
-- 响应语义：
-  - SUCCESS / OK：暂停成功，或重复暂停已暂停任务的幂等成功
-  - INVALID_PARAMS / VALIDATION_ERROR：请求体非空
-  - RESOURCE_NOT_FOUND / NOT_FOUND：任务不存在
-  - STATE_CONFLICT / STATE_CONFLICT：当前状态不允许暂停
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无暂停权限
-- 审计语义：
-  - 成功暂停后写入 `MISSION_PAUSE` 审计日志；幂等重复暂停也保留审计轨迹。
-- 项目内回归沉淀：
-  - `test_pause_mission_should_return_success`
-  - `test_pause_paused_mission_should_be_idempotent_success`
-  - `test_pause_mission_with_body_should_return_invalid_params`
-  - `test_pause_mission_state_conflict_should_return_state_conflict`
-  - `test_pause_mission_not_found_should_return_resource_not_found`
-  - `test_pause_mission_without_auth_should_return_permission_denied`
-  - `test_pause_mission_without_permission_should_return_permission_denied`
-
-## 本轮增补（2026-03-09，迭代 9）
-### 迭代 H：POST /api/v1/missions/{id}/resume
-- 业务目的：补齐任务恢复入口，让调度侧能够把已暂停任务显式恢复为执行中，形成“启动 -> 暂停 -> 恢复”的最小中断恢复闭环。
-- 设计边界：
-  - 只处理单条 mission 的状态流转，不承担飞行记录创建、无人机回收、媒体归档或其他跨实体编排。
-  - 请求体必须为空；恢复动作的输入仅由路径参数 `id` 决定。
-  - 仅允许 `PAUSED -> RUNNING`。
-  - 已处于 `RUNNING` 的任务重复 resume 按幂等成功处理。
-  - `PENDING`、`COMPLETED`、`CANCELED`、`FAILED` 不允许 resume，返回状态冲突。
-- 权限要求：调用方需具备 `mission.manage_mission`。
-- 响应语义：
-  - SUCCESS / OK：恢复成功，或重复恢复执行中任务的幂等成功
-  - INVALID_PARAMS / VALIDATION_ERROR：请求体非空
-  - RESOURCE_NOT_FOUND / NOT_FOUND：任务不存在
-  - STATE_CONFLICT / STATE_CONFLICT：当前状态不允许恢复
-  - PERMISSION_DENIED / NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无恢复权限
-- 审计语义：
-  - 成功恢复后写入 `MISSION_RESUME` 审计日志；幂等重复恢复也保留审计轨迹。
-- 项目内回归沉淀：
-  - `test_resume_mission_should_return_success`
-  - `test_resume_running_mission_should_be_idempotent_success`
-  - `test_resume_mission_with_body_should_return_invalid_params`
-  - `test_resume_mission_state_conflict_should_return_state_conflict`
-  - `test_resume_mission_not_found_should_return_resource_not_found`
-  - `test_resume_mission_without_auth_should_return_permission_denied`
-  - `test_resume_mission_without_permission_should_return_permission_denied`
-
-<!-- stage6_doc_sync::mission::impl_desc.md::start -->
-## Stage6 本轮同步
-- 本轮 focus API: POST /api/v1/missions/{id}/fail
-- 本轮实现目标: mission 现在已有创建、查询、局部更新、启动、暂停、恢复、完成和取消，但仍缺少把执行中的异常终止显式落到 FAILED 的基础入口，状态机缺少失败闭环。补齐 fail 后，mission 的核心状态流转才覆盖成功结束和失败结束两条主路径。
-- 业务事件: EVT-001 失败任务
-- 业务约束: N/A
-- 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
-- 关键文件: apps/mission/tests.py, apps/mission/views.py, apps/mission/models.py, apps/mission/serializers.py, apps/mission/urls.py
-<!-- stage6_doc_sync::mission::impl_desc.md::end -->
+- apps/access/management/commands/seed_role_permissions.py
+- apps/api_v1/urls.py

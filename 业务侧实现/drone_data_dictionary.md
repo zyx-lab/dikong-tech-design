@@ -1,4 +1,4 @@
-# 低空智能巡检平台 - Drone
+# 低空智能巡检平台 - 无人机
 
 ## 数据库
 
@@ -6,9 +6,39 @@ PostgreSQL
 
 ---
 
+## 文档格式说明
+
+本文档为 **数据字典** 类型文档，记录数据库表结构、字段定义、约束和业务规则。
+
+### 更新本文档的指南（大模型用）
+
+当需要更新此文档时，请遵循以下格式：
+
+```
+## N. {表名中文名}
+
+**说明**：{表用途简述}
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| {字段名} | {PostgreSQL类型} | {约束} | {默认值} | {字段说明} |
+
+**{某字段} 状态值**：
+
+| 值 | 含义 |
+|----|------|
+| {枚举值} | {含义} |
+
+**业务规则**：
+1. {规则1}
+2. {规则2}
+```
+
+---
+
 ## 阅读说明
 
-本数据字典只覆盖当前已落地的业务表：`drones`、`drone_assignments`。
+本数据字典覆盖当前已落地的业务表：`drones`、`drone_assignments`。
 
 ---
 
@@ -39,7 +69,7 @@ PostgreSQL
 | RETIRED | 已退役 |
 
 **业务规则**：
-1. `serial_no` 全局唯一。  
+1. `serial_no` 全局唯一。
 2. 已退役（`RETIRED`）状态不可逆。
 3. `DELETE /api/v1/drones/{id}` 仅允许空 body；若存在 `ACTIVE` 分配关系，返回 `STATE_CONFLICT` 并拒绝删除。
 
@@ -69,22 +99,22 @@ PostgreSQL
 | INACTIVE | 已失效 |
 
 **约束与规则**：
-1. 唯一约束：同一 `(drone_id, staff_id)` 在 `ACTIVE` 状态下唯一。  
+1. 唯一约束：同一 `(drone_id, staff_id)` 在 `ACTIVE` 状态下唯一。
 2. 取消分配采用软失效（`ACTIVE -> INACTIVE`），不物理删除。
 
 ---
 
 ## 3. 关系与外键
 
-1. `drone_assignments.drone_id -> drones.id`  
+1. `drone_assignments.drone_id -> drones.id`
 2. `drone_assignments.staff_id -> staff_profiles.id`
 
 ---
 
 ## 4. 与实现对应
 
-1. 模型：`apps/drone/models.py`  
-2. 序列化与校验：`apps/drone/serializers.py`  
+1. 模型：`apps/drone/models.py`
+2. 序列化与校验：`apps/drone/serializers.py`
 3. 接口：`apps/drone/views.py`
 
 ---

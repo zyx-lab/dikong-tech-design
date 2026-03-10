@@ -1,131 +1,109 @@
-# mission 数据字典
+# 低空智能巡检平台 - 任务
 
-- updated_at: 2026-03-09T09:30:00+08:00
-- entity: mission
+## 数据库
 
-## 业务定位
-- 历史 API: POST /api/v1/missions
-- 历史增补 API: GET /api/v1/missions
-- 历史增补 API: GET /api/v1/missions/{id}
-- 当前轮增补 API: PATCH /api/v1/missions/{id}
-- 本轮增补 API: POST /api/v1/missions/{id}/cancel
-- 业务目的：任务实体提供“创建 + 查询 + 局部更新 + 启动 + 暂停 + 恢复 + 取消”的基础能力，供外部系统按需组合调度流程。
+PostgreSQL
 
-## 字段定义（来自模型代码）
-- id: type=BigAutoField; constraints=PK; verbose=ID
-- name: type=CharField(100); constraints=NOT NULL; verbose=任务名称
-- route: type=ForeignKey(route.Route); constraints=NOT NULL, PROTECT; verbose=航线
-- route_name: type=CharField(100); constraints=NOT NULL, default=''; verbose=航线名称（冗余）
-- drone: type=ForeignKey(drone.Drone); constraints=NOT NULL, PROTECT; verbose=无人机
-- drone_name: type=CharField(100); constraints=NOT NULL, default=''; verbose=无人机名称（冗余）
-- pilot: type=ForeignKey(access.StaffProfile); constraints=NOT NULL, PROTECT; verbose=飞手
-- pilot_name: type=CharField(50); constraints=NOT NULL, default=''; verbose=飞手姓名（冗余）
-- scheduled_at: type=DateTimeField; constraints=NULLABLE; verbose=计划执行时间
-- remark: type=CharField(500); constraints=NOT NULL, default=''; verbose=任务备注
-- status: type=PositiveSmallIntegerField; constraints=NOT NULL, default=MissionStatus.PENDING(0); verbose=任务状态
-- created_at: type=DateTimeField(auto_now_add); constraints=NOT NULL; verbose=创建时间
-- updated_at: type=DateTimeField(auto_now); constraints=NOT NULL; verbose=更新时间
+---
 
-## 序列化读写边界
-- MissionWriteSerializer（POST/PATCH 写入）：
-  - 可写字段：`name`, `route`, `drone`, `pilot`, `scheduled_at`, `remark`
-  - 不可写字段：`status` 及其他未声明字段（返回 `INVALID_PARAMS`）
-  - 关键校验：route 必须 ACTIVE、drone 必须 ENABLED、pilot 必须在职且类型为 `pilot_operator`
-- MissionReadSerializer（GET 返回）：
-  - 返回字段：`id`, `name`, `route`, `route_name`, `drone`, `drone_name`, `pilot`, `pilot_name`, `scheduled_at`, `remark`, `status`, `created_at`, `updated_at`
+## 文档格式说明
 
-## 详情读取响应语义（历史增补）
-- 接口：`GET /api/v1/missions/{id}`
-- 成功响应：返回单条 mission 对象，并携带 `business_code=SUCCESS`
-- 无权限：`business_code=PERMISSION_DENIED`
-- 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
+本文档为 **数据字典** 类型文档，记录数据库表结构、字段定义、约束和业务规则。
 
-## 当前轮 PATCH 响应语义
-- 接口：`PATCH /api/v1/missions/{id}`
-- 成功响应：返回更新后的 mission 对象，并携带 `business_code=SUCCESS`
-- 参数非法：`business_code=INVALID_PARAMS`（detail code: `VALIDATION_ERROR`）
-- 无权限：`business_code=PERMISSION_DENIED`
-- 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
+### 更新本文档的指南（大模型用）
 
-## 本轮 cancel 响应语义
-- 接口：`POST /api/v1/missions/{id}/cancel`
-- 成功响应：返回取消后的 mission 对象，并携带 `business_code=SUCCESS`
-- 参数非法：请求体非空，返回 `business_code=INVALID_PARAMS`
-- 无权限：`business_code=PERMISSION_DENIED`
-- 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
-- 状态冲突：已完成、已取消或已失败任务再次取消，返回 `business_code=STATE_CONFLICT`
+当需要更新此文档时，请遵循以下格式：
 
-## 本轮 start 响应语义
-- 接口：`POST /api/v1/missions/{id}/start`
-- 成功响应：返回启动后的 mission 对象，并携带 `business_code=SUCCESS`
-- 幂等成功：已处于 `RUNNING` 的任务重复 start 仍返回 `SUCCESS`
-- 参数非法：请求体非空，返回 `business_code=INVALID_PARAMS`
-- 无权限：`business_code=PERMISSION_DENIED`
-- 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
-- 状态冲突：`PAUSED`、`COMPLETED`、`CANCELED`、`FAILED` 任务 start 返回 `business_code=STATE_CONFLICT`
+```
+## N. {表名中文名}
 
-## 本轮 pause 响应语义
-- 接口：`POST /api/v1/missions/{id}/pause`
-- 成功响应：返回暂停后的 mission 对象，并携带 `business_code=SUCCESS`
-- 幂等成功：已处于 `PAUSED` 的任务重复 pause 仍返回 `SUCCESS`
-- 参数非法：请求体非空，返回 `business_code=INVALID_PARAMS`
-- 无权限：`business_code=PERMISSION_DENIED`
-- 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
-- 状态冲突：`PENDING`、`COMPLETED`、`CANCELED`、`FAILED` 任务 pause 返回 `business_code=STATE_CONFLICT`
+**说明**：{表用途简述}
 
-## 本轮 resume 响应语义
-- 接口：`POST /api/v1/missions/{id}/resume`
-- 成功响应：返回恢复后的 mission 对象，并携带 `business_code=SUCCESS`
-- 幂等成功：已处于 `RUNNING` 的任务重复 resume 仍返回 `SUCCESS`
-- 参数非法：请求体非空，返回 `business_code=INVALID_PARAMS`
-- 无权限：`business_code=PERMISSION_DENIED`
-- 资源不存在：`business_code=RESOURCE_NOT_FOUND`（detail code: `NOT_FOUND`）
-- 状态冲突：`PENDING`、`COMPLETED`、`CANCELED`、`FAILED` 任务 resume 返回 `business_code=STATE_CONFLICT`
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| {字段名} | {PostgreSQL类型} | {约束} | {默认值} | {字段说明} |
 
-## 业务状态码覆盖
-- POST /api/v1/missions：
-  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
-  - 缺口：RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- GET /api/v1/missions：
-  - 已覆盖：SUCCESS, PERMISSION_DENIED
-  - 缺口：INVALID_PARAMS, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- GET /api/v1/missions/{id}：
-  - 已覆盖：SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
-  - 缺口：INVALID_PARAMS, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- PATCH /api/v1/missions/{id}：
-  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
-  - 缺口：STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- POST /api/v1/missions/{id}/cancel：
-  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT
-  - 缺口：IDEMPOTENT_DUPLICATE
-- POST /api/v1/missions/{id}/start：
-  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT
-  - 缺口：IDEMPOTENT_DUPLICATE
-- POST /api/v1/missions/{id}/pause：
-  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT
-  - 缺口：IDEMPOTENT_DUPLICATE
-- POST /api/v1/missions/{id}/resume：
-  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT
-  - 缺口：IDEMPOTENT_DUPLICATE
+**{某字段} 状态值**：
 
-## 权限码
-- mission.manage_mission：创建、局部更新、启动、暂停、恢复与取消任务（POST/PATCH/start/pause/resume/cancel）
-- mission.view_mission：查看任务列表与详情（GET）
+| 值 | 含义 |
+|----|------|
+| {枚举值} | {含义} |
 
-## 证据文件
-- apps/mission/models.py
-- apps/mission/serializers.py
-- apps/mission/views.py
-- apps/mission/tests.py
-- apps/mission/urls.py
-- apps/api_v1/business_response.py
+**业务规则**：
+1. {规则1}
+2. {规则2}
+```
 
-<!-- stage6_doc_sync::mission::data_dictionary.md::start -->
-## Stage6 本轮同步
-- 关联 API: POST /api/v1/missions/{id}/fail
-- 提名依据: mission 现在已有创建、查询、局部更新、启动、暂停、恢复、完成和取消，但仍缺少把执行中的异常终止显式落到 FAILED 的基础入口，状态机缺少失败闭环。补齐 fail 后，mission 的核心状态流转才覆盖成功结束和失败结束两条主路径。
-- 业务事件: EVT-001 失败任务
-- 业务码覆盖: 目标=SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE; 已覆盖=SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, INVALID_PARAMS; 缺口=IDEMPOTENT_DUPLICATE
-- 测试沉淀: 生成用例数: 5, 已执行用例数: 5, 已沉淀到项目测试: 5, 待沉淀 case: N/A, 失败 case: N/A
-- 证据文件: apps/mission/tests.py, apps/mission/views.py, apps/mission/models.py, apps/mission/serializers.py, apps/mission/urls.py
-<!-- stage6_doc_sync::mission::data_dictionary.md::end -->
+---
+
+## 阅读说明
+
+本数据字典覆盖当前已落地的业务表：`missions`。
+
+---
+
+## 1. missions（任务表）
+
+**说明**：存储任务执行计划信息。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| name | varchar(100) | NOT NULL | - | 任务名称 |
+| route_id | bigint | FK, NOT NULL | - | 航线 ID |
+| route_name | varchar(100) | - | "" | 航线名称（冗余） |
+| drone_id | bigint | FK, NOT NULL | - | 无人机 ID |
+| drone_name | varchar(100) | - | "" | 无人机名称（冗余） |
+| pilot_id | bigint | FK, NOT NULL | - | 飞手 ID |
+| pilot_name | varchar(50) | - | "" | 飞手姓名（冗余） |
+| scheduled_at | timestamp | - | - | 计划执行时间 |
+| remark | varchar(500) | - | "" | 任务备注 |
+| status | smallint | NOT NULL | 0 | 任务状态 |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+**status 状态值**：
+
+| 值 | 含义 |
+|----|------|
+| 0 | 待执行 |
+| 1 | 执行中 |
+| 2 | 已暂停 |
+| 3 | 已完成 |
+| 4 | 已取消 |
+| 5 | 执行失败 |
+
+**业务规则**：
+1. 创建任务时 route 必须为 ACTIVE，drone 必须为 ENABLED，pilot 必须为 pilot_operator 且在职。
+2. status 不可通过 PATCH 直接修改，需通过状态动作接口。
+
+---
+
+## 2. 与实现对应
+
+1. 模型：`apps/mission/models.py`
+2. 序列化与校验：`apps/mission/serializers.py`
+3. 接口：`apps/mission/views.py`
+
+---
+
+## 3. 业务响应码字典（Business API）
+
+说明：业务 API 响应体包含 `business_code`（主业务码）与 `business_detail_code`（细分原因码）。
+
+| business_code | 典型 HTTP | 语义 |
+| ------ | ------ | ------ |
+| SUCCESS | 200 / 201 | 业务处理成功 |
+| INVALID_PARAMS | 400 | 请求参数校验失败 |
+| PERMISSION_DENIED | 401 / 403 | 身份或权限不足 |
+| RESOURCE_NOT_FOUND | 404 | 目标资源不存在 |
+| STATE_CONFLICT | 409 | 状态机冲突 |
+
+| business_detail_code | 语义 |
+| ------ | ------ |
+| OK | 成功 |
+| NOT_AUTHENTICATED | 未登录或认证信息缺失 |
+| FORBIDDEN | 已登录但无权限 |
+| NOT_FOUND | 资源不存在 |
+| VALIDATION_ERROR | 参数校验失败 |
+| STATE_CONFLICT | 业务状态冲突 |

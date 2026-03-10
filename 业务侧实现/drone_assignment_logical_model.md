@@ -1,4 +1,7 @@
-# 低空智能巡检平台 - Drone Assignment 逻辑模型
+# 无人机分配逻辑模型
+
+- generated_at: 2026-03-08
+- entity: drone_assignment
 
 ## 数据库
 
@@ -6,93 +9,85 @@ PostgreSQL
 
 ---
 
-## 1. 实体定位
+## 文档格式说明
 
-`drone_assignment` 是无人机业务域中的关系实体，描述“无人机与飞手在某时间段内的生效分配”。
+本文档为 **逻辑模型** 类型文档，记录实体关系、状态机、生命周期、接口语义等。
 
-核心职责：
-1. 支撑无人机分配管理流程。  
-2. 作为 `ASSIGNED` 范围鉴权的事实数据来源。  
+### 更新本文档的指南（大模型用）
 
----
+当需要更新此文档时，请遵循以下格式：
 
-## 2. 实体结构（逻辑层）
+```
+## 实体主表
+- table: {表名}
+- 主键: {主键定义}
 
-实体：`DroneAssignment`
+## 状态机
+- {状态字段}: {状态值列表}
 
-属性：
-1. `id`：主键  
-2. `drone_id`：关联无人机  
-3. `staff_id`：关联飞手  
-4. `status`：`ACTIVE | INACTIVE`  
-5. `start_at`：生效时间  
-6. `end_at`：结束时间  
-7. `created_by_staff_id`：操作人  
-8. `created_at` / `updated_at`  
+## 关系与约束
+- {外键关系}
+- {业务约束}
 
----
+## 生命周期入口
+- {HTTP方法} {路径}: {功能描述}
 
-## 3. 状态机
-
-```mermaid
-stateDiagram-v2
-    [*] --> ACTIVE : create
-    ACTIVE --> INACTIVE : cancel
-    INACTIVE --> ACTIVE : reactivate
-    INACTIVE --> INACTIVE : cancel(idempotent)
-    ACTIVE --> ACTIVE : reactivate(idempotent)
+## 接口语义
+### {API名称}
+- 功能：{功能描述}
+- 路径：{API路径}
+- 方法：{HTTP方法}
+- 状态流转：{状态变化}
+- 有效状态：{允许执行该操作的状态}
+- 无效状态：{禁止执行该操作的状态列表}
+- 业务码：{返回的业务码}
 ```
 
-约束：
-1. 支持 `INACTIVE -> ACTIVE` 的恢复动作（reactivate）。  
-2. 已失效记录可重复接收取消请求，但状态保持 `INACTIVE`。  
-3. 已激活记录重复 reactivate 按幂等成功处理。  
-
 ---
 
-## 4. 关系模型
+## 实体主表
 
-```mermaid
-erDiagram
-    drones ||--o{ drone_assignments : "1:N"
-    staff_profiles ||--o{ drone_assignments : "1:N"
-```
+- table: drone_assignments
+- 主键: id (BigAutoField)
 
-语义说明：
-1. 同一无人机可以历史上对应多条分配记录。  
-2. 同一飞手可以历史上对应多条分配记录。  
-3. 同一 `(drone_id, staff_id)` 同时只能存在一条 `ACTIVE` 关系。  
+## 状态机
 
----
+| 状态字段 | 值 | 含义 |
+|---------|-----|------|
+| status | ACTIVE | 生效中 |
+| status | INACTIVE | 已失效 |
 
-## 5. 业务规则映射
+## 关系与约束
 
-创建分配前置条件：
-1. `drone.status != RETIRED`  
-2. `staff.employment_status == ACTIVE`  
-3. `staff.staff_type.code == pilot_operator`  
-4. 不存在同键 `ACTIVE` 记录  
+- drone_id -> drones.id
+- staff_id -> staff_profiles.id
+- 唯一约束：同一 (drone_id, staff_id) 在 ACTIVE 状态下唯一
 
-取消分配：
-1. `ACTIVE` -> `INACTIVE`，写入 `end_at`。  
-2. `INACTIVE` 重复取消，按幂等成功返回。  
+## 生命周期入口
 
-恢复分配：
-1. `INACTIVE` -> `ACTIVE`，清空 `end_at`。  
-2. 请求体必须为空；否则返回 `INVALID_PARAMS`。  
-3. 同键已有 `ACTIVE` 记录时返回 `STATE_CONFLICT`。  
+| 操作 | 路径 | 说明 |
+|-----|------|------|
+| 创建 | POST /api/v1/drone-assignments | 创建分配 |
+| 列表 | GET /api/v1/drone-assignments | 分配列表查询 |
+| 详情 | GET /api/v1/drone-assignments/{id} | 分配详情 |
+| 取消 | POST /api/v1/drone-assignments/{id}/cancel | 取消分配 |
+| 恢复 | POST /api/v1/drone-assignments/{id}/reactivate | 恢复分配 |
 
----
+## 接口语义
 
-## 6. 业务响应模型（非持久化字段）
+### 创建分配 POST /api/v1/drone-assignments
+- 功能：创建无人机与飞手的分配关系
+- 约束：drone.status!=RETIRED, staff在职且为pilot_operator, 不存在同键ACTIVE记录
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, PERMISSION_DENIED
 
-接口响应统一携带：
-1. `business_code`
-2. `business_detail_code`
+### 取消分配 POST /api/v1/drone-assignments/{id}/cancel
+- 状态流转：ACTIVE -> INACTIVE
+- 有效状态：ACTIVE
+- 无效状态：INACTIVE
+- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
 
-典型映射：
-1. 创建/取消成功 -> `SUCCESS + OK`  
-2. 参数校验失败 -> `INVALID_PARAMS + VALIDATION_ERROR`  
-3. 重复分配 -> `IDEMPOTENT_DUPLICATE + DUPLICATE_REQUEST`  
-4. 未认证/越权 -> `PERMISSION_DENIED + NOT_AUTHENTICATED/FORBIDDEN`  
-5. 记录不存在 -> `RESOURCE_NOT_FOUND + NOT_FOUND`  
+### 恢复分配 POST /api/v1/drone-assignments/{id}/reactivate
+- 状态流转：INACTIVE -> ACTIVE
+- 有效状态：INACTIVE
+- 无效状态：ACTIVE
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED

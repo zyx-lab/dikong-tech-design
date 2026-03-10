@@ -1,41 +1,97 @@
-# flight record 逻辑模型
+# 飞行记录逻辑模型
 
 - generated_at: 2026-03-08T09:24:39.176004Z
+- entity: flight_record
+
+## 数据库
+
+PostgreSQL
+
+---
+
+## 文档格式说明
+
+本文档为 **逻辑模型** 类型文档，记录实体关系、状态机、生命周期、接口语义等。
+
+### 更新本文档的指南（大模型用）
+
+当需要更新此文档时，请遵循以下格式：
+
+```
+## 实体主表
+- table: {表名}
+- 主键: {主键定义}
+
+## 状态机
+- {状态字段}: {状态值列表}
+
+## 关系与约束
+- {外键关系}
+- {业务约束}
+
+## 生命周期入口
+- {HTTP方法} {路径}: {功能描述}
+
+## 接口语义
+### {API名称}
+- 功能：{功能描述}
+- 路径：{API路径}
+- 方法：{HTTP方法}
+- 状态流转：{状态变化}
+- 有效状态：{允许执行该操作的状态}
+- 无效状态：{禁止执行该操作的状态列表}
+- 业务码：{返回的业务码}
+```
+
+---
 
 ## 实体主表
+
 - table: flight_records
 - 主键: id (BigAutoField)
 
 ## 状态机
-- N/A
+
+| 状态字段 | 值 | 含义 |
+|---------|-----|------|
+| status | 0 | 飞行中 |
+| status | 1 | 已完成 |
+| status | 2 | 异常终止 |
 
 ## 关系与约束
-- mission -> "mission.Mission"
-- drone -> "drone.Drone"
-- pilot -> "access.StaffProfile"
-- 唯一约束: flight_no
+
+- mission -> mission.Mission
+- drone -> drone.Drone
+- pilot -> access.StaffProfile
+- 唯一约束：flight_no 全局唯一
 
 ## 生命周期入口
-- 创建入口（历史增补）: POST /api/v1/flight-records
-- 查询入口（历史增补）: GET /api/v1/flight-records
-- 详情入口（历史增补）: GET /api/v1/flight-records/{id}
-- 更新入口（当前轮增补）: PATCH /api/v1/flight-records/{id}
 
-## 本轮增补（PATCH /api/v1/flight-records/{id}）
-- 更新入口: PATCH /api/v1/flight-records/{id}
-- 业务规则:
-  - 仅允许局部更新单条 flight_record 主记录元数据；
-  - PATCH 请求体必须至少包含一个可写字段；
-  - 允许更新 `mission`、`drone`、`pilot`、`airport_name`、`start_time`、`end_time`、`flight_duration`、`photo_count`、`video_count`、`status` 等字段；
-  - 不承担媒体文件编排、级联删除或跨实体状态流转。
-- 业务码: `SUCCESS` / `INVALID_PARAMS` / `PERMISSION_DENIED` / `RESOURCE_NOT_FOUND`。
+| 操作 | 路径 | 说明 |
+|-----|------|------|
+| 创建 | POST /api/v1/flight-records | 新增飞行记录 |
+| 列表 | GET /api/v1/flight-records | 飞行记录列表查询 |
+| 详情 | GET /api/v1/flight-records/{id} | 飞行记录详情 |
+| 更新 | PATCH /api/v1/flight-records/{id} | 局部更新飞行记录 |
+| 完成 | POST /api/v1/flight-records/{id}/complete | 完成飞行记录 |
+| 异常终止 | POST /api/v1/flight-records/{id}/abort | 异常终止飞行记录 |
 
-<!-- stage6_doc_sync::flight_record::logical_model.md::start -->
-## Stage6 本轮同步
-- 业务目标: N/A
-- 业务动作: N/A
-- 状态机: N/A
-- 业务约束: N/A
-- 事件闭环: EVT-001->POST /api/v1/flight-records/{id}/abort
-- 权限边界: 代码权限码: view_flight_record (可查看飞行记录), manage_flight_record (可新增与编辑飞行记录)
-<!-- stage6_doc_sync::flight_record::logical_model.md::end -->
+## 接口语义
+
+### 更新飞行记录 PATCH /api/v1/flight-records/{id}
+- 功能：局部更新飞行记录元数据
+- 可写字段：mission, drone, pilot, start_time, end_time, flight_duration, photo_count, video_count, airport_name
+- 约束：PATCH 请求体必须至少包含一个可写字段
+- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 完成飞行记录 POST /api/v1/flight-records/{id}/complete
+- 状态流转：IN_PROGRESS -> COMPLETED
+- 有效状态：IN_PROGRESS
+- 无效状态：COMPLETED / ABORTED
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+
+### 异常终止飞行记录 POST /api/v1/flight-records/{id}/abort
+- 状态流转：IN_PROGRESS -> ABORTED
+- 有效状态：IN_PROGRESS
+- 无效状态：COMPLETED / ABORTED
+- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED

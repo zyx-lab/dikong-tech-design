@@ -1,96 +1,109 @@
-# route 数据字典
+# 低空智能巡检平台 - 航线
 
-- updated_at: 2026-03-08T07:52:00Z
-- entity: route
+## 数据库
 
-## 业务定位
-- 历史 API: POST /api/v1/routes
-- 历史增补 API: GET /api/v1/routes
-- 历史增补 API: GET /api/v1/routes/{id}
-- 历史增补 API: DELETE /api/v1/routes/{id}
-- 当前轮增补 API: PATCH /api/v1/routes/{id}
-- 业务目的：航线台账先创建、后查询；外部系统基于基础接口自行组合业务流。
+PostgreSQL
 
-## 字段定义（来自模型代码）
-- id: type=BigAutoField; constraints=pk; verbose=ID
-- name: type=CharField(100); constraints=NOT NULL; verbose=航线名称
-- route_type: type=PositiveSmallIntegerField; constraints=NOT NULL, default=RouteType.PENDING_EXTENSION(0); verbose=航线类型扩展位
-- drone_type_id: type=BigIntegerField; constraints=NULLABLE; verbose=适用无人机类型 ID
-- total_distance: type=DecimalField(12,2); constraints=NULLABLE; verbose=航线总长度(米)
-- estimated_duration: type=PositiveIntegerField; constraints=NULLABLE; verbose=预计飞行时长(秒)
-- waypoint_count: type=PositiveIntegerField; constraints=NULLABLE; verbose=航点数量
-- creator_name: type=CharField(50); constraints=NOT NULL, default=''; verbose=创建人姓名
-- status: type=PositiveSmallIntegerField; constraints=NOT NULL, default=RouteStatus.ACTIVE(1); verbose=状态
-- created_at: type=DateTimeField(auto_now_add); constraints=NOT NULL; verbose=创建时间
-- updated_at: type=DateTimeField(auto_now); constraints=NOT NULL; verbose=更新时间
+---
 
-## 序列化读写边界
-- RouteWriteSerializer（POST/PATCH 写入）：
-  - 允许字段：`name`, `route_type`, `drone_type_id`, `total_distance`, `estimated_duration`, `waypoint_count`
-  - 拒绝未知字段：返回 `INVALID_PARAMS`
-- RouteReadSerializer（GET/POST/PATCH 返回）：
-  - 返回字段：`id`, `name`, `route_type`, `drone_type_id`, `total_distance`, `estimated_duration`, `waypoint_count`, `creator_name`, `status`, `created_at`, `updated_at`
+## 文档格式说明
 
-## 详情读取响应语义（当前轮）
-- 接口：`GET /api/v1/routes/{id}`
-- 成功响应：返回单条 route 对象（字段同 `RouteReadSerializer`）并携带 `business_code=SUCCESS`
-- 无权限：返回 `business_code=PERMISSION_DENIED`
-- 资源不存在：返回 `business_code=RESOURCE_NOT_FOUND`（detail code：`ROUTE_NOT_FOUND`）
+本文档为 **数据字典** 类型文档，记录数据库表结构、字段定义、约束和业务规则。
 
-## 更新响应语义（当前轮）
-- 接口：`PATCH /api/v1/routes/{id}`
-- 成功响应：返回最新 route 对象（字段同 `RouteReadSerializer`）并携带 `business_code=SUCCESS`
-- 参数错误：PATCH 请求体为空或包含不可写字段时返回 `business_code=INVALID_PARAMS`
-- 无权限：返回 `business_code=PERMISSION_DENIED`
-- 资源不存在：返回 `business_code=RESOURCE_NOT_FOUND`
+### 更新本文档的指南（大模型用）
 
-## 删除响应语义（历史增补）
-- 接口：`DELETE /api/v1/routes/{id}`
-- 成功响应：
-  - 未被 mission 引用：物理删除 route，返回 `deleted=true`, `delete_mode=hard`
-  - 已被 mission 引用：保留 route 主记录并将 `status=DISABLED(0)`，返回 `deleted=true`, `delete_mode=disabled`
-- 参数错误：DELETE 请求携带 body 时返回 `business_code=INVALID_PARAMS`
-- 无权限：返回 `business_code=PERMISSION_DENIED`
-- 资源不存在：返回 `business_code=RESOURCE_NOT_FOUND`
+当需要更新此文档时，请遵循以下格式：
 
-## 业务状态码覆盖
-- POST /api/v1/routes:
-  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
-  - 缺口：RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- GET /api/v1/routes:
-  - 已覆盖：SUCCESS, PERMISSION_DENIED
-  - 缺口：INVALID_PARAMS, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- GET /api/v1/routes/{id}:
-  - 已覆盖：SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
-  - 缺口：INVALID_PARAMS, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- PATCH /api/v1/routes/{id}:
-  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
-  - 缺口：STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- DELETE /api/v1/routes/{id}:
-  - 已覆盖：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND
-  - 缺口：STATE_CONFLICT, IDEMPOTENT_DUPLICATE
+```
+## N. {表名中文名}
 
-## 权限码
-- route.manage_route：创建航线（POST）
-- route.manage_route：更新航线（PATCH）
-- route.manage_route：删除航线（DELETE）
-- route.view_route：查看航线列表/详情（GET）
+**说明**：{表用途简述}
 
-## 证据文件
-- apps/route/models.py
-- apps/route/serializers.py
-- apps/route/views.py
-- apps/route/tests.py
-- apps/route/urls.py
-- apps/api_v1/urls.py
-- apps/api_v1/business_response.py
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| {字段名} | {PostgreSQL类型} | {约束} | {默认值} | {字段说明} |
 
-<!-- stage6_doc_sync::route::data_dictionary.md::start -->
-## Stage6 本轮同步
-- 关联 API: POST /api/v1/routes/{id}/enable
-- 提名依据: route 当前在被 mission 引用时执行 DELETE 只会软禁用为 DISABLED，但没有任何恢复入口，导致可引用航线会进入不可逆停用状态。补齐 enable 后，route 的软禁用路径才形成可恢复的最小闭环。
-- 业务事件: EVT-001 启用航线
-- 业务码覆盖: 目标=SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE; 已覆盖=SUCCESS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, INVALID_PARAMS; 缺口=STATE_CONFLICT, IDEMPOTENT_DUPLICATE
-- 测试沉淀: 生成用例数: 4, 已执行用例数: 4, 已沉淀到项目测试: 4, 待沉淀 case: N/A, 失败 case: N/A
-- 证据文件: apps/route/tests.py, apps/route/views.py, apps/route/models.py, apps/route/serializers.py, apps/route/urls.py
-<!-- stage6_doc_sync::route::data_dictionary.md::end -->
+**{某字段} 状态值**：
+
+| 值 | 含义 |
+|----|------|
+| {枚举值} | {含义} |
+
+**业务规则**：
+1. {规则1}
+2. {规则2}
+```
+
+---
+
+## 阅读说明
+
+本数据字典覆盖当前已落地的业务表：`routes`。
+
+---
+
+## 1. routes（航线表）
+
+**说明**：存储航线基础信息与状态。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| name | varchar(100) | NOT NULL | - | 航线名称 |
+| route_type | smallint | NOT NULL | 0 | 航线类型扩展位 |
+| drone_type_id | bigint | - | - | 适用无人机类型 ID |
+| total_distance | decimal(12,2) | - | - | 航线总长度（米） |
+| estimated_duration | int | - | - | 预计飞行时长（秒） |
+| waypoint_count | int | - | - | 航点数量 |
+| creator_name | varchar(50) | - | "" | 创建人姓名 |
+| status | smallint | NOT NULL | 1 | 状态：0=禁用, 1=正常 |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+**status 状态值**：
+
+| 值 | 含义 |
+|----|------|
+| 0 | 禁用 |
+| 1 | 正常 |
+
+**route_type 枚举值**：
+
+| 值 | 含义 |
+|----|------|
+| 0 | 待扩展 |
+
+**业务规则**：
+1. 删除航线时，若已被任务引用，则软禁用（status=0）而非物理删除。
+2. 启用/禁用航线通过状态动作接口完成。
+
+---
+
+## 2. 与实现对应
+
+1. 模型：`apps/route/models.py`
+2. 序列化与校验：`apps/route/serializers.py`
+3. 接口：`apps/route/views.py`
+
+---
+
+## 3. 业务响应码字典（Business API）
+
+说明：业务 API 响应体包含 `business_code`（主业务码）与 `business_detail_code`（细分原因码）。
+
+| business_code | 典型 HTTP | 语义 |
+| ------ | ------ | ------ |
+| SUCCESS | 200 / 201 | 业务处理成功 |
+| INVALID_PARAMS | 400 | 请求参数校验失败 |
+| PERMISSION_DENIED | 401 / 403 | 身份或权限不足 |
+| RESOURCE_NOT_FOUND | 404 | 目标资源不存在 |
+| STATE_CONFLICT | 409 | 状态机冲突 |
+
+| business_detail_code | 语义 |
+| ------ | ------ |
+| OK | 成功 |
+| NOT_AUTHENTICATED | 未登录或认证信息缺失 |
+| FORBIDDEN | 已登录但无权限 |
+| NOT_FOUND | 资源不存在 |
+| VALIDATION_ERROR | 参数校验失败 |
+| STATE_CONFLICT | 业务状态冲突 |
