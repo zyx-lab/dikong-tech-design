@@ -21,11 +21,6 @@
   - 飞行记录（flight_record）：CRUD + 状态流转（完成/异常终止）
   - 媒体文件（media_file）：CRUD + 逻辑删除
 
-3. Skill 工作流（流程脚手架）
-- 规划文件：`codex_devflow_scaffold/skill_implementation_plan.md`
-- 运行入口（自包含）：`python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py`
-- 当前实现状态：已落地并可执行 Stage0-Stage8，支持 `gate/decide`、`case-web`、`recalc-analyze`、`stage8-rollback`、Stage6 文档同步门禁、Stage2 离线 API 扫描（免启动服务）
-
 ## 快速启动
 
 ```bash
@@ -125,38 +120,62 @@ python manage.py runserver 0.0.0.0:8001
 
 ## 鉴权与授权边界
 
-- 认证方式：`SessionAuthentication` + `BasicAuthentication`
-- 默认权限：`IsAuthenticated`
-- 明确开放（AllowAny）：
-  - `GET /internal/auth/`
-  - `GET /internal/auth/session-status`
-  - `GET /api/v1/`
-  - `GET /api/v1/health`
-- Internal IAM 权限类：`RequireInternalPermission`
-- Business API 权限类：`ScopedActionPermission`
-- Scope 类型：`ALL` / `OWN` / `ASSIGNED`
-- superuser 作为 root 账号：不走 staff_type 授权链，拥有全量权限
+### 认证方式
 
-## Skill 规划对齐（实现态）
+| 方式 | 说明 |
+|------|------|
+| SessionAuthentication | 浏览器登录后 Django Session 保持登录状态 |
+| BasicAuthentication | 用户名:密码 Base64 编码，用于跨系统调用 |
 
-`codex_devflow_scaffold/skill_implementation_plan.md` 定义了 Stage0-Stage8 规范，当前仓库实现状态如下：
+### 默认权限
 
-1. 已存在
-- `codex_devflow_scaffold/skill_implementation_plan.md`
-- `codex_skills/codex-tdd-devflow/SKILL.md`
-- `codex_skills/codex-tdd-devflow/scripts/workflow_runner.py`
-- `codex_skills/codex-tdd-devflow/scripts/workflow_case_web.py`
-- `codex_devflow_scaffold/` 运行态目录与核心文件（`artifacts/inputs/schemas/registry/decisions/logs/state.json`）
+除 4 个明确开放的接口外，其他所有接口都需要登录（IsAuthenticated）。
 
-2. 使用入口（自包含）
-- `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py init`
-- `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py run-auto`
-- `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py gate`
-- `python codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --approve --apply`
+### 明确开放（无需登录）
 
-3. 结论
-- 当前仓库包含两条可运行能力：Django API 主工程 + codex-tdd-devflow 工作流 Skill。
-- Skill 入口与脚本均位于 `codex_skills/codex-tdd-devflow/`，不依赖 `tools/` 路径。
+| 接口 | 用途 |
+|------|------|
+| `GET /internal/auth/` | 检查 IAM 服务状态 |
+| `GET /internal/auth/session-status` | 查看当前登录状态 |
+| `GET /api/v1/` | 检查 API 服务状态 |
+| `GET /api/v1/health` | 健康检查 |
+
+### 两套权限体系
+
+#### Internal IAM（内部管理）
+
+使用 `RequireInternalPermission`，路径前缀 `/internal/auth/*`
+
+**规则**：
+1. 先检查是否是 superuser → 直接放行
+2. 再检查是否有 staff + staff_type 身份 → 没有则拒绝
+3. 最后检查权限码 → 通过 staff_type → group → permission 链判断
+
+#### Business API（业务接口）
+
+使用 `ScopedActionPermission`，路径前缀 `/api/v1/*`
+
+**规则**：
+1. 先检查权限码 → 每个 API action 对应一个权限码（如 `drone.view_drone`、`drone.manage_drone`）
+2. 再检查数据范围（Scope） → 决定能看哪些数据
+
+### Scope（数据可见范围）
+
+| Scope | 含义 | 适用角色 |
+|-------|------|----------|
+| ALL | 全部数据 | 管理员 |
+| OWN | 自己创建的 | 普通操作员 |
+| ASSIGNED | 分配给自己的 | 组长/主管 |
+
+**例子**：
+- 无人机列表 API 配置 Scope=ASSIGNED → 用户只能看到分配给自己的无人机
+- 任务列表 API 配置 Scope=OWN → 用户只能看到自己创建的任务
+
+### superuser（超级管理员）
+
+- **不通过 staff_type 授权**：不需要关联 staff、staff_type、group、permission
+- **拥有全部权限**：可以操作所有数据，不受 Scope 限制
+- **用途**：系统初始管理员、运维人员
 
 ## 文档导航
 
@@ -187,9 +206,6 @@ python manage.py runserver 0.0.0.0:8001
 - 权限逻辑模型：[authz_logical_model.md](权限管理侧实现/authz_logical_model.md)
 - 权限 DBML：[authz_schema.dbml](权限管理侧实现/authz_schema.dbml)
 
-### Skill 工作流
-- Skill 实施规划：[skill_implementation_plan.md](codex_devflow_scaffold/skill_implementation_plan.md)
-
 ## 近期路线（与代码现状对齐）
 
 1. 业务前端（未开始）
@@ -208,14 +224,5 @@ python manage.py runserver 0.0.0.0:8001
 - [x] 任务域（missions）
 - [x] 飞行记录与媒体域（flight_records/media_files）
 
-3. IAM 增强（部分已做）
-- [ ] 矩阵导出接口
-- [ ] 权限差异对比视图
-- [ ] 授权链完整性一键校验命令
-
-4. Skill 流程（已实现）
-- [x] 实现 `workflow_runner`
-- [x] 落地 `codex-tdd-devflow` skill 目录
-- [x] 按规划补齐 schemas/registry/state 机器校验闭环
-- [x] 门禁决策标准化（`gate` / `decide`）
-- [x] P2 能力（`case-web` / `recalc-analyze` / `stage8-rollback`）
+3. IAM 增强（已完成）
+- [x] 授权链完整性校验命令：`python manage.py check_auth_chain`

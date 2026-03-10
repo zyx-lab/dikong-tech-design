@@ -284,6 +284,34 @@ class DroneAssignmentApiTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
         self.assertIn("staff", response.data)
 
+    def test_create_assignment_with_nonexistent_drone_should_return_invalid_params(self):
+        """测试 drone 不存在"""
+        self._grant_manage_permission()
+        self._authenticate_dispatcher()
+
+        response = self.client.post(
+            "/api/v1/drone-assignments",
+            {"drone": 99999, "staff": self.pilot_staff.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+
+    def test_create_assignment_with_nonexistent_staff_should_return_invalid_params(self):
+        """测试 staff 不存在"""
+        self._grant_manage_permission()
+        self._authenticate_dispatcher()
+
+        response = self.client.post(
+            "/api/v1/drone-assignments",
+            {"drone": self.drone.id, "staff": 99999},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+
     def test_create_assignment_with_duplicate_active_pair_should_return_duplicate_request(self):
         self._grant_manage_permission()
         self._authenticate_dispatcher()

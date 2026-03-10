@@ -312,6 +312,23 @@ class RouteApiTests(TestCase):
         route.refresh_from_db()
         self.assertEqual(route.name, "空更新航线")
 
+    def test_patch_route_should_not_allow_status_field(self):
+        """测试 PATCH 不能修改 status 字段"""
+        self._grant_permission("route.manage_route")
+        self.client.force_authenticate(self.user)
+        route = self._create_route(name="状态测试航线", status=RouteStatus.DISABLED)
+
+        original_status = route.status
+        response = self.client.patch(
+            f"/api/v1/routes/{route.id}",
+            {"status": RouteStatus.ACTIVE},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        route.refresh_from_db()
+        self.assertEqual(route.status, original_status)
+
     def test_patch_route_not_found_should_return_resource_not_found(self):
         self._grant_permission("route.manage_route")
         self.client.force_authenticate(self.user)

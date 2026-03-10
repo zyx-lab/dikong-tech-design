@@ -16,6 +16,5 @@ urlpatterns = [
     path("staff-types", views.StaffTypeListCreateView.as_view(), name="staff-type-list-create"),
     path("staff-types/<int:pk>", views.StaffTypeDetailView.as_view(), name="staff-type-detail"),
     path("staff-types/<int:staff_type_id>/groups", views.StaffTypeGroupAssignView.as_view(), name="staff-type-group-assign"),
-    path("scopes/matrix", views.ScopeMatrixView.as_view(), name="scope-matrix"),
     path("audit-logs", views.AuditLogListView.as_view(), name="audit-log-list"),
 ]

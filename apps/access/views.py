@@ -369,32 +369,6 @@ class StaffTypeGroupAssignView(PermissionMapMixin, generics.GenericAPIView):
         return Response(after_data)
 
 
-class ScopeMatrixView(PermissionMapMixin, APIView):
-    permission_classes = [RequireInternalPermission]
-    required_permission = "access.manage_auth_scopes"
-
-    @extend_schema(responses=OpenApiTypes.OBJECT)
-    def get(self, request):
-        groups = Group.objects.all().order_by("id")
-        rows = []
-        scopes = GroupPermissionScope.objects.select_related("group", "permission__content_type").filter(status=ScopeStatus.ACTIVE)
-
-        matrix = {}
-        for scope in scopes:
-            key = f"{scope.permission.content_type.app_label}.{scope.permission.codename}"
-            matrix.setdefault(key, {})[scope.group_id] = scope.scope_type
-
-        for permission_key, group_scopes in sorted(matrix.items()):
-            rows.append(
-                {
-                    "permission": permission_key,
-                    "scopes": [{"group_id": group.id, "scope": group_scopes.get(group.id)} for group in groups],
-                }
-            )
-
-        return Response({"rows": rows})
-
-
 class AuditLogListView(PermissionMapMixin, generics.ListAPIView):
     serializer_class = AuditLogSerializer
     permission_classes = [RequireInternalPermission]

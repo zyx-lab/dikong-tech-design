@@ -220,6 +220,63 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
         self.assertIn("pilot", response.data)
 
+    def test_create_mission_with_nonexistent_route_should_return_invalid_params(self):
+        """测试 route 不存在"""
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+
+        response = self.client.post(
+            "/api/v1/missions",
+            {
+                "name": "不存在航线任务",
+                "route": 99999,
+                "drone": self.drone.id,
+                "pilot": self.pilot_staff.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+
+    def test_create_mission_with_nonexistent_drone_should_return_invalid_params(self):
+        """测试 drone 不存在"""
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+
+        response = self.client.post(
+            "/api/v1/missions",
+            {
+                "name": "不存在无人机任务",
+                "route": self.route.id,
+                "drone": 99999,
+                "pilot": self.pilot_staff.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+
+    def test_create_mission_with_nonexistent_pilot_should_return_invalid_params(self):
+        """测试 pilot 不存在"""
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+
+        response = self.client.post(
+            "/api/v1/missions",
+            {
+                "name": "不存在飞手任务",
+                "route": self.route.id,
+                "drone": self.drone.id,
+                "pilot": 99999,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+
     def test_create_mission_without_auth_should_return_permission_denied(self):
         response = self.client.post(
             "/api/v1/missions",
