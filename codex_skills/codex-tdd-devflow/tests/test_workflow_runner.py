@@ -161,10 +161,10 @@ class WorkflowRunnerStage6DocSyncTests(unittest.TestCase):
         paths = self._make_paths()
         original = "\n".join(
             [
-                "# 航线实现说明",
+                "# 示例实体实现说明",
                 "",
                 "- generated_at: 2026-03-08T07:52:00Z",
-                "- entity: route",
+                "- entity: sample_entity",
                 "",
                 "## 文档格式说明",
                 "",
@@ -182,64 +182,62 @@ class WorkflowRunnerStage6DocSyncTests(unittest.TestCase):
                 "- 业务码：{返回的业务码}",
                 "```",
                 "",
-                "## API 实现 (/api/v1/routes)",
+                "## 功能记录",
                 "",
-                "### 1. POST /api/v1/routes/{id}/enable",
-                "- 功能：启用航线",
-                "- 业务码：SUCCESS, INVALID_PARAMS",
+                "### 1. 示例已有条目",
+                "- 功能：人工维护内容",
+                "- 备注：应当保留",
                 "",
                 "## 审计动作",
                 "",
-                "- ROUTE_ENABLE",
+                "- MANUAL_AUDIT_ENTRY",
                 "",
-                "<!-- stage6_doc_sync::route::impl_desc.md::start -->",
+                "<!-- stage6_doc_sync::sample_entity::impl_desc.md::start -->",
                 "旧的 stage6 尾块",
-                "<!-- stage6_doc_sync::route::impl_desc.md::end -->",
+                "<!-- stage6_doc_sync::sample_entity::impl_desc.md::end -->",
             ]
         )
         merged = workflow_runner._merge_entity_doc_content(paths, original, "impl_desc.md", {})
 
-        self.assertIn("### 1. POST /api/v1/routes/{id}/enable", merged)
-        self.assertIn("- ROUTE_ENABLE", merged)
+        self.assertIn("### 1. 示例已有条目", merged)
+        self.assertIn("- MANUAL_AUDIT_ENTRY", merged)
         self.assertIn("### 更新本文档的指南（大模型用）", merged)
         self.assertNotIn("stage6_doc_sync", merged)
         self.assertNotIn("旧的 stage6 尾块", merged)
-        self.assertNotIn("POST /api/v1/routes/{id}/disable", merged)
+        self.assertIn("- 备注：应当保留", merged)
 
     def test_merge_schema_only_removes_stage6_markers_and_keeps_manual_notes(self):
         paths = self._make_paths()
         original = "\n".join(
             [
                 "// updated_at: 2026-03-08",
-                "// entity: route",
+                "// entity: sample_entity",
                 "",
-                "Table routes {",
+                "Table sample_entities {",
                 "  id bigint [pk, increment]",
-                "  name varchar(64)",
+                "  title varchar(64)",
                 "}",
                 "",
-                "// 本轮增补（2026-03-09）",
-                "// focus_api: POST /api/v1/routes/{id}/enable",
-                "// 语义: 启用航线",
+                "// 人工说明：这段说明应该保留",
                 "",
-                "// stage6_doc_sync::route::schema.dbml::start",
-                "// focus_api_keys: POST /api/v1/routes/{id}/disable",
-                "// stage6_doc_sync::route::schema.dbml::end",
+                "// stage6_doc_sync::sample_entity::schema.dbml::start",
+                "// generated sync block",
+                "// stage6_doc_sync::sample_entity::schema.dbml::end",
             ]
         )
         merged = workflow_runner._merge_entity_doc_content(paths, original, "schema.dbml", {})
 
-        self.assertIn("// focus_api: POST /api/v1/routes/{id}/enable", merged)
+        self.assertIn("// 人工说明：这段说明应该保留", merged)
         self.assertNotIn("stage6_doc_sync", merged)
-        self.assertNotIn("POST /api/v1/routes/{id}/disable", merged)
+        self.assertNotIn("generated sync block", merged)
 
     def test_auto_sync_skips_missing_docs_instead_of_generating_templates(self):
         paths = self._make_paths()
 
         report = workflow_runner.auto_sync_entity_docs(
             paths,
-            touched_entities=["route"],
-            changed_paths=["apps/route/views.py"],
+            touched_entities=["sample_entity"],
+            changed_paths=["apps/sample_entity/views.py"],
         )
 
         self.assertTrue(report["attempted"])
@@ -249,10 +247,10 @@ class WorkflowRunnerStage6DocSyncTests(unittest.TestCase):
             sorted(report["skipped_docs"]),
             sorted(
                 [
-                    "业务侧实现/route_data_dictionary.md",
-                    "业务侧实现/route_impl_desc.md",
-                    "业务侧实现/route_logical_model.md",
-                    "业务侧实现/route_schema.dbml",
+                    "业务侧实现/sample_entity_data_dictionary.md",
+                    "业务侧实现/sample_entity_impl_desc.md",
+                    "业务侧实现/sample_entity_logical_model.md",
+                    "业务侧实现/sample_entity_schema.dbml",
                 ]
             ),
         )
