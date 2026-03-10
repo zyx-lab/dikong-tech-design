@@ -323,6 +323,90 @@ class WorkflowRunnerStage5Tests(unittest.TestCase):
         )
 
 
+class WorkflowRunnerApiDiscoveryGovernanceTests(unittest.TestCase):
+    def _make_paths(self):
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        root = Path(tempdir.name)
+        scaffold = root / "codex_devflow_scaffold"
+        paths = workflow_runner.Paths(root=root, scaffold=scaffold)
+        workflow_runner.ensure_scaffold(paths, force=True)
+        return paths
+
+    def test_discover_apis_skips_ignored_root_endpoints_and_falls_back_to_local_scan(self):
+        paths = self._make_paths()
+        spec = json.loads(json.dumps(workflow_runner.DEFAULT_WORKFLOW_SPEC))
+        spec["business_api"].update(
+            {
+                "schema_url": "",
+                "root_url": "http://example.test/api/v1/",
+                "local_scan_enabled": True,
+                "local_scan_command": ["python3", "tools/export_openapi.py"],
+                "ignore_api_patterns": ["GET /api/v1/", "GET /api/v1/health"],
+            }
+        )
+
+        with (
+            mock.patch.object(
+                workflow_runner,
+                "_scan_api_from_root",
+                return_value=(["GET /api/v1/", "GET /api/v1/health"], "api_root"),
+            ),
+            mock.patch.object(
+                workflow_runner,
+                "_scan_api_from_local_schema",
+                return_value=(
+                    ["GET /api/v1/health", "POST /api/v1/routes", "POST /api/v1/routes"],
+                    "local_openapi",
+                ),
+            ),
+        ):
+            scanned, source, scan_error = workflow_runner.discover_apis(paths, spec)
+
+        self.assertEqual(scanned, ["POST /api/v1/routes"])
+        self.assertEqual(source, "local_openapi")
+        self.assertEqual(scan_error, "")
+
+    def test_stage2_prunes_ignored_registry_items_before_drift_check(self):
+        paths = self._make_paths()
+        workflow_runner.write_json(
+            paths.api_registry,
+            {
+                "schema_version": 1,
+                "bootstrap_done": True,
+                "items": [
+                    {"api_key": "GET /api/v1/", "source": "legacy"},
+                    {"api_key": "GET /api/v1/health", "source": "legacy"},
+                    {"api_key": "POST /api/v1/routes", "source": "legacy"},
+                ],
+            },
+        )
+        spec = json.loads(json.dumps(workflow_runner.DEFAULT_WORKFLOW_SPEC))
+        spec["business_api"]["ignore_api_patterns"] = ["GET /api/v1/", "GET /api/v1/health"]
+
+        with mock.patch.object(
+            workflow_runner,
+            "discover_apis",
+            return_value=(["POST /api/v1/routes"], "local_openapi", ""),
+        ):
+            result = workflow_runner.stage2(paths, spec, {})
+
+        registry = workflow_runner.read_json(paths.api_registry, {})
+        registry_keys = [
+            item["api_key"]
+            for item in registry.get("items", [])
+            if isinstance(item, dict) and isinstance(item.get("api_key"), str)
+        ]
+
+        self.assertEqual(registry_keys, ["POST /api/v1/routes"])
+        self.assertEqual(result.artifact["existing_api_keys"], ["POST /api/v1/routes"])
+        self.assertEqual(
+            result.artifact["registry_ignore_autofix"]["removed_api_keys"],
+            ["GET /api/v1/", "GET /api/v1/health"],
+        )
+        self.assertEqual(result.next_stage, 3)
+
+
 class WorkflowRunnerStage6DocSyncTests(unittest.TestCase):
     def _make_paths(self):
         tempdir = tempfile.TemporaryDirectory()

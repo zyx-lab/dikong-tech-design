@@ -211,6 +211,7 @@ DEFAULT_WORKFLOW_SPEC: dict[str, Any] = {
         "schema_url": "http://127.0.0.1:8001/api/v1/docs/schema/",
         "root_url": "http://127.0.0.1:8001/api/v1/",
         "timeout_seconds": 5,
+        "ignore_api_patterns": [],
         "local_scan_enabled": True,
         "local_scan_urlconf": "config.business_api_urlconf",
     },
@@ -280,6 +281,7 @@ INIT_WORKFLOW_SPEC: dict[str, Any] = {
         "schema_url": "",
         "root_url": "",
         "timeout_seconds": 5,
+        "ignore_api_patterns": [],
         "local_scan_enabled": False,
         "local_scan_command": [required_placeholder("api_discovery_command")],
         "local_scan_urlconf": "",
@@ -521,6 +523,9 @@ def build_init_workflow_spec_template(preset: str) -> dict[str, Any]:
             notes.append("JSON 不支持真正注释；请阅读 _template / _comment / _examples 字段。")
 
     payload["business_api"]["_comment"] = "API 发现配置。三选一即可：schema_url、root_url、或 local_scan_command。"
+    payload["business_api"]["_comment_ignore_api_patterns"] = (
+        "可选：需要从业务 API 发现中排除的 METHOD path 模式列表，支持 fnmatch。"
+    )
     payload["business_api"]["_examples"] = {
         "django_local_scan": ["{python}", "manage.py", "spectacular", "--format", "openapi-json", "--urlconf", "config.business_api_urlconf"],
         "custom_export_script": ["python3", "tools/export_openapi.py"],
@@ -1874,6 +1879,99 @@ def normalize_api_key(api_key: str) -> str:
     if len(parts) == 1:
         return parts[0].upper()
     return f"{parts[0].upper()} {parts[1]}"
+
+
+def normalize_api_pattern(pattern: str) -> str:
+    token = " ".join(pattern.strip().split())
+    if not token:
+        return ""
+    parts = token.split(" ", 1)
+    if len(parts) == 2:
+        return f"{parts[0].upper()} {parts[1]}"
+    return token
+
+
+def configured_ignore_api_patterns(spec: dict[str, Any]) -> list[str]:
+    business_api = spec.get("business_api", {}) if isinstance(spec, dict) else {}
+    raw_patterns = business_api.get("ignore_api_patterns", []) if isinstance(business_api, dict) else []
+    if not isinstance(raw_patterns, list):
+        return []
+    patterns: list[str] = []
+    for item in raw_patterns:
+        if not isinstance(item, str):
+            continue
+        normalized = normalize_api_pattern(item)
+        if normalized:
+            patterns.append(normalized)
+    return dedupe_keep_order(patterns)
+
+
+def api_key_matches_pattern(api_key: str, pattern: str) -> bool:
+    normalized_key = normalize_api_key(api_key)
+    normalized_pattern = normalize_api_pattern(pattern)
+    if not normalized_key or not normalized_pattern:
+        return False
+
+    parts = normalized_key.split(" ", 1)
+    path = parts[1] if len(parts) == 2 else normalized_key
+    if " " not in normalized_pattern:
+        return fnmatch.fnmatch(path, normalized_pattern)
+    return fnmatch.fnmatch(normalized_key, normalized_pattern)
+
+
+def filter_api_keys(api_keys: list[str], ignore_patterns: list[str]) -> list[str]:
+    normalized_patterns: list[str] = []
+    for pattern in ignore_patterns:
+        normalized_pattern = normalize_api_pattern(pattern)
+        if normalized_pattern:
+            normalized_patterns.append(normalized_pattern)
+    kept: list[str] = []
+    for item in api_keys:
+        normalized = normalize_api_key(str(item))
+        if not normalized:
+            continue
+        if any(api_key_matches_pattern(normalized, pattern) for pattern in normalized_patterns):
+            continue
+        kept.append(normalized)
+    return dedupe_keep_order(kept)
+
+
+def _prune_ignored_api_registry_items(
+    api_registry: dict[str, Any],
+    ignore_patterns: list[str],
+) -> tuple[list[str], bool]:
+    items = api_registry.get("items", []) if isinstance(api_registry, dict) else []
+    if not isinstance(items, list):
+        return [], False
+
+    changed = False
+    removed: list[str] = []
+    kept_items: list[Any] = []
+    for item in items:
+        if not isinstance(item, dict):
+            kept_items.append(item)
+            continue
+        raw_key = item.get("api_key")
+        if not isinstance(raw_key, str):
+            kept_items.append(item)
+            continue
+
+        normalized_key = normalize_api_key(raw_key)
+        if normalized_key and any(api_key_matches_pattern(normalized_key, pattern) for pattern in ignore_patterns):
+            removed.append(normalized_key)
+            changed = True
+            continue
+
+        current_item = item
+        if normalized_key and raw_key != normalized_key:
+            current_item = dict(item)
+            current_item["api_key"] = normalized_key
+            changed = True
+        kept_items.append(current_item)
+
+    if changed:
+        api_registry["items"] = kept_items
+    return sorted(set(removed)), changed
 
 
 def normalize_entity_name(raw: str) -> str:
@@ -4569,6 +4667,7 @@ def analyze_recalc_graph(paths: Paths, changed_paths: list[str] | None = None) -
 def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
     model = read_json(paths.semantic_model, {})
     api_registry = read_json(paths.api_registry, DEFAULT_API_REGISTRY)
+    ignore_patterns = configured_ignore_api_patterns(spec)
 
     missing = validate_semantic_model(model if isinstance(model, dict) else {})
     missing_dirs = missing_semantic_directories(paths)
@@ -4579,18 +4678,7 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
         "missing_semantic_directories": missing_dirs,
     }
 
-    existing_api_keys: set[str] = set()
-    if isinstance(api_registry, dict):
-        items = api_registry.get("items", [])
-        if isinstance(items, list):
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                key = item.get("api_key")
-                if isinstance(key, str):
-                    normalized_key = normalize_api_key(key)
-                    if normalized_key:
-                        existing_api_keys.add(normalized_key)
+    existing_api_keys = set(_extract_registry_api_keys(api_registry, ignore_patterns))
 
     bootstrap_done = bool(api_registry.get("bootstrap_done", False)) if isinstance(api_registry, dict) else False
     bootstrap_mode = (not existing_api_keys) and (not bootstrap_done)
@@ -4712,7 +4800,7 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
         },
         "commit_message": "stage-0(api-seed): generate next api candidate",
         "semantic_gap_report": semantic_gap_report,
-        "api_registry_items": len(api_registry.get("items", [])),
+        "api_registry_items": len(existing_api_keys),
         "candidate_source": candidate_source,
         "session_api_candidate_file": rel_path(paths, paths.session_api_candidates),
         "session_api_candidate_count": len(session_candidates),
@@ -4836,27 +4924,30 @@ def discover_apis(paths: Paths, spec: dict[str, Any]) -> tuple[list[str], str, s
     schema_url = str(business_api.get("schema_url", "")).strip()
     root_url = str(business_api.get("root_url", "")).strip()
     timeout_seconds = int(business_api.get("timeout_seconds", 5))
+    ignore_patterns = configured_ignore_api_patterns(spec)
     errors: list[str] = []
 
     if schema_url:
         try:
-            scanned, source = _scan_api_from_schema(schema_url, timeout_seconds)
+            raw_scanned, source = _scan_api_from_schema(schema_url, timeout_seconds)
+            scanned = filter_api_keys(raw_scanned, ignore_patterns)
             if scanned:
                 return scanned, source, ""
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError) as exc:
             errors.append(f"schema_error={exc}")
         else:
-            errors.append("schema_error=schema_empty")
+            errors.append("schema_error=schema_empty_after_ignore" if raw_scanned else "schema_error=schema_empty")
 
     if root_url:
         try:
-            scanned, source = _scan_api_from_root(root_url, timeout_seconds)
+            raw_scanned, source = _scan_api_from_root(root_url, timeout_seconds)
+            scanned = filter_api_keys(raw_scanned, ignore_patterns)
             if scanned:
                 return scanned, source, ""
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError) as exc:
             errors.append(f"root_error={exc}")
         else:
-            errors.append("root_error=root_empty")
+            errors.append("root_error=root_empty_after_ignore" if raw_scanned else "root_error=root_empty")
 
     local_enabled = bool(business_api.get("local_scan_enabled", True))
     if local_enabled:
@@ -4881,10 +4972,13 @@ def discover_apis(paths: Paths, spec: dict[str, Any]) -> tuple[list[str], str, s
                 local_urlconf,
             ]
         try:
-            scanned, source = _scan_api_from_local_schema(paths, command)
+            raw_scanned, source = _scan_api_from_local_schema(paths, command)
+            scanned = filter_api_keys(raw_scanned, ignore_patterns)
             if scanned:
                 return scanned, source, ""
-            errors.append("local_error=local_schema_empty")
+            errors.append(
+                "local_error=local_schema_empty_after_ignore" if raw_scanned else "local_error=local_schema_empty"
+            )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             errors.append(f"local_error={exc}")
     else:
@@ -4895,11 +4989,12 @@ def discover_apis(paths: Paths, spec: dict[str, Any]) -> tuple[list[str], str, s
     return [], "none", "; ".join(errors)
 
 
-def _extract_registry_api_keys(api_registry: dict[str, Any]) -> list[str]:
+def _extract_registry_api_keys(api_registry: dict[str, Any], ignore_patterns: list[str] | None = None) -> list[str]:
     keys: list[str] = []
     items = api_registry.get("items", []) if isinstance(api_registry, dict) else []
     if not isinstance(items, list):
         return keys
+    effective_ignore_patterns = ignore_patterns or []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -4908,6 +5003,8 @@ def _extract_registry_api_keys(api_registry: dict[str, Any]) -> list[str]:
             continue
         normalized = normalize_api_key(api_key)
         if normalized:
+            if any(api_key_matches_pattern(normalized, pattern) for pattern in effective_ignore_patterns):
+                continue
             keys.append(normalized)
     return sorted(set(keys))
 
@@ -4971,9 +5068,29 @@ def _stage2_autofix_missing_online(
 
 def stage2(paths: Paths, spec: dict[str, Any], state: dict[str, Any]) -> StageResult:
     api_registry = read_json(paths.api_registry, DEFAULT_API_REGISTRY)
+    ignore_patterns = configured_ignore_api_patterns(spec)
+    registry_ignore_autofix = {
+        "attempted": False,
+        "removed_api_keys": [],
+        "error": "",
+    }
+    removed_ignored_keys, registry_changed = _prune_ignored_api_registry_items(api_registry, ignore_patterns)
+    if registry_changed:
+        registry_ignore_autofix["attempted"] = True
+        registry_ignore_autofix["removed_api_keys"] = removed_ignored_keys
+        try:
+            write_json(paths.api_registry, api_registry)
+        except OSError as exc:
+            registry_ignore_autofix["error"] = str(exc)
+        else:
+            api_registry = read_json(paths.api_registry, DEFAULT_API_REGISTRY)
     scanned_apis, source, scan_error = discover_apis(paths, spec)
+    if registry_ignore_autofix["error"]:
+        scan_error = "; ".join(
+            [item for item in [scan_error, f"registry_ignore_error={registry_ignore_autofix['error']}"] if item]
+        )
 
-    existing_api_keys = _extract_registry_api_keys(api_registry)
+    existing_api_keys = _extract_registry_api_keys(api_registry, ignore_patterns)
 
     bootstrap_done = bool(api_registry.get("bootstrap_done", False))
     bootstrap_mode = (not existing_api_keys) and (not bootstrap_done)
@@ -5005,6 +5122,7 @@ def stage2(paths: Paths, spec: dict[str, Any], state: dict[str, Any]) -> StageRe
         "new_api_keys": new_api_keys,
         "drift_items": drift_items,
         "drift_autofix": drift_autofix,
+        "registry_ignore_autofix": registry_ignore_autofix,
         "bootstrap_mode": bootstrap_mode,
     }
 
@@ -6764,6 +6882,8 @@ def _upsert_api_registry(paths: Paths) -> dict[str, Any]:
     workflow_spec = read_json(paths.workflow_spec, DEFAULT_WORKFLOW_SPEC)
     if not isinstance(workflow_spec, dict):
         workflow_spec = DEFAULT_WORKFLOW_SPEC
+    ignore_patterns = configured_ignore_api_patterns(workflow_spec)
+    _prune_ignored_api_registry_items(api_registry, ignore_patterns)
 
     scanned_apis = stage2_artifact.get("scanned_apis", []) if isinstance(stage2_artifact, dict) else []
     new_api_keys = stage2_artifact.get("new_api_keys", []) if isinstance(stage2_artifact, dict) else []
