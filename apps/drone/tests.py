@@ -159,6 +159,33 @@ class DroneApiWriteTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("status", response.data)
 
+    def test_put_should_not_be_exposed(self):
+        self._grant_permissions(["drone.manage_drone"])
+        drone = Drone.objects.create(
+            code="DJ-0101-PUT",
+            name="无人机-PUT",
+            model="Matrice 30",
+            serial_no="SN-101-PUT",
+            status=DroneStatus.DISABLED,
+            created_by_staff_id=self.staff.id,
+        )
+
+        response = self.client.put(
+            f"/api/v1/drones/{drone.id}",
+            {
+                "code": "DJ-0101-PUT",
+                "name": "无人机-PUT-更新",
+                "model": "Matrice 30",
+                "serial_no": "SN-101-PUT",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.data["business_detail_code"], "METHOD_NOT_ALLOWED")
+        drone.refresh_from_db()
+        self.assertEqual(drone.name, "无人机-PUT")
+
     def test_retired_status_is_irreversible_and_idempotent(self):
         self._grant_permissions(["drone.view_drone", "drone.change_drone_status"])
         drone = Drone.objects.create(

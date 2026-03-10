@@ -1,7 +1,7 @@
 from django.db import transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ErrorDetail
+from rest_framework.exceptions import ErrorDetail, MethodNotAllowed
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema
 
@@ -29,7 +29,7 @@ class DroneViewSet(
 
     queryset = Drone.objects.all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     permission_map = {
         "list": "drone.view_drone",
@@ -132,6 +132,12 @@ class DroneViewSet(
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @extend_schema(exclude=True)
+    def update(self, request, *args, **kwargs):
+        if request.method.upper() == "PUT":
+            raise MethodNotAllowed("PUT")
+        return super().update(request, *args, **kwargs)
 
     @transaction.atomic
     def perform_create(self, serializer):
