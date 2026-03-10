@@ -115,6 +115,111 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
         self.assertIn("name", response.data)
 
+    def test_create_mission_with_disabled_route_should_return_invalid_params(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        disabled_route = Route.objects.create(name="禁用航线", status=RouteStatus.DISABLED)
+
+        response = self.client.post(
+            "/api/v1/missions",
+            {
+                "name": "禁用航线任务",
+                "route": disabled_route.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_staff.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("route", response.data)
+
+    def test_create_mission_with_disabled_drone_should_return_invalid_params(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        disabled_drone = Drone.objects.create(
+            code="DRN-002",
+            name="停用任务机",
+            model="M300",
+            serial_no="SN-MISSION-002",
+            status=DroneStatus.DISABLED,
+        )
+
+        response = self.client.post(
+            "/api/v1/missions",
+            {
+                "name": "停用无人机任务",
+                "route": self.route.id,
+                "drone": disabled_drone.id,
+                "pilot": self.pilot_staff.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("drone", response.data)
+
+    def test_create_mission_with_inactive_pilot_should_return_invalid_params(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        inactive_pilot_user = User.objects.create_user(username="inactive_mission_pilot", password="pass1234", status=1)
+        inactive_pilot = StaffProfile.objects.create(
+            user=inactive_pilot_user,
+            staff_no="P-002",
+            name="离职飞手",
+            employment_status=EmploymentStatus.INACTIVE,
+            staff_type=self.pilot_staff_type,
+        )
+
+        response = self.client.post(
+            "/api/v1/missions",
+            {
+                "name": "离职飞手任务",
+                "route": self.route.id,
+                "drone": self.drone.id,
+                "pilot": inactive_pilot.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("pilot", response.data)
+
+    def test_create_mission_with_non_pilot_staff_should_return_invalid_params(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        observer_staff_type = StaffType.objects.create(code="mission_observer_test", name="观察员", status=1)
+        observer_user = User.objects.create_user(username="mission_observer", password="pass1234", status=1)
+        observer_staff = StaffProfile.objects.create(
+            user=observer_user,
+            staff_no="O-001",
+            name="观察员A",
+            employment_status=EmploymentStatus.ACTIVE,
+            staff_type=observer_staff_type,
+        )
+
+        response = self.client.post(
+            "/api/v1/missions",
+            {
+                "name": "非飞手任务",
+                "route": self.route.id,
+                "drone": self.drone.id,
+                "pilot": observer_staff.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("pilot", response.data)
+
     def test_create_mission_without_auth_should_return_permission_denied(self):
         response = self.client.post(
             "/api/v1/missions",

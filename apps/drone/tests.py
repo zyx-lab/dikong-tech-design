@@ -119,6 +119,16 @@ class DroneApiWriteTests(TestCase):
                 status=ScopeStatus.ACTIVE,
             )
 
+    def _create_drone(self, *, code: str, status: str) -> Drone:
+        return Drone.objects.create(
+            code=code,
+            name=f"{code}-name",
+            model="Matrice 30",
+            serial_no=f"{code}-sn",
+            status=status,
+            created_by_staff_id=self.staff.id,
+        )
+
     def test_create_should_record_creator_staff_and_audit_log(self):
         self._grant_permissions(["drone.manage_drone"])
         payload = {
@@ -185,6 +195,102 @@ class DroneApiWriteTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "METHOD_NOT_ALLOWED")
         drone.refresh_from_db()
         self.assertEqual(drone.name, "无人机-PUT")
+
+    def test_enable_should_transition_disabled_drone_and_write_audit_log(self):
+        self._grant_permissions(["drone.change_drone_status"])
+        drone = self._create_drone(code="DJ-ENABLE-01", status=DroneStatus.DISABLED)
+
+        response = self.client.post(f"/api/v1/drones/{drone.id}/enable")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["status"], DroneStatus.ENABLED)
+        drone.refresh_from_db()
+        self.assertEqual(drone.status, DroneStatus.ENABLED)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="DRONE_STATUS_CHANGE",
+                target_type="drone",
+                target_id=str(drone.id),
+            ).exists()
+        )
+
+    def test_enable_enabled_drone_should_be_idempotent_success(self):
+        self._grant_permissions(["drone.change_drone_status"])
+        drone = self._create_drone(code="DJ-ENABLE-02", status=DroneStatus.ENABLED)
+
+        response = self.client.post(f"/api/v1/drones/{drone.id}/enable")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        drone.refresh_from_db()
+        self.assertEqual(drone.status, DroneStatus.ENABLED)
+
+    def test_disable_should_transition_enabled_drone_and_write_audit_log(self):
+        self._grant_permissions(["drone.change_drone_status"])
+        drone = self._create_drone(code="DJ-DISABLE-01", status=DroneStatus.ENABLED)
+
+        response = self.client.post(f"/api/v1/drones/{drone.id}/disable")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["status"], DroneStatus.DISABLED)
+        drone.refresh_from_db()
+        self.assertEqual(drone.status, DroneStatus.DISABLED)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="DRONE_STATUS_CHANGE",
+                target_type="drone",
+                target_id=str(drone.id),
+            ).exists()
+        )
+
+    def test_disable_disabled_drone_should_be_idempotent_success(self):
+        self._grant_permissions(["drone.change_drone_status"])
+        drone = self._create_drone(code="DJ-DISABLE-02", status=DroneStatus.DISABLED)
+
+        response = self.client.post(f"/api/v1/drones/{drone.id}/disable")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        drone.refresh_from_db()
+        self.assertEqual(drone.status, DroneStatus.DISABLED)
+
+    def test_maintenance_should_transition_enabled_drone_and_write_audit_log(self):
+        self._grant_permissions(["drone.change_drone_status"])
+        drone = self._create_drone(code="DJ-MAINT-01", status=DroneStatus.ENABLED)
+
+        response = self.client.post(f"/api/v1/drones/{drone.id}/maintenance")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["status"], DroneStatus.MAINTENANCE)
+        drone.refresh_from_db()
+        self.assertEqual(drone.status, DroneStatus.MAINTENANCE)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="DRONE_STATUS_CHANGE",
+                target_type="drone",
+                target_id=str(drone.id),
+            ).exists()
+        )
+
+    def test_maintenance_maintenance_drone_should_be_idempotent_success(self):
+        self._grant_permissions(["drone.change_drone_status"])
+        drone = self._create_drone(code="DJ-MAINT-02", status=DroneStatus.MAINTENANCE)
+
+        response = self.client.post(f"/api/v1/drones/{drone.id}/maintenance")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        drone.refresh_from_db()
+        self.assertEqual(drone.status, DroneStatus.MAINTENANCE)
 
     def test_retired_status_is_irreversible_and_idempotent(self):
         self._grant_permissions(["drone.view_drone", "drone.change_drone_status"])

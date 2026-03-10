@@ -301,7 +301,6 @@ class FlightRecordApiTests(TestCase):
                 "airport_name": "深圳宝安机场",
                 "end_time": new_end_time.isoformat(),
                 "photo_count": 16,
-                "status": FlightRecordStatus.COMPLETED,
             },
             format="json",
         )
@@ -311,11 +310,11 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "OK")
         self.assertEqual(response.data["airport_name"], "深圳宝安机场")
         self.assertEqual(response.data["photo_count"], 16)
-        self.assertEqual(response.data["status"], FlightRecordStatus.COMPLETED)
+        self.assertEqual(response.data["status"], FlightRecordStatus.IN_PROGRESS)
         record.refresh_from_db()
         self.assertEqual(record.airport_name, "深圳宝安机场")
         self.assertEqual(record.photo_count, 16)
-        self.assertEqual(record.status, FlightRecordStatus.COMPLETED)
+        self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
         self.assertTrue(
             AuditLog.objects.filter(
                 action="FLIGHT_RECORD_UPDATE",
@@ -323,6 +322,24 @@ class FlightRecordApiTests(TestCase):
                 target_id=str(record.id),
             ).exists()
         )
+
+    def test_patch_flight_record_with_status_should_return_invalid_params(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
+
+        response = self.client.patch(
+            f"/api/v1/flight-records/{record.id}",
+            {"status": FlightRecordStatus.COMPLETED},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("status", response.data)
+        record.refresh_from_db()
+        self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
 
     def test_patch_flight_record_empty_body_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")

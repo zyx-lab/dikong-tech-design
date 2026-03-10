@@ -36,6 +36,9 @@ class FlightRecordWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
 
         instance = getattr(self, "instance", None)
+        if instance is not None and "status" in self.initial_data:
+            raise serializers.ValidationError({"status": "status 不可通过 PATCH 直接修改，请使用状态动作接口"})
+
         start_time = attrs.get("start_time", instance.start_time if instance is not None else None)
         end_time = attrs.get("end_time", instance.end_time if instance is not None else None)
         mission = attrs.get("mission", instance.mission if instance is not None else None)

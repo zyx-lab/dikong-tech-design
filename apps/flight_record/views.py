@@ -116,10 +116,10 @@ class FlightRecordViewSet(
     def partial_update(self, request, *args, **kwargs):
         # 业务作用：
         # 提供“按 flight_record_id 局部更新飞行记录主数据”的基础接口（PATCH /api/v1/flight-records/{id}），
-        # 允许外部系统修正机场、飞行时间、图片视频数量、绑定关系与结果状态等执行结果元数据。
+        # 允许外部系统修正机场、飞行时间、图片视频数量与绑定关系等执行结果元数据。
         #
         # 适用边界：
-        # 1) 仅更新单条 flight_record 自身字段，不承担媒体文件编排、删除或跨实体状态流转；
+        # 1) 仅更新单条 flight_record 自身字段，不承担媒体文件编排、删除或状态流转；
         # 2) PATCH 请求体必须至少包含一个可写字段；
         # 3) 成功返回最新 flight_record 快照，业务码由统一响应层补齐。
         if not request.data:
