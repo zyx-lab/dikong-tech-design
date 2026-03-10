@@ -1,7 +1,7 @@
 # 航线实现说明
 
 - generated_at: 2026-03-08T07:52:00Z
-- updated_at: 2026-03-09
+- updated_at: 2026-03-10
 - entity: route
 
 ## 数据库
@@ -108,8 +108,12 @@ PostgreSQL
 
 ### 7. POST /api/v1/routes/{id}/disable
 - 功能：禁用航线
+- 路径：/api/v1/routes/{id}/disable
+- 方法：POST
 - 状态流转：ACTIVE -> DISABLED
-- 约束：请求体必须为空
+- 请求体：必须为空；提交 body 返回 INVALID_PARAMS
+- 响应：返回最新 route 快照；若当前已是 DISABLED，则按幂等成功返回当前状态
+- 约束：仅处理 route.status 自身流转，不承担航点删除、任务解绑或批量停用编排
 - 幂等：已处于 DISABLED 的航线重复 disable 返回当前状态
 - 权限：route.manage_route
 - 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED

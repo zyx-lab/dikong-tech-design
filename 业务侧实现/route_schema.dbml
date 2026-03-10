@@ -16,10 +16,12 @@
 // }
 // ```
 
-// updated_at: 2026-03-08T07:52:00Z
+// updated_at: 2026-03-10T10:30:00Z
 // entity: route
-// 历史保留 + 本轮增补：当前轮新增 PATCH /api/v1/routes/{id}，不改 routes 表结构
-// 当前轮接口语义：按 route 主键局部更新主记录元数据，返回 SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
+// 历史保留：上一轮已新增 PATCH /api/v1/routes/{id}，routes 表结构未变化
+// 本轮增补：新增 POST /api/v1/routes/{id}/disable，仍不改 routes 表结构
+// 当前轮接口语义：按 route 主键显式把 status 从 ACTIVE 置为 DISABLED；请求体必须为空；重复 disable 幂等成功
+// 当前轮业务码：SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
 
 Table routes {
   id bigint [pk, increment, note: 'ID']

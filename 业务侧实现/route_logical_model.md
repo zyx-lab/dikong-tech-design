@@ -1,6 +1,6 @@
 # 航线逻辑模型
 
-- updated_at: 2026-03-08T07:52:00Z
+- updated_at: 2026-03-10T10:30:00Z
 - entity: route
 
 ## 数据库
@@ -96,7 +96,11 @@ PostgreSQL
 - 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
 
 ### 禁用航线 POST /api/v1/routes/{id}/disable
+- 功能：按 route 主键显式执行禁用状态动作，与 DELETE 删除语义分离
+- 路径：/api/v1/routes/{id}/disable
+- 方法：POST
 - 状态流转：ACTIVE -> DISABLED
 - 有效状态：ACTIVE
-- 无效状态：DISABLED
+- 无效状态：N/A（DISABLED 按幂等成功返回当前状态）
+- 约束：请求体必须为空；不承担航点删除、任务解绑或批量停用编排
 - 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
