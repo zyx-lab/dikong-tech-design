@@ -53,6 +53,7 @@ class Command(BaseCommand):
                 username=username,
                 password=password,
                 is_staff=False,
+                is_superuser=False,
                 is_active=True,
                 status=UserStatus.ACTIVE,
             )

@@ -5,6 +5,8 @@ from apps.access import views
 urlpatterns = [
     path("", views.ApiRootView.as_view(), name="api-root"),
     path("session-status", views.SessionStatusView.as_view(), name="session-status"),
+    path("login", views.LoginView.as_view(), name="login"),
+    path("logout", views.LogoutView.as_view(), name="logout"),
     path("users", views.UserListCreateView.as_view(), name="user-list-create"),
     path("users/<int:pk>", views.UserDetailView.as_view(), name="user-detail"),
     path("me/permissions", views.MePermissionsView.as_view(), name="me-permissions"),

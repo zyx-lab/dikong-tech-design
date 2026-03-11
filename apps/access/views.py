@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from django.contrib.auth import authenticate, login
 from django.contrib.auth.models import Group, Permission
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -160,6 +161,56 @@ class SessionStatusView(APIView):
                 }
             )
         return Response({"is_authenticated": False})
+
+
+class LoginView(APIView):
+    """用户登录接口"""
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses=OpenApiTypes.OBJECT,
+    )
+    def post(self, request):
+        username = request.data.get("username")
+        password = request.data.get("password")
+
+        if not username or not password:
+            return Response(
+                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR", "error": "username and password required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = authenticate(request, username=username, password=password)
+
+        if user is not None:
+            login(request, user)
+            return Response({
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "username": user.username,
+                "is_superuser": user.is_superuser,
+            })
+        else:
+            return Response(
+                {"business_code": "PERMISSION_DENIED", "business_detail_code": "INVALID_CREDENTIALS", "error": "invalid username or password"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+
+class LogoutView(APIView):
+    """用户登出接口"""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from django.contrib.auth import logout
+        logout(request)
+        return Response({
+            "business_code": "SUCCESS",
+            "business_detail_code": "OK",
+        })
 
 
 class UserListCreateView(PermissionMapMixin, generics.ListCreateAPIView):

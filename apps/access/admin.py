@@ -239,6 +239,36 @@ class UserAdmin(DjangoUserAdmin):
     form = AccessUserChangeForm
     add_form = AccessUserCreationForm
 
+    def has_module_permission(self, request):
+        # staff 用户默认可以访问账号模块
+        if request.user.is_staff:
+            return True
+        return super().has_module_permission(request)
+
+    def has_view_permission(self, request, obj=None):
+        # staff 用户默认可以查看账号
+        if request.user.is_staff:
+            return True
+        return super().has_view_permission(request, obj)
+
+    def has_add_permission(self, request):
+        # staff 用户默认可以新增账号
+        if request.user.is_staff:
+            return True
+        return super().has_add_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        # staff 用户默认可以编辑账号
+        if request.user.is_staff:
+            return True
+        return super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        # staff 用户默认可以删除账号
+        if request.user.is_staff:
+            return True
+        return super().has_delete_permission(request, obj)
+
     list_display = (
         "id",
         "username",
@@ -310,6 +340,12 @@ class StaffTypeAdmin(admin.ModelAdmin):
     search_fields = ("code", "name", "description")
     inlines = (StaffTypeGroupByStaffTypeInline,)
 
+    def has_module_permission(self, request):
+        # 仅 superuser 可访问身份类型模块
+        if request.user.is_superuser:
+            return super().has_module_permission(request)
+        return False
+
     def save_related(self, request, form, formsets, change):
         before_groups = _staff_type_group_payload(form.instance) if change else []
         super().save_related(request, form, formsets, change)
@@ -339,6 +375,12 @@ class GroupAdmin(DjangoGroupAdmin):
     search_fields = ("name",)
     ordering = ("id",)
     inlines = (GroupPermissionScopeInline, StaffTypeGroupByGroupInline)
+
+    def has_module_permission(self, request):
+        # 仅 superuser 可访问能力组模块（角色权限）
+        if request.user.is_superuser:
+            return super().has_module_permission(request)
+        return False
 
     @admin.display(description="权限数")
     def permission_count(self, obj):
