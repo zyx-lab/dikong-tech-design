@@ -101,6 +101,7 @@ PostgreSQL
 ## 生命周期入口
 
 - `POST /internal/auth/tenants`: 创建租户
+- `POST /internal/auth/tenants/{id}/disable`: 停用租户
 - `POST /internal/auth/tenant-members/invite`: 邀请租户成员
 - `POST /internal/auth/tenant-members/confirm-invitation`: 用户确认租户邀请
 - `GET /internal/auth/me/tenants`: 获取当前用户可进入的租户列表
@@ -119,6 +120,21 @@ PostgreSQL
 - 业务码：
   - SUCCESS: 创建成功
   - INVALID_PARAMS: 参数校验失败（缺少必填字段、code 重复）
+
+### 停用租户
+- 功能：平台管理员停用指定租户
+- 路径：`/internal/auth/tenants/{id}/disable`
+- 方法：`POST`
+- 状态流转：ENABLED -> DISABLED
+- 有效状态：目标租户存在且当前状态为 ENABLED
+- 无效状态：
+  - 目标租户不存在
+  - 目标租户已经是 DISABLED，重复停用
+- 业务码：
+  - SUCCESS: 停用成功
+  - RESOURCE_NOT_FOUND: 租户不存在
+  - IDEMPOTENT_DUPLICATE: 租户已停用
+  - PERMISSION_DENIED: 当前操作者未登录或不具备平台租户管理权限
 
 ### 邀请租户成员
 - 功能：向已注册账号发起加入租户邀请

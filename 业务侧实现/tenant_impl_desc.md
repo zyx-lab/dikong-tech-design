@@ -110,7 +110,45 @@ PostgreSQL
 }
 ```
 
-### 2. 租户上下文解析
+### 2. 停用租户
+
+- 功能：平台管理员停用指定租户
+- 路径：`/internal/auth/tenants/{id}/disable`
+- 方法：`POST`
+- 权限：`access.manage_tenant`
+- 请求体：空
+- 响应（成功，200）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "id": 1,
+  "code": "tenant_code",
+  "name": "租户名称",
+  "status": 0
+}
+```
+- 响应（资源不存在，404）：
+```json
+{
+  "business_code": "RESOURCE_NOT_FOUND",
+  "business_detail_code": "TENANT_NOT_FOUND"
+}
+```
+- 响应（幂等重复，409）：
+```json
+{
+  "business_code": "IDEMPOTENT_DUPLICATE",
+  "business_detail_code": "TENANT_ALREADY_DISABLED"
+}
+```
+- 实现说明：
+  1. 按 `id` 查找目标租户
+  2. 仅允许 `ENABLED -> DISABLED`
+  3. 已禁用租户重复停用返回幂等重复
+  4. 成功停用后记录 `TENANT_DISABLE` 平台级审计日志
+
+### 3. 租户上下文解析
 
 - 功能：从 HTTP Header 解析当前租户
 - 中间件：`TenantContextMiddleware`
@@ -121,7 +159,7 @@ PostgreSQL
   3. 找到则设置 `request.tenant_context = tenant`
   4. 未找到或已禁用则返回 403
 
-### 3. 邀请租户成员
+### 4. 邀请租户成员
 
 - 功能：向已注册平台账号发起加入租户邀请，并预绑定初始角色
 - 路径：`/internal/auth/tenant-members/invite`
@@ -173,7 +211,7 @@ PostgreSQL
   4. 为成员写入初始 `TenantMemberRole`
   5. 记录 `TENANT_MEMBER_INVITE` 租户级审计日志
 
-### 4. 确认租户邀请
+### 5. 确认租户邀请
 
 - 功能：被邀请用户确认 invitation token，正式加入租户并激活已有角色绑定
 - 路径：`/internal/auth/tenant-members/confirm-invitation`
@@ -230,7 +268,7 @@ PostgreSQL
   4. 返回当前已预绑定的角色编码列表
   5. 记录 `TENANT_MEMBER_CONFIRM_INVITATION` 租户级审计日志
 
-### 5. 获取当前用户租户列表
+### 6. 获取当前用户租户列表
 
 - 功能：已登录用户读取自己当前可进入的租户列表及默认租户
 - 路径：`/internal/auth/me/tenants`

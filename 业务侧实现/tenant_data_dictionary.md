@@ -67,7 +67,7 @@ PostgreSQL
 **业务规则**：
 1. `code` 全局唯一，用于 X-Tenant-Code header 标识。
 2. 租户状态为禁用时，该租户所有业务数据不可访问。
-3. 租户删除采用软删除（status=0）。
+3. `POST /internal/auth/tenants/{id}/disable` 通过将 `status` 置为 0 实现停用。
 
 ---
 
@@ -145,7 +145,7 @@ PostgreSQL
 1. 模型：`apps/access/models.py` - `Tenant`
 2. 模型：`apps/access/models.py` - `TenantMember` / `TenantMemberRole`
 3. 序列化与校验：`apps/access/serializers.py`
-4. 接口：`apps/access/views.py` - `TenantViewSet` / `TenantMemberInviteView`
+4. 接口：`apps/access/views.py` - `TenantViewSet` / `TenantDisableView` / `TenantMemberInviteView`
 
 ---
 
@@ -174,12 +174,13 @@ PostgreSQL
 | TENANT_NOT_FOUND | 邀请时目标租户不存在 |
 | USER_NOT_FOUND | 邀请时目标用户不存在 |
 | TENANT_MEMBER_EXISTS | 租户成员关系已存在 |
+| TENANT_ALREADY_DISABLED | 租户已是禁用状态，重复停用 |
 | INVITATION_NOT_FOUND | invitation token 不存在 |
 | INVITATION_NOT_ALLOWED | invitation token 不属于当前登录用户 |
 | INVITATION_ALREADY_CONFIRMED | 邀请已确认，重复提交 |
 | INVITATION_STATUS_INVALID | invitation 对应成员状态不是 pending |
 
-当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
+当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
 
 `GET /internal/auth/tenant-audit-logs` 同样返回 `business_code + business_detail_code`，并使用以下额外 detail code：
 

@@ -14,7 +14,7 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 
 from apps.access.drf_permissions import PermissionMapMixin, RequireInternalPermission
-from apps.access.exceptions import BusinessPermissionDenied
+from apps.access.exceptions import BusinessIdempotentDuplicate, BusinessPermissionDenied, BusinessResourceNotFound
 from apps.access.models import (
     AuditLog,
     GroupPermissionScope,
@@ -665,6 +665,52 @@ class TenantDetailView(PermissionMapMixin, generics.RetrieveAPIView):
             "business_detail_code": "OK",
             "data": serializer.data,
         })
+
+
+class TenantDisableView(PermissionMapMixin, generics.GenericAPIView):
+    """停用租户。"""
+
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "POST": "access.manage_tenant",
+    }
+    queryset = Tenant.objects.all()
+
+    @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
+    def post(self, request, pk: int):
+        tenant = self.get_queryset().filter(id=pk).first()
+        if tenant is None:
+            raise BusinessResourceNotFound("tenant not found", business_detail_code="TENANT_NOT_FOUND")
+
+        before_data = snapshot(tenant)
+        if tenant.status == TenantStatus.DISABLED:
+            raise BusinessIdempotentDuplicate(
+                "tenant already disabled",
+                business_detail_code="TENANT_ALREADY_DISABLED",
+            )
+
+        tenant.status = TenantStatus.DISABLED
+        tenant.save(update_fields=["status", "updated_at"])
+        after_data = snapshot(tenant)
+        log_action(
+            request=request,
+            action="TENANT_DISABLE",
+            target_type="tenant",
+            target_id=tenant.id,
+            before_data=before_data,
+            after_data=after_data,
+        )
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "id": tenant.id,
+                "code": tenant.code,
+                "name": tenant.name,
+                "status": tenant.status,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 # ========== 平台固定角色 API ==========

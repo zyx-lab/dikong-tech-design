@@ -24,6 +24,7 @@ urlpatterns = [
     # 租户管理
     path("tenants", views.TenantViewSet.as_view(), name="tenant-list-create"),
     path("tenants/<int:pk>", views.TenantDetailView.as_view(), name="tenant-detail"),
+    path("tenants/<int:pk>/disable", views.TenantDisableView.as_view(), name="tenant-disable"),
     # 平台固定角色
     path("system-roles", views.SystemRoleListCreateView.as_view(), name="system-role-list-create"),
     path("system-roles/<int:pk>", views.SystemRoleDetailView.as_view(), name="system-role-detail"),
