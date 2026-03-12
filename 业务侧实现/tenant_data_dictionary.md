@@ -145,7 +145,7 @@ PostgreSQL
 1. 模型：`apps/access/models.py` - `Tenant`
 2. 模型：`apps/access/models.py` - `TenantMember` / `TenantMemberRole`
 3. 序列化与校验：`apps/access/serializers.py`
-4. 接口：`apps/access/views.py` - `TenantViewSet` / `TenantDisableView` / `TenantMemberInviteView`
+4. 接口：`apps/access/views.py` - `TenantViewSet` / `TenantDisableView` / `TenantMemberInviteView` / `TenantMemberDisableView`
 
 ---
 
@@ -175,12 +175,14 @@ PostgreSQL
 | USER_NOT_FOUND | 邀请时目标用户不存在 |
 | TENANT_MEMBER_EXISTS | 租户成员关系已存在 |
 | TENANT_ALREADY_DISABLED | 租户已是禁用状态，重复停用 |
+| TENANT_MEMBER_NOT_FOUND | 目标租户成员不存在 |
+| TENANT_MEMBER_ALREADY_DISABLED | 租户成员已是禁用状态，重复停用 |
 | INVITATION_NOT_FOUND | invitation token 不存在 |
 | INVITATION_NOT_ALLOWED | invitation token 不属于当前登录用户 |
 | INVITATION_ALREADY_CONFIRMED | 邀请已确认，重复提交 |
 | INVITATION_STATUS_INVALID | invitation 对应成员状态不是 pending |
 
-当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
+当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation`、`POST /internal/auth/tenant-members/{id}/disable` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
 
 `GET /internal/auth/tenant-audit-logs` 同样返回 `business_code + business_detail_code`，并使用以下额外 detail code：
 

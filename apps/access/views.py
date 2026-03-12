@@ -874,6 +874,63 @@ class TenantMemberConfirmInvitationView(generics.GenericAPIView):
         )
 
 
+class TenantMemberDisableView(PermissionMapMixin, generics.GenericAPIView):
+    """停用租户成员。"""
+
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "POST": "access.manage_tenant_member",
+    }
+    queryset = TenantMember.objects.select_related("tenant", "user")
+
+    @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
+    def post(self, request, pk: int):
+        member = self.get_queryset().filter(id=pk).first()
+        if member is None:
+            raise BusinessResourceNotFound("tenant member not found", business_detail_code="TENANT_MEMBER_NOT_FOUND")
+
+        before_data = {
+            "id": member.id,
+            "tenant_id": member.tenant_id,
+            "user_id": member.user_id,
+            "status": member.status,
+        }
+        if member.status == TenantMemberStatus.DISABLED:
+            raise BusinessIdempotentDuplicate(
+                "tenant member already disabled",
+                business_detail_code="TENANT_MEMBER_ALREADY_DISABLED",
+            )
+
+        member.status = TenantMemberStatus.DISABLED
+        member.save(update_fields=["status", "updated_at"])
+        after_data = {
+            "id": member.id,
+            "tenant_id": member.tenant_id,
+            "user_id": member.user_id,
+            "status": member.status,
+        }
+        log_action(
+            request=request,
+            action="TENANT_MEMBER_DISABLE",
+            target_type="tenant_member",
+            target_id=member.id,
+            tenant=member.tenant,
+            before_data=before_data,
+            after_data=after_data,
+        )
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "member_id": member.id,
+                "tenant_id": member.tenant_id,
+                "user_id": member.user_id,
+                "status": member.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class TenantMemberDetailView(PermissionMapMixin, generics.RetrieveUpdateDestroyAPIView):
     """租户成员详情/更新/删除"""
 

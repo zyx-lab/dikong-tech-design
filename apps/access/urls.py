@@ -32,6 +32,7 @@ urlpatterns = [
     path("tenant-members", views.TenantMemberListCreateView.as_view(), name="tenant-member-list-create"),
     path("tenant-members/invite", views.TenantMemberInviteView.as_view(), name="tenant-member-invite"),
     path("tenant-members/confirm-invitation", views.TenantMemberConfirmInvitationView.as_view(), name="tenant-member-confirm-invitation"),
+    path("tenant-members/<int:pk>/disable", views.TenantMemberDisableView.as_view(), name="tenant-member-disable"),
     path("tenant-members/<int:pk>", views.TenantMemberDetailView.as_view(), name="tenant-member-detail"),
     path("tenant-members/<int:pk>/roles", views.TenantMemberRoleAssignView.as_view(), name="tenant-member-role-assign"),
 ]

@@ -104,6 +104,7 @@ PostgreSQL
 - `POST /internal/auth/tenants/{id}/disable`: 停用租户
 - `POST /internal/auth/tenant-members/invite`: 邀请租户成员
 - `POST /internal/auth/tenant-members/confirm-invitation`: 用户确认租户邀请
+- `POST /internal/auth/tenant-members/{id}/disable`: 停用租户成员
 - `GET /internal/auth/me/tenants`: 获取当前用户可进入的租户列表
 - `GET /internal/auth/tenant-audit-logs`: 查看租户级审计日志
 
@@ -171,6 +172,21 @@ PostgreSQL
   - IDEMPOTENT_DUPLICATE: 邀请已确认
   - STATE_CONFLICT: 邀请记录已不处于 pending 状态
 
+### 停用租户成员
+- 功能：停用指定租户成员，使其失去当前租户内的有效成员身份
+- 路径：`/internal/auth/tenant-members/{id}/disable`
+- 方法：`POST`
+- 状态流转：PENDING -> DISABLED 或 ACTIVE -> DISABLED
+- 有效状态：目标成员存在，且当前状态为 PENDING 或 ACTIVE
+- 无效状态：
+  - 目标成员不存在
+  - 成员已经是 DISABLED，重复停用
+- 业务码：
+  - SUCCESS: 停用成功
+  - RESOURCE_NOT_FOUND: 租户成员不存在
+  - IDEMPOTENT_DUPLICATE: 租户成员已停用
+  - PERMISSION_DENIED: 当前操作者未登录或不具备成员管理权限
+
 ### 获取当前用户租户列表
 - 功能：已登录用户读取自己当前可进入的租户列表
 - 路径：`/internal/auth/me/tenants`
@@ -219,6 +235,7 @@ PostgreSQL
 - 租户管理员不直接管理租户（租户由平台管理）
 - 当前实现中的租户邀请接口仍位于 `internal/auth` 平面，由具备 `access.manage_tenant_member` 的系统操作者发起
 - 邀请确认接口同样保留在 `internal/auth` 平面，但调用者切换为被邀请的已登录账号
+- 租户成员停用接口同样位于 `internal/auth` 平面，当前由具备 `access.manage_tenant_member` 的系统操作者触发
 - 当前用户租户列表接口位于 `internal/auth/me/*` 平面，作为认证入口后的租户上下文读取补充
 - 租户级审计接口同样位于 `internal/auth` 平面，但其数据边界由 `X-Tenant-Code` 与租户成员关系共同决定
 

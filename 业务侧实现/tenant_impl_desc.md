@@ -268,7 +268,45 @@ PostgreSQL
   4. 返回当前已预绑定的角色编码列表
   5. 记录 `TENANT_MEMBER_CONFIRM_INVITATION` 租户级审计日志
 
-### 6. 获取当前用户租户列表
+### 6. 停用租户成员
+
+- 功能：停用指定租户成员
+- 路径：`/internal/auth/tenant-members/{id}/disable`
+- 方法：`POST`
+- 权限：`access.manage_tenant_member`
+- 请求体：空
+- 响应（成功，200）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "member_id": 1,
+  "tenant_id": 1,
+  "user_id": 2,
+  "status": 2
+}
+```
+- 响应（资源不存在，404）：
+```json
+{
+  "business_code": "RESOURCE_NOT_FOUND",
+  "business_detail_code": "TENANT_MEMBER_NOT_FOUND"
+}
+```
+- 响应（幂等重复，409）：
+```json
+{
+  "business_code": "IDEMPOTENT_DUPLICATE",
+  "business_detail_code": "TENANT_MEMBER_ALREADY_DISABLED"
+}
+```
+- 实现说明：
+  1. 按 `id` 查找目标 `TenantMember`
+  2. 允许 `pending -> disabled` 与 `active -> disabled`
+  3. 已禁用成员重复停用返回幂等重复
+  4. 成功停用后记录 `TENANT_MEMBER_DISABLE` 租户级审计日志
+
+### 7. 获取当前用户租户列表
 
 - 功能：已登录用户读取自己当前可进入的租户列表及默认租户
 - 路径：`/internal/auth/me/tenants`
@@ -304,7 +342,7 @@ PostgreSQL
   3. 每个租户返回当前有效角色编码列表
   4. `default_tenant` 默认取排序后的首个有效租户；若无有效租户则返回 `null`
 
-### 6. 查看租户级审计日志
+### 8. 查看租户级审计日志
 
 - 功能：在租户上下文内查看当前租户的治理审计日志
 - 路径：`/internal/auth/tenant-audit-logs`
@@ -356,6 +394,7 @@ X-Tenant-Code: tenant_a
 | TENANT_ENABLE | 启用租户 | tenant id |
 | TENANT_MEMBER_INVITE | 邀请租户成员 | member id, tenant id, user id |
 | TENANT_MEMBER_CONFIRM_INVITATION | 确认租户邀请 | member id, tenant id, user id, status |
+| TENANT_MEMBER_DISABLE | 停用租户成员 | member id, tenant id, user id, status |
 
 ---
 
