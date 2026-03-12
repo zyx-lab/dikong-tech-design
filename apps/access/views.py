@@ -36,6 +36,7 @@ from apps.access.serializers import (
     StaffTypeGroupAssignSerializer,
     StaffTypeSerializer,
     SystemRoleSerializer,
+    TenantMemberConfirmInvitationSerializer,
     TenantMemberCreateSerializer,
     TenantMemberInviteSerializer,
     TenantMemberRoleAssignSerializer,
@@ -669,6 +670,47 @@ class TenantMemberInviteView(PermissionMapMixin, generics.GenericAPIView):
                 "message": "邀请发送成功",
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class TenantMemberConfirmInvitationView(generics.GenericAPIView):
+    """租户成员确认邀请。"""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = TenantMemberConfirmInvitationSerializer
+
+    @extend_schema(request=TenantMemberConfirmInvitationSerializer, responses=OpenApiTypes.OBJECT)
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError:
+            return Response(
+                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        member = serializer.save()
+        role_codes = list(
+            member.role_bindings.select_related("system_role").order_by("id").values_list("system_role__code", flat=True)
+        )
+        log_action(
+            request=request,
+            action="TENANT_MEMBER_CONFIRM_INVITATION",
+            target_type="tenant_member",
+            target_id=member.id,
+            tenant=member.tenant,
+            after_data={"id": member.id, "tenant_id": member.tenant_id, "user_id": member.user_id, "status": member.status},
+        )
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "member_id": member.id,
+                "roles": role_codes,
+                "message": "您已成功加入租户",
+            },
+            status=status.HTTP_200_OK,
         )
 
 

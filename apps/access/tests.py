@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.core.exceptions import PermissionDenied
 from django.core.management import call_command
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import (
@@ -497,3 +498,122 @@ class TenantMemberInviteAPITests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
         self.assertEqual(response.data["business_detail_code"], "TENANT_MEMBER_EXISTS")
+
+
+class TenantMemberConfirmInvitationAPITests(TestCase):
+    """租户成员确认邀请 API 测试"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.invited_user = User.objects.create_user(username="tenant_member_u2", password="pass1234", status=1)
+        self.other_user = User.objects.create_user(username="tenant_member_u3", password="pass1234", status=1)
+        self.tenant = Tenant.objects.create(code="tenant-b", name="租户B", status=TenantStatus.ENABLED)
+        self.role = SystemRole.objects.create(code="route_planner", name="航线规划员", status=1)
+        self.member = TenantMember.objects.create(
+            tenant=self.tenant,
+            user=self.invited_user,
+            display_name="李四",
+            invitation_token="token-confirm-001",
+            status=TenantMemberStatus.PENDING,
+        )
+        self.member.role_bindings.create(system_role=self.role, status=1)
+
+    def test_auto__case_tenant_member_confirm_invitation_success(self):
+        self.client.force_authenticate(user=self.invited_user)
+        response = self.client.post(
+            "/internal/auth/tenant-members/confirm-invitation",
+            {"invitation_token": "token-confirm-001"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["member_id"], self.member.id)
+        self.assertEqual(response.data["roles"], ["route_planner"])
+
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.status, TenantMemberStatus.ACTIVE)
+        self.assertIsNotNone(self.member.joined_at)
+
+        audit_log = AuditLog.objects.get(action="TENANT_MEMBER_CONFIRM_INVITATION", target_id=str(self.member.id))
+        self.assertEqual(audit_log.tenant_id, self.tenant.id)
+        self.assertEqual(audit_log.actor_user_id, self.invited_user.id)
+
+    def test_auto__case_tenant_member_confirm_invitation_invalid_params(self):
+        self.client.force_authenticate(user=self.invited_user)
+        response = self.client.post(
+            "/internal/auth/tenant-members/confirm-invitation",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+
+    def test_auto__case_tenant_member_confirm_invitation_permission_denied(self):
+        response = self.client.post(
+            "/internal/auth/tenant-members/confirm-invitation",
+            {"invitation_token": "token-confirm-001"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+    def test_auto__case_tenant_member_confirm_invitation_wrong_user(self):
+        self.client.force_authenticate(user=self.other_user)
+        response = self.client.post(
+            "/internal/auth/tenant-members/confirm-invitation",
+            {"invitation_token": "token-confirm-001"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "INVITATION_NOT_ALLOWED")
+
+    def test_auto__case_tenant_member_confirm_invitation_not_found(self):
+        self.client.force_authenticate(user=self.invited_user)
+        response = self.client.post(
+            "/internal/auth/tenant-members/confirm-invitation",
+            {"invitation_token": "missing-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "INVITATION_NOT_FOUND")
+
+    def test_auto__case_tenant_member_confirm_invitation_duplicate(self):
+        self.client.force_authenticate(user=self.invited_user)
+        self.member.status = TenantMemberStatus.ACTIVE
+        self.member.joined_at = timezone.now()
+        self.member.save(update_fields=["status", "joined_at", "updated_at"])
+
+        response = self.client.post(
+            "/internal/auth/tenant-members/confirm-invitation",
+            {"invitation_token": "token-confirm-001"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
+        self.assertEqual(response.data["business_detail_code"], "INVITATION_ALREADY_CONFIRMED")
+
+    def test_auto__case_tenant_member_confirm_invitation_state_conflict(self):
+        self.client.force_authenticate(user=self.invited_user)
+        self.member.status = TenantMemberStatus.DISABLED
+        self.member.save(update_fields=["status", "updated_at"])
+
+        response = self.client.post(
+            "/internal/auth/tenant-members/confirm-invitation",
+            {"invitation_token": "token-confirm-001"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
+        self.assertEqual(response.data["business_detail_code"], "INVITATION_STATUS_INVALID")

@@ -31,6 +31,22 @@ class BusinessStateConflict(BusinessAPIException):
     business_detail_code = "STATE_CONFLICT"
 
 
+class BusinessIdempotentDuplicate(BusinessAPIException):
+    status_code = 409
+    default_detail = "duplicate request"
+    default_code = "duplicate_request"
+    business_code = "IDEMPOTENT_DUPLICATE"
+    business_detail_code = "DUPLICATE_REQUEST"
+
+
+class BusinessPermissionDenied(BusinessAPIException):
+    status_code = 403
+    default_detail = "permission denied"
+    default_code = "permission_denied"
+    business_code = "PERMISSION_DENIED"
+    business_detail_code = "FORBIDDEN"
+
+
 def custom_exception_handler(exc, context):
     """Custom exception handler that formats permission denied with business_code."""
     response = exception_handler(exc, context)

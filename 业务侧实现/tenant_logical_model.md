@@ -102,6 +102,7 @@ PostgreSQL
 
 - `POST /internal/auth/tenants`: 创建租户
 - `POST /internal/auth/tenant-members/invite`: 邀请租户成员
+- `POST /internal/auth/tenant-members/confirm-invitation`: 用户确认租户邀请
 
 ---
 
@@ -133,6 +134,25 @@ PostgreSQL
   - RESOURCE_NOT_FOUND: 租户或用户不存在
   - STATE_CONFLICT: 目标账号已在租户内存在成员关系
 
+### 确认租户邀请
+- 功能：被邀请用户确认 invitation token，激活自己的租户成员身份
+- 路径：`/internal/auth/tenant-members/confirm-invitation`
+- 方法：`POST`
+- 状态流转：PENDING -> ACTIVE
+- 有效状态：`invitation_token` 命中当前用户自己的 pending 成员记录
+- 无效状态：
+  - invitation token 不存在
+  - invitation token 不属于当前登录用户
+  - 成员已经是 active，重复确认
+  - 成员不是 pending（如 disabled）
+- 业务码：
+  - SUCCESS: 确认成功
+  - INVALID_PARAMS: 未提供 invitation_token
+  - PERMISSION_DENIED: 登录用户不是该邀请的目标账号
+  - RESOURCE_NOT_FOUND: invitation token 不存在
+  - IDEMPOTENT_DUPLICATE: 邀请已确认
+  - STATE_CONFLICT: 邀请记录已不处于 pending 状态
+
 ---
 
 ## 权限设计
@@ -149,6 +169,7 @@ PostgreSQL
 - `platform_admin`: 拥有 access.manage_tenant
 - 租户管理员不直接管理租户（租户由平台管理）
 - 当前实现中的租户邀请接口仍位于 `internal/auth` 平面，由具备 `access.manage_tenant_member` 的系统操作者发起
+- 邀请确认接口同样保留在 `internal/auth` 平面，但调用者切换为被邀请的已登录账号
 
 ---
 

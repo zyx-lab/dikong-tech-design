@@ -173,6 +173,63 @@ PostgreSQL
   4. 为成员写入初始 `TenantMemberRole`
   5. 记录 `TENANT_MEMBER_INVITE` 租户级审计日志
 
+### 4. 确认租户邀请
+
+- 功能：被邀请用户确认 invitation token，正式加入租户并激活已有角色绑定
+- 路径：`/internal/auth/tenant-members/confirm-invitation`
+- 方法：`POST`
+- 权限：已登录用户
+- 请求体：
+```json
+{
+  "invitation_token": "token-confirm-001"
+}
+```
+- 响应（成功，200）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "member_id": 1,
+  "roles": ["route_planner"],
+  "message": "您已成功加入租户"
+}
+```
+- 响应（资源不存在，404）：
+```json
+{
+  "business_code": "RESOURCE_NOT_FOUND",
+  "business_detail_code": "INVITATION_NOT_FOUND"
+}
+```
+- 响应（权限不足，403）：
+```json
+{
+  "business_code": "PERMISSION_DENIED",
+  "business_detail_code": "INVITATION_NOT_ALLOWED"
+}
+```
+- 响应（幂等重复，409）：
+```json
+{
+  "business_code": "IDEMPOTENT_DUPLICATE",
+  "business_detail_code": "INVITATION_ALREADY_CONFIRMED"
+}
+```
+- 响应（状态冲突，409）：
+```json
+{
+  "business_code": "STATE_CONFLICT",
+  "business_detail_code": "INVITATION_STATUS_INVALID"
+}
+```
+- 实现说明：
+  1. 用 `invitation_token` 定位租户成员
+  2. 仅允许被邀请本人确认当前邀请
+  3. `pending -> active` 时写入 `joined_at`
+  4. 返回当前已预绑定的角色编码列表
+  5. 记录 `TENANT_MEMBER_CONFIRM_INVITATION` 租户级审计日志
+
 ---
 
 ## 审计动作
@@ -184,6 +241,7 @@ PostgreSQL
 | TENANT_DISABLE | 禁用租户 | tenant id |
 | TENANT_ENABLE | 启用租户 | tenant id |
 | TENANT_MEMBER_INVITE | 邀请租户成员 | member id, tenant id, user id |
+| TENANT_MEMBER_CONFIRM_INVITATION | 确认租户邀请 | member id, tenant id, user id, status |
 
 ---
 

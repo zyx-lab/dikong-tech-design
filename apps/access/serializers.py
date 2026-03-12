@@ -7,7 +7,12 @@ from rest_framework import serializers
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
 
-from apps.access.exceptions import BusinessResourceNotFound, BusinessStateConflict
+from apps.access.exceptions import (
+    BusinessIdempotentDuplicate,
+    BusinessPermissionDenied,
+    BusinessResourceNotFound,
+    BusinessStateConflict,
+)
 from apps.access.models import (
     AuditLog,
     GroupPermissionScope,
@@ -544,6 +549,41 @@ class TenantMemberInviteSerializer(serializers.Serializer):
                 status=TenantMemberRoleStatus.ACTIVE,
             )
 
+        return member
+
+
+class TenantMemberConfirmInvitationSerializer(serializers.Serializer):
+    """租户成员确认邀请序列化器。"""
+
+    invitation_token = serializers.CharField(max_length=64, required=True)
+
+    @transaction.atomic
+    def create(self, validated_data):
+        request = self.context["request"]
+        member = (
+            TenantMember.objects.select_related("tenant", "user")
+            .prefetch_related("role_bindings__system_role")
+            .filter(invitation_token=validated_data["invitation_token"])
+            .first()
+        )
+        if member is None:
+            raise BusinessResourceNotFound("invitation not found", business_detail_code="INVITATION_NOT_FOUND")
+
+        if member.user_id != request.user.id:
+            raise BusinessPermissionDenied("invitation does not belong to current user", business_detail_code="INVITATION_NOT_ALLOWED")
+
+        if member.status == TenantMemberStatus.ACTIVE:
+            raise BusinessIdempotentDuplicate(
+                "invitation already confirmed",
+                business_detail_code="INVITATION_ALREADY_CONFIRMED",
+            )
+
+        if member.status != TenantMemberStatus.PENDING:
+            raise BusinessStateConflict("invitation is not pending", business_detail_code="INVITATION_STATUS_INVALID")
+
+        member.status = TenantMemberStatus.ACTIVE
+        member.joined_at = timezone.now()
+        member.save(update_fields=["status", "joined_at", "updated_at"])
         return member
 
 
