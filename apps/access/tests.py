@@ -295,6 +295,8 @@ class TenantAPITests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
         self.assertEqual(response.data["code"], "test_tenant")
         self.assertEqual(response.data["name"], "测试租户")
         self.assertEqual(response.data["status"], TenantStatus.ENABLED)
@@ -306,6 +308,8 @@ class TenantAPITests(TestCase):
         """创建租户参数非法 - 缺少必填字段"""
         response = self.client.post("/internal/auth/tenants", {}, format="json")
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
 
     def test_auto__case_tenant_create_permission_denied(self):
         """创建租户无权限"""
@@ -327,3 +331,4 @@ class TenantAPITests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")

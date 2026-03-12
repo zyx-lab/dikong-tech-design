@@ -1,0 +1,107 @@
+// ============================================================
+// 低空智能巡检平台 - 租户 Schema（当前实现）
+// 数据库：PostgreSQL
+// 说明：本文件覆盖租户核心表
+// 文档类型：图表 (schema)
+// ============================================================
+
+// 文档格式说明：
+// 本文件为 DBML 格式的数据库图表文件。
+// 更新本文档时，请遵循以下格式：
+// ```
+// Table {表名} [note: '{表说明}'] {
+//   {字段名} {类型} [约束, note: '{字段说明}']
+//   indexes {
+//     {索引字段} [name: '{索引名}']
+//   }
+// }
+// ```
+
+Project low_altitude_tenant {
+  database_type: 'PostgreSQL'
+  Note: '租户核心表：平台级模型'
+}
+
+// ============================================================
+// 1. tenants 租户主表
+// ============================================================
+Table tenants [note: '租户主表'] {
+  id bigserial [pk, note: 'id 主键']
+  code varchar(64) [not null, unique, note: 'code 租户编码']
+  name varchar(128) [not null, note: 'name 租户名称']
+  status smallint [not null, default: 1, note: 'status 0=禁用 1=启用']
+  plan varchar(32) [note: 'plan 套餐类型（预留）']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+
+  indexes {
+    code [name: 'idx_tenant_code', unique]
+  }
+}
+
+// ============================================================
+// 2. tenant_members 租户成员表
+// ============================================================
+Table tenant_members [note: '租户成员身份'] {
+  id bigserial [pk, note: 'id 主键']
+  tenant_id bigint [not null, note: 'tenant_id 关联租户']
+  user_id bigint [not null, note: 'user_id 关联用户']
+  display_name varchar(128) [not null, note: 'display_name 显示名称']
+  status smallint [not null, default: 0, note: 'status 0=pending 1=active 2=disabled']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+
+  indexes {
+    tenant_id [name: 'idx_tenant_member_tenant']
+    user_id [name: 'idx_tenant_member_user']
+  }
+}
+
+// ============================================================
+// 3. tenant_member_roles 租户成员角色绑定表
+// ============================================================
+Table tenant_member_roles [note: '租户成员角色绑定'] {
+  id bigserial [pk, note: 'id 主键']
+  tenant_member_id bigint [not null, note: 'tenant_member_id 关联租户成员']
+  system_role_id bigint [not null, note: 'system_role_id 关联系统角色']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+
+  indexes {
+    tenant_member_id [name: 'idx_tmr_member']
+    system_role_id [name: 'idx_tmr_role']
+  }
+}
+
+// ============================================================
+// 4. system_roles 平台固定角色表
+// ============================================================
+Table system_roles [note: '平台固定角色'] {
+  id bigserial [pk, note: 'id 主键']
+  code varchar(64) [not null, unique, note: 'code 角色编码']
+  name varchar(128) [not null, note: 'name 角色名称']
+  description varchar(500) [note: 'description 角色描述']
+  status smallint [not null, default: 1, note: 'status 0=disabled 1=active']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+
+  indexes {
+    code [name: 'idx_system_role_code', unique]
+  }
+}
+
+// ============================================================
+// 关系与外键
+// ============================================================
+
+// 租户成员关联租户
+Ref: tenant_members.tenant_id > tenants.id
+
+// 租户成员关联用户
+Ref: tenant_members.user_id > auth_users.id
+
+// 租户成员角色绑定关联租户成员
+Ref: tenant_member_roles.tenant_member_id > tenant_members.id
+
+// 租户成员角色绑定关联系统角色
+Ref: tenant_member_roles.system_role_id > system_roles.id

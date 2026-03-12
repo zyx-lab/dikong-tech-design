@@ -478,6 +478,28 @@ class TenantViewSet(PermissionMapMixin, generics.CreateAPIView):
     }
     queryset = Tenant.objects.all()
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception:
+            return Response(
+                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        self.perform_create(serializer)
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "id": serializer.instance.id,
+                "code": serializer.instance.code,
+                "name": serializer.instance.name,
+                "status": serializer.instance.status,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
     def perform_create(self, serializer):
         tenant = serializer.save()
         log_action(
