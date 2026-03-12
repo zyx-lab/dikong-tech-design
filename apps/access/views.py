@@ -713,6 +713,52 @@ class TenantDisableView(PermissionMapMixin, generics.GenericAPIView):
         )
 
 
+class TenantEnableView(PermissionMapMixin, generics.GenericAPIView):
+    """启用租户。"""
+
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "POST": "access.manage_tenant",
+    }
+    queryset = Tenant.objects.all()
+
+    @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
+    def post(self, request, pk: int):
+        tenant = self.get_queryset().filter(id=pk).first()
+        if tenant is None:
+            raise BusinessResourceNotFound("tenant not found", business_detail_code="TENANT_NOT_FOUND")
+
+        before_data = snapshot(tenant)
+        if tenant.status == TenantStatus.ENABLED:
+            raise BusinessIdempotentDuplicate(
+                "tenant already enabled",
+                business_detail_code="TENANT_ALREADY_ENABLED",
+            )
+
+        tenant.status = TenantStatus.ENABLED
+        tenant.save(update_fields=["status", "updated_at"])
+        after_data = snapshot(tenant)
+        log_action(
+            request=request,
+            action="TENANT_ENABLE",
+            target_type="tenant",
+            target_id=tenant.id,
+            before_data=before_data,
+            after_data=after_data,
+        )
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "id": tenant.id,
+                "code": tenant.code,
+                "name": tenant.name,
+                "status": tenant.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 # ========== 平台固定角色 API ==========
 
 class SystemRoleListCreateView(PermissionMapMixin, generics.ListCreateAPIView):

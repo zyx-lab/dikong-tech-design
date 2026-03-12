@@ -102,6 +102,7 @@ PostgreSQL
 
 - `POST /internal/auth/tenants`: 创建租户
 - `POST /internal/auth/tenants/{id}/disable`: 停用租户
+- `POST /internal/auth/tenants/{id}/enable`: 启用租户
 - `POST /internal/auth/tenant-members/invite`: 邀请租户成员
 - `POST /internal/auth/tenant-members/confirm-invitation`: 用户确认租户邀请
 - `POST /internal/auth/tenant-members/{id}/disable`: 停用租户成员
@@ -135,6 +136,21 @@ PostgreSQL
   - SUCCESS: 停用成功
   - RESOURCE_NOT_FOUND: 租户不存在
   - IDEMPOTENT_DUPLICATE: 租户已停用
+  - PERMISSION_DENIED: 当前操作者未登录或不具备平台租户管理权限
+
+### 启用租户
+- 功能：平台管理员启用指定租户
+- 路径：`/internal/auth/tenants/{id}/enable`
+- 方法：`POST`
+- 状态流转：DISABLED -> ENABLED
+- 有效状态：目标租户存在且当前状态为 DISABLED
+- 无效状态：
+  - 目标租户不存在
+  - 目标租户已经是 ENABLED，重复启用
+- 业务码：
+  - SUCCESS: 启用成功
+  - RESOURCE_NOT_FOUND: 租户不存在
+  - IDEMPOTENT_DUPLICATE: 租户已启用
   - PERMISSION_DENIED: 当前操作者未登录或不具备平台租户管理权限
 
 ### 邀请租户成员
