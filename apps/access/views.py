@@ -41,6 +41,7 @@ from apps.access.serializers import (
     StaffTypeGroupAssignSerializer,
     StaffTypeSerializer,
     SystemRoleSerializer,
+    TenantInitializeAdminSerializer,
     TenantMemberConfirmInvitationSerializer,
     TenantMemberCreateSerializer,
     TenantMemberInviteSerializer,
@@ -754,6 +755,65 @@ class TenantEnableView(PermissionMapMixin, generics.GenericAPIView):
                 "code": tenant.code,
                 "name": tenant.name,
                 "status": tenant.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class TenantInitializeAdminView(PermissionMapMixin, generics.GenericAPIView):
+    """初始化租户管理员。"""
+
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "POST": "access.manage_tenant",
+    }
+    serializer_class = TenantInitializeAdminSerializer
+    queryset = Tenant.objects.all()
+
+    @extend_schema(request=TenantInitializeAdminSerializer, responses=OpenApiTypes.OBJECT)
+    def post(self, request, pk: int):
+        tenant = self.get_queryset().filter(id=pk).first()
+        if tenant is None:
+            raise BusinessResourceNotFound("tenant not found", business_detail_code="TENANT_NOT_FOUND")
+
+        serializer = self.get_serializer(data=request.data, context={"tenant": tenant})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError:
+            return Response(
+                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        member = serializer.save()
+        role_codes = list(
+            member.role_bindings.filter(status=TenantMemberRoleStatus.ACTIVE)
+            .order_by("id")
+            .values_list("system_role__code", flat=True)
+        )
+        log_action(
+            request=request,
+            action="TENANT_ADMIN_INITIALIZE",
+            target_type="tenant_member",
+            target_id=member.id,
+            after_data={
+                "id": member.id,
+                "tenant_id": member.tenant_id,
+                "user_id": member.user_id,
+                "status": member.status,
+                "roles": role_codes,
+            },
+        )
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "member_id": member.id,
+                "tenant_id": member.tenant_id,
+                "user_id": member.user_id,
+                "roles": role_codes,
+                "status": member.status,
+                "message": "租户管理员初始化成功",
             },
             status=status.HTTP_200_OK,
         )

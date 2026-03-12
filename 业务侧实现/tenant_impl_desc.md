@@ -186,7 +186,71 @@ PostgreSQL
   3. 已启用租户重复启用返回幂等重复
   4. 成功启用后记录 `TENANT_ENABLE` 平台级审计日志
 
-### 4. 租户上下文解析
+### 4. 初始化租户管理员
+
+- 功能：平台管理员为指定租户初始化首个 `tenant_admin`
+- 路径：`/internal/auth/tenants/{id}/initialize-admin`
+- 方法：`POST`
+- 权限：`access.manage_tenant`
+- 请求体：
+```json
+{
+  "user_id": 2,
+  "display_name": "租户管理员A",
+  "staff_no": "TA-001",
+  "phone": "13800000000",
+  "email": "admin@example.com"
+}
+```
+- 响应（成功，200）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "member_id": 1,
+  "tenant_id": 1,
+  "user_id": 2,
+  "roles": ["tenant_admin"],
+  "status": 1,
+  "message": "租户管理员初始化成功"
+}
+```
+- 响应（参数错误，400）：
+```json
+{
+  "business_code": "INVALID_PARAMS",
+  "business_detail_code": "VALIDATION_ERROR"
+}
+```
+- 响应（资源不存在，404）：
+```json
+{
+  "business_code": "RESOURCE_NOT_FOUND",
+  "business_detail_code": "TENANT_NOT_FOUND"
+}
+```
+- 响应（状态冲突，409）：
+```json
+{
+  "business_code": "STATE_CONFLICT",
+  "business_detail_code": "TENANT_STATUS_INVALID"
+}
+```
+- 响应（幂等重复，409）：
+```json
+{
+  "business_code": "IDEMPOTENT_DUPLICATE",
+  "business_detail_code": "TENANT_ADMIN_ALREADY_INITIALIZED"
+}
+```
+- 实现说明：
+  1. 平台侧按 `tenant_id` 定位租户，且要求租户处于 `ENABLED`
+  2. 仅允许在当前租户尚未存在有效 `tenant_admin` 时执行一次初始化
+  3. 若目标用户已存在成员记录，则直接激活成员并绑定 `tenant_admin`
+  4. 若目标用户尚未入租，则创建 `TenantMember(status=ACTIVE)` 并绑定 `tenant_admin`
+  5. 成功后记录 `TENANT_ADMIN_INITIALIZE` 平台级审计日志
+
+### 5. 租户上下文解析
 
 - 功能：从 HTTP Header 解析当前租户
 - 中间件：`TenantContextMiddleware`
@@ -197,7 +261,7 @@ PostgreSQL
   3. 找到则设置 `request.tenant_context = tenant`
   4. 未找到或已禁用则返回 403
 
-### 5. 邀请租户成员
+### 6. 邀请租户成员
 
 - 功能：向已注册平台账号发起加入租户邀请，并预绑定初始角色
 - 路径：`/internal/auth/tenant-members/invite`
@@ -249,7 +313,7 @@ PostgreSQL
   4. 为成员写入初始 `TenantMemberRole`
   5. 记录 `TENANT_MEMBER_INVITE` 租户级审计日志
 
-### 6. 确认租户邀请
+### 7. 确认租户邀请
 
 - 功能：被邀请用户确认 invitation token，正式加入租户并激活已有角色绑定
 - 路径：`/internal/auth/tenant-members/confirm-invitation`
@@ -306,7 +370,7 @@ PostgreSQL
   4. 返回当前已预绑定的角色编码列表
   5. 记录 `TENANT_MEMBER_CONFIRM_INVITATION` 租户级审计日志
 
-### 7. 停用租户成员
+### 8. 停用租户成员
 
 - 功能：停用指定租户成员
 - 路径：`/internal/auth/tenant-members/{id}/disable`
@@ -344,7 +408,7 @@ PostgreSQL
   3. 已禁用成员重复停用返回幂等重复
   4. 成功停用后记录 `TENANT_MEMBER_DISABLE` 租户级审计日志
 
-### 8. 获取当前用户租户列表
+### 9. 获取当前用户租户列表
 
 - 功能：已登录用户读取自己当前可进入的租户列表及默认租户
 - 路径：`/internal/auth/me/tenants`
@@ -380,7 +444,7 @@ PostgreSQL
   3. 每个租户返回当前有效角色编码列表
   4. `default_tenant` 默认取排序后的首个有效租户；若无有效租户则返回 `null`
 
-### 9. 查看租户级审计日志
+### 10. 查看租户级审计日志
 
 - 功能：在租户上下文内查看当前租户的治理审计日志
 - 路径：`/internal/auth/tenant-audit-logs`
@@ -430,6 +494,7 @@ X-Tenant-Code: tenant_a
 | TENANT_UPDATE | 更新租户 | tenant id, 更新字段 |
 | TENANT_DISABLE | 禁用租户 | tenant id |
 | TENANT_ENABLE | 启用租户 | tenant id |
+| TENANT_ADMIN_INITIALIZE | 初始化租户管理员 | member id, tenant id, user id, roles |
 | TENANT_MEMBER_INVITE | 邀请租户成员 | member id, tenant id, user id |
 | TENANT_MEMBER_CONFIRM_INVITATION | 确认租户邀请 | member id, tenant id, user id, status |
 | TENANT_MEMBER_DISABLE | 停用租户成员 | member id, tenant id, user id, status |

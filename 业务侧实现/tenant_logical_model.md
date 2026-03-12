@@ -103,6 +103,7 @@ PostgreSQL
 - `POST /internal/auth/tenants`: 创建租户
 - `POST /internal/auth/tenants/{id}/disable`: 停用租户
 - `POST /internal/auth/tenants/{id}/enable`: 启用租户
+- `POST /internal/auth/tenants/{id}/initialize-admin`: 初始化租户管理员
 - `POST /internal/auth/tenant-members/invite`: 邀请租户成员
 - `POST /internal/auth/tenant-members/confirm-invitation`: 用户确认租户邀请
 - `POST /internal/auth/tenant-members/{id}/disable`: 停用租户成员
@@ -151,6 +152,27 @@ PostgreSQL
   - SUCCESS: 启用成功
   - RESOURCE_NOT_FOUND: 租户不存在
   - IDEMPOTENT_DUPLICATE: 租户已启用
+  - PERMISSION_DENIED: 当前操作者未登录或不具备平台租户管理权限
+
+### 初始化租户管理员
+- 功能：平台管理员为指定租户初始化首个 `tenant_admin`
+- 路径：`/internal/auth/tenants/{id}/initialize-admin`
+- 方法：`POST`
+- 状态流转：成员不存在 / PENDING / DISABLED -> ACTIVE，并绑定 `tenant_admin`
+- 有效状态：
+  - 目标租户存在且状态为 ENABLED
+  - 当前租户尚未存在有效的 `tenant_admin`
+- 无效状态：
+  - 目标租户不存在
+  - 请求体缺少必要字段
+  - 目标租户不是 ENABLED
+  - 当前租户已经存在有效 `tenant_admin`
+- 业务码：
+  - SUCCESS: 初始化成功
+  - INVALID_PARAMS: 请求体缺少必要字段
+  - RESOURCE_NOT_FOUND: 租户或用户不存在
+  - STATE_CONFLICT: 目标租户当前状态不允许初始化管理员
+  - IDEMPOTENT_DUPLICATE: 当前租户已完成管理员初始化
   - PERMISSION_DENIED: 当前操作者未登录或不具备平台租户管理权限
 
 ### 邀请租户成员
@@ -249,6 +271,7 @@ PostgreSQL
 ### 权限归属
 - `platform_admin`: 拥有 access.manage_tenant
 - 租户管理员不直接管理租户（租户由平台管理）
+- 租户管理员初始化接口位于平台侧 `internal/auth/tenants/*` 平面，由具备 `access.manage_tenant` 的操作者执行
 - 当前实现中的租户邀请接口仍位于 `internal/auth` 平面，由具备 `access.manage_tenant_member` 的系统操作者发起
 - 邀请确认接口同样保留在 `internal/auth` 平面，但调用者切换为被邀请的已登录账号
 - 租户成员停用接口同样位于 `internal/auth` 平面，当前由具备 `access.manage_tenant_member` 的系统操作者触发

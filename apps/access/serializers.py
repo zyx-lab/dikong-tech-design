@@ -28,6 +28,7 @@ from apps.access.models import (
     TenantMemberRole,
     TenantMemberRoleStatus,
     TenantMemberStatus,
+    TenantStatus,
     User,
 )
 
@@ -510,6 +511,91 @@ class TenantMemberCreateSerializer(serializers.ModelSerializer):
                 status=TenantMemberRoleStatus.ACTIVE,
             )
 
+        return member
+
+
+class TenantInitializeAdminSerializer(serializers.Serializer):
+    """初始化租户管理员。"""
+
+    user_id = serializers.IntegerField(required=True)
+    display_name = serializers.CharField(max_length=128)
+    staff_no = serializers.CharField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
+
+    @transaction.atomic
+    def create(self, validated_data):
+        tenant = self.context["tenant"]
+        if tenant.status != TenantStatus.ENABLED:
+            raise BusinessStateConflict("tenant status invalid", business_detail_code="TENANT_STATUS_INVALID")
+
+        user = User.objects.filter(id=validated_data["user_id"]).first()
+        if user is None:
+            raise BusinessResourceNotFound("user not found", business_detail_code="USER_NOT_FOUND")
+
+        tenant_admin_role = SystemRole.objects.filter(code="tenant_admin", status=SystemRoleStatus.ACTIVE).first()
+        if tenant_admin_role is None:
+            raise BusinessStateConflict(
+                "tenant_admin role not configured",
+                business_detail_code="TENANT_ADMIN_ROLE_NOT_CONFIGURED",
+            )
+
+        existing_admin = (
+            TenantMemberRole.objects.select_related("tenant_member")
+            .filter(
+                tenant_member__tenant=tenant,
+                tenant_member__status=TenantMemberStatus.ACTIVE,
+                system_role=tenant_admin_role,
+                status=TenantMemberRoleStatus.ACTIVE,
+            )
+            .first()
+        )
+        if existing_admin is not None:
+            raise BusinessIdempotentDuplicate(
+                "tenant admin already initialized",
+                business_detail_code="TENANT_ADMIN_ALREADY_INITIALIZED",
+            )
+
+        member = TenantMember.objects.filter(tenant=tenant, user=user).first()
+        joined_at = timezone.now()
+        if member is None:
+            member = TenantMember.objects.create(
+                tenant=tenant,
+                user=user,
+                display_name=validated_data["display_name"],
+                staff_no=validated_data.get("staff_no", ""),
+                phone=validated_data.get("phone", ""),
+                email=validated_data.get("email", ""),
+                invitation_token=None,
+                status=TenantMemberStatus.ACTIVE,
+                joined_at=joined_at,
+            )
+        else:
+            member.display_name = validated_data["display_name"]
+            member.staff_no = validated_data.get("staff_no", "")
+            member.phone = validated_data.get("phone", "")
+            member.email = validated_data.get("email", "")
+            member.invitation_token = None
+            member.status = TenantMemberStatus.ACTIVE
+            member.joined_at = member.joined_at or joined_at
+            member.save(
+                update_fields=[
+                    "display_name",
+                    "staff_no",
+                    "phone",
+                    "email",
+                    "invitation_token",
+                    "status",
+                    "joined_at",
+                    "updated_at",
+                ]
+            )
+
+        TenantMemberRole.objects.update_or_create(
+            tenant_member=member,
+            system_role=tenant_admin_role,
+            defaults={"status": TenantMemberRoleStatus.ACTIVE},
+        )
         return member
 
 

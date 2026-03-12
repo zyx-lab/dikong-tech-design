@@ -102,6 +102,7 @@ PostgreSQL
 1. `(tenant_id, user_id)` 唯一，同一账号不能重复加入同一租户。
 2. 邀请制创建成员时状态为 `pending`，并生成 `invitation_token`。
 3. `joined_at` 仅在成员确认加入后写入。
+4. `POST /internal/auth/tenants/{id}/initialize-admin` 可直接创建或激活首个 `tenant_admin` 成员。
 
 ---
 
@@ -145,7 +146,7 @@ PostgreSQL
 1. 模型：`apps/access/models.py` - `Tenant`
 2. 模型：`apps/access/models.py` - `TenantMember` / `TenantMemberRole`
 3. 序列化与校验：`apps/access/serializers.py`
-4. 接口：`apps/access/views.py` - `TenantViewSet` / `TenantDisableView` / `TenantMemberInviteView` / `TenantMemberDisableView`
+4. 接口：`apps/access/views.py` - `TenantViewSet` / `TenantDisableView` / `TenantEnableView` / `TenantInitializeAdminView` / `TenantMemberInviteView` / `TenantMemberDisableView`
 
 ---
 
@@ -176,6 +177,9 @@ PostgreSQL
 | TENANT_MEMBER_EXISTS | 租户成员关系已存在 |
 | TENANT_ALREADY_DISABLED | 租户已是禁用状态，重复停用 |
 | TENANT_ALREADY_ENABLED | 租户已是启用状态，重复启用 |
+| TENANT_STATUS_INVALID | 租户当前状态不允许执行目标动作 |
+| TENANT_ADMIN_ALREADY_INITIALIZED | 当前租户已完成管理员初始化 |
+| TENANT_ADMIN_ROLE_NOT_CONFIGURED | tenant_admin 固定角色未初始化 |
 | TENANT_MEMBER_NOT_FOUND | 目标租户成员不存在 |
 | TENANT_MEMBER_ALREADY_DISABLED | 租户成员已是禁用状态，重复停用 |
 | INVITATION_NOT_FOUND | invitation token 不存在 |
@@ -183,7 +187,7 @@ PostgreSQL
 | INVITATION_ALREADY_CONFIRMED | 邀请已确认，重复提交 |
 | INVITATION_STATUS_INVALID | invitation 对应成员状态不是 pending |
 
-当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenants/{id}/enable`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation`、`POST /internal/auth/tenant-members/{id}/disable` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
+当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenants/{id}/enable`、`POST /internal/auth/tenants/{id}/initialize-admin`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation`、`POST /internal/auth/tenant-members/{id}/disable` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
 
 `GET /internal/auth/tenant-audit-logs` 同样返回 `business_code + business_detail_code`，并使用以下额外 detail code：
 

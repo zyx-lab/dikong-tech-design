@@ -666,6 +666,113 @@ class TenantEnableAPITests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "TENANT_ALREADY_ENABLED")
 
 
+class TenantInitializeAdminAPITests(TestCase):
+    """初始化租户管理员 API 测试"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_superuser(username="tenant_admin_initializer", password="pass1234")
+        self.client.force_authenticate(user=self.user)
+        self.tenant = Tenant.objects.create(code="tenant_init_admin", name="初始化管理员租户", status=TenantStatus.ENABLED)
+        self.target_user = User.objects.create_user(username="tenant_admin_u1", password="pass1234", status=1)
+        self.admin_role = SystemRole.objects.create(code="tenant_admin", name="租户管理员", status=1)
+
+    def test_auto__case_tenant_initialize_admin_success(self):
+        response = self.client.post(
+            f"/internal/auth/tenants/{self.tenant.id}/initialize-admin",
+            {"user_id": self.target_user.id, "display_name": "租户管理员A"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["roles"], ["tenant_admin"])
+        self.assertEqual(response.data["status"], TenantMemberStatus.ACTIVE)
+
+        member = TenantMember.objects.get(tenant=self.tenant, user=self.target_user)
+        self.assertEqual(member.status, TenantMemberStatus.ACTIVE)
+        self.assertIsNotNone(member.joined_at)
+        self.assertEqual(
+            list(member.role_bindings.filter(status=1).values_list("system_role__code", flat=True)),
+            ["tenant_admin"],
+        )
+
+        audit_log = AuditLog.objects.get(action="TENANT_ADMIN_INITIALIZE", target_id=str(member.id))
+        self.assertIsNone(audit_log.tenant_id)
+        self.assertEqual(audit_log.actor_user_id, self.user.id)
+        self.assertEqual(audit_log.after_data["tenant_id"], self.tenant.id)
+
+    def test_auto__case_tenant_initialize_admin_invalid_params(self):
+        response = self.client.post(
+            f"/internal/auth/tenants/{self.tenant.id}/initialize-admin",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+
+    def test_auto__case_tenant_initialize_admin_permission_denied(self):
+        client = APIClient()
+        response = client.post(
+            f"/internal/auth/tenants/{self.tenant.id}/initialize-admin",
+            {"user_id": self.target_user.id, "display_name": "租户管理员A"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+    def test_auto__case_tenant_initialize_admin_resource_not_found(self):
+        response = self.client.post(
+            "/internal/auth/tenants/99999/initialize-admin",
+            {"user_id": self.target_user.id, "display_name": "租户管理员A"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_NOT_FOUND")
+
+    def test_auto__case_tenant_initialize_admin_state_conflict(self):
+        self.tenant.status = TenantStatus.DISABLED
+        self.tenant.save(update_fields=["status", "updated_at"])
+
+        response = self.client.post(
+            f"/internal/auth/tenants/{self.tenant.id}/initialize-admin",
+            {"user_id": self.target_user.id, "display_name": "租户管理员A"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_STATUS_INVALID")
+
+    def test_auto__case_tenant_initialize_admin_idempotent_duplicate(self):
+        existing_member = TenantMember.objects.create(
+            tenant=self.tenant,
+            user=self.target_user,
+            display_name="既有管理员",
+            status=TenantMemberStatus.ACTIVE,
+            joined_at=timezone.now(),
+        )
+        existing_member.role_bindings.create(system_role=self.admin_role, status=1)
+
+        other_user = User.objects.create_user(username="tenant_admin_u2", password="pass1234", status=1)
+        response = self.client.post(
+            f"/internal/auth/tenants/{self.tenant.id}/initialize-admin",
+            {"user_id": other_user.id, "display_name": "租户管理员B"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_ADMIN_ALREADY_INITIALIZED")
+
+
 class TenantMemberDisableAPITests(TestCase):
     """租户成员停用 API 测试"""
 
