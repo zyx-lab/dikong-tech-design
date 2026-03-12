@@ -107,6 +107,7 @@ PostgreSQL
 - `POST /internal/auth/tenant-members/invite`: 邀请租户成员
 - `POST /internal/auth/tenant-members/confirm-invitation`: 用户确认租户邀请
 - `POST /internal/auth/tenant-members/{id}/disable`: 停用租户成员
+- `POST /internal/auth/tenant-members/{id}/enable`: 启用租户成员
 - `GET /internal/auth/me/tenants`: 获取当前用户可进入的租户列表
 - `GET /internal/auth/tenant-audit-logs`: 查看租户级审计日志
 
@@ -223,6 +224,21 @@ PostgreSQL
   - SUCCESS: 停用成功
   - RESOURCE_NOT_FOUND: 租户成员不存在
   - IDEMPOTENT_DUPLICATE: 租户成员已停用
+  - PERMISSION_DENIED: 当前操作者未登录或不具备成员管理权限
+
+### 启用租户成员
+- 功能：启用指定租户成员，使其恢复当前租户内的有效成员身份
+- 路径：`/internal/auth/tenant-members/{id}/enable`
+- 方法：`POST`
+- 状态流转：DISABLED -> ACTIVE
+- 有效状态：目标成员存在，且当前状态为 DISABLED
+- 无效状态：
+  - 目标成员不存在
+  - 成员已经是 ACTIVE，重复启用
+- 业务码：
+  - SUCCESS: 启用成功
+  - RESOURCE_NOT_FOUND: 租户成员不存在
+  - IDEMPOTENT_DUPLICATE: 租户成员已启用
   - PERMISSION_DENIED: 当前操作者未登录或不具备成员管理权限
 
 ### 获取当前用户租户列表

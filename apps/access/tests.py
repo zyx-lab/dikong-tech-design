@@ -835,6 +835,70 @@ class TenantMemberDisableAPITests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "TENANT_MEMBER_ALREADY_DISABLED")
 
 
+class TenantMemberEnableAPITests(TestCase):
+    """租户成员启用 API 测试"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_superuser(username="tenant_member_enabler", password="pass1234")
+        self.client.force_authenticate(user=self.user)
+        self.tenant = Tenant.objects.create(code="tenant_member_enable", name="成员启用租户", status=TenantStatus.ENABLED)
+        self.target_user = User.objects.create_user(username="tenant_member_enable_u1", password="pass1234", status=1)
+        self.member = TenantMember.objects.create(
+            tenant=self.tenant,
+            user=self.target_user,
+            display_name="待启用成员",
+            status=TenantMemberStatus.DISABLED,
+            joined_at=None,
+        )
+
+    def test_auto__case_tenant_member_enable_success(self):
+        response = self.client.post(f"/internal/auth/tenant-members/{self.member.id}/enable", format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["member_id"], self.member.id)
+        self.assertEqual(response.data["status"], TenantMemberStatus.ACTIVE)
+
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.status, TenantMemberStatus.ACTIVE)
+        self.assertIsNotNone(self.member.joined_at)
+
+        audit_log = AuditLog.objects.get(action="TENANT_MEMBER_ENABLE", target_id=str(self.member.id))
+        self.assertEqual(audit_log.tenant_id, self.tenant.id)
+        self.assertEqual(audit_log.actor_user_id, self.user.id)
+        self.assertEqual(audit_log.before_data["status"], TenantMemberStatus.DISABLED)
+        self.assertEqual(audit_log.after_data["status"], TenantMemberStatus.ACTIVE)
+
+    def test_auto__case_tenant_member_enable_permission_denied(self):
+        client = APIClient()
+
+        response = client.post(f"/internal/auth/tenant-members/{self.member.id}/enable", format="json")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+    def test_auto__case_tenant_member_enable_resource_not_found(self):
+        response = self.client.post("/internal/auth/tenant-members/99999/enable", format="json")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_MEMBER_NOT_FOUND")
+
+    def test_auto__case_tenant_member_enable_idempotent_duplicate(self):
+        self.member.status = TenantMemberStatus.ACTIVE
+        self.member.joined_at = timezone.now()
+        self.member.save(update_fields=["status", "joined_at", "updated_at"])
+
+        response = self.client.post(f"/internal/auth/tenant-members/{self.member.id}/enable", format="json")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_MEMBER_ALREADY_ENABLED")
+
+
 class TenantMemberInviteAPITests(TestCase):
     """租户成员邀请 API 测试"""
 
