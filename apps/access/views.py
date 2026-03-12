@@ -14,6 +14,7 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 
 from apps.access.drf_permissions import PermissionMapMixin, RequireInternalPermission
+from apps.access.exceptions import BusinessPermissionDenied
 from apps.access.models import (
     AuditLog,
     GroupPermissionScope,
@@ -24,6 +25,7 @@ from apps.access.models import (
     Tenant,
     TenantMember,
     TenantMemberRole,
+    TenantMemberRoleStatus,
     TenantMemberStatus,
     TenantStatus,
     User,
@@ -184,6 +186,7 @@ class ApiRootView(APIView):
                     "staff_types": reverse("staff-type-list-create", request=request),
                     "scope_matrix": reverse("scope-matrix", request=request),
                     "audit_logs": reverse("audit-log-list", request=request),
+                    "tenant_audit_logs": reverse("tenant-audit-log-list", request=request),
                 },
             }
         )
@@ -501,6 +504,84 @@ class AuditLogListView(PermissionMapMixin, generics.ListAPIView):
                 qs = qs.filter(created_at__lte=end)
 
         return qs.order_by("-created_at", "-id")
+
+
+class TenantAuditLogListView(generics.ListAPIView):
+    serializer_class = AuditLogSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+    queryset = AuditLog.objects.select_related("actor_user", "tenant").all()
+    allowed_role_codes = {"tenant_admin", "business_admin"}
+
+    def _get_current_tenant(self):
+        tenant = getattr(self.request, "tenant_context", None)
+        if tenant is None:
+            raise BusinessPermissionDenied("tenant context required", business_detail_code="TENANT_CONTEXT_REQUIRED")
+
+        member = (
+            TenantMember.objects.filter(
+                tenant=tenant,
+                user=self.request.user,
+                status=TenantMemberStatus.ACTIVE,
+            )
+            .prefetch_related("role_bindings__system_role")
+            .first()
+        )
+        if member is None:
+            raise BusinessPermissionDenied("active tenant membership required", business_detail_code="TENANT_MEMBERSHIP_REQUIRED")
+
+        role_codes = set(
+            member.role_bindings.filter(status=TenantMemberRoleStatus.ACTIVE).values_list("system_role__code", flat=True)
+        )
+        if not role_codes.intersection(self.allowed_role_codes):
+            raise BusinessPermissionDenied("tenant audit permission denied", business_detail_code="TENANT_AUDIT_FORBIDDEN")
+
+        return tenant
+
+    def get_queryset(self):
+        tenant = self._get_current_tenant()
+        qs = super().get_queryset().filter(tenant=tenant)
+
+        action = self.request.query_params.get("action")
+        target_type = self.request.query_params.get("target_type")
+        actor_user_id = self.request.query_params.get("actor_user_id")
+        request_id = self.request.query_params.get("request_id")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+
+        if action:
+            qs = qs.filter(action=action)
+        if target_type:
+            qs = qs.filter(target_type=target_type)
+        if actor_user_id:
+            qs = qs.filter(actor_user_id=actor_user_id)
+        if request_id:
+            qs = qs.filter(request_id=request_id)
+
+        if date_from:
+            start = _parse_iso_datetime(date_from)
+            if start is not None:
+                qs = qs.filter(created_at__gte=start)
+
+        if date_to:
+            end = _parse_iso_datetime(date_to)
+            if end is not None:
+                qs = qs.filter(created_at__lte=end)
+
+        return qs.order_by("-created_at", "-id")
+
+    @extend_schema(responses=OpenApiTypes.OBJECT)
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "count": len(serializer.data),
+                "data": serializer.data,
+            }
+        )
 
 
 class TenantViewSet(PermissionMapMixin, generics.ListCreateAPIView, generics.RetrieveAPIView):

@@ -268,6 +268,94 @@ class MeTenantListAPITests(TestCase):
         self.assertIsNone(response.data["default_tenant"])
 
 
+class TenantAuditLogListAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="tenant_auditor_user", password="pass1234", status=1)
+        self.other_user = User.objects.create_user(username="tenant_auditor_other", password="pass1234", status=1)
+        self.role_admin = SystemRole.objects.create(code="tenant_admin", name="租户管理员", status=1)
+        self.role_viewer = SystemRole.objects.create(code="route_planner", name="航线规划员", status=1)
+        self.tenant_a = Tenant.objects.create(code="tenant_audit_a", name="租户审计A", status=TenantStatus.ENABLED)
+        self.tenant_b = Tenant.objects.create(code="tenant_audit_b", name="租户审计B", status=TenantStatus.ENABLED)
+
+        member = TenantMember.objects.create(
+            tenant=self.tenant_a,
+            user=self.user,
+            display_name="审计用户",
+            status=TenantMemberStatus.ACTIVE,
+            joined_at=timezone.now(),
+        )
+        member.role_bindings.create(system_role=self.role_admin, status=1)
+
+        viewer_member = TenantMember.objects.create(
+            tenant=self.tenant_a,
+            user=self.other_user,
+            display_name="普通成员",
+            status=TenantMemberStatus.ACTIVE,
+            joined_at=timezone.now(),
+        )
+        viewer_member.role_bindings.create(system_role=self.role_viewer, status=1)
+
+        self.tenant_log = AuditLog.objects.create(
+            tenant=self.tenant_a,
+            actor_user=self.user,
+            action="TENANT_MEMBER_INVITE",
+            target_type="tenant_member",
+            target_id="101",
+        )
+        AuditLog.objects.create(
+            tenant=self.tenant_b,
+            actor_user=self.user,
+            action="TENANT_MEMBER_INVITE",
+            target_type="tenant_member",
+            target_id="202",
+        )
+        AuditLog.objects.create(
+            tenant=None,
+            actor_user=self.user,
+            action="TENANT_CREATE",
+            target_type="tenant",
+            target_id=str(self.tenant_a.id),
+        )
+
+    def test_auto__case_tenant_audit_logs_success(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get("/internal/auth/tenant-audit-logs", HTTP_X_TENANT_CODE="tenant_audit_a")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["data"][0]["id"], self.tenant_log.id)
+        self.assertEqual(response.data["data"][0]["action"], "TENANT_MEMBER_INVITE")
+
+    def test_auto__case_tenant_audit_logs_permission_denied_not_authenticated(self):
+        response = self.client.get("/internal/auth/tenant-audit-logs", HTTP_X_TENANT_CODE="tenant_audit_a")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+    def test_auto__case_tenant_audit_logs_permission_denied_missing_tenant_context(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get("/internal/auth/tenant-audit-logs")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_CONTEXT_REQUIRED")
+
+    def test_auto__case_tenant_audit_logs_permission_denied_forbidden_role(self):
+        self.client.force_authenticate(self.other_user)
+
+        response = self.client.get("/internal/auth/tenant-audit-logs", HTTP_X_TENANT_CODE="tenant_audit_a")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_AUDIT_FORBIDDEN")
+
+
 class SuperuserRootPolicyTests(TestCase):
     def setUp(self):
         self.client = APIClient()

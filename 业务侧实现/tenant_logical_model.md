@@ -104,6 +104,7 @@ PostgreSQL
 - `POST /internal/auth/tenant-members/invite`: 邀请租户成员
 - `POST /internal/auth/tenant-members/confirm-invitation`: 用户确认租户邀请
 - `GET /internal/auth/me/tenants`: 获取当前用户可进入的租户列表
+- `GET /internal/auth/tenant-audit-logs`: 查看租户级审计日志
 
 ---
 
@@ -166,6 +167,25 @@ PostgreSQL
   - SUCCESS: 返回租户列表与 default_tenant
   - PERMISSION_DENIED: 未登录
 
+### 查看租户级审计日志
+- 功能：在当前租户上下文内读取租户治理审计日志
+- 路径：`/internal/auth/tenant-audit-logs`
+- 方法：`GET`
+- 状态流转：无状态变更，只读取当前租户下的审计记录
+- 有效状态：
+  - 请求已认证
+  - `X-Tenant-Code` 解析出有效租户
+  - 当前用户是该租户的 `ACTIVE` 成员
+  - 当前成员角色包含 `tenant_admin` 或 `business_admin`
+- 无效状态：
+  - 当前请求未认证
+  - 未提供租户上下文
+  - 当前用户不是该租户的有效成员
+  - 当前成员角色不允许查看租户审计
+- 业务码：
+  - SUCCESS: 返回当前租户的审计日志列表
+  - PERMISSION_DENIED: 未登录、缺少租户上下文、成员身份无效或角色不足
+
 ---
 
 ## 权限设计
@@ -184,6 +204,7 @@ PostgreSQL
 - 当前实现中的租户邀请接口仍位于 `internal/auth` 平面，由具备 `access.manage_tenant_member` 的系统操作者发起
 - 邀请确认接口同样保留在 `internal/auth` 平面，但调用者切换为被邀请的已登录账号
 - 当前用户租户列表接口位于 `internal/auth/me/*` 平面，作为认证入口后的租户上下文读取补充
+- 租户级审计接口同样位于 `internal/auth` 平面，但其数据边界由 `X-Tenant-Code` 与租户成员关系共同决定
 
 ---
 

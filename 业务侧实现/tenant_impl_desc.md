@@ -266,6 +266,46 @@ PostgreSQL
   3. 每个租户返回当前有效角色编码列表
   4. `default_tenant` 默认取排序后的首个有效租户；若无有效租户则返回 `null`
 
+### 6. 查看租户级审计日志
+
+- 功能：在租户上下文内查看当前租户的治理审计日志
+- 路径：`/internal/auth/tenant-audit-logs`
+- 方法：`GET`
+- 权限：已登录用户，且必须是当前租户的 `tenant_admin` 或 `business_admin`
+- 请求头：
+```http
+X-Tenant-Code: tenant_a
+```
+- 响应（成功，200）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "count": 1,
+  "data": [
+    {
+      "id": 1,
+      "action": "TENANT_MEMBER_INVITE",
+      "target_type": "tenant_member",
+      "target_id": "101"
+    }
+  ]
+}
+```
+- 响应（权限不足，403）：
+```json
+{
+  "business_code": "PERMISSION_DENIED",
+  "business_detail_code": "TENANT_AUDIT_FORBIDDEN"
+}
+```
+- 实现说明：
+  1. 依赖 `TenantContextMiddleware` 从 `X-Tenant-Code` 解析当前租户
+  2. 只允许当前租户下 `ACTIVE` 成员访问
+  3. 成员角色必须包含 `tenant_admin` 或 `business_admin`
+  4. 只返回 `AuditLog.tenant = request.tenant_context` 的记录
+  5. 过滤掉其他租户与平台级审计日志
+
 ---
 
 ## 审计动作

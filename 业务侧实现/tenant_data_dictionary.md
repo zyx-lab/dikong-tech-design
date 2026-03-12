@@ -180,3 +180,11 @@ PostgreSQL
 | INVITATION_STATUS_INVALID | invitation 对应成员状态不是 pending |
 
 当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
+
+`GET /internal/auth/tenant-audit-logs` 同样返回 `business_code + business_detail_code`，并使用以下额外 detail code：
+
+| business_detail_code | 语义 |
+| ------ | ------ |
+| TENANT_CONTEXT_REQUIRED | 请求缺少租户上下文 |
+| TENANT_MEMBERSHIP_REQUIRED | 当前用户不是该租户的有效成员 |
+| TENANT_AUDIT_FORBIDDEN | 当前成员角色不允许查看租户审计 |
