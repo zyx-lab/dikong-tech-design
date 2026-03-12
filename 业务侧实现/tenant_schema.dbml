@@ -30,7 +30,8 @@ Table tenants [note: '租户主表'] {
   code varchar(64) [not null, unique, note: 'code 租户编码']
   name varchar(128) [not null, note: 'name 租户名称']
   status smallint [not null, default: 1, note: 'status 0=禁用 1=启用']
-  plan varchar(32) [note: 'plan 套餐类型（预留）']
+  plan varchar(64) [note: 'plan 套餐类型（预留）']
+  remark varchar(500) [note: 'remark 备注']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 
@@ -47,13 +48,20 @@ Table tenant_members [note: '租户成员身份'] {
   tenant_id bigint [not null, note: 'tenant_id 关联租户']
   user_id bigint [not null, note: 'user_id 关联用户']
   display_name varchar(128) [not null, note: 'display_name 显示名称']
+  staff_no varchar(64) [note: 'staff_no 工号']
+  phone varchar(32) [note: 'phone 手机号']
+  email varchar(254) [note: 'email 邮箱']
+  invitation_token varchar(64) [unique, note: 'invitation_token 邀请确认令牌']
   status smallint [not null, default: 0, note: 'status 0=pending 1=active 2=disabled']
+  joined_at timestamp [note: 'joined_at 确认加入时间']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 
   indexes {
     tenant_id [name: 'idx_tenant_member_tenant']
     user_id [name: 'idx_tenant_member_user']
+    invitation_token [name: 'idx_tenant_member_invitation_token', unique]
+    (tenant_id, user_id) [name: 'uniq_tenant_user_member', unique]
   }
 }
 
@@ -64,12 +72,14 @@ Table tenant_member_roles [note: '租户成员角色绑定'] {
   id bigserial [pk, note: 'id 主键']
   tenant_member_id bigint [not null, note: 'tenant_member_id 关联租户成员']
   system_role_id bigint [not null, note: 'system_role_id 关联系统角色']
+  status smallint [not null, default: 1, note: 'status 0=disabled 1=active']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 
   indexes {
     tenant_member_id [name: 'idx_tmr_member']
     system_role_id [name: 'idx_tmr_role']
+    (tenant_member_id, system_role_id) [name: 'uniq_member_role', unique]
   }
 }
 

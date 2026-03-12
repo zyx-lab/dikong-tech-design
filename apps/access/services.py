@@ -146,6 +146,7 @@ def log_action(
     target_id: Any = "",
     before_data: Optional[dict[str, Any]] = None,
     after_data: Optional[dict[str, Any]] = None,
+    tenant=None,
     request=None,
     actor_user=None,
 ) -> AuditLog:
@@ -155,6 +156,7 @@ def log_action(
         actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
 
     return AuditLog.objects.create(
+        tenant=tenant,
         actor_user=actor_user,
         action=action,
         target_type=target_type,

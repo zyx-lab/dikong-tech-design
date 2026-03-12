@@ -43,13 +43,36 @@ PostgreSQL
 | code | CharField(64) | 租户编码，唯一 |
 | name | CharField(128) | 租户名称 |
 | status | SmallIntegerField | 状态：0=禁用，1=启用 |
-| plan | CharField(32) | 套餐类型（预留） |
+| plan | CharField(64) | 套餐类型（预留） |
+| remark | CharField(500) | 备注 |
 | created_at | DateTimeField | 创建时间 |
 | updated_at | DateTimeField | 更新时间 |
 
 ### TenantStatus 枚举
 - DISABLED = 0, "disabled"
 - ENABLED = 1, "enabled"
+
+### TenantMember 表 (tenant_members)
+
+| 字段 | 类型 | 说明 |
+|-----|------|------|
+| id | BigAutoField | 主键 |
+| tenant | ForeignKey(Tenant) | 所属租户 |
+| user | ForeignKey(User) | 被邀请或已加入的账号 |
+| display_name | CharField(128) | 租户内显示名称 |
+| staff_no | CharField(64) | 工号 |
+| phone | CharField(32) | 手机号 |
+| email | EmailField | 邮箱 |
+| invitation_token | CharField(64) | 邀请确认令牌，邀请制流程使用 |
+| status | SmallIntegerField | 状态：0=pending，1=active，2=disabled |
+| joined_at | DateTimeField | 确认加入时间，pending 时为空 |
+| created_at | DateTimeField | 创建时间 |
+| updated_at | DateTimeField | 更新时间 |
+
+### TenantMemberStatus 枚举
+- PENDING = 0, "pending"
+- ACTIVE = 1, "active"
+- DISABLED = 2, "disabled"
 
 ---
 
@@ -98,6 +121,58 @@ PostgreSQL
   3. 找到则设置 `request.tenant_context = tenant`
   4. 未找到或已禁用则返回 403
 
+### 3. 邀请租户成员
+
+- 功能：向已注册平台账号发起加入租户邀请，并预绑定初始角色
+- 路径：`/internal/auth/tenant-members/invite`
+- 方法：`POST`
+- 权限：`access.manage_tenant_member`
+- 请求体：
+```json
+{
+  "tenant_id": 1,
+  "user_id": 2,
+  "display_name": "张三",
+  "roles": ["pilot_operator"]
+}
+```
+- 响应（成功，201）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "member_id": 1,
+  "message": "邀请发送成功"
+}
+```
+- 响应（参数错误，400）：
+```json
+{
+  "business_code": "INVALID_PARAMS",
+  "business_detail_code": "VALIDATION_ERROR"
+}
+```
+- 响应（资源不存在，404）：
+```json
+{
+  "business_code": "RESOURCE_NOT_FOUND",
+  "business_detail_code": "TENANT_NOT_FOUND"
+}
+```
+- 响应（状态冲突，409）：
+```json
+{
+  "business_code": "STATE_CONFLICT",
+  "business_detail_code": "TENANT_MEMBER_EXISTS"
+}
+```
+- 实现说明：
+  1. 校验 `tenant_id` 与 `user_id` 对应资源存在
+  2. 校验当前 `(tenant_id, user_id)` 尚未存在成员关系
+  3. 创建 `TenantMember(status=PENDING)`，并生成 `invitation_token`
+  4. 为成员写入初始 `TenantMemberRole`
+  5. 记录 `TENANT_MEMBER_INVITE` 租户级审计日志
+
 ---
 
 ## 审计动作
@@ -108,6 +183,7 @@ PostgreSQL
 | TENANT_UPDATE | 更新租户 | tenant id, 更新字段 |
 | TENANT_DISABLE | 禁用租户 | tenant id |
 | TENANT_ENABLE | 启用租户 | tenant id |
+| TENANT_MEMBER_INVITE | 邀请租户成员 | member id, tenant id, user id |
 
 ---
 
@@ -117,6 +193,8 @@ PostgreSQL
 
 - 租户管理权限：`access.manage_tenant`
 - 租户查看权限：`access.view_tenant`
+- 租户成员管理权限：`access.manage_tenant_member`
+- 租户成员查看权限：`access.view_tenant_member`
 
 ---
 

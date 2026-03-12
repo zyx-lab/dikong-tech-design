@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from django.contrib.auth.models import Group, Permission
 from django.db import transaction
 from django.utils import timezone
@@ -5,6 +7,7 @@ from rest_framework import serializers
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
 
+from apps.access.exceptions import BusinessResourceNotFound, BusinessStateConflict
 from apps.access.models import (
     AuditLog,
     GroupPermissionScope,
@@ -476,6 +479,64 @@ class TenantMemberCreateSerializer(serializers.ModelSerializer):
 
         # 绑定角色
         for code in role_codes:
+            role = SystemRole.objects.get(code=code)
+            TenantMemberRole.objects.create(
+                tenant_member=member,
+                system_role=role,
+                status=TenantMemberRoleStatus.ACTIVE,
+            )
+
+        return member
+
+
+class TenantMemberInviteSerializer(serializers.Serializer):
+    """租户成员邀请序列化器。"""
+
+    tenant_id = serializers.IntegerField(required=True)
+    user_id = serializers.IntegerField(required=True)
+    display_name = serializers.CharField(max_length=128)
+    staff_no = serializers.CharField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
+    roles = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        allow_empty=True,
+    )
+
+    def validate_roles(self, value):
+        valid_codes = set(SystemRole.objects.filter(status=SystemRoleStatus.ACTIVE).values_list("code", flat=True))
+        invalid = set(value) - valid_codes
+        if invalid:
+            raise serializers.ValidationError(f"Invalid role codes: {invalid}")
+        return value
+
+    @transaction.atomic
+    def create(self, validated_data):
+        tenant = Tenant.objects.filter(id=validated_data["tenant_id"]).first()
+        if tenant is None:
+            raise BusinessResourceNotFound("tenant not found", business_detail_code="TENANT_NOT_FOUND")
+
+        user = User.objects.filter(id=validated_data["user_id"]).first()
+        if user is None:
+            raise BusinessResourceNotFound("user not found", business_detail_code="USER_NOT_FOUND")
+
+        if TenantMember.objects.filter(tenant=tenant, user=user).exists():
+            raise BusinessStateConflict("tenant member already exists", business_detail_code="TENANT_MEMBER_EXISTS")
+
+        member = TenantMember.objects.create(
+            tenant=tenant,
+            user=user,
+            display_name=validated_data["display_name"],
+            staff_no=validated_data.get("staff_no", ""),
+            phone=validated_data.get("phone", ""),
+            email=validated_data.get("email", ""),
+            invitation_token=uuid4().hex,
+            status=TenantMemberStatus.PENDING,
+            joined_at=None,
+        )
+
+        for code in validated_data.get("roles", []):
             role = SystemRole.objects.get(code=code)
             TenantMemberRole.objects.create(
                 tenant_member=member,

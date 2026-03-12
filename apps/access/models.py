@@ -369,6 +369,7 @@ class TenantMember(TimeStampedModel):
     staff_no = models.CharField(max_length=64, blank=True, verbose_name="工号")
     phone = models.CharField(max_length=32, blank=True, verbose_name="手机")
     email = models.EmailField(blank=True, verbose_name="邮箱")
+    invitation_token = models.CharField(max_length=64, unique=True, null=True, blank=True, verbose_name="邀请令牌")
     status = models.PositiveSmallIntegerField(choices=TenantMemberStatus.choices, default=TenantMemberStatus.PENDING, verbose_name="状态")
     joined_at = models.DateTimeField(null=True, blank=True, verbose_name="加入时间")
 

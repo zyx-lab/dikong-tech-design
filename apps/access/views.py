@@ -4,7 +4,7 @@ from django.contrib.auth import authenticate, login
 from django.contrib.auth.models import Group, Permission
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import generics, status
+from rest_framework import generics, serializers, status
 from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -37,6 +37,7 @@ from apps.access.serializers import (
     StaffTypeSerializer,
     SystemRoleSerializer,
     TenantMemberCreateSerializer,
+    TenantMemberInviteSerializer,
     TenantMemberRoleAssignSerializer,
     TenantMemberRoleSerializer,
     TenantMemberSerializer,
@@ -468,15 +469,35 @@ class AuditLogListView(PermissionMapMixin, generics.ListAPIView):
         return qs.order_by("-created_at", "-id")
 
 
-class TenantViewSet(PermissionMapMixin, generics.CreateAPIView):
-    """创建租户 API"""
+class TenantViewSet(PermissionMapMixin, generics.ListCreateAPIView, generics.RetrieveAPIView):
+    """租户 API - 列表/创建/详情"""
 
     serializer_class = TenantSerializer
     permission_classes = [RequireInternalPermission]
     method_permission_map = {
+        "GET": "access.view_tenant",
         "POST": "access.manage_tenant",
     }
     queryset = Tenant.objects.all()
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            "business_code": "SUCCESS",
+            "business_detail_code": "OK",
+            "data": serializer.data,
+            "count": len(serializer.data),
+        })
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response({
+            "business_code": "SUCCESS",
+            "business_detail_code": "OK",
+            "data": serializer.data,
+        })
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -509,6 +530,26 @@ class TenantViewSet(PermissionMapMixin, generics.CreateAPIView):
             target_id=tenant.id,
             after_data={"id": tenant.id, "code": tenant.code, "name": tenant.name},
         )
+
+
+class TenantDetailView(PermissionMapMixin, generics.RetrieveAPIView):
+    """租户详情"""
+
+    serializer_class = TenantSerializer
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "GET": "access.view_tenant",
+    }
+    queryset = Tenant.objects.all()
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response({
+            "business_code": "SUCCESS",
+            "business_detail_code": "OK",
+            "data": serializer.data,
+        })
 
 
 # ========== 平台固定角色 API ==========
@@ -586,7 +627,48 @@ class TenantMemberListCreateView(PermissionMapMixin, generics.ListCreateAPIView)
             action="TENANT_MEMBER_CREATE",
             target_type="tenant_member",
             target_id=member.id,
+            tenant=member.tenant,
             after_data={"id": member.id, "tenant_id": member.tenant_id, "user_id": member.user_id},
+        )
+
+
+class TenantMemberInviteView(PermissionMapMixin, generics.GenericAPIView):
+    """租户成员邀请。"""
+
+    permission_classes = [RequireInternalPermission]
+    serializer_class = TenantMemberInviteSerializer
+    method_permission_map = {
+        "POST": "access.manage_tenant_member",
+    }
+
+    @extend_schema(request=TenantMemberInviteSerializer, responses=OpenApiTypes.OBJECT)
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError:
+            return Response(
+                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        member = serializer.save()
+        log_action(
+            request=request,
+            action="TENANT_MEMBER_INVITE",
+            target_type="tenant_member",
+            target_id=member.id,
+            tenant=member.tenant,
+            after_data={"id": member.id, "tenant_id": member.tenant_id, "user_id": member.user_id},
+        )
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "member_id": member.id,
+                "message": "邀请发送成功",
+            },
+            status=status.HTTP_201_CREATED,
         )
 
 

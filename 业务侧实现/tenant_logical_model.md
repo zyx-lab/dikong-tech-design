@@ -50,10 +50,17 @@ PostgreSQL
 | 表名 | 说明 |
 |------|------|
 | tenants | 租户主表 |
+| tenant_members | 租户成员身份 |
+| tenant_member_roles | 租户成员角色绑定 |
 
 ### tenants（租户主表）
 - 主键: id (BigAutoField)
 - 状态字段: status
+
+### tenant_members（租户成员身份）
+- 主键: id (BigAutoField)
+- 状态字段: status
+- 邀请确认字段: invitation_token
 
 ---
 
@@ -66,6 +73,14 @@ PostgreSQL
 | 0 (DISABLED) | 禁用 | 1 (ENABLED) |
 | 1 (ENABLED) | 启用 | 0 (DISABLED) |
 
+### TenantMember 状态机
+
+| status | 含义 | 可转换到 |
+|--------|------|----------|
+| 0 (PENDING) | 已发出邀请，等待确认 | 1 (ACTIVE), 2 (DISABLED) |
+| 1 (ACTIVE) | 已加入租户 | 2 (DISABLED) |
+| 2 (DISABLED) | 已禁用 | 1 (ACTIVE) |
+
 ---
 
 ## 关系与约束
@@ -73,16 +88,20 @@ PostgreSQL
 ### 业务约束
 1. `code` 全局唯一
 2. 租户禁用后，该租户所有业务数据不可通过 `X-Tenant-Code` 访问
+3. `tenant_members` 上 `(tenant_id, user_id)` 唯一，同一账号不能重复加入同一租户
+4. 邀请制成员在确认前必须处于 `PENDING`，且保留 `invitation_token`
 
 ### 跨表约束
 - 所有业务表（drones, routes, missions, flight_records, media_files, drone_assignments）通过 `tenant_id` 关联到 `tenants`
 - 业务表的外键必须在同一租户内
+- `tenant_member_roles` 必须绑定到有效的 `tenant_members`
 
 ---
 
 ## 生命周期入口
 
 - `POST /internal/auth/tenants`: 创建租户
+- `POST /internal/auth/tenant-members/invite`: 邀请租户成员
 
 ---
 
@@ -98,6 +117,22 @@ PostgreSQL
   - SUCCESS: 创建成功
   - INVALID_PARAMS: 参数校验失败（缺少必填字段、code 重复）
 
+### 邀请租户成员
+- 功能：向已注册账号发起加入租户邀请
+- 路径：`/internal/auth/tenant-members/invite`
+- 方法：`POST`
+- 状态流转：不存在 -> PENDING
+- 有效状态：租户存在且启用；目标账号尚未是该租户成员
+- 无效状态：
+  - 目标租户不存在
+  - 目标账号不存在
+  - `(tenant_id, user_id)` 已存在成员关系
+- 业务码：
+  - SUCCESS: 邀请发送成功
+  - INVALID_PARAMS: 请求体缺少必填字段或角色编码非法
+  - RESOURCE_NOT_FOUND: 租户或用户不存在
+  - STATE_CONFLICT: 目标账号已在租户内存在成员关系
+
 ---
 
 ## 权限设计
@@ -107,10 +142,13 @@ PostgreSQL
 |--------|------|
 | access.view_tenant | 查看租户 |
 | access.manage_tenant | 管理租户（创建、修改、禁用） |
+| access.view_tenant_member | 查看租户成员 |
+| access.manage_tenant_member | 管理租户成员 |
 
 ### 权限归属
 - `platform_admin`: 拥有 access.manage_tenant
 - 租户管理员不直接管理租户（租户由平台管理）
+- 当前实现中的租户邀请接口仍位于 `internal/auth` 平面，由具备 `access.manage_tenant_member` 的系统操作者发起
 
 ---
 
@@ -138,3 +176,4 @@ Tenant (平台级)
 4. **跨租户防护**：
    - 外键约束确保关联对象同租户
    - 唯一约束改为租户内唯一（如 `tenant_id + code`）
+5. **邀请链路**：邀请制通过 `TenantMember.invitation_token` 持有待确认状态，确认前不写入 `joined_at`

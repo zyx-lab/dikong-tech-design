@@ -7,13 +7,17 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.access.models import (
+    AuditLog,
     GroupPermissionScope,
     ScopeStatus,
     ScopeType,
     StaffProfile,
     StaffType,
     StaffTypeGroup,
+    SystemRole,
     Tenant,
+    TenantMember,
+    TenantMemberStatus,
     TenantStatus,
 )
 from apps.access.services import AuthorizationReason, AuthzService
@@ -321,6 +325,8 @@ class TenantAPITests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_auto__case_tenant_create_duplicate(self):
         """创建租户编码重复"""
@@ -332,3 +338,162 @@ class TenantAPITests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+
+
+class TenantListAPITests(TestCase):
+    """租户列表 API 测试"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_superuser(username="tenant_admin", password="pass1234")
+        self.client.force_authenticate(user=self.user)
+        # 创建测试租户
+        Tenant.objects.create(code="tenant1", name="租户1")
+        Tenant.objects.create(code="tenant2", name="租户2")
+
+    def test_auto__case_tenant_list_success(self):
+        """获取租户列表成功"""
+        response = self.client.get("/internal/auth/tenants")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["count"], 2)
+        self.assertIn("data", response.data)
+
+    def test_auto__case_tenant_list_permission_denied(self):
+        """获取租户列表权限拒绝"""
+        client = APIClient()  # 未认证
+        response = client.get("/internal/auth/tenants")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+
+class TenantDetailAPITests(TestCase):
+    """租户详情 API 测试"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_superuser(username="tenant_admin", password="pass1234")
+        self.client.force_authenticate(user=self.user)
+        self.tenant = Tenant.objects.create(code="tenant1", name="租户1")
+
+    def test_auto__case_tenant_detail_success(self):
+        """获取租户详情成功"""
+        response = self.client.get(f"/internal/auth/tenants/{self.tenant.id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["data"]["code"], "tenant1")
+
+    def test_auto__case_tenant_detail_not_found(self):
+        """获取租户详情不存在"""
+        response = self.client.get("/internal/auth/tenants/99999")
+        self.assertEqual(response.status_code, 404)
+
+
+class TenantMemberInviteAPITests(TestCase):
+    """租户成员邀请 API 测试"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_superuser(username="tenant_inviter", password="pass1234")
+        self.client.force_authenticate(user=self.user)
+        self.tenant = Tenant.objects.create(code="tenant-a", name="租户A", status=TenantStatus.ENABLED)
+        self.target_user = User.objects.create_user(username="tenant_member_u1", password="pass1234", status=1)
+        self.role = SystemRole.objects.create(code="pilot_operator", name="飞手", status=1)
+
+    def test_auto__case_tenant_member_invite_success(self):
+        response = self.client.post(
+            "/internal/auth/tenant-members/invite",
+            {
+                "tenant_id": self.tenant.id,
+                "user_id": self.target_user.id,
+                "display_name": "张三",
+                "roles": ["pilot_operator"],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["message"], "邀请发送成功")
+
+        member = TenantMember.objects.get(tenant=self.tenant, user=self.target_user)
+        self.assertEqual(member.status, TenantMemberStatus.PENDING)
+        self.assertIsNone(member.joined_at)
+        self.assertTrue(member.invitation_token)
+        self.assertEqual(list(member.role_bindings.values_list("system_role__code", flat=True)), ["pilot_operator"])
+
+        audit_log = AuditLog.objects.get(action="TENANT_MEMBER_INVITE", target_id=str(member.id))
+        self.assertEqual(audit_log.tenant_id, self.tenant.id)
+
+    def test_auto__case_tenant_member_invite_invalid_params(self):
+        response = self.client.post(
+            "/internal/auth/tenant-members/invite",
+            {
+                "user_id": self.target_user.id,
+                "display_name": "张三",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+
+    def test_auto__case_tenant_member_invite_permission_denied(self):
+        client = APIClient()
+        response = client.post(
+            "/internal/auth/tenant-members/invite",
+            {
+                "tenant_id": self.tenant.id,
+                "user_id": self.target_user.id,
+                "display_name": "张三",
+                "roles": ["pilot_operator"],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+    def test_auto__case_tenant_member_invite_resource_not_found(self):
+        response = self.client.post(
+            "/internal/auth/tenant-members/invite",
+            {
+                "tenant_id": 99999,
+                "user_id": self.target_user.id,
+                "display_name": "张三",
+                "roles": ["pilot_operator"],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_NOT_FOUND")
+
+    def test_auto__case_tenant_member_invite_state_conflict(self):
+        TenantMember.objects.create(
+            tenant=self.tenant,
+            user=self.target_user,
+            display_name="张三",
+            status=TenantMemberStatus.ACTIVE,
+        )
+
+        response = self.client.post(
+            "/internal/auth/tenant-members/invite",
+            {
+                "tenant_id": self.tenant.id,
+                "user_id": self.target_user.id,
+                "display_name": "张三",
+                "roles": ["pilot_operator"],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_MEMBER_EXISTS")
