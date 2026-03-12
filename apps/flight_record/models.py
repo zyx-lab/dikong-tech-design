@@ -10,6 +10,14 @@ class FlightRecordStatus(models.IntegerChoices):
 class FlightRecord(models.Model):
     """飞行记录主表（flight_records）。"""
 
+    tenant = models.ForeignKey(
+        "access.Tenant",
+        on_delete=models.CASCADE,
+        related_name="flight_records",
+        verbose_name="租户",
+        null=True,
+        blank=True,
+    )
     flight_no = models.CharField("架次编号", max_length=50, unique=True)
     mission = models.ForeignKey(
         "mission.Mission",

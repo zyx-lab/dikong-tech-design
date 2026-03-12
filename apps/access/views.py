@@ -20,6 +20,10 @@ from apps.access.models import (
     ScopeStatus,
     StaffType,
     StaffTypeGroup,
+    SystemRole,
+    Tenant,
+    TenantMember,
+    TenantMemberRole,
     User,
 )
 from apps.access.serializers import (
@@ -31,6 +35,12 @@ from apps.access.serializers import (
     PermissionCodeSerializer,
     StaffTypeGroupAssignSerializer,
     StaffTypeSerializer,
+    SystemRoleSerializer,
+    TenantMemberCreateSerializer,
+    TenantMemberRoleAssignSerializer,
+    TenantMemberRoleSerializer,
+    TenantMemberSerializer,
+    TenantSerializer,
     UserManageSerializer,
 )
 from apps.access.services import AuthzService, IdentityService, log_action, snapshot
@@ -456,3 +466,146 @@ class AuditLogListView(PermissionMapMixin, generics.ListAPIView):
                 qs = qs.filter(created_at__lte=end)
 
         return qs.order_by("-created_at", "-id")
+
+
+class TenantViewSet(PermissionMapMixin, generics.CreateAPIView):
+    """创建租户 API"""
+
+    serializer_class = TenantSerializer
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "POST": "access.manage_tenant",
+    }
+    queryset = Tenant.objects.all()
+
+    def perform_create(self, serializer):
+        tenant = serializer.save()
+        log_action(
+            request=self.request,
+            action="TENANT_CREATE",
+            target_type="tenant",
+            target_id=tenant.id,
+            after_data={"id": tenant.id, "code": tenant.code, "name": tenant.name},
+        )
+
+
+# ========== 平台固定角色 API ==========
+
+class SystemRoleListCreateView(PermissionMapMixin, generics.ListCreateAPIView):
+    """平台固定角色列表/创建"""
+
+    serializer_class = SystemRoleSerializer
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "GET": "access.view_system_role",
+        "POST": "access.manage_system_role",
+    }
+    queryset = SystemRole.objects.all().order_by("id")
+
+
+class SystemRoleDetailView(PermissionMapMixin, generics.RetrieveUpdateAPIView):
+    """平台固定角色详情/更新"""
+
+    serializer_class = SystemRoleSerializer
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "GET": "access.view_system_role",
+        "PUT": "access.manage_system_role",
+        "PATCH": "access.manage_system_role",
+    }
+    queryset = SystemRole.objects.all()
+
+
+# ========== 租户成员管理 API ==========
+
+class TenantMemberListCreateView(PermissionMapMixin, generics.ListCreateAPIView):
+    """租户成员列表/创建"""
+
+    serializer_class = TenantMemberSerializer
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "GET": "access.view_tenant_member",
+        "POST": "access.manage_tenant_member",
+    }
+
+    def get_queryset(self):
+        qs = TenantMember.objects.select_related("tenant", "user").all()
+        tenant_id = self.request.query_params.get("tenant_id")
+        status = self.request.query_params.get("status")
+        if tenant_id:
+            qs = qs.filter(tenant_id=tenant_id)
+        if status:
+            qs = qs.filter(status=status)
+        return qs.order_by("-id")
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return TenantMemberCreateSerializer
+        return TenantMemberSerializer
+
+    def get_serializer(self, *args, **kwargs):
+        if hasattr(self, "get_object"):
+            return super().get_serializer(*args, **kwargs)
+        # 对于创建，需要传递 tenant
+        if self.request.method == "POST":
+            tenant_id = self.request.data.get("tenant_id")
+            if not tenant_id:
+                # 如果没有指定 tenant_id，获取第一个启用的租户
+                tenant = Tenant.objects.filter(status=1).first()
+            else:
+                tenant = Tenant.objects.filter(id=tenant_id).first()
+            kwargs["context"] = {"tenant": tenant}
+        return super().get_serializer(*args, **kwargs)
+
+    def perform_create(self, serializer):
+        member = serializer.save()
+        log_action(
+            request=self.request,
+            action="TENANT_MEMBER_CREATE",
+            target_type="tenant_member",
+            target_id=member.id,
+            after_data={"id": member.id, "tenant_id": member.tenant_id, "user_id": member.user_id},
+        )
+
+
+class TenantMemberDetailView(PermissionMapMixin, generics.RetrieveUpdateDestroyAPIView):
+    """租户成员详情/更新/删除"""
+
+    serializer_class = TenantMemberSerializer
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "GET": "access.view_tenant_member",
+        "PUT": "access.manage_tenant_member",
+        "PATCH": "access.manage_tenant_member",
+        "DELETE": "access.manage_tenant_member",
+    }
+    queryset = TenantMember.objects.select_related("tenant", "user")
+
+    def perform_destroy(self, instance):
+        log_action(
+            request=self.request,
+            action="TENANT_MEMBER_DELETE",
+            target_type="tenant_member",
+            target_id=instance.id,
+            before_data={"id": instance.id, "tenant_id": instance.tenant_id, "user_id": instance.user_id},
+        )
+        instance.delete()
+
+
+class TenantMemberRoleAssignView(PermissionMapMixin, generics.GenericAPIView):
+    """租户成员角色分配"""
+
+    permission_classes = [RequireInternalPermission]
+    required_permission = "access.assign_tenant_member_role"
+    serializer_class = TenantMemberRoleAssignSerializer
+    queryset = TenantMember.objects.all()
+
+    @extend_schema(request=TenantMemberRoleAssignSerializer, responses=TenantMemberSerializer)
+    def post(self, request, pk):
+        member = self.get_object()
+        serializer = self.get_serializer(data=request.data, context={"tenant_member": member})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        # 重新获取成员信息
+        member = TenantMember.objects.select_related("tenant", "user").get(id=pk)
+        return Response(TenantMemberSerializer(member).data)

@@ -9,6 +9,14 @@ class MediaType(models.IntegerChoices):
 class MediaFile(models.Model):
     """媒体文件主表（media_files）。"""
 
+    tenant = models.ForeignKey(
+        "access.Tenant",
+        on_delete=models.CASCADE,
+        related_name="media_files",
+        verbose_name="租户",
+        null=True,
+        blank=True,
+    )
     flight_record = models.ForeignKey(
         "flight_record.FlightRecord",
         on_delete=models.PROTECT,

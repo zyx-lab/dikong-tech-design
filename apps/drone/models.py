@@ -14,8 +14,17 @@ class Drone(models.Model):
     说明：
     - 当前只做台账管理，不做资源指派。
     - created_by_staff_id 仅用于审计和未来 OWN 范围扩展。
+    - tenant_id 用于多租户数据隔离。
     """
 
+    tenant = models.ForeignKey(
+        "access.Tenant",
+        on_delete=models.CASCADE,
+        related_name="drones",
+        verbose_name="租户",
+        null=True,
+        blank=True,
+    )
     code = models.CharField("业务编码", max_length=64, unique=True)
     name = models.CharField("无人机名称", max_length=128)
     model = models.CharField("型号", max_length=128)

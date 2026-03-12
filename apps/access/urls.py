@@ -19,4 +19,13 @@ urlpatterns = [
     path("staff-types/<int:pk>", views.StaffTypeDetailView.as_view(), name="staff-type-detail"),
     path("staff-types/<int:staff_type_id>/groups", views.StaffTypeGroupAssignView.as_view(), name="staff-type-group-assign"),
     path("audit-logs", views.AuditLogListView.as_view(), name="audit-log-list"),
+    # 租户管理
+    path("tenants", views.TenantViewSet.as_view(), name="tenant-create"),
+    # 平台固定角色
+    path("system-roles", views.SystemRoleListCreateView.as_view(), name="system-role-list-create"),
+    path("system-roles/<int:pk>", views.SystemRoleDetailView.as_view(), name="system-role-detail"),
+    # 租户成员管理
+    path("tenant-members", views.TenantMemberListCreateView.as_view(), name="tenant-member-list-create"),
+    path("tenant-members/<int:pk>", views.TenantMemberDetailView.as_view(), name="tenant-member-detail"),
+    path("tenant-members/<int:pk>/roles", views.TenantMemberRoleAssignView.as_view(), name="tenant-member-role-assign"),
 ]

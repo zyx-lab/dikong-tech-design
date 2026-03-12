@@ -1,5 +1,6 @@
 from django.contrib.auth.models import Group, Permission
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
@@ -12,6 +13,13 @@ from apps.access.models import (
     StaffProfile,
     StaffType,
     StaffTypeGroup,
+    SystemRole,
+    SystemRoleStatus,
+    Tenant,
+    TenantMember,
+    TenantMemberRole,
+    TenantMemberRoleStatus,
+    TenantMemberStatus,
     User,
 )
 
@@ -338,3 +346,197 @@ class MePermissionSerializer(serializers.Serializer):
     permission = serializers.CharField()
     scope = serializers.CharField(allow_null=True)
     enabled = serializers.BooleanField()
+
+
+class TenantSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Tenant
+        fields = [
+            "id",
+            "code",
+            "name",
+            "status",
+            "plan",
+            "remark",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class SystemRoleSerializer(serializers.ModelSerializer):
+    """平台固定角色序列化器"""
+
+    class Meta:
+        model = SystemRole
+        fields = [
+            "id",
+            "code",
+            "name",
+            "description",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class TenantMemberSerializer(serializers.ModelSerializer):
+    """租户成员序列化器"""
+
+    username = serializers.CharField(source="user.username", read_only=True)
+    tenant_code = serializers.CharField(source="tenant.code", read_only=True)
+    roles = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = TenantMember
+        fields = [
+            "id",
+            "tenant",
+            "tenant_code",
+            "user",
+            "username",
+            "display_name",
+            "staff_no",
+            "phone",
+            "email",
+            "status",
+            "joined_at",
+            "roles",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "tenant_code", "username", "joined_at", "created_at", "updated_at"]
+
+    @extend_schema_field({"type": "array", "items": {"type": "string"}})
+    def get_roles(self, obj):
+        """获取成员绑定的角色编码列表"""
+        return list(
+            obj.role_bindings.filter(status=TenantMemberRoleStatus.ACTIVE)
+            .values_list("system_role__code", flat=True)
+        )
+
+
+class TenantMemberCreateSerializer(serializers.ModelSerializer):
+    """租户成员创建序列化器"""
+
+    user_id = serializers.IntegerField(write_only=True)
+    role_codes = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        write_only=True,
+        allow_empty=True,
+    )
+
+    class Meta:
+        model = TenantMember
+        fields = [
+            "user_id",
+            "display_name",
+            "staff_no",
+            "phone",
+            "email",
+            "role_codes",
+        ]
+
+    def validate_user_id(self, value):
+        user = User.objects.filter(id=value).first()
+        if not user:
+            raise serializers.ValidationError("User not found")
+        # 检查用户是否已在该租户中
+        tenant = self.context.get("tenant")
+        if tenant and TenantMember.objects.filter(tenant=tenant, user=user).exists():
+            raise serializers.ValidationError("User is already a member of this tenant")
+        return value
+
+    def validate_role_codes(self, value):
+        valid_codes = set(SystemRole.objects.filter(status=SystemRoleStatus.ACTIVE).values_list("code", flat=True))
+        invalid = set(value) - valid_codes
+        if invalid:
+            raise serializers.ValidationError(f"Invalid role codes: {invalid}")
+        return value
+
+    @transaction.atomic
+    def create(self, validated_data):
+        user_id = validated_data.pop("user_id")
+        role_codes = validated_data.pop("role_codes", [])
+        user = User.objects.get(id=user_id)
+        tenant = self.context["tenant"]
+
+        member = TenantMember.objects.create(
+            tenant=tenant,
+            user=user,
+            display_name=validated_data["display_name"],
+            staff_no=validated_data.get("staff_no", ""),
+            phone=validated_data.get("phone", ""),
+            email=validated_data.get("email", ""),
+            status=TenantMemberStatus.ACTIVE,
+            joined_at=timezone.now(),
+        )
+
+        # 绑定角色
+        for code in role_codes:
+            role = SystemRole.objects.get(code=code)
+            TenantMemberRole.objects.create(
+                tenant_member=member,
+                system_role=role,
+                status=TenantMemberRoleStatus.ACTIVE,
+            )
+
+        return member
+
+
+class TenantMemberRoleSerializer(serializers.ModelSerializer):
+    """成员角色绑定序列化器"""
+
+    role_code = serializers.CharField(source="system_role.code", read_only=True)
+    role_name = serializers.CharField(source="system_role.name", read_only=True)
+
+    class Meta:
+        model = TenantMemberRole
+        fields = [
+            "id",
+            "tenant_member",
+            "system_role",
+            "role_code",
+            "role_name",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "role_code", "role_name", "created_at", "updated_at"]
+
+
+class TenantMemberRoleAssignSerializer(serializers.Serializer):
+    """成员角色分配序列化器"""
+
+    role_codes = serializers.ListField(
+        child=serializers.CharField(),
+        required=True,
+    )
+
+    def validate_role_codes(self, value):
+        valid_codes = set(SystemRole.objects.filter(status=SystemRoleStatus.ACTIVE).values_list("code", flat=True))
+        invalid = set(value) - valid_codes
+        if invalid:
+            raise serializers.ValidationError(f"Invalid role codes: {invalid}")
+        return value
+
+    @transaction.atomic
+    def save(self, **kwargs):
+        member = self.context["tenant_member"]
+        role_codes = self.validated_data["role_codes"]
+
+        # 先禁用所有现有角色
+        member.role_bindings.update(status=TenantMemberRoleStatus.DISABLED)
+
+        # 启用或创建新角色
+        for code in role_codes:
+            role = SystemRole.objects.get(code=code)
+            binding, _ = TenantMemberRole.objects.update_or_create(
+                tenant_member=member,
+                system_role=role,
+                defaults={"status": TenantMemberRoleStatus.ACTIVE},
+            )
+
+        return member

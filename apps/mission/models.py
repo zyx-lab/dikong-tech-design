@@ -13,6 +13,14 @@ class MissionStatus(models.IntegerChoices):
 class Mission(models.Model):
     """巡检任务主记录。"""
 
+    tenant = models.ForeignKey(
+        "access.Tenant",
+        on_delete=models.CASCADE,
+        related_name="missions",
+        verbose_name="租户",
+        null=True,
+        blank=True,
+    )
     name = models.CharField("任务名称", max_length=100)
     route = models.ForeignKey("route.Route", on_delete=models.PROTECT, related_name="missions", verbose_name="航线")
     route_name = models.CharField("航线名称（冗余）", max_length=100, blank=True, default="")

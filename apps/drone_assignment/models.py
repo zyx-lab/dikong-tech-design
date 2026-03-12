@@ -10,6 +10,14 @@ class DroneAssignmentStatus(models.TextChoices):
 class DroneAssignment(models.Model):
     """无人机与飞手的关联关系。"""
 
+    tenant = models.ForeignKey(
+        "access.Tenant",
+        on_delete=models.CASCADE,
+        related_name="drone_assignments",
+        verbose_name="租户",
+        null=True,
+        blank=True,
+    )
     drone = models.ForeignKey("drone.Drone", on_delete=models.CASCADE, related_name="assignments", verbose_name="无人机")
     staff = models.ForeignKey(
         "access.StaffProfile",

@@ -13,6 +13,14 @@ class RouteStatus(models.IntegerChoices):
 class Route(models.Model):
     """航线台账（V1）。"""
 
+    tenant = models.ForeignKey(
+        "access.Tenant",
+        on_delete=models.CASCADE,
+        related_name="routes",
+        verbose_name="租户",
+        null=True,
+        blank=True,
+    )
     name = models.CharField("航线名称", max_length=100)
     route_type = models.PositiveSmallIntegerField(
         "航线类型扩展位",

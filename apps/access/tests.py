@@ -13,6 +13,8 @@ from apps.access.models import (
     StaffProfile,
     StaffType,
     StaffTypeGroup,
+    Tenant,
+    TenantStatus,
 )
 from apps.access.services import AuthorizationReason, AuthzService
 
@@ -274,3 +276,54 @@ class UserPermissionPolicyTests(TestCase):
                 employment_status=1,
                 staff_type=staff_type,
             )
+
+
+class TenantAPITests(TestCase):
+    """Tenant 创建 API 测试"""
+
+    def setUp(self):
+        self.client = APIClient()
+        # 使用 superuser 通过权限验证
+        self.user = User.objects.create_superuser(username="tenant_admin", password="pass1234")
+        self.client.force_authenticate(user=self.user)
+
+    def test_auto__case_tenant_create_success(self):
+        """创建租户成功"""
+        response = self.client.post(
+            "/internal/auth/tenants",
+            {"code": "test_tenant", "name": "测试租户"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["code"], "test_tenant")
+        self.assertEqual(response.data["name"], "测试租户")
+        self.assertEqual(response.data["status"], TenantStatus.ENABLED)
+        # 验证数据库
+        tenant = Tenant.objects.get(code="test_tenant")
+        self.assertEqual(tenant.name, "测试租户")
+
+    def test_auto__case_tenant_create_invalid_params(self):
+        """创建租户参数非法 - 缺少必填字段"""
+        response = self.client.post("/internal/auth/tenants", {}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_auto__case_tenant_create_permission_denied(self):
+        """创建租户无权限"""
+        # 未认证用户
+        client = APIClient()
+        response = client.post(
+            "/internal/auth/tenants",
+            {"code": "test_tenant", "name": "测试租户"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_auto__case_tenant_create_duplicate(self):
+        """创建租户编码重复"""
+        Tenant.objects.create(code="existing", name="已存在")
+        response = self.client.post(
+            "/internal/auth/tenants",
+            {"code": "existing", "name": "重复"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
