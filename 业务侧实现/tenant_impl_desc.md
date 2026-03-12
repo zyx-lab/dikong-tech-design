@@ -230,6 +230,42 @@ PostgreSQL
   4. 返回当前已预绑定的角色编码列表
   5. 记录 `TENANT_MEMBER_CONFIRM_INVITATION` 租户级审计日志
 
+### 5. 获取当前用户租户列表
+
+- 功能：已登录用户读取自己当前可进入的租户列表及默认租户
+- 路径：`/internal/auth/me/tenants`
+- 方法：`GET`
+- 权限：已登录用户
+- 响应（成功，200）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "username": "zhangsan",
+  "tenants": [
+    {
+      "tenant_id": 1,
+      "tenant_code": "tenant_a",
+      "tenant_name": "租户A",
+      "roles": ["tenant_admin"]
+    }
+  ],
+  "default_tenant": 1
+}
+```
+- 响应（未认证，403）：
+```json
+{
+  "business_code": "PERMISSION_DENIED",
+  "business_detail_code": "NOT_AUTHENTICATED"
+}
+```
+- 实现说明：
+  1. 只返回当前用户 `TenantMember.status=ACTIVE` 的租户成员关系
+  2. 过滤掉 `pending` 或停用租户下的成员关系
+  3. 每个租户返回当前有效角色编码列表
+  4. `default_tenant` 默认取排序后的首个有效租户；若无有效租户则返回 `null`
+
 ---
 
 ## 审计动作

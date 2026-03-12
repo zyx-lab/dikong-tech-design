@@ -103,6 +103,7 @@ PostgreSQL
 - `POST /internal/auth/tenants`: 创建租户
 - `POST /internal/auth/tenant-members/invite`: 邀请租户成员
 - `POST /internal/auth/tenant-members/confirm-invitation`: 用户确认租户邀请
+- `GET /internal/auth/me/tenants`: 获取当前用户可进入的租户列表
 
 ---
 
@@ -153,6 +154,18 @@ PostgreSQL
   - IDEMPOTENT_DUPLICATE: 邀请已确认
   - STATE_CONFLICT: 邀请记录已不处于 pending 状态
 
+### 获取当前用户租户列表
+- 功能：已登录用户读取自己当前可进入的租户列表
+- 路径：`/internal/auth/me/tenants`
+- 方法：`GET`
+- 状态流转：无状态变更，只读取当前 ACTIVE 成员关系
+- 有效状态：用户已登录，且可存在 0..N 条 ACTIVE 租户成员关系
+- 无效状态：
+  - 当前请求未认证
+- 业务码：
+  - SUCCESS: 返回租户列表与 default_tenant
+  - PERMISSION_DENIED: 未登录
+
 ---
 
 ## 权限设计
@@ -170,6 +183,7 @@ PostgreSQL
 - 租户管理员不直接管理租户（租户由平台管理）
 - 当前实现中的租户邀请接口仍位于 `internal/auth` 平面，由具备 `access.manage_tenant_member` 的系统操作者发起
 - 邀请确认接口同样保留在 `internal/auth` 平面，但调用者切换为被邀请的已登录账号
+- 当前用户租户列表接口位于 `internal/auth/me/*` 平面，作为认证入口后的租户上下文读取补充
 
 ---
 

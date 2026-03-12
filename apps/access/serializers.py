@@ -356,6 +356,25 @@ class MePermissionSerializer(serializers.Serializer):
     enabled = serializers.BooleanField()
 
 
+class CurrentUserTenantSerializer(serializers.ModelSerializer):
+    tenant_id = serializers.IntegerField(source="tenant.id", read_only=True)
+    tenant_code = serializers.CharField(source="tenant.code", read_only=True)
+    tenant_name = serializers.CharField(source="tenant.name", read_only=True)
+    roles = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = TenantMember
+        fields = ["tenant_id", "tenant_code", "tenant_name", "roles"]
+
+    @extend_schema_field({"type": "array", "items": {"type": "string"}})
+    def get_roles(self, obj):
+        return list(
+            obj.role_bindings.filter(status=TenantMemberRoleStatus.ACTIVE)
+            .order_by("id")
+            .values_list("system_role__code", flat=True)
+        )
+
+
 class TenantSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant

@@ -186,6 +186,88 @@ class AuthzApiSmokeTests(TestCase):
         self.assertIn("staff", response.data)
 
 
+class MeTenantListAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="tenant_user", password="pass1234", status=1)
+        self.role_admin = SystemRole.objects.create(code="tenant_admin", name="租户管理员", status=1)
+        self.role_planner = SystemRole.objects.create(code="route_planner", name="航线规划员", status=1)
+
+        self.tenant_a = Tenant.objects.create(code="tenant_a", name="租户A", status=TenantStatus.ENABLED)
+        self.tenant_b = Tenant.objects.create(code="tenant_b", name="租户B", status=TenantStatus.ENABLED)
+        self.tenant_pending = Tenant.objects.create(code="tenant_p", name="租户P", status=TenantStatus.ENABLED)
+
+        member_a = TenantMember.objects.create(
+            tenant=self.tenant_a,
+            user=self.user,
+            display_name="张三",
+            status=TenantMemberStatus.ACTIVE,
+            joined_at=timezone.now(),
+        )
+        member_b = TenantMember.objects.create(
+            tenant=self.tenant_b,
+            user=self.user,
+            display_name="张三",
+            status=TenantMemberStatus.ACTIVE,
+            joined_at=timezone.now(),
+        )
+        TenantMember.objects.create(
+            tenant=self.tenant_pending,
+            user=self.user,
+            display_name="张三",
+            status=TenantMemberStatus.PENDING,
+        )
+
+        member_a.role_bindings.create(system_role=self.role_admin, status=1)
+        member_b.role_bindings.create(system_role=self.role_planner, status=1)
+
+    def test_auto__case_me_tenants_success(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get("/internal/auth/me/tenants")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["username"], self.user.username)
+        self.assertEqual(response.data["default_tenant"], self.tenant_a.id)
+        self.assertEqual(
+            response.data["tenants"],
+            [
+                {
+                    "tenant_id": self.tenant_a.id,
+                    "tenant_code": "tenant_a",
+                    "tenant_name": "租户A",
+                    "roles": ["tenant_admin"],
+                },
+                {
+                    "tenant_id": self.tenant_b.id,
+                    "tenant_code": "tenant_b",
+                    "tenant_name": "租户B",
+                    "roles": ["route_planner"],
+                },
+            ],
+        )
+
+    def test_auto__case_me_tenants_permission_denied(self):
+        response = self.client.get("/internal/auth/me/tenants")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+    def test_auto__case_me_tenants_empty(self):
+        other_user = User.objects.create_user(username="tenant_user_empty", password="pass1234", status=1)
+        self.client.force_authenticate(other_user)
+
+        response = self.client.get("/internal/auth/me/tenants")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["tenants"], [])
+        self.assertIsNone(response.data["default_tenant"])
+
+
 class SuperuserRootPolicyTests(TestCase):
     def setUp(self):
         self.client = APIClient()

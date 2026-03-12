@@ -179,4 +179,4 @@ PostgreSQL
 | INVITATION_ALREADY_CONFIRMED | 邀请已确认，重复提交 |
 | INVITATION_STATUS_INVALID | invitation 对应成员状态不是 pending |
 
-当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenant-members/invite` 与 `POST /internal/auth/tenant-members/confirm-invitation` 都返回 `business_code + business_detail_code`。
+当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。

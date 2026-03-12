@@ -24,10 +24,13 @@ from apps.access.models import (
     Tenant,
     TenantMember,
     TenantMemberRole,
+    TenantMemberStatus,
+    TenantStatus,
     User,
 )
 from apps.access.serializers import (
     AuditLogSerializer,
+    CurrentUserTenantSerializer,
     GroupPermissionAssignSerializer,
     GroupScopeAssignSerializer,
     GroupSerializer,
@@ -129,6 +132,35 @@ class MePermissionsView(generics.GenericAPIView):
         return Response({"items": serializer.data})
 
 
+class MeTenantListView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CurrentUserTenantSerializer
+
+    @extend_schema(responses=OpenApiTypes.OBJECT)
+    def get(self, request):
+        memberships = (
+            TenantMember.objects.filter(
+                user=request.user,
+                status=TenantMemberStatus.ACTIVE,
+                tenant__status=TenantStatus.ENABLED,
+            )
+            .select_related("tenant")
+            .prefetch_related("role_bindings__system_role")
+            .order_by("tenant_id", "id")
+        )
+        tenants = self.get_serializer(memberships, many=True).data
+        default_tenant = tenants[0]["tenant_id"] if tenants else None
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "username": request.user.username,
+                "tenants": tenants,
+                "default_tenant": default_tenant,
+            }
+        )
+
+
 class ApiRootView(APIView):
     """IAM 内部 API 根入口。"""
 
@@ -145,6 +177,7 @@ class ApiRootView(APIView):
                     "business_docs_v1": reverse("business-docs", request=request),
                     "session_status": reverse("session-status", request=request),
                     "users": reverse("user-list-create", request=request),
+                    "me_tenants": reverse("me-tenant-list", request=request),
                     "me_permissions": reverse("me-permissions", request=request),
                     "permission_catalog": reverse("permission-catalog", request=request),
                     "groups": reverse("group-list-create", request=request),
