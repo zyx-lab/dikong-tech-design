@@ -50,6 +50,7 @@ from apps.access.serializers import (
     TenantMemberSerializer,
     TenantSetPlanSerializer,
     TenantSerializer,
+    UserSelfRegisterSerializer,
     UserManageSerializer,
 )
 from apps.access.services import AuthzService, IdentityService, log_action, snapshot
@@ -261,6 +262,43 @@ class LogoutView(APIView):
             "business_code": "SUCCESS",
             "business_detail_code": "OK",
         })
+
+
+class UserSelfRegisterView(generics.GenericAPIView):
+    """平台注册账号。"""
+
+    permission_classes = [AllowAny]
+    serializer_class = UserSelfRegisterSerializer
+
+    @extend_schema(request=UserSelfRegisterSerializer, responses=OpenApiTypes.OBJECT)
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError:
+            return Response(
+                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = serializer.save()
+        log_action(
+            action="USER_REGISTER",
+            target_type="user",
+            target_id=user.id,
+            after_data=_user_payload(user),
+            actor_user=user,
+        )
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "user_id": user.id,
+                "username": user.username,
+                "message": "注册成功，请等待租户管理员邀请",
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class UserListCreateView(PermissionMapMixin, generics.ListCreateAPIView):

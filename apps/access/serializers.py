@@ -15,11 +15,13 @@ from apps.access.exceptions import (
 )
 from apps.access.models import (
     AuditLog,
+    EmploymentStatus,
     GroupPermissionScope,
     ScopeStatus,
     ScopeType,
     StaffProfile,
     StaffType,
+    StaffTypeStatus,
     StaffTypeGroup,
     SystemRole,
     SystemRoleStatus,
@@ -162,6 +164,67 @@ class UserManageSerializer(serializers.ModelSerializer):
                     staff.save()
 
         return instance
+
+
+class UserSelfRegisterSerializer(serializers.Serializer):
+    """平台注册账号。"""
+
+    username = serializers.CharField(max_length=150, trim_whitespace=True)
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    name = serializers.CharField(max_length=64, trim_whitespace=True)
+    phone = serializers.CharField(max_length=32, trim_whitespace=True)
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise BusinessIdempotentDuplicate(
+                "username already exists",
+                business_detail_code="USERNAME_ALREADY_EXISTS",
+            )
+        return value
+
+    def validate(self, attrs):
+        for field in ("username", "password", "name", "phone"):
+            value = attrs.get(field)
+            if isinstance(value, str) and not value.strip():
+                raise serializers.ValidationError({field: "该字段不能为空"})
+        return attrs
+
+    def _pending_staff_type(self) -> StaffType:
+        staff_type, created = StaffType.objects.get_or_create(
+            code="pending_user",
+            defaults={
+                "name": "待邀请用户",
+                "description": "平台注册后待租户邀请的占位身份",
+                "status": StaffTypeStatus.ACTIVE,
+            },
+        )
+        if staff_type.status != StaffTypeStatus.ACTIVE:
+            staff_type.status = StaffTypeStatus.ACTIVE
+            staff_type.save(update_fields=["status", "updated_at"])
+        return staff_type
+
+    def _generate_staff_no(self) -> str:
+        while True:
+            staff_no = f"REG-{uuid4().hex[:12].upper()}"
+            if not StaffProfile.objects.filter(staff_no=staff_no).exists():
+                return staff_no
+
+    @transaction.atomic
+    def create(self, validated_data):
+        pending_staff_type = self._pending_staff_type()
+        password = validated_data.pop("password")
+        name = validated_data.pop("name")
+        phone = validated_data.pop("phone")
+        user = User.objects.create_user(password=password, is_staff=False, **validated_data)
+        StaffProfile.objects.create(
+            user=user,
+            staff_no=self._generate_staff_no(),
+            name=name,
+            phone=phone,
+            employment_status=EmploymentStatus.ACTIVE,
+            staff_type=pending_staff_type,
+        )
+        return user
 
 
 class GroupSerializer(serializers.ModelSerializer):

@@ -186,6 +186,74 @@ class AuthzApiSmokeTests(TestCase):
         self.assertIn("staff", response.data)
 
 
+class UserSelfRegisterAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_auto__case_user_register_success(self):
+        response = self.client.post(
+            "/internal/auth/users/register",
+            {
+                "username": "register_user",
+                "password": "pass1234",
+                "name": "注册用户",
+                "phone": "13800138000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["username"], "register_user")
+
+        user = User.objects.get(username="register_user")
+        self.assertTrue(user.is_active)
+        self.assertFalse(user.is_staff)
+        self.assertEqual(user.staff_profile.name, "注册用户")
+        self.assertEqual(user.staff_profile.phone, "13800138000")
+        self.assertEqual(user.staff_profile.staff_type.code, "pending_user")
+        self.assertEqual(user.staff_profile.staff_type.group_links.count(), 0)
+
+        audit_log = AuditLog.objects.get(action="USER_REGISTER", target_id=str(user.id))
+        self.assertEqual(audit_log.actor_user_id, user.id)
+        self.assertIsNone(audit_log.tenant_id)
+
+    def test_auto__case_user_register_invalid_params(self):
+        response = self.client.post(
+            "/internal/auth/users/register",
+            {
+                "username": "register_invalid",
+                "password": "",
+                "name": "注册用户",
+                "phone": "",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+
+    def test_auto__case_user_register_idempotent_duplicate(self):
+        User.objects.create_user(username="duplicate_user", password="pass1234", status=1)
+
+        response = self.client.post(
+            "/internal/auth/users/register",
+            {
+                "username": "duplicate_user",
+                "password": "pass1234",
+                "name": "重复用户",
+                "phone": "13800138001",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
+        self.assertEqual(response.data["business_detail_code"], "USERNAME_ALREADY_EXISTS")
+
+
 class MeTenantListAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
