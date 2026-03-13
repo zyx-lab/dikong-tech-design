@@ -180,6 +180,7 @@ PostgreSQL
 | TENANT_STATUS_INVALID | 租户当前状态不允许执行目标动作 |
 | TENANT_ADMIN_ALREADY_INITIALIZED | 当前租户已完成管理员初始化 |
 | TENANT_ADMIN_ROLE_NOT_CONFIGURED | tenant_admin 固定角色未初始化 |
+| TENANT_PLAN_UNCHANGED | 提交的套餐值与当前租户套餐一致 |
 | TENANT_MEMBER_NOT_FOUND | 目标租户成员不存在 |
 | TENANT_MEMBER_ALREADY_DISABLED | 租户成员已是禁用状态，重复停用 |
 | TENANT_MEMBER_ALREADY_ENABLED | 租户成员已是启用状态，重复启用 |
@@ -188,7 +189,7 @@ PostgreSQL
 | INVITATION_ALREADY_CONFIRMED | 邀请已确认，重复提交 |
 | INVITATION_STATUS_INVALID | invitation 对应成员状态不是 pending |
 
-当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenants/{id}/enable`、`POST /internal/auth/tenants/{id}/initialize-admin`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation`、`POST /internal/auth/tenant-members/{id}/disable`、`POST /internal/auth/tenant-members/{id}/enable` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
+当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenants/{id}/enable`、`POST /internal/auth/tenants/{id}/initialize-admin`、`POST /internal/auth/tenants/{id}/set-plan`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation`、`POST /internal/auth/tenant-members/{id}/disable`、`POST /internal/auth/tenant-members/{id}/enable` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
 
 `GET /internal/auth/tenant-audit-logs` 同样返回 `business_code + business_detail_code`，并使用以下额外 detail code：
 

@@ -104,6 +104,7 @@ PostgreSQL
 - `POST /internal/auth/tenants/{id}/disable`: 停用租户
 - `POST /internal/auth/tenants/{id}/enable`: 启用租户
 - `POST /internal/auth/tenants/{id}/initialize-admin`: 初始化租户管理员
+- `POST /internal/auth/tenants/{id}/set-plan`: 配置租户套餐
 - `POST /internal/auth/tenant-members/invite`: 邀请租户成员
 - `POST /internal/auth/tenant-members/confirm-invitation`: 用户确认租户邀请
 - `POST /internal/auth/tenant-members/{id}/disable`: 停用租户成员
@@ -174,6 +175,23 @@ PostgreSQL
   - RESOURCE_NOT_FOUND: 租户或用户不存在
   - STATE_CONFLICT: 目标租户当前状态不允许初始化管理员
   - IDEMPOTENT_DUPLICATE: 当前租户已完成管理员初始化
+  - PERMISSION_DENIED: 当前操作者未登录或不具备平台租户管理权限
+
+### 配置租户套餐
+- 功能：平台管理员为指定租户设置或变更套餐标识
+- 路径：`/internal/auth/tenants/{id}/set-plan`
+- 方法：`POST`
+- 状态流转：租户状态不变，仅更新 `plan`
+- 有效状态：目标租户存在，且请求体提供新的非空套餐值
+- 无效状态：
+  - 目标租户不存在
+  - 请求体缺少 `plan` 或为空
+  - 新套餐值与当前套餐值相同
+- 业务码：
+  - SUCCESS: 配置成功
+  - INVALID_PARAMS: 请求体缺少有效 `plan`
+  - RESOURCE_NOT_FOUND: 租户不存在
+  - IDEMPOTENT_DUPLICATE: 套餐值未变化
   - PERMISSION_DENIED: 当前操作者未登录或不具备平台租户管理权限
 
 ### 邀请租户成员

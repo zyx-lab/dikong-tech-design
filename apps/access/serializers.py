@@ -392,6 +392,26 @@ class TenantSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at"]
 
 
+class TenantSetPlanSerializer(serializers.Serializer):
+    """租户套餐配置。"""
+
+    plan = serializers.CharField(max_length=64, allow_blank=False, trim_whitespace=True)
+
+    @transaction.atomic
+    def create(self, validated_data):
+        tenant = self.context["tenant"]
+        new_plan = validated_data["plan"]
+        if tenant.plan == new_plan:
+            raise BusinessIdempotentDuplicate(
+                "tenant plan unchanged",
+                business_detail_code="TENANT_PLAN_UNCHANGED",
+            )
+
+        tenant.plan = new_plan
+        tenant.save(update_fields=["plan", "updated_at"])
+        return tenant
+
+
 class SystemRoleSerializer(serializers.ModelSerializer):
     """平台固定角色序列化器"""
 

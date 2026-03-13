@@ -48,6 +48,7 @@ from apps.access.serializers import (
     TenantMemberRoleAssignSerializer,
     TenantMemberRoleSerializer,
     TenantMemberSerializer,
+    TenantSetPlanSerializer,
     TenantSerializer,
     UserManageSerializer,
 )
@@ -814,6 +815,56 @@ class TenantInitializeAdminView(PermissionMapMixin, generics.GenericAPIView):
                 "roles": role_codes,
                 "status": member.status,
                 "message": "租户管理员初始化成功",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class TenantSetPlanView(PermissionMapMixin, generics.GenericAPIView):
+    """配置租户套餐。"""
+
+    permission_classes = [RequireInternalPermission]
+    method_permission_map = {
+        "POST": "access.manage_tenant",
+    }
+    serializer_class = TenantSetPlanSerializer
+    queryset = Tenant.objects.all()
+
+    @extend_schema(request=TenantSetPlanSerializer, responses=OpenApiTypes.OBJECT)
+    def post(self, request, pk: int):
+        tenant = self.get_queryset().filter(id=pk).first()
+        if tenant is None:
+            raise BusinessResourceNotFound("tenant not found", business_detail_code="TENANT_NOT_FOUND")
+
+        before_data = snapshot(tenant)
+        serializer = self.get_serializer(data=request.data, context={"tenant": tenant})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError:
+            return Response(
+                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tenant = serializer.save()
+        after_data = snapshot(tenant)
+        log_action(
+            request=request,
+            action="TENANT_PLAN_CHANGE",
+            target_type="tenant",
+            target_id=tenant.id,
+            before_data=before_data,
+            after_data=after_data,
+        )
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "id": tenant.id,
+                "code": tenant.code,
+                "name": tenant.name,
+                "status": tenant.status,
+                "plan": tenant.plan,
             },
             status=status.HTTP_200_OK,
         )

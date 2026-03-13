@@ -773,6 +773,87 @@ class TenantInitializeAdminAPITests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "TENANT_ADMIN_ALREADY_INITIALIZED")
 
 
+class TenantSetPlanAPITests(TestCase):
+    """租户套餐配置 API 测试"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_superuser(username="tenant_plan_operator", password="pass1234")
+        self.client.force_authenticate(user=self.user)
+        self.tenant = Tenant.objects.create(
+            code="tenant_plan",
+            name="套餐租户",
+            status=TenantStatus.ENABLED,
+            plan="basic",
+        )
+
+    def test_auto__case_tenant_set_plan_success(self):
+        response = self.client.post(
+            f"/internal/auth/tenants/{self.tenant.id}/set-plan",
+            {"plan": "enterprise"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["plan"], "enterprise")
+
+        self.tenant.refresh_from_db()
+        self.assertEqual(self.tenant.plan, "enterprise")
+
+        audit_log = AuditLog.objects.get(action="TENANT_PLAN_CHANGE", target_id=str(self.tenant.id))
+        self.assertIsNone(audit_log.tenant_id)
+        self.assertEqual(audit_log.actor_user_id, self.user.id)
+        self.assertEqual(audit_log.before_data["plan"], "basic")
+        self.assertEqual(audit_log.after_data["plan"], "enterprise")
+
+    def test_auto__case_tenant_set_plan_invalid_params(self):
+        response = self.client.post(
+            f"/internal/auth/tenants/{self.tenant.id}/set-plan",
+            {"plan": ""},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+
+    def test_auto__case_tenant_set_plan_permission_denied(self):
+        client = APIClient()
+        response = client.post(
+            f"/internal/auth/tenants/{self.tenant.id}/set-plan",
+            {"plan": "enterprise"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+    def test_auto__case_tenant_set_plan_resource_not_found(self):
+        response = self.client.post(
+            "/internal/auth/tenants/99999/set-plan",
+            {"plan": "enterprise"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_NOT_FOUND")
+
+    def test_auto__case_tenant_set_plan_idempotent_duplicate(self):
+        response = self.client.post(
+            f"/internal/auth/tenants/{self.tenant.id}/set-plan",
+            {"plan": "basic"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_PLAN_UNCHANGED")
+
+
 class TenantMemberDisableAPITests(TestCase):
     """租户成员停用 API 测试"""
 
