@@ -50,6 +50,7 @@ from apps.access.serializers import (
     TenantMemberSerializer,
     TenantSetPlanSerializer,
     TenantSerializer,
+    UserPhoneRegisterSerializer,
     UserSelfRegisterSerializer,
     UserManageSerializer,
 )
@@ -296,6 +297,45 @@ class UserSelfRegisterView(generics.GenericAPIView):
                 "user_id": user.id,
                 "username": user.username,
                 "message": "注册成功，请等待租户管理员邀请",
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class UserPhoneRegisterView(generics.GenericAPIView):
+    """手机号注册平台账号。"""
+
+    permission_classes = [AllowAny]
+    serializer_class = UserPhoneRegisterSerializer
+
+    @extend_schema(request=UserPhoneRegisterSerializer, responses=OpenApiTypes.OBJECT)
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError:
+            return Response(
+                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = serializer.save()
+        after_data = _user_payload(user)
+        after_data["register_channel"] = "phone"
+        log_action(
+            action="USER_REGISTER",
+            target_type="user",
+            target_id=user.id,
+            after_data=after_data,
+            actor_user=user,
+        )
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "user_id": user.id,
+                "username": user.username,
+                "message": "手机号注册成功，请等待租户管理员邀请",
             },
             status=status.HTTP_201_CREATED,
         )

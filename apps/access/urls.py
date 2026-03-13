@@ -7,6 +7,7 @@ urlpatterns = [
     path("session-status", views.SessionStatusView.as_view(), name="session-status"),
     path("login", views.LoginView.as_view(), name="login"),
     path("logout", views.LogoutView.as_view(), name="logout"),
+    path("users/register/by-phone", views.UserPhoneRegisterView.as_view(), name="user-phone-register"),
     path("users/register", views.UserSelfRegisterView.as_view(), name="user-self-register"),
     path("users", views.UserListCreateView.as_view(), name="user-list-create"),
     path("users/<int:pk>", views.UserDetailView.as_view(), name="user-detail"),

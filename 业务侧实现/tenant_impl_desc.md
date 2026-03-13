@@ -346,7 +346,50 @@ PostgreSQL
   3. “待邀请”状态通过用户尚无 `ACTIVE` 租户成员关系表达，不额外引入新的用户状态枚举
   4. 成功后记录 `USER_REGISTER` 平台级审计日志
 
-### 7. 租户上下文解析
+### 7. 手机号注册平台账号
+
+- 功能：终端用户通过手机号与短信验证码完成平台注册
+- 路径：`/internal/auth/users/register/by-phone`
+- 方法：`POST`
+- 权限：匿名可调用
+- 请求体：
+```json
+{
+  "phone": "13800138000",
+  "sms_code": "123456"
+}
+```
+- 响应（成功，201）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "user_id": 1,
+  "username": "13800138000",
+  "message": "手机号注册成功，请等待租户管理员邀请"
+}
+```
+- 响应（参数错误，400）：
+```json
+{
+  "business_code": "INVALID_PARAMS",
+  "business_detail_code": "VALIDATION_ERROR"
+}
+```
+- 响应（幂等重复，409）：
+```json
+{
+  "business_code": "IDEMPOTENT_DUPLICATE",
+  "business_detail_code": "PHONE_ALREADY_EXISTS"
+}
+```
+- 实现说明：
+  1. 当前实现为 mock 验证码方案，固定接受 `sms_code=123456`
+  2. 接口会将手机号写入 `username`，并同步创建占位 `StaffProfile`
+  3. 当前实现会生成内部随机密码，仅用于打通注册链路；真实短信服务、正式手机号登录/设密流程待后续扩展
+  4. 成功后同样记录 `USER_REGISTER` 平台级审计日志，并在审计数据中标记 `register_channel=phone`
+
+### 8. 租户上下文解析
 
 - 功能：从 HTTP Header 解析当前租户
 - 中间件：`TenantContextMiddleware`
@@ -357,7 +400,7 @@ PostgreSQL
   3. 找到则设置 `request.tenant_context = tenant`
   4. 未找到或已禁用则返回 403
 
-### 8. 邀请租户成员
+### 9. 邀请租户成员
 
 - 功能：向已注册平台账号发起加入租户邀请，并预绑定初始角色
 - 路径：`/internal/auth/tenant-members/invite`
@@ -409,7 +452,7 @@ PostgreSQL
   4. 为成员写入初始 `TenantMemberRole`
   5. 记录 `TENANT_MEMBER_INVITE` 租户级审计日志
 
-### 9. 确认租户邀请
+### 10. 确认租户邀请
 
 - 功能：被邀请用户确认 invitation token，正式加入租户并激活已有角色绑定
 - 路径：`/internal/auth/tenant-members/confirm-invitation`
@@ -466,7 +509,7 @@ PostgreSQL
   4. 返回当前已预绑定的角色编码列表
   5. 记录 `TENANT_MEMBER_CONFIRM_INVITATION` 租户级审计日志
 
-### 10. 停用租户成员
+### 11. 停用租户成员
 
 - 功能：停用指定租户成员
 - 路径：`/internal/auth/tenant-members/{id}/disable`
@@ -504,7 +547,7 @@ PostgreSQL
   3. 已禁用成员重复停用返回幂等重复
   4. 成功停用后记录 `TENANT_MEMBER_DISABLE` 租户级审计日志
 
-### 11. 启用租户成员
+### 12. 启用租户成员
 
 - 功能：启用指定租户成员
 - 路径：`/internal/auth/tenant-members/{id}/enable`
@@ -543,7 +586,7 @@ PostgreSQL
   4. 若 `joined_at` 为空，则启用时补写当前时间
   5. 成功启用后记录 `TENANT_MEMBER_ENABLE` 租户级审计日志
 
-### 12. 获取当前用户租户列表
+### 13. 获取当前用户租户列表
 
 - 功能：已登录用户读取自己当前可进入的租户列表及默认租户
 - 路径：`/internal/auth/me/tenants`
@@ -579,7 +622,7 @@ PostgreSQL
   3. 每个租户返回当前有效角色编码列表
   4. `default_tenant` 默认取排序后的首个有效租户；若无有效租户则返回 `null`
 
-### 13. 查看租户级审计日志
+### 14. 查看租户级审计日志
 
 - 功能：在租户上下文内查看当前租户的治理审计日志
 - 路径：`/internal/auth/tenant-audit-logs`
@@ -631,7 +674,7 @@ X-Tenant-Code: tenant_a
 | TENANT_ENABLE | 启用租户 | tenant id |
 | TENANT_ADMIN_INITIALIZE | 初始化租户管理员 | member id, tenant id, user id, roles |
 | TENANT_PLAN_CHANGE | 配置租户套餐 | tenant id, plan |
-| USER_REGISTER | 平台注册账号 | user id, username |
+| USER_REGISTER | 平台注册账号 | user id, username, register_channel |
 | TENANT_MEMBER_INVITE | 邀请租户成员 | member id, tenant id, user id |
 | TENANT_MEMBER_CONFIRM_INVITATION | 确认租户邀请 | member id, tenant id, user id, status |
 | TENANT_MEMBER_DISABLE | 停用租户成员 | member id, tenant id, user id, status |

@@ -166,31 +166,9 @@ class UserManageSerializer(serializers.ModelSerializer):
         return instance
 
 
-class UserSelfRegisterSerializer(serializers.Serializer):
-    """平台注册账号。"""
-
-    username = serializers.CharField(max_length=150, trim_whitespace=True)
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
-    name = serializers.CharField(max_length=64, trim_whitespace=True)
-    phone = serializers.CharField(max_length=32, trim_whitespace=True)
-
-    def validate_username(self, value):
-        if User.objects.filter(username=value).exists():
-            raise BusinessIdempotentDuplicate(
-                "username already exists",
-                business_detail_code="USERNAME_ALREADY_EXISTS",
-            )
-        return value
-
-    def validate(self, attrs):
-        for field in ("username", "password", "name", "phone"):
-            value = attrs.get(field)
-            if isinstance(value, str) and not value.strip():
-                raise serializers.ValidationError({field: "该字段不能为空"})
-        return attrs
-
+class BaseUserRegisterSerializer(serializers.Serializer):
     def _pending_staff_type(self) -> StaffType:
-        staff_type, created = StaffType.objects.get_or_create(
+        staff_type, _ = StaffType.objects.get_or_create(
             code="pending_user",
             defaults={
                 "name": "待邀请用户",
@@ -209,13 +187,32 @@ class UserSelfRegisterSerializer(serializers.Serializer):
             if not StaffProfile.objects.filter(staff_no=staff_no).exists():
                 return staff_no
 
-    @transaction.atomic
-    def create(self, validated_data):
+    def _validate_non_empty(self, attrs, fields: list[str]):
+        for field in fields:
+            value = attrs.get(field)
+            if isinstance(value, str) and not value.strip():
+                raise serializers.ValidationError({field: "该字段不能为空"})
+        return attrs
+
+    def _check_duplicate_username(self, username: str) -> str:
+        if User.objects.filter(username=username).exists():
+            raise BusinessIdempotentDuplicate(
+                "username already exists",
+                business_detail_code="USERNAME_ALREADY_EXISTS",
+            )
+        return username
+
+    def _check_duplicate_phone(self, phone: str) -> str:
+        if User.objects.filter(username=phone).exists() or StaffProfile.objects.filter(phone=phone).exists():
+            raise BusinessIdempotentDuplicate(
+                "phone already exists",
+                business_detail_code="PHONE_ALREADY_EXISTS",
+            )
+        return phone
+
+    def _create_registered_user(self, *, username: str, password: str, name: str, phone: str) -> User:
         pending_staff_type = self._pending_staff_type()
-        password = validated_data.pop("password")
-        name = validated_data.pop("name")
-        phone = validated_data.pop("phone")
-        user = User.objects.create_user(password=password, is_staff=False, **validated_data)
+        user = User.objects.create_user(username=username, password=password, is_staff=False)
         StaffProfile.objects.create(
             user=user,
             staff_no=self._generate_staff_no(),
@@ -225,6 +222,57 @@ class UserSelfRegisterSerializer(serializers.Serializer):
             staff_type=pending_staff_type,
         )
         return user
+
+
+class UserSelfRegisterSerializer(BaseUserRegisterSerializer):
+    """平台注册账号。"""
+
+    username = serializers.CharField(max_length=150, trim_whitespace=True)
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    name = serializers.CharField(max_length=64, trim_whitespace=True)
+    phone = serializers.CharField(max_length=32, trim_whitespace=True)
+
+    def validate_username(self, value):
+        return self._check_duplicate_username(value)
+
+    def validate(self, attrs):
+        return self._validate_non_empty(attrs, ["username", "password", "name", "phone"])
+
+    @transaction.atomic
+    def create(self, validated_data):
+        password = validated_data["password"]
+        return self._create_registered_user(
+            username=validated_data["username"],
+            password=password,
+            name=validated_data["name"],
+            phone=validated_data["phone"],
+        )
+
+
+class UserPhoneRegisterSerializer(BaseUserRegisterSerializer):
+    """手机号注册平台账号。"""
+
+    phone = serializers.CharField(max_length=32, trim_whitespace=True)
+    sms_code = serializers.CharField(max_length=16, trim_whitespace=True)
+
+    def validate_phone(self, value):
+        return self._check_duplicate_phone(value)
+
+    def validate(self, attrs):
+        attrs = self._validate_non_empty(attrs, ["phone", "sms_code"])
+        if attrs["sms_code"] != "123456":
+            raise serializers.ValidationError({"sms_code": "mock 短信验证码固定为 123456"})
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        phone = validated_data["phone"]
+        return self._create_registered_user(
+            username=phone,
+            password=uuid4().hex,
+            name=f"手机用户{phone[-4:]}",
+            phone=phone,
+        )
 
 
 class GroupSerializer(serializers.ModelSerializer):

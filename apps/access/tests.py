@@ -254,6 +254,73 @@ class UserSelfRegisterAPITests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "USERNAME_ALREADY_EXISTS")
 
 
+class UserPhoneRegisterAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_auto__case_user_phone_register_success(self):
+        response = self.client.post(
+            "/internal/auth/users/register/by-phone",
+            {
+                "phone": "13800138002",
+                "sms_code": "123456",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["username"], "13800138002")
+
+        user = User.objects.get(username="13800138002")
+        self.assertTrue(user.is_active)
+        self.assertEqual(user.staff_profile.phone, "13800138002")
+        self.assertEqual(user.staff_profile.name, "手机用户8002")
+        self.assertEqual(user.staff_profile.staff_type.code, "pending_user")
+
+        audit_log = AuditLog.objects.get(action="USER_REGISTER", target_id=str(user.id))
+        self.assertEqual(audit_log.after_data["register_channel"], "phone")
+
+    def test_auto__case_user_phone_register_invalid_params(self):
+        response = self.client.post(
+            "/internal/auth/users/register/by-phone",
+            {
+                "phone": "13800138003",
+                "sms_code": "000000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+
+    def test_auto__case_user_phone_register_idempotent_duplicate(self):
+        first = self.client.post(
+            "/internal/auth/users/register/by-phone",
+            {
+                "phone": "13800138004",
+                "sms_code": "123456",
+            },
+            format="json",
+        )
+        self.assertEqual(first.status_code, 201)
+
+        response = self.client.post(
+            "/internal/auth/users/register/by-phone",
+            {
+                "phone": "13800138004",
+                "sms_code": "123456",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
+        self.assertEqual(response.data["business_detail_code"], "PHONE_ALREADY_EXISTS")
+
+
 class MeTenantListAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
