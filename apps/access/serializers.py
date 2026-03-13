@@ -851,6 +851,40 @@ class TenantMemberConfirmInvitationSerializer(serializers.Serializer):
         return member
 
 
+class TenantMemberRejectInvitationSerializer(serializers.Serializer):
+    """租户成员拒绝邀请序列化器。"""
+
+    invitation_token = serializers.CharField(max_length=64, required=True)
+
+    @transaction.atomic
+    def create(self, validated_data):
+        request = self.context["request"]
+        member = (
+            TenantMember.objects.select_related("tenant", "user")
+            .prefetch_related("role_bindings__system_role")
+            .filter(invitation_token=validated_data["invitation_token"])
+            .first()
+        )
+        if member is None:
+            raise BusinessResourceNotFound("invitation not found", business_detail_code="INVITATION_NOT_FOUND")
+
+        if member.user_id != request.user.id:
+            raise BusinessPermissionDenied("invitation does not belong to current user", business_detail_code="INVITATION_NOT_ALLOWED")
+
+        if member.status != TenantMemberStatus.PENDING:
+            raise BusinessStateConflict("invitation is not pending", business_detail_code="INVITATION_STATUS_INVALID")
+
+        payload = {
+            "tenant": member.tenant,
+            "member_id": member.id,
+            "tenant_id": member.tenant_id,
+            "user_id": member.user_id,
+            "status": member.status,
+        }
+        member.delete()
+        return payload
+
+
 class TenantMemberRoleSerializer(serializers.ModelSerializer):
     """成员角色绑定序列化器"""
 

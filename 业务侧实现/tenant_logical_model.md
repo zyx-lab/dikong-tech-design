@@ -112,6 +112,7 @@ PostgreSQL
 - `POST /internal/auth/tenant-members/{id}/disable`: 停用租户成员
 - `POST /internal/auth/tenant-members/{id}/enable`: 启用租户成员
 - `GET /internal/auth/me/invitations`: 获取当前用户待确认邀请列表
+- `POST /internal/auth/me/invitations/reject`: 当前用户拒绝租户邀请
 - `GET /internal/auth/me/tenants`: 获取当前用户可进入的租户列表
 - `GET /internal/auth/tenant-audit-logs`: 查看租户级审计日志
 
@@ -317,6 +318,25 @@ PostgreSQL
 - 业务码：
   - SUCCESS: 返回待确认邀请列表
   - PERMISSION_DENIED: 未登录
+
+### 当前用户拒绝租户邀请
+- 功能：已登录用户显式拒绝一条属于自己的 pending 租户邀请
+- 路径：`/internal/auth/me/invitations/reject`
+- 方法：`POST`
+- 状态流转：PENDING -> 删除该待确认成员记录
+- 有效状态：`invitation_token` 命中当前用户自己的 pending 成员记录
+- 无效状态：
+  - 当前请求未认证
+  - 未提供 invitation_token
+  - invitation token 不存在
+  - invitation token 不属于当前登录用户
+  - invitation 对应成员记录不是 pending
+- 业务码：
+  - SUCCESS: 拒绝成功
+  - INVALID_PARAMS: 未提供 invitation_token
+  - PERMISSION_DENIED: 未登录，或登录用户不是该邀请的目标账号
+  - RESOURCE_NOT_FOUND: invitation token 不存在
+  - STATE_CONFLICT: invitation 记录已不处于 pending 状态
 
 ### 查看租户级审计日志
 - 功能：在当前租户上下文内读取租户治理审计日志

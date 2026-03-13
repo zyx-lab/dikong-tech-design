@@ -46,6 +46,7 @@ from apps.access.serializers import (
     TenantMemberConfirmInvitationSerializer,
     TenantMemberCreateSerializer,
     TenantMemberInviteSerializer,
+    TenantMemberRejectInvitationSerializer,
     TenantMemberRoleAssignSerializer,
     TenantMemberRoleSerializer,
     TenantMemberSerializer,
@@ -212,6 +213,7 @@ class ApiRootView(APIView):
                     "session_status": reverse("session-status", request=request),
                     "users": reverse("user-list-create", request=request),
                     "me_invitations": reverse("me-invitation-list", request=request),
+                    "me_invitation_reject": reverse("me-invitation-reject", request=request),
                     "me_tenants": reverse("me-tenant-list", request=request),
                     "me_permissions": reverse("me-permissions", request=request),
                     "permission_catalog": reverse("permission-catalog", request=request),
@@ -1133,6 +1135,50 @@ class TenantMemberConfirmInvitationView(generics.GenericAPIView):
                 "member_id": member.id,
                 "roles": role_codes,
                 "message": "您已成功加入租户",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class MeInvitationRejectView(generics.GenericAPIView):
+    """当前用户拒绝租户邀请。"""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = TenantMemberRejectInvitationSerializer
+
+    @extend_schema(request=TenantMemberRejectInvitationSerializer, responses=OpenApiTypes.OBJECT)
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError:
+            return Response(
+                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = serializer.save()
+        log_action(
+            request=request,
+            action="TENANT_MEMBER_REJECT_INVITATION",
+            target_type="tenant_member",
+            target_id=result["member_id"],
+            tenant=result["tenant"],
+            before_data={
+                "id": result["member_id"],
+                "tenant_id": result["tenant_id"],
+                "user_id": result["user_id"],
+                "status": result["status"],
+            },
+            after_data={
+                "result": "rejected",
+            },
+        )
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "message": "您已拒绝该租户邀请",
             },
             status=status.HTTP_200_OK,
         )

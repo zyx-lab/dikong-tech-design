@@ -659,6 +659,61 @@ PostgreSQL
   3. 每条邀请返回租户标识、显示名称、当前有效角色编码列表与 invitation token
   4. 当前没有待处理邀请时返回空数组 `items=[]`
 
+### 13.2 当前用户拒绝租户邀请
+
+- 功能：已登录用户显式拒绝一条属于自己的 pending 租户邀请
+- 路径：`/internal/auth/me/invitations/reject`
+- 方法：`POST`
+- 权限：已登录用户
+- 请求体：
+```json
+{
+  "invitation_token": "token-reject-001"
+}
+```
+- 响应（成功，200）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "message": "您已拒绝该租户邀请"
+}
+```
+- 响应（参数错误，400）：
+```json
+{
+  "business_code": "INVALID_PARAMS",
+  "business_detail_code": "VALIDATION_ERROR"
+}
+```
+- 响应（资源不存在，404）：
+```json
+{
+  "business_code": "RESOURCE_NOT_FOUND",
+  "business_detail_code": "INVITATION_NOT_FOUND"
+}
+```
+- 响应（权限不足，403）：
+```json
+{
+  "business_code": "PERMISSION_DENIED",
+  "business_detail_code": "INVITATION_NOT_ALLOWED"
+}
+```
+- 响应（状态冲突，409）：
+```json
+{
+  "business_code": "STATE_CONFLICT",
+  "business_detail_code": "INVITATION_STATUS_INVALID"
+}
+```
+- 实现说明：
+  1. 用 `invitation_token` 定位租户成员
+  2. 仅允许被邀请本人拒绝当前邀请
+  3. 仅允许拒绝 `pending` 邀请；已确认或其他非 pending 状态返回状态冲突
+  4. 拒绝成功后删除该待确认成员记录，使其不再出现在邀请列表中
+  5. 记录 `TENANT_MEMBER_REJECT_INVITATION` 租户级审计日志
+
 ### 14. 查看租户级审计日志
 
 - 功能：在租户上下文内查看当前租户的治理审计日志
@@ -714,6 +769,7 @@ X-Tenant-Code: tenant_a
 | USER_REGISTER | 平台注册账号 | user id, username, register_channel |
 | TENANT_MEMBER_INVITE | 邀请租户成员 | member id, tenant id, user id |
 | TENANT_MEMBER_CONFIRM_INVITATION | 确认租户邀请 | member id, tenant id, user id, status |
+| TENANT_MEMBER_REJECT_INVITATION | 拒绝租户邀请 | member id, tenant id, user id, status |
 | TENANT_MEMBER_DISABLE | 停用租户成员 | member id, tenant id, user id, status |
 | TENANT_MEMBER_ENABLE | 启用租户成员 | member id, tenant id, user id, status |
 

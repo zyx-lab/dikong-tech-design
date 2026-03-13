@@ -1427,3 +1427,109 @@ class TenantMemberConfirmInvitationAPITests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
         self.assertEqual(response.data["business_detail_code"], "INVITATION_STATUS_INVALID")
+
+
+class MeInvitationRejectAPITests(TestCase):
+    """当前用户拒绝租户邀请 API 测试"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.invited_user = User.objects.create_user(username="tenant_member_reject_u1", password="pass1234", status=1)
+        self.other_user = User.objects.create_user(username="tenant_member_reject_u2", password="pass1234", status=1)
+        self.tenant = Tenant.objects.create(code="tenant-reject", name="租户拒绝测试", status=TenantStatus.ENABLED)
+        self.role = SystemRole.objects.create(code="pilot_operator", name="飞手", status=1)
+        self.member = TenantMember.objects.create(
+            tenant=self.tenant,
+            user=self.invited_user,
+            display_name="王六",
+            invitation_token="token-reject-001",
+            status=TenantMemberStatus.PENDING,
+        )
+        self.member.role_bindings.create(system_role=self.role, status=1)
+
+    def test_auto__case_me_invitation_reject_success(self):
+        self.client.force_authenticate(user=self.invited_user)
+
+        response = self.client.post(
+            "/internal/auth/me/invitations/reject",
+            {"invitation_token": "token-reject-001"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["message"], "您已拒绝该租户邀请")
+        self.assertFalse(TenantMember.objects.filter(id=self.member.id).exists())
+
+        audit_log = AuditLog.objects.get(action="TENANT_MEMBER_REJECT_INVITATION", target_id=str(self.member.id))
+        self.assertEqual(audit_log.tenant_id, self.tenant.id)
+        self.assertEqual(audit_log.actor_user_id, self.invited_user.id)
+        self.assertEqual(audit_log.before_data["status"], TenantMemberStatus.PENDING)
+        self.assertEqual(audit_log.after_data["result"], "rejected")
+
+    def test_auto__case_me_invitation_reject_invalid_params(self):
+        self.client.force_authenticate(user=self.invited_user)
+
+        response = self.client.post(
+            "/internal/auth/me/invitations/reject",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+
+    def test_auto__case_me_invitation_reject_permission_denied(self):
+        response = self.client.post(
+            "/internal/auth/me/invitations/reject",
+            {"invitation_token": "token-reject-001"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+    def test_auto__case_me_invitation_reject_wrong_user(self):
+        self.client.force_authenticate(user=self.other_user)
+
+        response = self.client.post(
+            "/internal/auth/me/invitations/reject",
+            {"invitation_token": "token-reject-001"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "INVITATION_NOT_ALLOWED")
+
+    def test_auto__case_me_invitation_reject_not_found(self):
+        self.client.force_authenticate(user=self.invited_user)
+
+        response = self.client.post(
+            "/internal/auth/me/invitations/reject",
+            {"invitation_token": "missing-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
+        self.assertEqual(response.data["business_detail_code"], "INVITATION_NOT_FOUND")
+
+    def test_auto__case_me_invitation_reject_state_conflict(self):
+        self.client.force_authenticate(user=self.invited_user)
+        self.member.status = TenantMemberStatus.ACTIVE
+        self.member.joined_at = timezone.now()
+        self.member.save(update_fields=["status", "joined_at", "updated_at"])
+
+        response = self.client.post(
+            "/internal/auth/me/invitations/reject",
+            {"invitation_token": "token-reject-001"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
+        self.assertEqual(response.data["business_detail_code"], "INVITATION_STATUS_INVALID")

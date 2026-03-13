@@ -191,7 +191,7 @@ PostgreSQL
 | INVITATION_ALREADY_CONFIRMED | 邀请已确认，重复提交 |
 | INVITATION_STATUS_INVALID | invitation 对应成员状态不是 pending |
 
-当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenants/{id}/enable`、`POST /internal/auth/tenants/{id}/initialize-admin`、`POST /internal/auth/tenants/{id}/set-plan`、`POST /internal/auth/users/register`、`POST /internal/auth/users/register/by-phone`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation`、`POST /internal/auth/tenant-members/{id}/disable`、`POST /internal/auth/tenant-members/{id}/enable`、`GET /internal/auth/me/invitations` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
+当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenants/{id}/enable`、`POST /internal/auth/tenants/{id}/initialize-admin`、`POST /internal/auth/tenants/{id}/set-plan`、`POST /internal/auth/users/register`、`POST /internal/auth/users/register/by-phone`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation`、`POST /internal/auth/me/invitations/reject`、`POST /internal/auth/tenant-members/{id}/disable`、`POST /internal/auth/tenant-members/{id}/enable`、`GET /internal/auth/me/invitations` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
 
 `GET /internal/auth/tenant-audit-logs` 同样返回 `business_code + business_detail_code`，并使用以下额外 detail code：
 
