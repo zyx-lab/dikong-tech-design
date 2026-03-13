@@ -622,6 +622,43 @@ PostgreSQL
   3. 每个租户返回当前有效角色编码列表
   4. `default_tenant` 默认取排序后的首个有效租户；若无有效租户则返回 `null`
 
+### 13.1 获取当前用户待确认邀请列表
+
+- 功能：已登录用户读取自己所有仍待确认的租户邀请，供后续确认或拒绝邀请使用
+- 路径：`/internal/auth/me/invitations`
+- 方法：`GET`
+- 权限：已登录用户
+- 响应（成功，200）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "items": [
+    {
+      "member_id": 1,
+      "tenant_id": 1,
+      "tenant_code": "tenant_a",
+      "tenant_name": "租户A",
+      "display_name": "张三",
+      "roles": ["pilot_operator"],
+      "invitation_token": "invite-token-001"
+    }
+  ]
+}
+```
+- 响应（未认证，403）：
+```json
+{
+  "business_code": "PERMISSION_DENIED",
+  "business_detail_code": "NOT_AUTHENTICATED"
+}
+```
+- 实现说明：
+  1. 只返回当前用户 `TenantMember.status=PENDING` 且 `invitation_token` 非空的邀请记录
+  2. 过滤掉其他用户的邀请、无 token 的 pending 记录和已激活成员关系
+  3. 每条邀请返回租户标识、显示名称、当前有效角色编码列表与 invitation token
+  4. 当前没有待处理邀请时返回空数组 `items=[]`
+
 ### 14. 查看租户级审计日志
 
 - 功能：在租户上下文内查看当前租户的治理审计日志

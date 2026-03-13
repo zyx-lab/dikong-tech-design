@@ -403,6 +403,93 @@ class MeTenantListAPITests(TestCase):
         self.assertIsNone(response.data["default_tenant"])
 
 
+class MeInvitationListAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="invite_user", password="pass1234", status=1)
+        self.other_user = User.objects.create_user(username="invite_other", password="pass1234", status=1)
+        self.role_pilot = SystemRole.objects.create(code="pilot_operator", name="飞手", status=1)
+        self.role_planner = SystemRole.objects.create(code="route_planner", name="航线规划员", status=1)
+
+        self.tenant_a = Tenant.objects.create(code="invite_a", name="邀请租户A", status=TenantStatus.ENABLED)
+        self.tenant_b = Tenant.objects.create(code="invite_b", name="邀请租户B", status=TenantStatus.ENABLED)
+        self.tenant_c = Tenant.objects.create(code="invite_c", name="邀请租户C", status=TenantStatus.ENABLED)
+
+        self.pending_member = TenantMember.objects.create(
+            tenant=self.tenant_a,
+            user=self.user,
+            display_name="张三",
+            invitation_token="invite-token-001",
+            status=TenantMemberStatus.PENDING,
+        )
+        self.pending_member.role_bindings.create(system_role=self.role_pilot, status=1)
+        self.pending_member.role_bindings.create(system_role=self.role_planner, status=1)
+
+        TenantMember.objects.create(
+            tenant=self.tenant_b,
+            user=self.user,
+            display_name="张三",
+            invitation_token=None,
+            status=TenantMemberStatus.PENDING,
+        )
+        TenantMember.objects.create(
+            tenant=self.tenant_b,
+            user=self.other_user,
+            display_name="李四",
+            invitation_token="invite-token-002",
+            status=TenantMemberStatus.PENDING,
+        )
+        TenantMember.objects.create(
+            tenant=self.tenant_c,
+            user=self.user,
+            display_name="王五",
+            invitation_token="invite-token-003",
+            status=TenantMemberStatus.ACTIVE,
+            joined_at=timezone.now(),
+        )
+
+    def test_auto__case_me_invitations_success(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get("/internal/auth/me/invitations")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(
+            response.data["items"],
+            [
+                {
+                    "member_id": self.pending_member.id,
+                    "tenant_id": self.tenant_a.id,
+                    "tenant_code": "invite_a",
+                    "tenant_name": "邀请租户A",
+                    "display_name": "张三",
+                    "roles": ["pilot_operator", "route_planner"],
+                    "invitation_token": "invite-token-001",
+                }
+            ],
+        )
+
+    def test_auto__case_me_invitations_permission_denied(self):
+        response = self.client.get("/internal/auth/me/invitations")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+    def test_auto__case_me_invitations_empty(self):
+        empty_user = User.objects.create_user(username="invite_empty", password="pass1234", status=1)
+        self.client.force_authenticate(empty_user)
+
+        response = self.client.get("/internal/auth/me/invitations")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["items"], [])
+
+
 class TenantAuditLogListAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()

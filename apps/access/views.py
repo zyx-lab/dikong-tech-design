@@ -32,6 +32,7 @@ from apps.access.models import (
 )
 from apps.access.serializers import (
     AuditLogSerializer,
+    CurrentUserInvitationSerializer,
     CurrentUserTenantSerializer,
     GroupPermissionAssignSerializer,
     GroupScopeAssignSerializer,
@@ -167,6 +168,33 @@ class MeTenantListView(generics.GenericAPIView):
         )
 
 
+class MeInvitationListView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CurrentUserInvitationSerializer
+
+    @extend_schema(responses=OpenApiTypes.OBJECT)
+    def get(self, request):
+        invitations = (
+            TenantMember.objects.filter(
+                user=request.user,
+                status=TenantMemberStatus.PENDING,
+                invitation_token__isnull=False,
+            )
+            .exclude(invitation_token="")
+            .select_related("tenant")
+            .prefetch_related("role_bindings__system_role")
+            .order_by("tenant_id", "id")
+        )
+        items = self.get_serializer(invitations, many=True).data
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "items": items,
+            }
+        )
+
+
 class ApiRootView(APIView):
     """IAM 内部 API 根入口。"""
 
@@ -183,6 +211,7 @@ class ApiRootView(APIView):
                     "business_docs_v1": reverse("business-docs", request=request),
                     "session_status": reverse("session-status", request=request),
                     "users": reverse("user-list-create", request=request),
+                    "me_invitations": reverse("me-invitation-list", request=request),
                     "me_tenants": reverse("me-tenant-list", request=request),
                     "me_permissions": reverse("me-permissions", request=request),
                     "permission_catalog": reverse("permission-catalog", request=request),

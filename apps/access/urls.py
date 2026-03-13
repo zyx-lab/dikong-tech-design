@@ -11,6 +11,7 @@ urlpatterns = [
     path("users/register", views.UserSelfRegisterView.as_view(), name="user-self-register"),
     path("users", views.UserListCreateView.as_view(), name="user-list-create"),
     path("users/<int:pk>", views.UserDetailView.as_view(), name="user-detail"),
+    path("me/invitations", views.MeInvitationListView.as_view(), name="me-invitation-list"),
     path("me/tenants", views.MeTenantListView.as_view(), name="me-tenant-list"),
     path("me/permissions", views.MePermissionsView.as_view(), name="me-permissions"),
     path("permissions", views.PermissionCatalogView.as_view(), name="permission-catalog"),
