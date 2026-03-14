@@ -1,14 +1,13 @@
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.access.models import (
     AuditLog,
     EmploymentStatus,
+    Permission,
     ScopeType,
     StaffProfile,
-    SystemRoleGroup,
 )
 from apps.access.test_support import (
     ensure_staff_profile,
@@ -120,13 +119,14 @@ class DroneAssignmentApiTests(TestCase):
             )
             return
 
-        group = Group.objects.create(name="无人机分配管理组-无scope")
-        permission = Permission.objects.get(
-            content_type__app_label="drone_assignment",
-            codename="manage_drone_assignment",
+        Permission.objects.update_or_create(
+            code="drone_assignment.manage_drone_assignment",
+            defaults={
+                "name": "drone_assignment.manage_drone_assignment",
+                "module": "drone_assignment",
+                "status": 1,
+            },
         )
-        group.permissions.add(permission)
-        SystemRoleGroup.objects.create(system_role=self.role, group=group, status=1)
 
     def _authenticate_dispatcher(self):
         self.client.force_authenticate(self.dispatcher_user)
@@ -201,7 +201,7 @@ class DroneAssignmentApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["detail"], "SCOPE_NOT_CONFIGURED")
+        self.assertEqual(response.data["detail"], "PERMISSION_DENIED")
 
     def test_retrieve_assignment_should_return_success(self):
         self._grant_manage_permission()

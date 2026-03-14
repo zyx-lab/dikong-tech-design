@@ -1,11 +1,8 @@
 from uuid import uuid4
 
-from django.contrib.auth.models import Group, Permission
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
-from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema_field
 
 from apps.access.exceptions import (
     BusinessIdempotentDuplicate,
@@ -15,18 +12,17 @@ from apps.access.exceptions import (
 )
 from apps.access.models import (
     AuditLog,
+    DirectoryStatus,
     EmploymentStatus,
-    GroupPermissionScope,
-    ScopeStatus,
+    Permission,
+    QualificationRecordStatus,
+    QualificationType,
+    Role,
+    RolePermissionGrant,
     ScopeType,
     StaffProfile,
-    SystemRole,
-    SystemRoleGroup,
-    SystemRoleStatus,
     Tenant,
     TenantMember,
-    TenantMemberAttributeStatus,
-    TenantMemberPosition,
     TenantMemberQualification,
     TenantMemberRole,
     TenantMemberRoleStatus,
@@ -34,18 +30,13 @@ from apps.access.models import (
     TenantStatus,
     User,
 )
+from apps.access.services import default_invitation_expiry, expire_stale_tenant_member_invitation
 
 
 class PermissionCodeSerializer(serializers.ModelSerializer):
-    code = serializers.SerializerMethodField()
-
     class Meta:
         model = Permission
-        fields = ["id", "name", "code"]
-
-    @extend_schema_field(OpenApiTypes.STR)
-    def get_code(self, obj):
-        return f"{obj.content_type.app_label}.{obj.codename}"
+        fields = ["id", "code", "name", "module", "resource_code", "status"]
 
 
 class StaffProfileNestedSerializer(serializers.ModelSerializer):
@@ -94,7 +85,6 @@ class UserManageSerializer(serializers.ModelSerializer):
         target_is_superuser = attrs.get("is_superuser", self.instance.is_superuser if self.instance else False)
         existing_staff = getattr(self.instance, "staff_profile", None) if self.instance else None
 
-        # superuser 作为 root 账号，不绑定全局 staff 档案。
         if target_is_superuser:
             if has_staff_field:
                 raise serializers.ValidationError({"staff": "superuser 账号不允许提交 staff 字段"})
@@ -102,8 +92,6 @@ class UserManageSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"staff": "superuser 账号不允许绑定 staff 信息"})
             return attrs
 
-        # 非 superuser 必须最终拥有 staff。
-        will_have_staff = False
         if has_staff_field:
             will_have_staff = staff_data is not None
         else:
@@ -121,7 +109,6 @@ class UserManageSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"password": "创建账号必须提供密码"})
 
         user = User.objects.create_user(password=password, **validated_data)
-        # 一账号一 staff：通过 OneToOne 约束保证不会出现多 staff 绑定。
         if staff_data:
             StaffProfile.objects.create(user=user, **staff_data)
         return user
@@ -206,8 +193,6 @@ class BaseUserRegisterSerializer(serializers.Serializer):
 
 
 class UserSelfRegisterSerializer(BaseUserRegisterSerializer):
-    """平台注册账号。"""
-
     username = serializers.CharField(max_length=150, trim_whitespace=True)
     password = serializers.CharField(write_only=True, trim_whitespace=False)
     name = serializers.CharField(max_length=64, trim_whitespace=True)
@@ -221,18 +206,15 @@ class UserSelfRegisterSerializer(BaseUserRegisterSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        password = validated_data["password"]
         return self._create_registered_user(
             username=validated_data["username"],
-            password=password,
+            password=validated_data["password"],
             name=validated_data["name"],
             phone=validated_data["phone"],
         )
 
 
 class UserPhoneRegisterSerializer(BaseUserRegisterSerializer):
-    """手机号注册平台账号。"""
-
     phone = serializers.CharField(max_length=32, trim_whitespace=True)
     sms_code = serializers.CharField(max_length=16, trim_whitespace=True)
 
@@ -256,174 +238,86 @@ class UserPhoneRegisterSerializer(BaseUserRegisterSerializer):
         )
 
 
-class GroupSerializer(serializers.ModelSerializer):
-    permissions = serializers.SerializerMethodField(read_only=True)
+class TenantMemberQualificationSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    qualification_type_code = serializers.CharField(max_length=64)
+    qualification_type_name = serializers.CharField(read_only=True)
+    certificate_no = serializers.CharField(max_length=128, allow_blank=True, required=False)
+    level = serializers.CharField(max_length=64, allow_blank=True, required=False)
+    status = serializers.ChoiceField(choices=QualificationRecordStatus.choices, required=False, default=QualificationRecordStatus.ACTIVE)
+    issued_at = serializers.DateField(required=False, allow_null=True)
+    valid_from = serializers.DateField(required=False, allow_null=True)
+    valid_until = serializers.DateField(required=False, allow_null=True)
+    issuer = serializers.CharField(max_length=128, allow_blank=True, required=False)
+    payload_json = serializers.JSONField(required=False)
 
-    class Meta:
-        model = Group
-        fields = ["id", "name", "permissions"]
+    def to_representation(self, instance):
+        return {
+            "id": instance.id,
+            "qualification_type_code": instance.qualification_type.code,
+            "qualification_type_name": instance.qualification_type.name,
+            "certificate_no": instance.certificate_no,
+            "level": instance.level,
+            "status": instance.status,
+            "issued_at": instance.issued_at,
+            "valid_from": instance.valid_from,
+            "valid_until": instance.valid_until,
+            "issuer": instance.issuer,
+            "payload_json": instance.payload_json,
+            "created_at": instance.created_at,
+            "updated_at": instance.updated_at,
+        }
 
-    @extend_schema_field({"type": "array", "items": {"type": "string"}})
-    def get_permissions(self, obj):
-        perms = obj.permissions.select_related("content_type").all()
-        return [f"{perm.content_type.app_label}.{perm.codename}" for perm in perms]
+    def validate(self, attrs):
+        code = attrs["qualification_type_code"]
+        qualification_type = QualificationType.objects.filter(code=code).first()
+        if qualification_type is None:
+            raise serializers.ValidationError({"qualification_type_code": "资质类型不存在"})
+        if qualification_type.status != DirectoryStatus.ACTIVE:
+            raise serializers.ValidationError({"qualification_type_code": "资质类型已停用"})
 
+        valid_from = attrs.get("valid_from")
+        valid_until = attrs.get("valid_until")
+        if qualification_type.requires_validity:
+            if valid_from is None:
+                raise serializers.ValidationError({"valid_from": "该资质类型要求提供 valid_from"})
+            if valid_until is None:
+                raise serializers.ValidationError({"valid_until": "该资质类型要求提供 valid_until"})
+        if valid_from and valid_until and valid_from > valid_until:
+            raise serializers.ValidationError({"valid_until": "valid_until 不能早于 valid_from"})
 
-class GroupPermissionAssignSerializer(serializers.Serializer):
-    permission_codes = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+        payload_json = attrs.get("payload_json", {}) or {}
+        schema = qualification_type.payload_schema_json or {}
+        for required_key in schema.get("required", []):
+            if required_key not in payload_json or payload_json[required_key] in (None, ""):
+                raise serializers.ValidationError({"payload_json": f"缺少必填字段: {required_key}"})
 
-    def validate_permission_codes(self, value):
-        unique_values = list(dict.fromkeys(value))
-        missing = []
-        permissions = []
-
-        for code in unique_values:
-            if "." not in code:
-                missing.append(code)
-                continue
-            app_label, codename = code.split(".", 1)
-            perm = Permission.objects.filter(content_type__app_label=app_label, codename=codename).first()
-            if not perm:
-                missing.append(code)
-                continue
-            permissions.append(perm)
-
-        if missing:
-            raise serializers.ValidationError(f"permissions not found: {missing}")
-
-        self._resolved_permissions = permissions
-        return unique_values
-
-    def save(self, **kwargs):
-        group = self.context["group"]
-        group.permissions.set(self._resolved_permissions)
-        # 权限移除后，相关 scope 一并删除，避免留下脏配置。
-        GroupPermissionScope.objects.filter(group=group).exclude(permission__in=self._resolved_permissions).delete()
-        return group
-
-
-class GroupScopeItemSerializer(serializers.Serializer):
-    permission_code = serializers.CharField()
-    scope_type = serializers.ChoiceField(choices=ScopeType.choices)
-    status = serializers.IntegerField(required=False, default=ScopeStatus.ACTIVE)
-
-    def validate_permission_code(self, value):
-        if "." not in value:
-            raise serializers.ValidationError("permission_code must be app_label.codename")
-        return value
-
-
-class GroupScopeAssignSerializer(serializers.Serializer):
-    items = GroupScopeItemSerializer(many=True)
-
-    @transaction.atomic
-    def save(self, **kwargs):
-        group = self.context["group"]
-        results = []
-
-        for item in self.validated_data["items"]:
-            app_label, codename = item["permission_code"].split(".", 1)
-            permission = Permission.objects.filter(
-                content_type__app_label=app_label,
-                codename=codename,
-            ).first()
-            if not permission:
-                raise serializers.ValidationError(f"permission not found: {item['permission_code']}")
-
-            if not group.permissions.filter(id=permission.id).exists():
-                raise serializers.ValidationError(
-                    f"permission {item['permission_code']} is not assigned to group {group.id}"
-                )
-
-            scope_obj, _ = GroupPermissionScope.objects.update_or_create(
-                group=group,
-                permission=permission,
-                defaults={
-                    "scope_type": item["scope_type"],
-                    "status": item["status"],
-                },
-            )
-            results.append(scope_obj)
-
-        return results
-
-
-class TenantMemberPositionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = TenantMemberPosition
-        fields = [
-            "id",
-            "code",
-            "name",
-            "description",
-            "status",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-
-class TenantMemberQualificationSerializer(serializers.ModelSerializer):
-    payload = serializers.JSONField(required=False)
-
-    class Meta:
-        model = TenantMemberQualification
-        fields = [
-            "id",
-            "code",
-            "name",
-            "description",
-            "status",
-            "valid_until",
-            "payload",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        attrs["_qualification_type"] = qualification_type
+        attrs["payload_json"] = payload_json
+        return attrs
 
 
 class TenantMemberAttributeMixin:
-    def _sync_positions(self, member: TenantMember, positions_data: list[dict]) -> None:
-        codes = [item["code"] for item in positions_data]
-        member.positions.exclude(code__in=codes).delete()
-        for item in positions_data:
-            TenantMemberPosition.objects.update_or_create(
-                tenant_member=member,
-                code=item["code"],
-                defaults={
-                    "name": item["name"],
-                    "description": item.get("description", ""),
-                    "status": item.get("status", TenantMemberAttributeStatus.ACTIVE),
-                },
-            )
-
-    def _sync_qualifications(self, member: TenantMember, qualifications_data: list[dict]) -> None:
-        codes = [item["code"] for item in qualifications_data]
-        member.qualifications.exclude(code__in=codes).delete()
+    def _replace_member_qualifications(self, member: TenantMember, qualifications_data: list[dict]) -> None:
+        member.qualifications.all().delete()
         for item in qualifications_data:
-            TenantMemberQualification.objects.update_or_create(
+            qualification_type = item["_qualification_type"]
+            TenantMemberQualification.objects.create(
                 tenant_member=member,
-                code=item["code"],
-                defaults={
-                    "name": item["name"],
-                    "description": item.get("description", ""),
-                    "status": item.get("status", TenantMemberAttributeStatus.ACTIVE),
-                    "valid_until": item.get("valid_until"),
-                    "payload": item.get("payload", {}),
-                },
+                qualification_type=qualification_type,
+                certificate_no=item.get("certificate_no", ""),
+                level=item.get("level", ""),
+                status=item.get("status", QualificationRecordStatus.ACTIVE),
+                issued_at=item.get("issued_at"),
+                valid_from=item.get("valid_from"),
+                valid_until=item.get("valid_until"),
+                issuer=item.get("issuer", ""),
+                payload_json=item.get("payload_json", {}),
             )
 
-    def sync_member_attributes(
-        self,
-        member: TenantMember,
-        *,
-        positions_data=serializers.empty,
-        qualifications_data=serializers.empty,
-    ) -> None:
-        if positions_data is not serializers.empty:
-            self._sync_positions(member, positions_data)
+    def sync_member_attributes(self, member: TenantMember, *, qualifications_data=serializers.empty) -> None:
         if qualifications_data is not serializers.empty:
-            self._sync_qualifications(member, qualifications_data)
+            self._replace_member_qualifications(member, qualifications_data)
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
@@ -462,10 +356,9 @@ class CurrentUserTenantSerializer(serializers.ModelSerializer):
         model = TenantMember
         fields = ["tenant_id", "tenant_code", "tenant_name", "roles"]
 
-    @extend_schema_field({"type": "array", "items": {"type": "string"}})
     def get_roles(self, obj):
         return list(
-            obj.role_bindings.filter(status=TenantMemberRoleStatus.ACTIVE)
+            obj.role_bindings.filter(status=TenantMemberRoleStatus.GRANTED)
             .order_by("id")
             .values_list("system_role__code", flat=True)
         )
@@ -477,7 +370,6 @@ class CurrentUserInvitationSerializer(serializers.ModelSerializer):
     tenant_code = serializers.CharField(source="tenant.code", read_only=True)
     tenant_name = serializers.CharField(source="tenant.name", read_only=True)
     roles = serializers.SerializerMethodField(read_only=True)
-    positions = TenantMemberPositionSerializer(many=True, read_only=True)
     qualifications = TenantMemberQualificationSerializer(many=True, read_only=True)
 
     class Meta:
@@ -489,15 +381,15 @@ class CurrentUserInvitationSerializer(serializers.ModelSerializer):
             "tenant_name",
             "display_name",
             "roles",
-            "positions",
             "qualifications",
             "invitation_token",
+            "invited_at",
+            "expires_at",
         ]
 
-    @extend_schema_field({"type": "array", "items": {"type": "string"}})
     def get_roles(self, obj):
         return list(
-            obj.role_bindings.filter(status=TenantMemberRoleStatus.ACTIVE)
+            obj.role_bindings.filter(status=TenantMemberRoleStatus.GRANTED)
             .order_by("id")
             .values_list("system_role__code", flat=True)
         )
@@ -520,8 +412,6 @@ class TenantSerializer(serializers.ModelSerializer):
 
 
 class TenantSetPlanSerializer(serializers.Serializer):
-    """租户套餐配置。"""
-
     plan = serializers.CharField(max_length=64, allow_blank=False, trim_whitespace=True)
 
     @transaction.atomic
@@ -539,75 +429,38 @@ class TenantSetPlanSerializer(serializers.Serializer):
         return tenant
 
 
-class SystemRoleSerializer(serializers.ModelSerializer):
-    """平台固定角色序列化器"""
-
-    groups = serializers.SerializerMethodField(read_only=True)
+class RoleSerializer(serializers.ModelSerializer):
+    permission_grants = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
-        model = SystemRole
+        model = Role
         fields = [
             "id",
             "code",
             "name",
             "description",
             "status",
-            "groups",
+            "permission_grants",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
-    @extend_schema_field({"type": "array", "items": {"type": "object"}})
-    def get_groups(self, obj):
-        links = (
-            SystemRoleGroup.objects.filter(system_role=obj, status=ScopeStatus.ACTIVE)
-            .select_related("group")
-            .order_by("group_id")
-        )
-        return [{"id": link.group_id, "name": link.group.name} for link in links]
-
-
-class SystemRoleGroupAssignSerializer(serializers.Serializer):
-    group_ids = serializers.ListField(child=serializers.IntegerField(), allow_empty=True)
-
-    def validate_group_ids(self, value):
-        unique_values = list(dict.fromkeys(value))
-        groups = list(Group.objects.filter(id__in=unique_values))
-        found = {group.id for group in groups}
-        missing = [gid for gid in unique_values if gid not in found]
-        if missing:
-            raise serializers.ValidationError(f"groups not found: {missing}")
-        self._groups = groups
-        return unique_values
-
-    @transaction.atomic
-    def save(self, **kwargs):
-        system_role = self.context["system_role"]
-        group_ids = [group.id for group in self._groups]
-
-        if group_ids:
-            SystemRoleGroup.objects.filter(system_role=system_role).exclude(group_id__in=group_ids).update(status=ScopeStatus.DISABLED)
-        else:
-            SystemRoleGroup.objects.filter(system_role=system_role).update(status=ScopeStatus.DISABLED)
-
-        for group in self._groups:
-            SystemRoleGroup.objects.update_or_create(
-                system_role=system_role,
-                group=group,
-                defaults={"status": ScopeStatus.ACTIVE},
-            )
-
-        return system_role
+    def get_permission_grants(self, obj):
+        grants = obj.permission_grants.select_related("permission").order_by("permission__code")
+        return [
+            {
+                "permission": item.permission.code,
+                "scope_type": item.scope_type,
+            }
+            for item in grants
+        ]
 
 
 class TenantMemberSerializer(TenantMemberAttributeMixin, serializers.ModelSerializer):
-    """租户成员序列化器"""
-
     username = serializers.CharField(source="user.username", read_only=True)
     tenant_code = serializers.CharField(source="tenant.code", read_only=True)
     roles = serializers.SerializerMethodField(read_only=True)
-    positions = TenantMemberPositionSerializer(many=True, required=False)
     qualifications = TenantMemberQualificationSerializer(many=True, required=False)
 
     class Meta:
@@ -618,14 +471,15 @@ class TenantMemberSerializer(TenantMemberAttributeMixin, serializers.ModelSerial
             "tenant_code",
             "user",
             "username",
+            "member_no",
             "display_name",
-            "staff_no",
-            "phone",
-            "email",
             "status",
+            "invitation_token",
+            "invited_at",
+            "expires_at",
+            "responded_at",
             "joined_at",
             "roles",
-            "positions",
             "qualifications",
             "created_at",
             "updated_at",
@@ -637,24 +491,37 @@ class TenantMemberSerializer(TenantMemberAttributeMixin, serializers.ModelSerial
             "user",
             "username",
             "status",
+            "invitation_token",
+            "invited_at",
+            "expires_at",
+            "responded_at",
             "joined_at",
             "roles",
             "created_at",
             "updated_at",
         ]
 
-    @extend_schema_field({"type": "array", "items": {"type": "string"}})
     def get_roles(self, obj):
-        """获取成员绑定的角色编码列表"""
         return list(
-            obj.role_bindings.filter(status=TenantMemberRoleStatus.ACTIVE)
+            obj.role_bindings.filter(status=TenantMemberRoleStatus.GRANTED)
+            .order_by("id")
             .values_list("system_role__code", flat=True)
         )
 
+    def validate(self, attrs):
+        member_no = attrs.get("member_no", self.instance.member_no if self.instance else "")
+        if member_no and self.instance and self.instance.status != TenantMemberStatus.ACTIVE:
+            raise serializers.ValidationError({"member_no": "只有 ACTIVE 成员允许设置 member_no"})
+        return attrs
+
     @transaction.atomic
     def update(self, instance, validated_data):
-        positions_data = validated_data.pop("positions", serializers.empty)
         qualifications_data = validated_data.pop("qualifications", serializers.empty)
+
+        if "member_no" in validated_data:
+            new_member_no = validated_data["member_no"]
+            if new_member_no and instance.status != TenantMemberStatus.ACTIVE:
+                raise serializers.ValidationError({"member_no": "只有 ACTIVE 成员允许设置 member_no"})
 
         update_fields = []
         for attr, value in validated_data.items():
@@ -666,118 +533,94 @@ class TenantMemberSerializer(TenantMemberAttributeMixin, serializers.ModelSerial
         else:
             instance.save()
 
-        self.sync_member_attributes(
-            instance,
-            positions_data=positions_data,
-            qualifications_data=qualifications_data,
-        )
+        self.sync_member_attributes(instance, qualifications_data=qualifications_data)
         return instance
 
 
-class TenantMemberCreateSerializer(TenantMemberAttributeMixin, serializers.ModelSerializer):
-    """租户成员创建序列化器"""
-
+class TenantMemberCreateSerializer(TenantMemberAttributeMixin, serializers.Serializer):
+    tenant_id = serializers.IntegerField(write_only=True)
     user_id = serializers.IntegerField(write_only=True)
-    role_codes = serializers.ListField(
-        child=serializers.CharField(),
-        required=False,
-        write_only=True,
-        allow_empty=True,
-    )
-    positions = TenantMemberPositionSerializer(many=True, required=False)
+    display_name = serializers.CharField(max_length=128, required=False, allow_blank=True)
+    member_no = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    role_codes = serializers.ListField(child=serializers.CharField(), required=False, allow_empty=True)
     qualifications = TenantMemberQualificationSerializer(many=True, required=False)
 
-    class Meta:
-        model = TenantMember
-        fields = [
-            "user_id",
-            "display_name",
-            "staff_no",
-            "phone",
-            "email",
-            "role_codes",
-            "positions",
-            "qualifications",
-        ]
+    def validate_tenant_id(self, value):
+        tenant = Tenant.objects.filter(id=value).first()
+        if tenant is None:
+            raise serializers.ValidationError("租户不存在")
+        if tenant.status != TenantStatus.ACTIVE:
+            raise serializers.ValidationError("租户未启用")
+        self._tenant = tenant
+        return value
 
     def validate_user_id(self, value):
         user = User.objects.filter(id=value).first()
         if not user:
-            raise serializers.ValidationError("User not found")
-        # 检查用户是否已在该租户中
-        tenant = self.context.get("tenant")
-        if tenant and TenantMember.objects.filter(tenant=tenant, user=user).exists():
-            raise serializers.ValidationError("User is already a member of this tenant")
+            raise serializers.ValidationError("用户不存在")
+        self._user = user
         return value
 
     def validate_role_codes(self, value):
-        valid_codes = set(SystemRole.objects.filter(status=SystemRoleStatus.ACTIVE).values_list("code", flat=True))
+        valid_codes = set(Role.objects.filter(status=DirectoryStatus.ACTIVE).values_list("code", flat=True))
         invalid = set(value) - valid_codes
         if invalid:
-            raise serializers.ValidationError(f"Invalid role codes: {invalid}")
-        return value
+            raise serializers.ValidationError(f"非法角色编码: {sorted(invalid)}")
+        return list(dict.fromkeys(value))
+
+    def validate(self, attrs):
+        tenant = getattr(self, "_tenant", None)
+        user = getattr(self, "_user", None)
+        if tenant and user and TenantMember.objects.filter(tenant=tenant, user=user).exists():
+            raise serializers.ValidationError({"user_id": "该用户已是当前租户成员"})
+        return attrs
 
     @transaction.atomic
     def create(self, validated_data):
-        user_id = validated_data.pop("user_id")
-        role_codes = validated_data.pop("role_codes", [])
-        positions_data = validated_data.pop("positions", [])
-        qualifications_data = validated_data.pop("qualifications", [])
-        user = User.objects.get(id=user_id)
-        tenant = self.context["tenant"]
-
+        tenant = self._tenant
+        user = self._user
+        role_codes = validated_data.get("role_codes", [])
+        qualifications_data = validated_data.get("qualifications", [])
         member = TenantMember.objects.create(
             tenant=tenant,
             user=user,
-            display_name=validated_data["display_name"],
-            staff_no=validated_data.get("staff_no", ""),
-            phone=validated_data.get("phone", ""),
-            email=validated_data.get("email", ""),
+            display_name=validated_data.get("display_name", ""),
+            member_no=validated_data.get("member_no") or None,
             status=TenantMemberStatus.ACTIVE,
+            responded_at=timezone.now(),
             joined_at=timezone.now(),
         )
-
-        # 绑定角色
         for code in role_codes:
-            role = SystemRole.objects.get(code=code)
+            role = Role.objects.get(code=code)
             TenantMemberRole.objects.create(
                 tenant_member=member,
                 system_role=role,
-                status=TenantMemberRoleStatus.ACTIVE,
+                status=TenantMemberRoleStatus.GRANTED,
+                assigned_by_user=getattr(self.context.get("request"), "user", None),
+                assigned_at=timezone.now(),
             )
-
-        self.sync_member_attributes(
-            member,
-            positions_data=positions_data,
-            qualifications_data=qualifications_data,
-        )
+        self.sync_member_attributes(member, qualifications_data=qualifications_data)
         return member
 
 
 class TenantInitializeAdminSerializer(TenantMemberAttributeMixin, serializers.Serializer):
-    """初始化租户管理员。"""
-
     user_id = serializers.IntegerField(required=True)
-    display_name = serializers.CharField(max_length=128)
-    staff_no = serializers.CharField(required=False, allow_blank=True)
-    phone = serializers.CharField(required=False, allow_blank=True)
-    email = serializers.EmailField(required=False, allow_blank=True)
-    positions = TenantMemberPositionSerializer(many=True, required=False)
+    display_name = serializers.CharField(max_length=128, required=False, allow_blank=True)
+    member_no = serializers.CharField(required=False, allow_blank=True)
     qualifications = TenantMemberQualificationSerializer(many=True, required=False)
 
     @transaction.atomic
     def create(self, validated_data):
         tenant = self.context["tenant"]
-        positions_data = validated_data.pop("positions", [])
         qualifications_data = validated_data.pop("qualifications", [])
-        if tenant.status != TenantStatus.ENABLED:
+        if tenant.status != TenantStatus.ACTIVE:
             raise BusinessStateConflict("tenant status invalid", business_detail_code="TENANT_STATUS_INVALID")
 
         user = User.objects.filter(id=validated_data["user_id"]).first()
         if user is None:
             raise BusinessResourceNotFound("user not found", business_detail_code="USER_NOT_FOUND")
 
-        tenant_admin_role = SystemRole.objects.filter(code="tenant_admin", status=SystemRoleStatus.ACTIVE).first()
+        tenant_admin_role = Role.objects.filter(code="tenant_admin", status=DirectoryStatus.ACTIVE).first()
         if tenant_admin_role is None:
             raise BusinessStateConflict(
                 "tenant_admin role not configured",
@@ -790,7 +633,7 @@ class TenantInitializeAdminSerializer(TenantMemberAttributeMixin, serializers.Se
                 tenant_member__tenant=tenant,
                 tenant_member__status=TenantMemberStatus.ACTIVE,
                 system_role=tenant_admin_role,
-                status=TenantMemberRoleStatus.ACTIVE,
+                status=TenantMemberRoleStatus.GRANTED,
             )
             .first()
         )
@@ -801,123 +644,111 @@ class TenantInitializeAdminSerializer(TenantMemberAttributeMixin, serializers.Se
             )
 
         member = TenantMember.objects.filter(tenant=tenant, user=user).first()
-        joined_at = timezone.now()
         if member is None:
             member = TenantMember.objects.create(
                 tenant=tenant,
                 user=user,
-                display_name=validated_data["display_name"],
-                staff_no=validated_data.get("staff_no", ""),
-                phone=validated_data.get("phone", ""),
-                email=validated_data.get("email", ""),
-                invitation_token=None,
+                display_name=validated_data.get("display_name", ""),
+                member_no=validated_data.get("member_no") or None,
                 status=TenantMemberStatus.ACTIVE,
-                joined_at=joined_at,
+                responded_at=timezone.now(),
+                joined_at=timezone.now(),
             )
         else:
-            member.display_name = validated_data["display_name"]
-            member.staff_no = validated_data.get("staff_no", "")
-            member.phone = validated_data.get("phone", "")
-            member.email = validated_data.get("email", "")
-            member.invitation_token = None
+            member.display_name = validated_data.get("display_name", member.display_name)
+            member.member_no = validated_data.get("member_no") or member.member_no
             member.status = TenantMemberStatus.ACTIVE
-            member.joined_at = member.joined_at or joined_at
-            member.save(
-                update_fields=[
-                    "display_name",
-                    "staff_no",
-                    "phone",
-                    "email",
-                    "invitation_token",
-                    "status",
-                    "joined_at",
-                    "updated_at",
-                ]
-            )
+            member.invitation_token = None
+            member.invited_by_user = None
+            member.invited_at = None
+            member.expires_at = None
+            member.responded_at = member.responded_at or timezone.now()
+            member.joined_at = member.joined_at or timezone.now()
+            member.save()
 
         TenantMemberRole.objects.update_or_create(
             tenant_member=member,
             system_role=tenant_admin_role,
-            defaults={"status": TenantMemberRoleStatus.ACTIVE},
+            defaults={
+                "status": TenantMemberRoleStatus.GRANTED,
+                "assigned_by_user": getattr(self.context.get("request"), "user", None),
+                "assigned_at": timezone.now(),
+            },
         )
-        self.sync_member_attributes(
-            member,
-            positions_data=positions_data,
-            qualifications_data=qualifications_data,
-        )
+        self.sync_member_attributes(member, qualifications_data=qualifications_data)
         return member
 
 
 class TenantMemberInviteSerializer(TenantMemberAttributeMixin, serializers.Serializer):
-    """租户成员邀请序列化器。"""
-
     tenant_id = serializers.IntegerField(required=True)
     user_id = serializers.IntegerField(required=True)
-    display_name = serializers.CharField(max_length=128)
-    staff_no = serializers.CharField(required=False, allow_blank=True)
-    phone = serializers.CharField(required=False, allow_blank=True)
-    email = serializers.EmailField(required=False, allow_blank=True)
-    roles = serializers.ListField(
-        child=serializers.CharField(),
-        required=False,
-        allow_empty=True,
-    )
-    positions = TenantMemberPositionSerializer(many=True, required=False)
+    display_name = serializers.CharField(max_length=128, required=False, allow_blank=True)
+    role_codes = serializers.ListField(child=serializers.CharField(), required=False, allow_empty=True)
+    roles = serializers.ListField(child=serializers.CharField(), required=False, allow_empty=True)
     qualifications = TenantMemberQualificationSerializer(many=True, required=False)
 
-    def validate_roles(self, value):
-        valid_codes = set(SystemRole.objects.filter(status=SystemRoleStatus.ACTIVE).values_list("code", flat=True))
-        invalid = set(value) - valid_codes
-        if invalid:
-            raise serializers.ValidationError(f"Invalid role codes: {invalid}")
-        return value
+    def validate(self, attrs):
+        role_codes = attrs.get("role_codes")
+        if role_codes is None:
+            role_codes = attrs.get("roles", [])
+        attrs["role_codes"] = list(dict.fromkeys(role_codes))
+        attrs.pop("roles", None)
 
-    @transaction.atomic
-    def create(self, validated_data):
-        positions_data = validated_data.pop("positions", [])
-        qualifications_data = validated_data.pop("qualifications", [])
-        tenant = Tenant.objects.filter(id=validated_data["tenant_id"]).first()
+        tenant = Tenant.objects.filter(id=attrs["tenant_id"]).first()
         if tenant is None:
             raise BusinessResourceNotFound("tenant not found", business_detail_code="TENANT_NOT_FOUND")
+        if tenant.status != TenantStatus.ACTIVE:
+            raise BusinessStateConflict("tenant status invalid", business_detail_code="TENANT_STATUS_INVALID")
 
-        user = User.objects.filter(id=validated_data["user_id"]).first()
+        user = User.objects.filter(id=attrs["user_id"]).first()
         if user is None:
             raise BusinessResourceNotFound("user not found", business_detail_code="USER_NOT_FOUND")
 
         if TenantMember.objects.filter(tenant=tenant, user=user).exists():
             raise BusinessStateConflict("tenant member already exists", business_detail_code="TENANT_MEMBER_EXISTS")
 
+        valid_codes = set(Role.objects.filter(status=DirectoryStatus.ACTIVE).values_list("code", flat=True))
+        invalid = set(attrs["role_codes"]) - valid_codes
+        if invalid:
+            raise serializers.ValidationError({"role_codes": f"非法角色编码: {sorted(invalid)}"})
+
+        attrs["_tenant"] = tenant
+        attrs["_user"] = user
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        qualifications_data = validated_data.get("qualifications", [])
+        request = self.context.get("request")
+        now = timezone.now()
+        tenant = validated_data["_tenant"]
+        user = validated_data["_user"]
         member = TenantMember.objects.create(
             tenant=tenant,
             user=user,
-            display_name=validated_data["display_name"],
-            staff_no=validated_data.get("staff_no", ""),
-            phone=validated_data.get("phone", ""),
-            email=validated_data.get("email", ""),
+            display_name=validated_data.get("display_name", ""),
             invitation_token=uuid4().hex,
-            status=TenantMemberStatus.PENDING,
-            joined_at=None,
+            invited_by_user=request.user if request and request.user.is_authenticated else None,
+            invited_at=now,
+            expires_at=default_invitation_expiry(now),
+            status=TenantMemberStatus.INVITED,
         )
 
-        for code in validated_data.get("roles", []):
-            role = SystemRole.objects.get(code=code)
+        for code in validated_data["role_codes"]:
+            role = Role.objects.get(code=code)
             TenantMemberRole.objects.create(
                 tenant_member=member,
                 system_role=role,
-                status=TenantMemberRoleStatus.ACTIVE,
+                status=TenantMemberRoleStatus.GRANTED,
+                assigned_by_user=request.user if request and request.user.is_authenticated else None,
+                assigned_at=now,
             )
 
-        self.sync_member_attributes(
-            member,
-            positions_data=positions_data,
-            qualifications_data=qualifications_data,
-        )
+        self.sync_member_attributes(member, qualifications_data=qualifications_data)
         return member
 
 
 class TenantMemberConfirmInvitationSerializer(serializers.Serializer):
-    """租户成员确认邀请序列化器。"""
-
     invitation_token = serializers.CharField(max_length=64, required=True)
 
     @transaction.atomic
@@ -929,30 +760,29 @@ class TenantMemberConfirmInvitationSerializer(serializers.Serializer):
             .filter(invitation_token=validated_data["invitation_token"])
             .first()
         )
+        member = expire_stale_tenant_member_invitation(member)
         if member is None:
             raise BusinessResourceNotFound("invitation not found", business_detail_code="INVITATION_NOT_FOUND")
 
         if member.user_id != request.user.id:
             raise BusinessPermissionDenied("invitation does not belong to current user", business_detail_code="INVITATION_NOT_ALLOWED")
 
-        if member.status == TenantMemberStatus.ACTIVE:
-            raise BusinessIdempotentDuplicate(
-                "invitation already confirmed",
-                business_detail_code="INVITATION_ALREADY_CONFIRMED",
-            )
+        if member.status != TenantMemberStatus.INVITED:
+            raise BusinessStateConflict("invitation is not invited", business_detail_code="INVITATION_STATUS_INVALID")
 
-        if member.status != TenantMemberStatus.PENDING:
-            raise BusinessStateConflict("invitation is not pending", business_detail_code="INVITATION_STATUS_INVALID")
-
+        now = timezone.now()
         member.status = TenantMemberStatus.ACTIVE
-        member.joined_at = timezone.now()
-        member.save(update_fields=["status", "joined_at", "updated_at"])
+        member.invitation_token = None
+        member.invited_by_user = None
+        member.invited_at = None
+        member.expires_at = None
+        member.responded_at = now
+        member.joined_at = now
+        member.save()
         return member
 
 
 class TenantMemberRejectInvitationSerializer(serializers.Serializer):
-    """租户成员拒绝邀请序列化器。"""
-
     invitation_token = serializers.CharField(max_length=64, required=True)
 
     @transaction.atomic
@@ -964,29 +794,24 @@ class TenantMemberRejectInvitationSerializer(serializers.Serializer):
             .filter(invitation_token=validated_data["invitation_token"])
             .first()
         )
+        member = expire_stale_tenant_member_invitation(member)
         if member is None:
             raise BusinessResourceNotFound("invitation not found", business_detail_code="INVITATION_NOT_FOUND")
 
         if member.user_id != request.user.id:
             raise BusinessPermissionDenied("invitation does not belong to current user", business_detail_code="INVITATION_NOT_ALLOWED")
 
-        if member.status != TenantMemberStatus.PENDING:
-            raise BusinessStateConflict("invitation is not pending", business_detail_code="INVITATION_STATUS_INVALID")
+        if member.status != TenantMemberStatus.INVITED:
+            raise BusinessStateConflict("invitation is not invited", business_detail_code="INVITATION_STATUS_INVALID")
 
-        payload = {
-            "tenant": member.tenant,
-            "member_id": member.id,
-            "tenant_id": member.tenant_id,
-            "user_id": member.user_id,
-            "status": member.status,
-        }
-        member.delete()
-        return payload
+        member.status = TenantMemberStatus.REJECTED
+        member.invitation_token = None
+        member.responded_at = timezone.now()
+        member.save(update_fields=["status", "invitation_token", "responded_at", "updated_at"])
+        return member
 
 
 class TenantMemberRoleSerializer(serializers.ModelSerializer):
-    """成员角色绑定序列化器"""
-
     role_code = serializers.CharField(source="system_role.code", read_only=True)
     role_name = serializers.CharField(source="system_role.name", read_only=True)
 
@@ -999,6 +824,8 @@ class TenantMemberRoleSerializer(serializers.ModelSerializer):
             "role_code",
             "role_name",
             "status",
+            "assigned_by_user",
+            "assigned_at",
             "created_at",
             "updated_at",
         ]
@@ -1006,35 +833,35 @@ class TenantMemberRoleSerializer(serializers.ModelSerializer):
 
 
 class TenantMemberRoleAssignSerializer(serializers.Serializer):
-    """成员角色分配序列化器"""
-
-    role_codes = serializers.ListField(
-        child=serializers.CharField(),
-        required=True,
-    )
+    role_codes = serializers.ListField(child=serializers.CharField(), required=True)
 
     def validate_role_codes(self, value):
-        valid_codes = set(SystemRole.objects.filter(status=SystemRoleStatus.ACTIVE).values_list("code", flat=True))
-        invalid = set(value) - valid_codes
+        normalized = list(dict.fromkeys(value))
+        valid_codes = set(Role.objects.filter(status=DirectoryStatus.ACTIVE).values_list("code", flat=True))
+        invalid = set(normalized) - valid_codes
         if invalid:
-            raise serializers.ValidationError(f"Invalid role codes: {invalid}")
-        return value
+            raise serializers.ValidationError(f"非法角色编码: {sorted(invalid)}")
+        return normalized
 
     @transaction.atomic
     def save(self, **kwargs):
         member = self.context["tenant_member"]
+        request = self.context.get("request")
         role_codes = self.validated_data["role_codes"]
+        now = timezone.now()
 
-        # 先禁用所有现有角色
-        member.role_bindings.update(status=TenantMemberRoleStatus.DISABLED)
+        desired_role_ids = set(Role.objects.filter(code__in=role_codes).values_list("id", flat=True))
+        member.role_bindings.exclude(system_role_id__in=desired_role_ids).update(status=TenantMemberRoleStatus.REVOKED, updated_at=now)
 
-        # 启用或创建新角色
-        for code in role_codes:
-            role = SystemRole.objects.get(code=code)
-            binding, _ = TenantMemberRole.objects.update_or_create(
+        for role in Role.objects.filter(id__in=desired_role_ids):
+            TenantMemberRole.objects.update_or_create(
                 tenant_member=member,
                 system_role=role,
-                defaults={"status": TenantMemberRoleStatus.ACTIVE},
+                defaults={
+                    "status": TenantMemberRoleStatus.GRANTED,
+                    "assigned_by_user": request.user if request and request.user.is_authenticated else None,
+                    "assigned_at": now,
+                },
             )
 
         return member

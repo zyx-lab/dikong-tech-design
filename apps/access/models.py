@@ -1,8 +1,11 @@
 from django.conf import settings
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
-from django.contrib.auth.models import Group, Permission, PermissionsMixin
+from django.contrib.auth.models import Group as AuthGroup
+from django.contrib.auth.models import Permission as AuthPermission
+from django.contrib.auth.models import PermissionsMixin
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
 
@@ -26,20 +29,40 @@ class EmploymentStatus(models.IntegerChoices):
     ACTIVE = 1, "active"
 
 
-class TenantMemberAttributeStatus(models.IntegerChoices):
-    DISABLED = 0, "disabled"
-    ACTIVE = 1, "active"
-
-
 class ScopeType(models.TextChoices):
     ALL = "ALL", "ALL"
     OWN = "OWN", "OWN"
     ASSIGNED = "ASSIGNED", "ASSIGNED"
 
 
-class ScopeStatus(models.IntegerChoices):
+class DirectoryStatus(models.IntegerChoices):
     DISABLED = 0, "disabled"
     ACTIVE = 1, "active"
+
+
+class TenantStatus(models.IntegerChoices):
+    DISABLED = 0, "disabled"
+    ACTIVE = 1, "active"
+
+
+class TenantMemberStatus(models.IntegerChoices):
+    INVITED = 0, "invited"
+    ACTIVE = 1, "active"
+    REJECTED = 2, "rejected"
+    EXPIRED = 3, "expired"
+    REVOKED = 4, "revoked"
+    DISABLED = 5, "disabled"
+
+
+class TenantMemberRoleStatus(models.IntegerChoices):
+    REVOKED = 0, "revoked"
+    GRANTED = 1, "granted"
+
+
+class QualificationRecordStatus(models.IntegerChoices):
+    ACTIVE = 1, "active"
+    INVALID = 2, "invalid"
+    REVOKED = 3, "revoked"
 
 
 class UserManager(BaseUserManager):
@@ -78,14 +101,7 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    """平台账号模型。
-
-    说明：
-    - 用户模型只承载“账号域”字段：登录、启用状态、后台状态。
-    - 人员身份事实（name/phone/email）统一放在 StaffProfile。
-    - groups/user_permissions 通过信号强制禁止直接改动。
-    - 多租户授权统一走 tenant_member -> system_role -> group -> permission(scope)。
-    """
+    """平台账号模型。"""
 
     username = models.CharField(max_length=150, unique=True)
     is_staff = models.BooleanField(default=False)
@@ -96,7 +112,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     updated_at = models.DateTimeField(auto_now=True)
 
     groups = models.ManyToManyField(
-        Group,
+        AuthGroup,
         verbose_name=_("groups"),
         blank=True,
         help_text=_("业务上禁止用户直接绑定 Group。"),
@@ -105,7 +121,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         db_table="auth_users_groups",
     )
     user_permissions = models.ManyToManyField(
-        Permission,
+        AuthPermission,
         verbose_name=_("user permissions"),
         blank=True,
         help_text=_("业务上禁止用户直接绑定权限点。"),
@@ -134,10 +150,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class StaffProfile(TimeStampedModel):
-    """人员全局档案。
-
-    关键约束：一账号一 Staff。
-    """
+    """人员全局档案。"""
 
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="staff_profile")
     staff_no = models.CharField(max_length=64, unique=True)
@@ -160,7 +173,6 @@ class StaffProfile(TimeStampedModel):
         ]
 
     def clean(self):
-        # superuser 作为 root 账号，不绑定全局 StaffProfile。
         if self.user_id and self.user.is_superuser:
             raise ValidationError({"user": "superuser 账号不允许绑定 staff_profile"})
 
@@ -172,35 +184,8 @@ class StaffProfile(TimeStampedModel):
         return f"{self.staff_no}-{self.name}"
 
 
-class GroupPermissionScope(TimeStampedModel):
-    """Group 中每个权限点的数据范围策略。"""
-
-    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name="permission_scopes")
-    permission = models.ForeignKey(Permission, on_delete=models.CASCADE, related_name="group_scopes")
-    scope_type = models.CharField(max_length=16, choices=ScopeType.choices)
-    status = models.PositiveSmallIntegerField(choices=ScopeStatus.choices, default=ScopeStatus.ACTIVE)
-
-    class Meta:
-        db_table = "auth_group_permission_scopes"
-        verbose_name = "能力组权限范围"
-        verbose_name_plural = "能力组权限范围"
-        default_permissions = ()
-        constraints = [
-            models.UniqueConstraint(fields=["group", "permission"], name="uniq_group_permission_scope"),
-        ]
-        permissions = [
-            ("manage_auth_groups", "可管理能力组与权限"),
-            ("manage_auth_scopes", "可管理权限范围策略"),
-        ]
-
-
 class AuditLog(models.Model):
-    """权限关键动作审计日志。
-
-    说明：
-    - tenant 为空时表示平台级审计（如租户创建、套餐变更）
-    - tenant 有值时表示租户级审计（如成员管理、角色分配）
-    """
+    """权限关键动作审计日志。"""
 
     tenant = models.ForeignKey(
         "Tenant",
@@ -240,39 +225,12 @@ class AuditLog(models.Model):
         return f"{self.action}:{self.target_type}:{self.target_id}"
 
 
-class TenantStatus(models.IntegerChoices):
-    DISABLED = 0, "disabled"
-    ENABLED = 1, "enabled"
-
-
-class TenantMemberStatus(models.IntegerChoices):
-    """租户成员状态"""
-    PENDING = 0, "pending"  # 待激活（待租户邀请）
-    ACTIVE = 1, "active"    # 已激活（已加入租户）
-    DISABLED = 2, "disabled"  # 已禁用
-
-
-class TenantMemberRoleStatus(models.IntegerChoices):
-    """成员角色绑定状态"""
-    DISABLED = 0, "disabled"
-    ACTIVE = 1, "active"
-
-
-class SystemRoleStatus(models.IntegerChoices):
-    """平台固定角色状态"""
-    DISABLED = 0, "disabled"
-    ACTIVE = 1, "active"
-
-
 class Tenant(TimeStampedModel):
-    """租户主表，表示一个买家。
-
-    平台级模型，不需要 tenant_id。
-    """
+    """租户主表。"""
 
     code = models.CharField(max_length=64, unique=True, verbose_name="租户编码")
     name = models.CharField(max_length=128, verbose_name="租户名称")
-    status = models.PositiveSmallIntegerField(choices=TenantStatus.choices, default=TenantStatus.ENABLED, verbose_name="状态")
+    status = models.PositiveSmallIntegerField(choices=TenantStatus.choices, default=TenantStatus.ACTIVE, verbose_name="状态")
     plan = models.CharField(max_length=64, blank=True, verbose_name="套餐")
     remark = models.CharField(max_length=500, blank=True, verbose_name="备注")
 
@@ -290,68 +248,120 @@ class Tenant(TimeStampedModel):
         return f"{self.code}:{self.name}"
 
 
-class SystemRole(TimeStampedModel):
-    """平台固定角色目录。
-
-    7个固定角色由平台统一定义和维护，所有租户共用同一套角色模板。
-    平台级模型，不需要 tenant_id。
-    """
+class Role(TimeStampedModel):
+    """平台级统一角色目录。"""
 
     code = models.CharField(max_length=64, unique=True, verbose_name="角色编码")
     name = models.CharField(max_length=128, verbose_name="角色名称")
     description = models.CharField(max_length=500, blank=True, verbose_name="角色描述")
-    status = models.PositiveSmallIntegerField(choices=SystemRoleStatus.choices, default=SystemRoleStatus.ACTIVE, verbose_name="状态")
+    status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE, verbose_name="状态")
 
     class Meta:
-        db_table = "system_roles"
-        verbose_name = "平台固定角色"
-        verbose_name_plural = "平台固定角色"
+        db_table = "roles"
+        verbose_name = "平台角色"
+        verbose_name_plural = "平台角色"
         default_permissions = ()
         permissions = [
-            ("view_system_role", "可查看固定角色"),
-            ("manage_system_role", "可管理固定角色"),
+            ("view_role", "可查看平台角色"),
+            ("manage_role", "可管理平台角色"),
         ]
 
     def __str__(self):
         return f"{self.code}:{self.name}"
 
 
-class SystemRoleGroup(TimeStampedModel):
-    """固定角色 -> 能力模块（Group）的映射。"""
+class Permission(TimeStampedModel):
+    """平台权限目录。"""
 
-    system_role = models.ForeignKey(SystemRole, on_delete=models.CASCADE, related_name="group_links")
-    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name="system_role_links")
-    status = models.PositiveSmallIntegerField(choices=ScopeStatus.choices, default=ScopeStatus.ACTIVE)
+    code = models.CharField(max_length=128, unique=True, verbose_name="权限编码")
+    name = models.CharField(max_length=128, verbose_name="权限名称")
+    module = models.CharField(max_length=64, verbose_name="模块")
+    resource_code = models.CharField(max_length=64, blank=True, verbose_name="资源编码")
+    description = models.CharField(max_length=500, blank=True, verbose_name="描述")
+    status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE, verbose_name="状态")
 
     class Meta:
-        db_table = "system_role_groups"
-        verbose_name = "固定角色能力组映射"
-        verbose_name_plural = "固定角色能力组映射"
+        db_table = "permissions"
+        verbose_name = "平台权限"
+        verbose_name_plural = "平台权限"
         default_permissions = ()
-        constraints = [
-            models.UniqueConstraint(fields=["system_role", "group"], name="uniq_system_role_group"),
+        permissions = [
+            ("view_permission_catalog", "可查看权限目录"),
+            ("manage_permission_catalog", "可管理权限目录"),
+        ]
+        indexes = [
+            models.Index(fields=["module", "status"], name="idx_permission_module_status"),
         ]
 
     def __str__(self):
-        return f"{self.system_role_id}:{self.group_id}"
+        return self.code
+
+
+class RolePermissionGrant(TimeStampedModel):
+    """角色默认权限映射。"""
+
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name="permission_grants")
+    permission = models.ForeignKey(Permission, on_delete=models.CASCADE, related_name="role_grants")
+    scope_type = models.CharField(max_length=16, choices=ScopeType.choices, default=ScopeType.ALL)
+
+    class Meta:
+        db_table = "role_permission_grants"
+        verbose_name = "角色权限映射"
+        verbose_name_plural = "角色权限映射"
+        default_permissions = ()
+        constraints = [
+            models.UniqueConstraint(fields=["role", "permission"], name="uniq_role_permission_grant"),
+        ]
+
+    def __str__(self):
+        return f"{self.role.code}:{self.permission.code}:{self.scope_type}"
+
+
+class QualificationType(TimeStampedModel):
+    """平台资质类型目录。"""
+
+    code = models.CharField(max_length=64, unique=True, verbose_name="资质编码")
+    name = models.CharField(max_length=128, verbose_name="资质名称")
+    description = models.CharField(max_length=500, blank=True, verbose_name="资质描述")
+    requires_validity = models.BooleanField(default=False, verbose_name="是否要求有效期")
+    payload_schema_json = models.JSONField(null=True, blank=True, verbose_name="扩展字段 schema")
+    status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE, verbose_name="状态")
+
+    class Meta:
+        db_table = "qualification_types"
+        verbose_name = "资质类型"
+        verbose_name_plural = "资质类型"
+        default_permissions = ()
+        permissions = [
+            ("view_qualification_type", "可查看资质类型"),
+            ("manage_qualification_type", "可管理资质类型"),
+        ]
+
+    def __str__(self):
+        return f"{self.code}:{self.name}"
 
 
 class TenantMember(TimeStampedModel):
-    """租户成员身份。
-
-    表示某个 User 在某个 Tenant 中的成员身份。
-    租户级模型，通过 tenant_id 关联租户。
-    """
+    """租户成员关系。"""
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="members")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="tenant_members")
-    display_name = models.CharField(max_length=128, verbose_name="显示名称")
-    staff_no = models.CharField(max_length=64, blank=True, verbose_name="工号")
-    phone = models.CharField(max_length=32, blank=True, verbose_name="手机")
-    email = models.EmailField(blank=True, verbose_name="邮箱")
-    invitation_token = models.CharField(max_length=64, unique=True, null=True, blank=True, verbose_name="邀请令牌")
-    status = models.PositiveSmallIntegerField(choices=TenantMemberStatus.choices, default=TenantMemberStatus.PENDING, verbose_name="状态")
+    member_no = models.CharField(max_length=64, blank=True, null=True, verbose_name="工号")
+    display_name = models.CharField(max_length=128, blank=True, verbose_name="显示名称")
+    invitation_token = models.CharField(max_length=64, unique=False, null=True, blank=True, verbose_name="邀请令牌")
+    invited_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="sent_tenant_invitations",
+        verbose_name="邀请人",
+    )
+    invited_at = models.DateTimeField(null=True, blank=True, verbose_name="邀请时间")
+    expires_at = models.DateTimeField(null=True, blank=True, verbose_name="邀请过期时间")
+    responded_at = models.DateTimeField(null=True, blank=True, verbose_name="响应时间")
     joined_at = models.DateTimeField(null=True, blank=True, verbose_name="加入时间")
+    status = models.PositiveSmallIntegerField(choices=TenantMemberStatus.choices, default=TenantMemberStatus.INVITED, verbose_name="状态")
 
     class Meta:
         db_table = "tenant_members"
@@ -364,78 +374,87 @@ class TenantMember(TimeStampedModel):
         ]
         constraints = [
             models.UniqueConstraint(fields=["tenant", "user"], name="uniq_tenant_user_member"),
+            models.UniqueConstraint(
+                fields=["tenant", "member_no"],
+                condition=Q(member_no__isnull=False) & ~Q(member_no=""),
+                name="uniq_tenant_member_no",
+            ),
+            models.UniqueConstraint(
+                fields=["invitation_token"],
+                condition=Q(invitation_token__isnull=False) & ~Q(invitation_token=""),
+                name="uniq_tenant_member_invitation_token",
+            ),
         ]
 
     def __str__(self):
         return f"{self.tenant.code}:{self.user.username}"
 
 
-class TenantMemberPosition(TimeStampedModel):
-    """租户成员岗位。
-
-    岗位是租户内属性，不参与权限判定，只用于业务校验和业务展示。
-    """
-
-    tenant_member = models.ForeignKey(TenantMember, on_delete=models.CASCADE, related_name="positions")
-    code = models.CharField(max_length=64, verbose_name="岗位编码")
-    name = models.CharField(max_length=128, verbose_name="岗位名称")
-    description = models.CharField(max_length=255, blank=True, verbose_name="岗位描述")
-    status = models.PositiveSmallIntegerField(
-        choices=TenantMemberAttributeStatus.choices,
-        default=TenantMemberAttributeStatus.ACTIVE,
-        verbose_name="状态",
-    )
-
-    class Meta:
-        db_table = "tenant_member_positions"
-        verbose_name = "租户成员岗位"
-        verbose_name_plural = "租户成员岗位"
-        default_permissions = ()
-        constraints = [
-            models.UniqueConstraint(fields=["tenant_member", "code"], name="uniq_tenant_member_position_code"),
-        ]
-
-    def __str__(self):
-        return f"{self.tenant_member_id}:{self.code}"
-
-
 class TenantMemberQualification(TimeStampedModel):
-    """租户成员业务资质。
-
-    资质同样不进入授权矩阵，只用于租户内业务约束，例如飞手可执行资格校验。
-    """
+    """租户成员资质记录。"""
 
     tenant_member = models.ForeignKey(TenantMember, on_delete=models.CASCADE, related_name="qualifications")
-    code = models.CharField(max_length=64, verbose_name="资质编码")
-    name = models.CharField(max_length=128, verbose_name="资质名称")
-    description = models.CharField(max_length=255, blank=True, verbose_name="资质描述")
+    qualification_type = models.ForeignKey(QualificationType, on_delete=models.PROTECT, related_name="member_records")
+    certificate_no = models.CharField(max_length=128, blank=True, verbose_name="证书编号")
+    level = models.CharField(max_length=64, blank=True, verbose_name="等级")
     status = models.PositiveSmallIntegerField(
-        choices=TenantMemberAttributeStatus.choices,
-        default=TenantMemberAttributeStatus.ACTIVE,
+        choices=QualificationRecordStatus.choices,
+        default=QualificationRecordStatus.ACTIVE,
         verbose_name="状态",
     )
-    valid_until = models.DateField(null=True, blank=True, verbose_name="有效期至")
-    payload = models.JSONField(default=dict, blank=True, verbose_name="扩展信息")
+    issued_at = models.DateField(null=True, blank=True, verbose_name="发证日期")
+    valid_from = models.DateField(null=True, blank=True, verbose_name="有效开始日期")
+    valid_until = models.DateField(null=True, blank=True, verbose_name="有效截止日期")
+    issuer = models.CharField(max_length=128, blank=True, verbose_name="发证机构")
+    payload_json = models.JSONField(default=dict, blank=True, verbose_name="扩展信息")
 
     class Meta:
         db_table = "tenant_member_qualifications"
         verbose_name = "租户成员资质"
         verbose_name_plural = "租户成员资质"
         default_permissions = ()
+        indexes = [
+            models.Index(fields=["tenant_member", "qualification_type"], name="idx_tm_qualification_type"),
+            models.Index(fields=["tenant_member", "status"], name="idx_tm_qualification_status"),
+        ]
         constraints = [
-            models.UniqueConstraint(fields=["tenant_member", "code"], name="uniq_tenant_member_qualification_code"),
+            models.CheckConstraint(
+                condition=Q(valid_from__isnull=True) | Q(valid_until__isnull=True) | Q(valid_from__lte=models.F("valid_until")),
+                name="chk_tm_qualification_valid_range",
+            ),
         ]
 
+    @property
+    def code(self) -> str:
+        return self.qualification_type.code
+
+    @property
+    def name(self) -> str:
+        return self.qualification_type.name
+
     def __str__(self):
-        return f"{self.tenant_member_id}:{self.code}"
+        return f"{self.tenant_member_id}:{self.qualification_type.code}"
 
 
 class TenantMemberRole(TimeStampedModel):
-    """租户成员与固定角色的绑定关系。"""
+    """租户成员与平台角色的绑定关系。"""
 
     tenant_member = models.ForeignKey(TenantMember, on_delete=models.CASCADE, related_name="role_bindings")
-    system_role = models.ForeignKey(SystemRole, on_delete=models.CASCADE, related_name="member_bindings")
-    status = models.PositiveSmallIntegerField(choices=TenantMemberRoleStatus.choices, default=TenantMemberRoleStatus.ACTIVE, verbose_name="状态")
+    system_role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name="member_bindings")
+    status = models.PositiveSmallIntegerField(
+        choices=TenantMemberRoleStatus.choices,
+        default=TenantMemberRoleStatus.GRANTED,
+        verbose_name="状态",
+    )
+    assigned_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_tenant_member_roles",
+        verbose_name="分配人",
+    )
+    assigned_at = models.DateTimeField(null=True, blank=True, verbose_name="分配时间")
 
     class Meta:
         db_table = "tenant_member_roles"
@@ -449,5 +468,14 @@ class TenantMemberRole(TimeStampedModel):
             models.UniqueConstraint(fields=["tenant_member", "system_role"], name="uniq_member_role"),
         ]
 
+    @property
+    def role(self):
+        return self.system_role
+
     def __str__(self):
         return f"{self.tenant_member_id}:{self.system_role.code}"
+
+
+# 兼容旧代码的别名，后续逐步移除。
+SystemRole = Role
+SystemRoleStatus = DirectoryStatus

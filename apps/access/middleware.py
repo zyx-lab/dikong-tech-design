@@ -37,7 +37,7 @@ class TenantContextMiddleware:
         tenant_code = request.META.get(self.header_name)
 
         if tenant_code:
-            tenant = Tenant.objects.filter(code=tenant_code, status=TenantStatus.ENABLED).first()
+            tenant = Tenant.objects.filter(code=tenant_code, status=TenantStatus.ACTIVE).first()
             if not tenant:
                 raise PermissionDenied("Invalid or disabled tenant")
             request.tenant_context = tenant

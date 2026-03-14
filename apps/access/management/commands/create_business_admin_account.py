@@ -97,7 +97,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f"updated staff profile: {staff.staff_no} (id={staff.id})"))
 
         self.stdout.write(self.style.SUCCESS("business admin account is ready"))
-        self.stdout.write("note=该命令不会分配租户角色；如需业务权限，请为用户创建 TenantMember 并分配 SystemRole")
+        self.stdout.write("note=该命令不会分配租户角色；如需业务权限，请为用户创建 TenantMember 并分配 Role")
         self.stdout.write(f"username={user.username}")
         if password_auto_generated:
             self.stdout.write(self.style.WARNING(f"generated_password={password}"))

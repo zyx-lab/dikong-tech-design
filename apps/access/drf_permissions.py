@@ -28,7 +28,7 @@ class RequireInternalPermission(BasePermission):
 
     规则：
     - superuser：允许（root，全量权限）。
-    - 普通账号：必须是有效账号，并在当前租户上下文中通过 `SystemRole -> Group -> Permission` 命中权限码。
+    - 普通账号：必须是有效账号，并在当前租户上下文中通过 `TenantMemberRole -> RolePermissionGrant -> Permission` 命中权限码。
     - 不做 scope 对象级限制（IAM 管理动作默认使用 ALL 管理语义）。
     """
 

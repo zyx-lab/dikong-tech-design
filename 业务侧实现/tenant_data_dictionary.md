@@ -6,87 +6,60 @@ PostgreSQL
 
 ---
 
-## 文档格式说明
-
-本文档为 **数据字典** 类型文档，记录数据库表结构、字段定义、约束和业务规则。
-
-### 更新本文档的指南（大模型用）
-
-当需要更新此文档时，请遵循以下格式：
-
-```
-## N. {表名中文名}
-
-**说明**：{表用途简述}
-
-| 字段名 | 类型 | 约束 | 默认值 | 说明 |
-| ------ | ---- | ---- | ------ | ---- |
-| {字段名} | {PostgreSQL类型} | {约束} | {默认值} | {字段说明} |
-
-**{某字段} 状态值**：
-
-| 值 | 含义 |
-|----|------|
-| {枚举值} | {含义} |
-
-**业务规则**：
-1. {规则1}
-2. {规则2}
-```
-
----
-
 ## 阅读说明
 
-本数据字典覆盖当前已落地的业务表：`tenants`、`tenant_members`、`tenant_member_positions`、`tenant_member_qualifications`、`tenant_member_roles`、`system_role_groups`。
+本数据字典覆盖当前已落地的多租户权限核心表：
+
+- `tenants`
+- `tenant_members`
+- `roles`
+- `permissions`
+- `role_permission_grants`
+- `qualification_types`
+- `tenant_member_roles`
+- `tenant_member_qualifications`
 
 ---
 
-## 1. tenants（租户主表）
+## 1. tenants
 
-**说明**：存储租户（买家）基本信息，平台级模型，不包含 tenant_id。
+**说明**：租户主表，平台级数据。
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
-| code | varchar(64) | NOT NULL, UNIQUE | - | 租户编码（唯一） |
+| code | varchar(64) | NOT NULL, UNIQUE | - | 租户编码 |
 | name | varchar(128) | NOT NULL | - | 租户名称 |
-| status | smallint | NOT NULL | 1 | 租户状态 |
-| plan | varchar(64) | - | - | 套餐类型（预留） |
-| remark | varchar(500) | - | - | 备注 |
+| status | smallint | NOT NULL | 1 | 0=DISABLED, 1=ACTIVE |
+| plan | varchar(64) | 可空字符串 | '' | 套餐标识 |
+| remark | varchar(500) | 可空字符串 | '' | 备注 |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
-**status 状态值**：
-
-| 值 | 含义 |
-|----|------|
-| 0 | 禁用 |
-| 1 | 启用 |
-
 **业务规则**：
-1. `code` 全局唯一，用于 X-Tenant-Code header 标识。
-2. 租户状态为禁用时，该租户所有业务数据不可访问。
-3. `POST /internal/auth/tenants/{id}/disable` 通过将 `status` 置为 0 实现停用。
+1. `code` 全局唯一。
+2. `status=DISABLED` 时，该租户所有租户态接口都不可通过 `X-Tenant-Code` 进入。
 
 ---
 
-## 2. tenant_members（租户成员身份）
+## 2. tenant_members
 
-**说明**：表示某个账号在某个租户中的成员身份，支持邀请制入租流程。
+**说明**：某个 `User` 在某个租户中的成员关系，同时承载邀请生命周期。
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
 | tenant_id | bigint | NOT NULL, FK -> tenants.id | - | 所属租户 |
 | user_id | bigint | NOT NULL, FK -> auth_users.id | - | 平台账号 |
-| display_name | varchar(128) | NOT NULL | - | 租户内显示名称 |
-| staff_no | varchar(64) | - | '' | 工号 |
-| phone | varchar(32) | - | '' | 手机号 |
-| email | varchar(254) | - | '' | 邮箱 |
-| invitation_token | varchar(64) | UNIQUE，可空 | null | 邀请确认令牌 |
+| member_no | varchar(64) | 可空 | null | 租户内工号 |
+| display_name | varchar(128) | 可空字符串 | '' | 租户内显示名 |
+| invitation_token | varchar(64) | 可空，非空时唯一 | null | 邀请令牌 |
+| invited_by_user_id | bigint | 可空, FK -> auth_users.id | null | 邀请人 |
+| invited_at | timestamp | 可空 | null | 邀请发出时间 |
+| expires_at | timestamp | 可空 | null | 邀请过期时间 |
+| responded_at | timestamp | 可空 | null | 用户响应时间 |
+| joined_at | timestamp | 可空 | null | 成员加入时间 |
 | status | smallint | NOT NULL | 0 | 成员状态 |
-| joined_at | timestamp | 可空 | null | 确认加入时间 |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
@@ -94,199 +67,151 @@ PostgreSQL
 
 | 值 | 含义 |
 |----|------|
-| 0 | 待确认（pending） |
-| 1 | 已加入（active） |
-| 2 | 已禁用（disabled） |
+| 0 | INVITED |
+| 1 | ACTIVE |
+| 2 | REJECTED |
+| 3 | EXPIRED |
+| 4 | REVOKED |
+| 5 | DISABLED |
 
 **业务规则**：
-1. `(tenant_id, user_id)` 唯一，同一账号不能重复加入同一租户。
-2. 邀请制创建成员时状态为 `pending`，并生成 `invitation_token`。
-3. `joined_at` 仅在成员确认加入后写入。
-4. `POST /internal/auth/tenants/{id}/initialize-admin` 可直接创建或激活首个 `tenant_admin` 成员。
+1. `(tenant_id, user_id)` 唯一。
+2. `(tenant_id, member_no)` 在 `member_no` 非空时唯一。
+3. `invitation_token` 在非空时唯一。
+4. `INVITED` 必须有 `invitation_token / invited_at / expires_at`。
+5. `ACTIVE` 不保留邀请元数据，且可分配 `member_no`。
 
 ---
 
-## 3. tenant_member_roles（租户成员角色绑定）
+## 3. roles
 
-**说明**：记录租户成员与平台固定角色之间的绑定关系。
+**说明**：平台统一角色目录，统一承载业务岗位与管理职责。
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
-| tenant_member_id | bigint | NOT NULL, FK -> tenant_members.id | - | 租户成员 |
-| system_role_id | bigint | NOT NULL, FK -> system_roles.id | - | 平台固定角色 |
-| status | smallint | NOT NULL | 1 | 绑定状态 |
+| code | varchar(64) | NOT NULL, UNIQUE | - | 角色编码 |
+| name | varchar(128) | NOT NULL | - | 角色名称 |
+| description | varchar(500) | 可空字符串 | '' | 描述 |
+| status | smallint | NOT NULL | 1 | 0=DISABLED, 1=ACTIVE |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
-**status 状态值**：
+**业务规则**：
+1. `code` 发布后保持稳定。
+2. 平台管理员维护角色目录，租户管理员不可修改。
+
+---
+
+## 4. permissions
+
+**说明**：平台统一权限目录。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| code | varchar(128) | NOT NULL, UNIQUE | - | 权限编码 |
+| name | varchar(128) | NOT NULL | - | 权限名称 |
+| module | varchar(64) | NOT NULL | - | 模块名 |
+| resource_code | varchar(64) | 可空字符串 | '' | 细粒度资源编码 |
+| description | varchar(500) | 可空字符串 | '' | 描述 |
+| status | smallint | NOT NULL | 1 | 0=DISABLED, 1=ACTIVE |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+**业务规则**：
+1. `OWN / ASSIGNED` 只允许用于代码已经实现资源判定的权限。
+2. 不需要细粒度判定的权限统一使用 `ALL`。
+
+---
+
+## 5. role_permission_grants
+
+**说明**：角色默认权限映射。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| role_id | bigint | NOT NULL, FK -> roles.id | - | 角色 |
+| permission_id | bigint | NOT NULL, FK -> permissions.id | - | 权限 |
+| scope_type | varchar(16) | NOT NULL | ALL | 数据范围 |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+**scope_type 枚举**：
 
 | 值 | 含义 |
 |----|------|
-| 0 | 禁用 |
-| 1 | 启用 |
+| ALL | 全量范围 |
+| OWN | 自建资源 |
+| ASSIGNED | 分配到自己的资源 |
+
+**业务规则**：
+1. `(role_id, permission_id)` 唯一。
+2. 多角色命中同一权限时按 `ALL > ASSIGNED > OWN` 合并。
+
+---
+
+## 6. qualification_types
+
+**说明**：平台统一资质类型目录。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| code | varchar(64) | NOT NULL, UNIQUE | - | 资质类型编码 |
+| name | varchar(128) | NOT NULL | - | 资质类型名称 |
+| description | varchar(500) | 可空字符串 | '' | 描述 |
+| requires_validity | boolean | NOT NULL | false | 是否要求有效期 |
+| payload_schema_json | jsonb | 可空 | null | 扩展字段 schema |
+| status | smallint | NOT NULL | 1 | 0=DISABLED, 1=ACTIVE |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+---
+
+## 7. tenant_member_roles
+
+**说明**：成员绑定角色的实际运行数据。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| tenant_member_id | bigint | NOT NULL, FK -> tenant_members.id | - | 成员 |
+| system_role_id | bigint | NOT NULL, FK -> roles.id | - | 角色 |
+| status | smallint | NOT NULL | 1 | 0=REVOKED, 1=GRANTED |
+| assigned_by_user_id | bigint | 可空, FK -> auth_users.id | null | 分配人 |
+| assigned_at | timestamp | 可空 | null | 分配时间 |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
 **业务规则**：
 1. `(tenant_member_id, system_role_id)` 唯一。
-2. 邀请接口会在创建 pending 成员时预写入角色绑定。
+2. `INVITED` 成员允许预绑定角色，但不参与实际授权。
 
 ---
 
-## 4. tenant_member_positions（租户成员岗位）
+## 8. tenant_member_qualifications
 
-**说明**：记录租户成员在当前租户内承担的业务岗位，不参与授权矩阵，只用于业务校验与展示。
+**说明**：成员实际持有的资质记录。
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
-| tenant_member_id | bigint | NOT NULL, FK -> tenant_members.id | - | 所属租户成员 |
-| code | varchar(64) | NOT NULL | - | 岗位编码 |
-| name | varchar(128) | NOT NULL | - | 岗位名称 |
-| description | varchar(255) | - | '' | 岗位描述 |
-| status | smallint | NOT NULL | 1 | 岗位状态 |
+| tenant_member_id | bigint | NOT NULL, FK -> tenant_members.id | - | 成员 |
+| qualification_type_id | bigint | NOT NULL, FK -> qualification_types.id | - | 资质类型 |
+| certificate_no | varchar(128) | 可空字符串 | '' | 证书编号 |
+| level | varchar(64) | 可空字符串 | '' | 等级 |
+| status | smallint | NOT NULL | 1 | 1=ACTIVE, 2=INVALID, 3=REVOKED |
+| issued_at | date | 可空 | null | 发证日期 |
+| valid_from | date | 可空 | null | 生效日期 |
+| valid_until | date | 可空 | null | 到期日期 |
+| issuer | varchar(128) | 可空字符串 | '' | 发证机构 |
+| payload_json | jsonb | NOT NULL | `{}` | 扩展信息 |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
-**status 状态值**：
-
-| 值 | 含义 |
-|----|------|
-| 0 | 禁用 |
-| 1 | 启用 |
-
 **业务规则**：
-1. `(tenant_member_id, code)` 唯一。
-2. 岗位是租户内属性，同一用户在不同租户可拥有不同岗位集合。
-3. 业务侧可基于岗位做校验，例如 `pilot_operator` 才允许被分配到飞行任务。
-
----
-
-## 5. tenant_member_qualifications（租户成员资质）
-
-**说明**：记录租户成员在当前租户内持有的业务资质，不参与授权矩阵，可附带有效期与扩展信息。
-
-| 字段名 | 类型 | 约束 | 默认值 | 说明 |
-| ------ | ---- | ---- | ------ | ---- |
-| id | bigserial | PK | 自增 | 主键 |
-| tenant_member_id | bigint | NOT NULL, FK -> tenant_members.id | - | 所属租户成员 |
-| code | varchar(64) | NOT NULL | - | 资质编码 |
-| name | varchar(128) | NOT NULL | - | 资质名称 |
-| description | varchar(255) | - | '' | 资质描述 |
-| status | smallint | NOT NULL | 1 | 资质状态 |
-| valid_until | date | 可空 | null | 资质有效期截止日 |
-| payload | jsonb | NOT NULL | `{}` | 资质扩展信息 |
-| created_at | timestamp | NOT NULL | now() | 创建时间 |
-| updated_at | timestamp | NOT NULL | now() | 更新时间 |
-
-**status 状态值**：
-
-| 值 | 含义 |
-|----|------|
-| 0 | 禁用 |
-| 1 | 启用 |
-
-**业务规则**：
-1. `(tenant_member_id, code)` 唯一。
-2. `valid_until` 为空表示长期有效；有值时需由业务自行解释到期规则。
-3. `payload` 用于承载证号、签发机构等扩展字段。
-
----
-
-## 6. system_role_groups（固定角色能力组映射）
-
-**说明**：记录平台固定角色与能力组（Group）之间的绑定关系，是权限矩阵的角色入口。
-
-| 字段名 | 类型 | 约束 | 默认值 | 说明 |
-| ------ | ---- | ---- | ------ | ---- |
-| id | bigserial | PK | 自增 | 主键 |
-| system_role_id | bigint | NOT NULL, FK -> system_roles.id | - | 平台固定角色 |
-| group_id | bigint | NOT NULL, FK -> auth_group.id | - | 能力组 |
-| status | smallint | NOT NULL | 1 | 绑定状态 |
-| created_at | timestamp | NOT NULL | now() | 创建时间 |
-| updated_at | timestamp | NOT NULL | now() | 更新时间 |
-
-**status 状态值**：
-
-| 值 | 含义 |
-|----|------|
-| 0 | 禁用 |
-| 1 | 启用 |
-
-**业务规则**：
-1. `(system_role_id, group_id)` 唯一。
-2. 非 superuser 的权限计算统一从 `TenantMember -> TenantMemberRole -> SystemRoleGroup -> GroupPermissionScope` 进入。
-
----
-
-## 7. 关系与外键
-
-1. `tenant_members.tenant_id -> tenants.id`
-2. `tenant_members.user_id -> auth_users.id`
-3. `tenant_member_positions.tenant_member_id -> tenant_members.id`
-4. `tenant_member_qualifications.tenant_member_id -> tenant_members.id`
-5. `tenant_member_roles.tenant_member_id -> tenant_members.id`
-6. `tenant_member_roles.system_role_id -> system_roles.id`
-7. `system_role_groups.system_role_id -> system_roles.id`
-8. `system_role_groups.group_id -> auth_group.id`
-
----
-
-## 8. 与实现对应
-
-1. 模型：`apps/access/models.py` - `Tenant`
-2. 模型：`apps/access/models.py` - `TenantMember` / `TenantMemberPosition` / `TenantMemberQualification` / `TenantMemberRole` / `SystemRoleGroup`
-3. 序列化与校验：`apps/access/serializers.py`
-4. 接口：`apps/access/views.py` - `TenantViewSet` / `TenantDisableView` / `TenantEnableView` / `TenantInitializeAdminView` / `TenantMemberInviteView` / `TenantMemberDisableView`
-
----
-
-## 9. 业务响应码字典（Business API）
-
-说明：业务 API 响应体包含 `business_code`（主业务码）与 `business_detail_code`（细分原因码）。
-
-| business_code | 典型 HTTP | 语义 |
-| ------ | ------ | ------ |
-| SUCCESS | 200 / 201 | 业务处理成功 |
-| INVALID_PARAMS | 400 | 请求参数校验失败 |
-| PERMISSION_DENIED | 401 / 403 | 身份或权限不足 |
-| RESOURCE_NOT_FOUND | 404 | 目标资源不存在 |
-| STATE_CONFLICT | 409 | 状态机冲突 |
-| IDEMPOTENT_DUPLICATE | 409 | 幂等重复提交（如唯一键冲突） |
-
-| business_detail_code | 语义 |
-| ------ | ------ |
-| OK | 成功 |
-| NOT_AUTHENTICATED | 未登录或认证信息缺失 |
-| FORBIDDEN | 已登录但无权限 |
-| NOT_FOUND | 资源不存在 |
-| VALIDATION_ERROR | 参数校验失败 |
-| STATE_CONFLICT | 业务状态冲突 |
-| DUPLICATE_REQUEST | 幂等重复请求 |
-| TENANT_NOT_FOUND | 邀请时目标租户不存在 |
-| USER_NOT_FOUND | 邀请时目标用户不存在 |
-| TENANT_MEMBER_EXISTS | 租户成员关系已存在 |
-| TENANT_ALREADY_DISABLED | 租户已是禁用状态，重复停用 |
-| TENANT_ALREADY_ENABLED | 租户已是启用状态，重复启用 |
-| TENANT_STATUS_INVALID | 租户当前状态不允许执行目标动作 |
-| TENANT_ADMIN_ALREADY_INITIALIZED | 当前租户已完成管理员初始化 |
-| TENANT_ADMIN_ROLE_NOT_CONFIGURED | tenant_admin 固定角色未初始化 |
-| TENANT_PLAN_UNCHANGED | 提交的套餐值与当前租户套餐一致 |
-| USERNAME_ALREADY_EXISTS | 提交的 username 已存在，重复注册 |
-| PHONE_ALREADY_EXISTS | 提交的 phone 已存在，重复手机号注册 |
-| TENANT_MEMBER_NOT_FOUND | 目标租户成员不存在 |
-| TENANT_MEMBER_ALREADY_DISABLED | 租户成员已是禁用状态，重复停用 |
-| TENANT_MEMBER_ALREADY_ENABLED | 租户成员已是启用状态，重复启用 |
-| INVITATION_NOT_FOUND | invitation token 不存在 |
-| INVITATION_NOT_ALLOWED | invitation token 不属于当前登录用户 |
-| INVITATION_ALREADY_CONFIRMED | 邀请已确认，重复提交 |
-| INVITATION_STATUS_INVALID | invitation 对应成员状态不是 pending |
-
-当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenants/{id}/enable`、`POST /internal/auth/tenants/{id}/initialize-admin`、`POST /internal/auth/tenants/{id}/set-plan`、`POST /internal/auth/users/register`、`POST /internal/auth/users/register/by-phone`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation`、`POST /internal/auth/me/invitations/reject`、`POST /internal/auth/tenant-members/{id}/disable`、`POST /internal/auth/tenant-members/{id}/enable`、`GET /internal/auth/me/invitations`、`GET /internal/auth/me/tenants` 与 `GET /internal/auth/me/permissions` 都返回 `business_code + business_detail_code`。
-
-`GET /internal/auth/me/permissions` 与 `GET /internal/auth/tenant-audit-logs` 同样返回 `business_code + business_detail_code`，并使用以下额外 detail code：
-
-| business_detail_code | 语义 |
-| ------ | ------ |
-| TENANT_CONTEXT_REQUIRED | 请求缺少租户上下文 |
-| TENANT_MEMBERSHIP_REQUIRED | 当前用户不是该租户的有效成员 |
-| TENANT_AUDIT_FORBIDDEN | 当前成员角色不允许查看租户审计 |
+1. 允许同一成员同一资质类型存在多条记录。
+2. `requires_validity=true` 时必须提供 `valid_from / valid_until`，且 `valid_from <= valid_until`。
+3. 结构非法或缺少关键字段时应写成 `INVALID`，不参与业务资格判定。

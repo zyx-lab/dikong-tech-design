@@ -1,18 +1,14 @@
-from django.contrib.auth.models import Group
 from django.core.management.base import BaseCommand
 from django.db.models import Count, Q
 from django.utils import timezone
 
 from apps.access.models import (
+    DirectoryStatus,
     EmploymentStatus,
-    GroupPermissionScope,
-    ScopeStatus,
-    SystemRole,
-    SystemRoleGroup,
-    SystemRoleStatus,
+    QualificationRecordStatus,
+    Role,
+    RolePermissionGrant,
     TenantMember,
-    TenantMemberAttributeStatus,
-    TenantMemberRole,
     TenantMemberRoleStatus,
     TenantMemberStatus,
     User,
@@ -20,7 +16,7 @@ from apps.access.models import (
 
 
 class Command(BaseCommand):
-    help = "校验当前多租户授权链与租户内岗位/资质配置是否存在断裂"
+    help = "校验当前多租户授权链与成员资质配置是否存在断裂"
 
     def handle(self, *args, **options):
         self.issues = []
@@ -33,21 +29,19 @@ class Command(BaseCommand):
 
         self.check_user_staff_link()
         self.check_active_member_role_link()
-        self.check_system_role_group_link()
-        self.check_group_permissions_link()
+        self.check_role_permission_grants()
+        self.check_member_invitations()
         self.check_member_qualifications()
 
         self.print_results()
 
     def check_user_staff_link(self):
         self.stdout.write("\n[1/5] 检查 User -> StaffProfile 链路...")
-
         users_without_staff = User.objects.filter(is_superuser=False).exclude(staff_profile__isnull=False)
         count = users_without_staff.count()
         self.stats["users_checked"] = User.objects.filter(is_superuser=False).count()
         if count <= 0:
             return
-
         self.stats["issues_found"] += count
         self.issues.append(
             {
@@ -60,21 +54,18 @@ class Command(BaseCommand):
 
     def check_active_member_role_link(self):
         self.stdout.write("\n[2/5] 检查 TenantMember -> TenantMemberRole 链路...")
-
         active_members_without_role = TenantMember.objects.annotate(
-            active_role_count=Count(
+            granted_role_count=Count(
                 "role_bindings",
-                filter=Q(role_bindings__status=TenantMemberRoleStatus.ACTIVE),
+                filter=Q(role_bindings__status=TenantMemberRoleStatus.GRANTED),
             )
         ).filter(
             status=TenantMemberStatus.ACTIVE,
-            active_role_count=0,
+            granted_role_count=0,
         )
-
         count = active_members_without_role.count()
         if count <= 0:
             return
-
         self.stats["warnings_found"] += count
         self.warnings.append(
             {
@@ -83,63 +74,87 @@ class Command(BaseCommand):
                 "details": list(active_members_without_role.values_list("tenant__code", "user__username")[:10]),
             }
         )
-        self.stdout.write(self.style.WARNING(f"  发现 {count} 个活跃租户成员未绑定任何 SystemRole"))
+        self.stdout.write(self.style.WARNING(f"  发现 {count} 个活跃租户成员未绑定任何角色"))
 
-    def check_system_role_group_link(self):
-        self.stdout.write("\n[3/5] 检查 SystemRole -> SystemRoleGroup 链路...")
-
-        roles_without_groups = SystemRole.objects.annotate(
-            active_group_count=Count(
-                "group_links",
-                filter=Q(group_links__status=ScopeStatus.ACTIVE),
-            )
+    def check_role_permission_grants(self):
+        self.stdout.write("\n[3/5] 检查 Role -> RolePermissionGrant 链路...")
+        roles_without_grants = Role.objects.annotate(
+            grant_count=Count("permission_grants")
         ).filter(
-            status=SystemRoleStatus.ACTIVE,
-            active_group_count=0,
+            status=DirectoryStatus.ACTIVE,
+            grant_count=0,
         )
-
-        count = roles_without_groups.count()
+        count = roles_without_grants.count()
         if count <= 0:
             return
-
         self.stats["issues_found"] += count
         self.issues.append(
             {
-                "type": "固定角色无能力组",
+                "type": "活跃角色无权限映射",
                 "count": count,
-                "details": list(roles_without_groups.values_list("code", "name")[:10]),
+                "details": list(roles_without_grants.values_list("code", "name")[:10]),
             }
         )
-        self.stdout.write(self.style.ERROR(f"  发现 {count} 个活跃 SystemRole 未关联任何 Group"))
+        self.stdout.write(self.style.ERROR(f"  发现 {count} 个活跃角色未配置任何 RolePermissionGrant"))
 
-    def check_group_permissions_link(self):
-        self.stdout.write("\n[4/5] 检查 Group -> GroupPermissionScope 链路...")
-
-        active_group_ids = SystemRoleGroup.objects.filter(status=ScopeStatus.ACTIVE).values_list("group_id", flat=True)
-        groups_without_scopes = Group.objects.filter(id__in=active_group_ids).annotate(
-            scope_count=Count(
-                "permission_scopes",
-                filter=Q(permission_scopes__status=ScopeStatus.ACTIVE),
-            )
-        ).filter(scope_count=0)
-
-        count = groups_without_scopes.count()
-        if count <= 0:
+        duplicated = (
+            RolePermissionGrant.objects.values("role_id", "permission_id")
+            .annotate(total=Count("id"))
+            .filter(total__gt=1)
+        )
+        duplicate_count = duplicated.count()
+        if duplicate_count <= 0:
             return
-
-        self.stats["warnings_found"] += count
-        self.warnings.append(
+        self.stats["issues_found"] += duplicate_count
+        self.issues.append(
             {
-                "type": "能力组无有效 scope 配置",
-                "count": count,
-                "details": list(groups_without_scopes.values_list("name", flat=True)[:10]),
+                "type": "角色权限映射重复",
+                "count": duplicate_count,
+                "details": list(duplicated.values_list("role_id", "permission_id", "total")[:10]),
             }
         )
-        self.stdout.write(self.style.WARNING(f"  发现 {count} 个已被角色引用的 Group 未配置有效 GroupPermissionScope"))
+        self.stdout.write(self.style.ERROR(f"  发现 {duplicate_count} 组重复的 RolePermissionGrant"))
+
+    def check_member_invitations(self):
+        self.stdout.write("\n[4/5] 检查成员邀请状态...")
+        invalid_invited_members = TenantMember.objects.filter(
+            status=TenantMemberStatus.INVITED,
+        ).filter(
+            Q(invitation_token__isnull=True)
+            | Q(invitation_token="")
+            | Q(invited_at__isnull=True)
+            | Q(expires_at__isnull=True)
+        )
+        count = invalid_invited_members.count()
+        if count > 0:
+            self.stats["issues_found"] += count
+            self.issues.append(
+                {
+                    "type": "邀请态成员缺少关键字段",
+                    "count": count,
+                    "details": list(invalid_invited_members.values_list("tenant__code", "user__username")[:10]),
+                }
+            )
+            self.stdout.write(self.style.ERROR(f"  发现 {count} 个 INVITED 成员缺少邀请关键字段"))
+
+        expired_but_not_flipped = TenantMember.objects.filter(
+            status=TenantMemberStatus.INVITED,
+            expires_at__lt=timezone.now(),
+        )
+        expired_count = expired_but_not_flipped.count()
+        if expired_count > 0:
+            self.stats["warnings_found"] += expired_count
+            self.warnings.append(
+                {
+                    "type": "邀请已过期但状态未切换",
+                    "count": expired_count,
+                    "details": list(expired_but_not_flipped.values_list("tenant__code", "user__username")[:10]),
+                }
+            )
+            self.stdout.write(self.style.WARNING(f"  发现 {expired_count} 个已过期但仍是 INVITED 的成员"))
 
     def check_member_qualifications(self):
-        self.stdout.write("\n[5/5] 检查租户成员岗位/资质状态...")
-
+        self.stdout.write("\n[5/5] 检查成员资质状态...")
         inactive_staffs = User.objects.filter(
             staff_profile__employment_status=EmploymentStatus.INACTIVE,
             tenant_members__status=TenantMemberStatus.ACTIVE,
@@ -156,21 +171,20 @@ class Command(BaseCommand):
             )
             self.stdout.write(self.style.WARNING(f"  发现 {count} 个离职用户仍存在活跃租户成员"))
 
-        expired_qualifications = TenantMember.objects.filter(
-            qualifications__status=TenantMemberAttributeStatus.ACTIVE,
-            qualifications__valid_until__lt=timezone.localdate(),
+        invalid_qualifications = TenantMember.objects.filter(
+            qualifications__status=QualificationRecordStatus.INVALID,
         ).distinct()
-        if expired_qualifications.exists():
-            count = expired_qualifications.count()
+        if invalid_qualifications.exists():
+            count = invalid_qualifications.count()
             self.stats["warnings_found"] += count
             self.warnings.append(
                 {
-                    "type": "成员存在已过期资质",
+                    "type": "成员存在 INVALID 资质记录",
                     "count": count,
-                    "details": list(expired_qualifications.values_list("tenant__code", "user__username")[:10]),
+                    "details": list(invalid_qualifications.values_list("tenant__code", "user__username")[:10]),
                 }
             )
-            self.stdout.write(self.style.WARNING(f"  发现 {count} 个成员存在已过期但仍为 ACTIVE 的资质"))
+            self.stdout.write(self.style.WARNING(f"  发现 {count} 个成员存在 INVALID 资质记录"))
 
     def print_results(self):
         self.stdout.write("\n" + "=" * 60)
@@ -200,6 +214,6 @@ class Command(BaseCommand):
         self.stdout.write("建议操作:")
         self.stdout.write("=" * 60)
         self.stdout.write("  1. 为缺少档案的账号补齐 StaffProfile")
-        self.stdout.write("  2. 为活跃 TenantMember 分配至少一个 SystemRole")
-        self.stdout.write("  3. 为活跃 SystemRole 绑定 Group，并为 Group 配置 scope")
-        self.stdout.write("  4. 将业务岗位迁移到 TenantMemberPosition，资质迁移到 TenantMemberQualification")
+        self.stdout.write("  2. 为活跃 TenantMember 分配至少一个 Role")
+        self.stdout.write("  3. 为活跃 Role 配置 RolePermissionGrant")
+        self.stdout.write("  4. 修复 INVALID 资质记录和过期邀请")

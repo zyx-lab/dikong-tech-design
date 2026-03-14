@@ -1,21 +1,20 @@
 from types import SimpleNamespace
 from uuid import uuid4
 
-from django.contrib.auth.models import Group, Permission
 from django.utils import timezone
 
 from apps.access.models import (
-    GroupPermissionScope,
-    ScopeStatus,
+    DirectoryStatus,
+    Permission,
+    QualificationRecordStatus,
+    QualificationType,
+    Role,
+    RolePermissionGrant,
     ScopeType,
     StaffProfile,
-    SystemRole,
-    SystemRoleGroup,
     Tenant,
-    TenantMemberAttributeStatus,
-    TenantMemberPosition,
-    TenantMemberQualification,
     TenantMember,
+    TenantMemberQualification,
     TenantMemberRole,
     TenantMemberRoleStatus,
     TenantMemberStatus,
@@ -53,7 +52,7 @@ def ensure_tenant_role_binding(
     tenant = tenant or Tenant.objects.create(
         code=tenant_code or f"tenant_{uuid4().hex[:8]}",
         name=f"租户{uuid4().hex[:4]}",
-        status=TenantStatus.ENABLED,
+        status=TenantStatus.ACTIVE,
     )
     member, _ = TenantMember.objects.update_or_create(
         tenant=tenant,
@@ -61,17 +60,21 @@ def ensure_tenant_role_binding(
         defaults={
             "display_name": display_name or getattr(user, "username", "成员"),
             "status": TenantMemberStatus.ACTIVE,
+            "responded_at": timezone.now(),
             "joined_at": timezone.now(),
         },
     )
-    role, _ = SystemRole.objects.update_or_create(
+    role, _ = Role.objects.update_or_create(
         code=role_code,
-        defaults={"name": role_name, "status": 1},
+        defaults={"name": role_name, "status": DirectoryStatus.ACTIVE},
     )
     TenantMemberRole.objects.update_or_create(
         tenant_member=member,
         system_role=role,
-        defaults={"status": TenantMemberRoleStatus.ACTIVE},
+        defaults={
+            "status": TenantMemberRoleStatus.GRANTED,
+            "assigned_at": timezone.now(),
+        },
     )
     return tenant, member, role
 
@@ -82,10 +85,9 @@ def ensure_tenant_member_position(
     code: str,
     name: str,
     description: str = "",
-    status: int = TenantMemberAttributeStatus.ACTIVE,
+    status: int = DirectoryStatus.ACTIVE,
 ):
-    position, _ = TenantMemberPosition.objects.update_or_create(
-        tenant_member=member,
+    role, _ = Role.objects.update_or_create(
         code=code,
         defaults={
             "name": name,
@@ -93,7 +95,15 @@ def ensure_tenant_member_position(
             "status": status,
         },
     )
-    return position
+    binding, _ = TenantMemberRole.objects.update_or_create(
+        tenant_member=member,
+        system_role=role,
+        defaults={
+            "status": TenantMemberRoleStatus.GRANTED,
+            "assigned_at": timezone.now(),
+        },
+    )
+    return binding
 
 
 def ensure_tenant_member_qualification(
@@ -101,52 +111,56 @@ def ensure_tenant_member_qualification(
     *,
     code: str,
     name: str,
-    description: str = "",
-    status: int = TenantMemberAttributeStatus.ACTIVE,
+    status: int = QualificationRecordStatus.ACTIVE,
+    valid_from=None,
     valid_until=None,
     payload: dict | None = None,
 ):
-    qualification, _ = TenantMemberQualification.objects.update_or_create(
-        tenant_member=member,
+    qualification_type, _ = QualificationType.objects.update_or_create(
         code=code,
         defaults={
             "name": name,
-            "description": description,
-            "status": status,
-            "valid_until": valid_until,
-            "payload": payload or {},
+            "status": DirectoryStatus.ACTIVE,
+            "requires_validity": bool(valid_from or valid_until),
         },
+    )
+    qualification = TenantMemberQualification.objects.create(
+        tenant_member=member,
+        qualification_type=qualification_type,
+        status=status,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        payload_json=payload or {},
     )
     return qualification
 
 
 def grant_role_permissions(
-    role: SystemRole,
+    role: Role,
     permission_scopes: dict[str, str],
     *,
     group_name: str | None = None,
 ):
-    group = Group.objects.create(name=group_name or f"{role.code}-{uuid4().hex[:8]}")
-    permissions = []
-    for permission_code in permission_scopes.keys():
-        app_label, codename = permission_code.split(".", 1)
-        permission = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-        permissions.append(permission)
-    group.permissions.add(*permissions)
-    SystemRoleGroup.objects.update_or_create(
-        system_role=role,
-        group=group,
-        defaults={"status": ScopeStatus.ACTIVE},
-    )
+    del group_name
+    grants = []
     for permission_code, scope_type in permission_scopes.items():
-        app_label, codename = permission_code.split(".", 1)
-        permission = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-        GroupPermissionScope.objects.update_or_create(
-            group=group,
-            permission=permission,
-            defaults={"scope_type": scope_type, "status": ScopeStatus.ACTIVE},
+        module = permission_code.split(".", 1)[0] if "." in permission_code else "access"
+        permission, _ = Permission.objects.update_or_create(
+            code=permission_code,
+            defaults={
+                "name": permission_code,
+                "module": module,
+                "resource_code": module if scope_type in {ScopeType.OWN, ScopeType.ASSIGNED} else "",
+                "status": DirectoryStatus.ACTIVE,
+            },
         )
-    return group
+        grant, _ = RolePermissionGrant.objects.update_or_create(
+            role=role,
+            permission=permission,
+            defaults={"scope_type": scope_type},
+        )
+        grants.append(grant)
+    return grants
 
 
 def build_request(user, tenant=None):

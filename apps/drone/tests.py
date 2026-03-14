@@ -1,9 +1,8 @@
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.access.models import AuditLog, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, SystemRoleGroup
+from apps.access.models import AuditLog, Permission, ScopeType, StaffProfile
 from apps.access.test_support import (
     ensure_staff_profile,
     ensure_tenant_member_position,
@@ -34,18 +33,13 @@ class DroneApiAuthzTests(TestCase):
         self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def _grant_permission(self, permission_code: str, with_scope: bool = True):
-        app_label, codename = permission_code.split(".", 1)
-        perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-        group = Group.objects.create(name=f"{permission_code}-group")
-        group.permissions.add(perm)
-        SystemRoleGroup.objects.create(system_role=self.role, group=group, status=ScopeStatus.ACTIVE)
         if with_scope:
-            GroupPermissionScope.objects.create(
-                group=group,
-                permission=perm,
-                scope_type=ScopeType.ALL,
-                status=ScopeStatus.ACTIVE,
-            )
+            grant_role_permissions(self.role, {permission_code: ScopeType.ALL})
+            return
+        Permission.objects.update_or_create(
+            code=permission_code,
+            defaults={"name": permission_code, "module": permission_code.split(".", 1)[0], "status": 1},
+        )
 
     def test_unauthenticated_should_be_rejected(self):
         response = self.client.get("/api/v1/drones")
@@ -62,7 +56,7 @@ class DroneApiAuthzTests(TestCase):
         self.client.force_authenticate(self.user)
         response = self.client.get("/api/v1/drones")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["detail"], "SCOPE_NOT_CONFIGURED")
+        self.assertEqual(response.data["detail"], "PERMISSION_DENIED")
 
     def test_view_permission_with_all_scope_should_allow_list(self):
         self._grant_permission("drone.view_drone", with_scope=True)

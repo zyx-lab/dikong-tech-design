@@ -16,10 +16,8 @@ urlpatterns = [
     path("me/tenants", views.MeTenantListView.as_view(), name="me-tenant-list"),
     path("me/permissions", views.MePermissionsView.as_view(), name="me-permissions"),
     path("permissions", views.PermissionCatalogView.as_view(), name="permission-catalog"),
-    path("groups", views.GroupListCreateView.as_view(), name="group-list-create"),
-    path("groups/<int:pk>", views.GroupDetailView.as_view(), name="group-detail"),
-    path("groups/<int:group_id>/permissions", views.GroupPermissionAssignView.as_view(), name="group-permissions-assign"),
-    path("groups/<int:group_id>/scopes", views.GroupScopeAssignView.as_view(), name="group-scopes-assign"),
+    path("roles", views.RoleListView.as_view(), name="role-list"),
+    path("roles/<int:pk>", views.RoleDetailView.as_view(), name="role-detail"),
     path("audit-logs", views.AuditLogListView.as_view(), name="audit-log-list"),
     path("tenant-audit-logs", views.TenantAuditLogListView.as_view(), name="tenant-audit-log-list"),
     # 租户管理
@@ -29,10 +27,6 @@ urlpatterns = [
     path("tenants/<int:pk>/enable", views.TenantEnableView.as_view(), name="tenant-enable"),
     path("tenants/<int:pk>/initialize-admin", views.TenantInitializeAdminView.as_view(), name="tenant-initialize-admin"),
     path("tenants/<int:pk>/set-plan", views.TenantSetPlanView.as_view(), name="tenant-set-plan"),
-    # 平台固定角色
-    path("system-roles", views.SystemRoleListCreateView.as_view(), name="system-role-list-create"),
-    path("system-roles/<int:pk>", views.SystemRoleDetailView.as_view(), name="system-role-detail"),
-    path("system-roles/<int:pk>/groups", views.SystemRoleGroupAssignView.as_view(), name="system-role-group-assign"),
     # 租户成员管理
     path("tenant-members", views.TenantMemberListCreateView.as_view(), name="tenant-member-list-create"),
     path("tenant-members/invite", views.TenantMemberInviteView.as_view(), name="tenant-member-invite"),
