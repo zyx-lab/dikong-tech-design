@@ -76,8 +76,8 @@ PostgreSQL
 
 **业务规则**：
 1. `(tenant_id, user_id)` 唯一。
-2. `(tenant_id, member_no)` 在 `member_no` 非空时唯一。
-3. `invitation_token` 在非空时唯一。
+2. `(tenant_id, member_no)` 仅在 `member_no` 非空且非空字符串时唯一。
+3. `invitation_token` 仅在非空且非空字符串时唯一。
 4. `INVITED` 必须有 `invitation_token / invited_at / expires_at`。
 5. `ACTIVE` 不保留邀请元数据，且可分配 `member_no`。
 
@@ -120,8 +120,8 @@ PostgreSQL
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
 **业务规则**：
-1. `OWN / ASSIGNED` 只允许用于代码已经实现资源判定的权限。
-2. 不需要细粒度判定的权限统一使用 `ALL`。
+1. 目录只存平台级权限定义，不直接承载租户运行态授权结果。
+2. 权限是否开放给某角色，由 `role_permission_grants` 决定。
 
 ---
 
@@ -178,7 +178,7 @@ PostgreSQL
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
 | tenant_member_id | bigint | NOT NULL, FK -> tenant_members.id | - | 成员 |
-| system_role_id | bigint | NOT NULL, FK -> roles.id | - | 角色 |
+| system_role_id | bigint | NOT NULL, FK -> roles.id | - | 角色（当前代码字段名沿用 `system_role_id`） |
 | status | smallint | NOT NULL | 1 | 0=REVOKED, 1=GRANTED |
 | assigned_by_user_id | bigint | 可空, FK -> auth_users.id | null | 分配人 |
 | assigned_at | timestamp | 可空 | null | 分配时间 |
@@ -188,6 +188,11 @@ PostgreSQL
 **业务规则**：
 1. `(tenant_member_id, system_role_id)` 唯一。
 2. `INVITED` 成员允许预绑定角色，但不参与实际授权。
+3. 角色同步接口会把未出现在最新 `role_codes` 中的绑定改成 `REVOKED`。
+
+**scope 规则补充**：
+1. `OWN / ASSIGNED` 只允许用于代码已经实现资源判定的权限。
+2. 不需要细粒度判定的权限统一使用 `ALL`。
 
 ---
 

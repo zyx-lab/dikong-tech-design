@@ -1,13 +1,13 @@
 # 低空平台权限系统（V3）
 
-## 当前状态（对齐日期：2026-03-10）
+## 当前状态（对齐日期：2026-03-14）
 
 本仓库当前是一个 Django + DRF 的双平面 API 项目，代码已实现：
 
 1. Internal IAM Plane（内部管理）
 - 前缀：`/internal/auth/*`
 - 文档：`/internal/docs/`
-- 能力：账号管理、能力组与权限范围管理、身份类型映射、审计日志查询
+- 能力：账号管理、平台角色与权限目录查看、租户与成员管理、邀请流转、审计日志查询
 
 2. Business API Plane（业务开放）
 - 前缀：`/api/v1/*`
@@ -53,19 +53,34 @@ python manage.py runserver 0.0.0.0:8001
 1. Internal IAM
 - `GET /internal/auth/`
 - `GET /internal/auth/session-status`
+- `POST /internal/auth/login`
+- `POST /internal/auth/logout`
+- `POST /internal/auth/users/register`
+- `POST /internal/auth/users/register/by-phone`
 - `GET /internal/auth/me/permissions`
+- `GET /internal/auth/me/tenants`
+- `GET /internal/auth/me/invitations`
+- `POST /internal/auth/me/invitations/reject`
 - `GET/POST /internal/auth/users`
 - `GET/PUT/PATCH /internal/auth/users/{id}`
-- `GET /internal/auth/permissions?app_label=xxx`
-- `GET/POST /internal/auth/groups`
-- `GET/PUT/PATCH /internal/auth/groups/{id}`
-- `POST /internal/auth/groups/{id}/permissions`
-- `POST /internal/auth/groups/{id}/scopes`
-- `GET/POST /internal/auth/staff-types`
-- `GET/PUT/PATCH /internal/auth/staff-types/{id}`
-- `POST /internal/auth/staff-types/{id}/groups`
-- `GET /internal/auth/scopes/matrix`
+- `GET /internal/auth/permissions?module=xxx`
+- `GET /internal/auth/roles`
+- `GET /internal/auth/roles/{id}`
 - `GET /internal/auth/audit-logs`
+- `GET /internal/auth/tenant-audit-logs`
+- `GET/POST /internal/auth/tenants`
+- `GET /internal/auth/tenants/{id}`
+- `POST /internal/auth/tenants/{id}/disable`
+- `POST /internal/auth/tenants/{id}/enable`
+- `POST /internal/auth/tenants/{id}/initialize-admin`
+- `POST /internal/auth/tenants/{id}/set-plan`
+- `GET/POST /internal/auth/tenant-members`
+- `GET/PUT/PATCH/DELETE /internal/auth/tenant-members/{id}`
+- `POST /internal/auth/tenant-members/invite`
+- `POST /internal/auth/tenant-members/confirm-invitation`
+- `POST /internal/auth/tenant-members/{id}/disable`
+- `POST /internal/auth/tenant-members/{id}/enable`
+- `POST /internal/auth/tenant-members/{id}/roles`
 
 2. Business API - 无人机（drone）
 - `GET/POST /api/v1/drones`
@@ -129,7 +144,7 @@ python manage.py runserver 0.0.0.0:8001
 
 ### 默认权限
 
-除 4 个明确开放的接口外，其他所有接口都需要登录（IsAuthenticated）。
+除 7 个明确开放的 API 外，其他接口都需要登录；内部管理接口再按权限码做二次判权。
 
 ### 明确开放（无需登录）
 
@@ -137,6 +152,9 @@ python manage.py runserver 0.0.0.0:8001
 |------|------|
 | `GET /internal/auth/` | 检查 IAM 服务状态 |
 | `GET /internal/auth/session-status` | 查看当前登录状态 |
+| `POST /internal/auth/login` | 账号登录 |
+| `POST /internal/auth/users/register` | 用户名密码注册 |
+| `POST /internal/auth/users/register/by-phone` | 手机号注册（mock 验证码） |
 | `GET /api/v1/` | 检查 API 服务状态 |
 | `GET /api/v1/health` | 健康检查 |
 
@@ -144,12 +162,13 @@ python manage.py runserver 0.0.0.0:8001
 
 #### Internal IAM（内部管理）
 
-使用 `RequireInternalPermission`，路径前缀 `/internal/auth/*`
+大多数管理接口使用 `RequireInternalPermission`，路径前缀 `/internal/auth/*`；`/internal/auth/me/*` 与 `/internal/auth/tenant-audit-logs` 这类当前用户接口使用 `IsAuthenticated`，再在视图内补租户上下文与权限判断。
 
 **规则**：
 1. 先检查是否是 superuser → 直接放行
-2. 再检查是否有 staff + staff_type 身份 → 没有则拒绝
-3. 最后检查权限码 → 通过 staff_type → group → permission 链判断
+2. 普通账号必须先通过账号状态校验
+3. 需要租户上下文的接口，再通过 `TenantMember -> TenantMemberRole -> RolePermissionGrant -> Permission` 判权
+4. 平台目录相关接口直接按 `Permission.code` 判权，不再走 `staff_type / group` 旧链路
 
 #### Business API（业务接口）
 
@@ -157,7 +176,9 @@ python manage.py runserver 0.0.0.0:8001
 
 **规则**：
 1. 先检查权限码 → 每个 API action 对应一个权限码（如 `drone.view_drone`、`drone.manage_drone`）
-2. 再检查数据范围（Scope） → 决定能看哪些数据
+2. 再通过 `TenantMember -> TenantMemberRole -> RolePermissionGrant -> Permission` 命中授权
+3. 若 scope 不是 `ALL`，调用人还必须具备有效 `StaffProfile`
+4. 最后检查数据范围（Scope） → 决定能看哪些数据
 
 ### Scope（数据可见范围）
 
@@ -173,7 +194,7 @@ python manage.py runserver 0.0.0.0:8001
 
 ### superuser（超级管理员）
 
-- **不通过 staff_type 授权**：不需要关联 staff、staff_type、group、permission
+- **不通过租户角色授权**：不需要关联 `TenantMember`、`Role`、`Permission`
 - **拥有全部权限**：可以操作所有数据，不受 Scope 限制
 - **用途**：系统初始管理员、运维人员
 

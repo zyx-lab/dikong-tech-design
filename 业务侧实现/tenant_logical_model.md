@@ -34,6 +34,7 @@ PostgreSQL
 ### tenant_member_roles
 - 主键: id (BigAutoField)
 - 状态字段: status
+- 角色字段: system_role_id（当前代码字段名，对应 `roles.id`）
 
 ### tenant_member_qualifications
 - 主键: id (BigAutoField)
@@ -113,6 +114,7 @@ User(ACTIVE)
 6. `role_permission_grants` 上 `(role_id, permission_id)` 唯一。
 7. `tenant_member_qualifications.valid_from <= valid_until` 在两者同时存在时必须满足。
 8. 岗位概念已收敛为角色，业务代码通过 `role.code` 判断“飞手/调度员/租户管理员”等身份。
+9. `tenant-members/{id}/roles` 会把本次未提交的角色绑定统一改成 `REVOKED`。
 
 ---
 
@@ -126,15 +128,22 @@ User(ACTIVE)
 - `POST /internal/auth/users/register`
 - `POST /internal/auth/users/register/by-phone`
 - `POST /internal/auth/tenant-members`
+- `GET /internal/auth/tenant-members`
 - `POST /internal/auth/tenant-members/invite`
 - `POST /internal/auth/tenant-members/confirm-invitation`
 - `POST /internal/auth/me/invitations/reject`
+- `GET /internal/auth/tenant-members/{id}`
+- `PUT /internal/auth/tenant-members/{id}`
+- `PATCH /internal/auth/tenant-members/{id}`
+- `DELETE /internal/auth/tenant-members/{id}`
 - `POST /internal/auth/tenant-members/{id}/disable`
 - `POST /internal/auth/tenant-members/{id}/enable`
 - `POST /internal/auth/tenant-members/{id}/roles`
 - `GET /internal/auth/me/invitations`
 - `GET /internal/auth/me/tenants`
 - `GET /internal/auth/me/permissions`
+- `GET /internal/auth/roles/{id}`
+- `GET /internal/auth/audit-logs`
 - `GET /internal/auth/tenant-audit-logs`
 
 ---
@@ -149,6 +158,15 @@ User(ACTIVE)
 - 有效状态：租户为 `ACTIVE`，目标账号未加入该租户
 - 无效状态：租户不存在、账号不存在、成员关系已存在、角色编码非法
 - 业务码：`SUCCESS / INVALID_PARAMS / RESOURCE_NOT_FOUND / STATE_CONFLICT`
+
+### 直接创建租户成员
+- 功能：跳过邀请，直接创建 `ACTIVE` 成员并可附带角色、资质。
+- 路径：`/internal/auth/tenant-members`
+- 方法：`POST`
+- 状态流转：不存在 -> `ACTIVE`
+- 有效状态：租户为 `ACTIVE`，目标账号未加入该租户
+- 无效状态：租户不存在、租户未启用、账号不存在、成员关系已存在、角色编码非法
+- 业务码：`SUCCESS / INVALID_PARAMS`
 
 ### 确认租户邀请
 - 功能：被邀请用户接受邀请并激活成员关系。
@@ -185,3 +203,11 @@ User(ACTIVE)
 - 有效状态：目标成员存在且状态为 `DISABLED`
 - 无效状态：目标成员不存在；已是 `ACTIVE`；状态不允许启用
 - 业务码：`SUCCESS / RESOURCE_NOT_FOUND / IDEMPOTENT_DUPLICATE / STATE_CONFLICT`
+
+### 同步成员角色
+- 功能：把成员当前角色集合直接同步成请求中的 `role_codes`。
+- 路径：`/internal/auth/tenant-members/{id}/roles`
+- 方法：`POST`
+- 有效状态：成员存在，角色编码全部合法
+- 无效状态：成员不存在、角色编码非法
+- 当前行为：命中的角色写成 `GRANTED`，未命中的既有绑定写成 `REVOKED`

@@ -1,117 +1,141 @@
 // ============================================================
 // 低空智能巡检平台 - 租户 Schema（当前实现）
 // 数据库：PostgreSQL
-// 说明：本文件覆盖租户核心表
-// 文档类型：图表 (schema)
+// 说明：本文件覆盖当前多租户权限核心表
 // ============================================================
-
-// 文档格式说明：
-// 本文件为 DBML 格式的数据库图表文件。
-// 更新本文档时，请遵循以下格式：
-// ```
-// Table {表名} [note: '{表说明}'] {
-//   {字段名} {类型} [约束, note: '{字段说明}']
-//   indexes {
-//     {索引字段} [name: '{索引名}']
-//   }
-// }
-// ```
 
 Project low_altitude_tenant {
   database_type: 'PostgreSQL'
-  Note: '租户核心表：平台级模型'
+  Note: '平台目录 + 租户运行数据'
 }
 
-// ============================================================
-// 1. tenants 租户主表
-// ============================================================
 Table tenants [note: '租户主表'] {
-  id bigserial [pk, note: 'id 主键']
-  code varchar(64) [not null, unique, note: 'code 租户编码']
-  name varchar(128) [not null, note: 'name 租户名称']
-  status smallint [not null, default: 1, note: 'status 0=禁用 1=启用']
-  plan varchar(64) [note: 'plan 套餐类型（预留）']
-  remark varchar(500) [note: 'remark 备注']
-  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
-
-  indexes {
-    code [name: 'idx_tenant_code', unique]
-  }
+  id bigserial [pk]
+  code varchar(64) [not null, unique, note: '租户编码']
+  name varchar(128) [not null, note: '租户名称']
+  status smallint [not null, default: 1, note: '0=DISABLED 1=ACTIVE']
+  plan varchar(64) [note: '套餐标识']
+  remark varchar(500) [note: '备注']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
 }
 
-// ============================================================
-// 2. tenant_members 租户成员表
-// ============================================================
-Table tenant_members [note: '租户成员身份'] {
-  id bigserial [pk, note: 'id 主键']
-  tenant_id bigint [not null, note: 'tenant_id 关联租户']
-  user_id bigint [not null, note: 'user_id 关联用户']
-  display_name varchar(128) [not null, note: 'display_name 显示名称']
-  staff_no varchar(64) [note: 'staff_no 工号']
-  phone varchar(32) [note: 'phone 手机号']
-  email varchar(254) [note: 'email 邮箱']
-  invitation_token varchar(64) [unique, note: 'invitation_token 邀请确认令牌']
-  status smallint [not null, default: 0, note: 'status 0=pending 1=active 2=disabled']
-  joined_at timestamp [note: 'joined_at 确认加入时间']
-  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+Table tenant_members [note: '租户成员关系'] {
+  id bigserial [pk]
+  tenant_id bigint [not null, note: '所属租户']
+  user_id bigint [not null, note: '平台账号']
+  member_no varchar(64) [note: '租户内工号']
+  display_name varchar(128) [note: '租户内显示名']
+  invitation_token varchar(64) [note: '邀请令牌，非空时唯一']
+  invited_by_user_id bigint [note: '邀请人']
+  invited_at timestamp [note: '邀请时间']
+  expires_at timestamp [note: '邀请过期时间']
+  responded_at timestamp [note: '响应时间']
+  joined_at timestamp [note: '加入时间']
+  status smallint [not null, default: 0, note: '0=INVITED 1=ACTIVE 2=REJECTED 3=EXPIRED 4=REVOKED 5=DISABLED']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
 
   indexes {
-    tenant_id [name: 'idx_tenant_member_tenant']
-    user_id [name: 'idx_tenant_member_user']
-    invitation_token [name: 'idx_tenant_member_invitation_token', unique]
     (tenant_id, user_id) [name: 'uniq_tenant_user_member', unique]
+    invitation_token [name: 'uniq_tenant_member_invitation_token', note: '仅在非空且非空字符串时唯一']
+    (tenant_id, member_no) [name: 'uniq_tenant_member_no', note: '仅在非空且非空字符串时唯一']
   }
 }
 
-// ============================================================
-// 3. tenant_member_roles 租户成员角色绑定表
-// ============================================================
-Table tenant_member_roles [note: '租户成员角色绑定'] {
-  id bigserial [pk, note: 'id 主键']
-  tenant_member_id bigint [not null, note: 'tenant_member_id 关联租户成员']
-  system_role_id bigint [not null, note: 'system_role_id 关联系统角色']
-  status smallint [not null, default: 1, note: 'status 0=disabled 1=active']
-  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+Table roles [note: '平台统一角色目录'] {
+  id bigserial [pk]
+  code varchar(64) [not null, unique]
+  name varchar(128) [not null]
+  description varchar(500)
+  status smallint [not null, default: 1, note: '0=DISABLED 1=ACTIVE']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table permissions [note: '平台统一权限目录'] {
+  id bigserial [pk]
+  code varchar(128) [not null, unique]
+  name varchar(128) [not null]
+  module varchar(64) [not null]
+  resource_code varchar(64) [note: '细粒度资源编码']
+  description varchar(500)
+  status smallint [not null, default: 1, note: '0=DISABLED 1=ACTIVE']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table role_permission_grants [note: '角色默认权限映射'] {
+  id bigserial [pk]
+  role_id bigint [not null]
+  permission_id bigint [not null]
+  scope_type varchar(16) [not null, default: 'ALL', note: 'ALL / OWN / ASSIGNED']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
 
   indexes {
-    tenant_member_id [name: 'idx_tmr_member']
-    system_role_id [name: 'idx_tmr_role']
+    (role_id, permission_id) [name: 'uniq_role_permission_grant', unique]
+  }
+}
+
+Table qualification_types [note: '平台统一资质类型目录'] {
+  id bigserial [pk]
+  code varchar(64) [not null, unique]
+  name varchar(128) [not null]
+  description varchar(500)
+  requires_validity boolean [not null, default: false]
+  payload_schema_json jsonb
+  status smallint [not null, default: 1, note: '0=DISABLED 1=ACTIVE']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table tenant_member_roles [note: '成员角色绑定，字段名沿用当前实现'] {
+  id bigserial [pk]
+  tenant_member_id bigint [not null]
+  system_role_id bigint [not null, note: '关联 roles.id']
+  status smallint [not null, default: 1, note: '0=REVOKED 1=GRANTED']
+  assigned_by_user_id bigint [note: '分配人']
+  assigned_at timestamp [note: '分配时间']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
     (tenant_member_id, system_role_id) [name: 'uniq_member_role', unique]
   }
 }
 
-// ============================================================
-// 4. system_roles 平台固定角色表
-// ============================================================
-Table system_roles [note: '平台固定角色'] {
-  id bigserial [pk, note: 'id 主键']
-  code varchar(64) [not null, unique, note: 'code 角色编码']
-  name varchar(128) [not null, note: 'name 角色名称']
-  description varchar(500) [note: 'description 角色描述']
-  status smallint [not null, default: 1, note: 'status 0=disabled 1=active']
-  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+Table tenant_member_qualifications [note: '成员资质记录'] {
+  id bigserial [pk]
+  tenant_member_id bigint [not null]
+  qualification_type_id bigint [not null]
+  certificate_no varchar(128)
+  level varchar(64)
+  status smallint [not null, default: 1, note: '1=ACTIVE 2=INVALID 3=REVOKED']
+  issued_at date
+  valid_from date
+  valid_until date
+  issuer varchar(128)
+  payload_json jsonb [not null, default: '{}']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
 
   indexes {
-    code [name: 'idx_system_role_code', unique]
+    (tenant_member_id, qualification_type_id) [name: 'idx_tm_qualification_type']
+    (tenant_member_id, status) [name: 'idx_tm_qualification_status']
   }
 }
 
-// ============================================================
-// 关系与外键
-// ============================================================
-
-// 租户成员关联租户
 Ref: tenant_members.tenant_id > tenants.id
-
-// 租户成员关联用户
 Ref: tenant_members.user_id > auth_users.id
+Ref: tenant_members.invited_by_user_id > auth_users.id
 
-// 租户成员角色绑定关联租户成员
 Ref: tenant_member_roles.tenant_member_id > tenant_members.id
+Ref: tenant_member_roles.system_role_id > roles.id
+Ref: tenant_member_roles.assigned_by_user_id > auth_users.id
 
-// 租户成员角色绑定关联系统角色
-Ref: tenant_member_roles.system_role_id > system_roles.id
+Ref: role_permission_grants.role_id > roles.id
+Ref: role_permission_grants.permission_id > permissions.id
+
+Ref: tenant_member_qualifications.tenant_member_id > tenant_members.id
+Ref: tenant_member_qualifications.qualification_type_id > qualification_types.id

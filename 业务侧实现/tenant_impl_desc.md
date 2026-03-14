@@ -98,7 +98,15 @@ TenantMember(ACTIVE) -> TenantMemberQualification(有效) -> QualificationType
 - 请求体：`tenant_id / user_id` 必填；可附带 `display_name / member_no / role_codes / qualifications`
 - 业务码：`SUCCESS / INVALID_PARAMS`
 
-### 8. 邀请租户成员
+### 8. 查询租户成员列表
+- 功能：查询租户成员列表。
+- 路径：`/internal/auth/tenant-members`
+- 方法：`GET`
+- 权限：`access.view_tenant_member`
+- 查询参数：`tenant_id`、`status` 可选
+- 返回：成员基础信息、当前 `roles`、资质列表
+
+### 9. 邀请租户成员
 - 功能：向已存在平台账号发出租户邀请，并预绑定角色。
 - 路径：`/internal/auth/tenant-members/invite`
 - 方法：`POST`
@@ -111,7 +119,7 @@ TenantMember(ACTIVE) -> TenantMemberQualification(有效) -> QualificationType
   4. 预绑定 `TenantMemberRole(status=GRANTED)`
 - 业务码：`SUCCESS / INVALID_PARAMS / RESOURCE_NOT_FOUND / STATE_CONFLICT`
 
-### 9. 确认邀请
+### 10. 确认邀请
 - 功能：当前登录用户接受邀请。
 - 路径：`/internal/auth/tenant-members/confirm-invitation`
 - 方法：`POST`
@@ -125,7 +133,7 @@ TenantMember(ACTIVE) -> TenantMemberQualification(有效) -> QualificationType
   4. 保留预绑定角色
 - 业务码：`SUCCESS / INVALID_PARAMS / RESOURCE_NOT_FOUND / PERMISSION_DENIED / STATE_CONFLICT`
 
-### 10. 拒绝邀请
+### 11. 拒绝邀请
 - 功能：当前登录用户拒绝邀请。
 - 路径：`/internal/auth/me/invitations/reject`
 - 方法：`POST`
@@ -137,7 +145,23 @@ TenantMember(ACTIVE) -> TenantMemberQualification(有效) -> QualificationType
   2. 保留 `invited_by_user / invited_at / expires_at`
   3. 写入 `responded_at`
 
-### 11. 停用 / 启用成员
+### 12. 查询 / 更新 / 删除成员
+- 功能：查看单个成员，或更新成员基础属性与资质，或直接删除成员关系。
+- 路径：`/internal/auth/tenant-members/{id}`
+- 方法：
+  - `GET`
+  - `PUT / PATCH`
+  - `DELETE`
+- 权限：
+  - `GET` 需要 `access.view_tenant_member`
+  - `PUT / PATCH / DELETE` 需要 `access.manage_tenant_member`
+- 更新范围：
+  - 可更新 `display_name`
+  - `ACTIVE` 成员可更新 `member_no`
+  - 传入 `qualifications` 时会整批替换成员资质
+- 说明：`DELETE` 为物理删除当前 `TenantMember`
+
+### 13. 停用 / 启用成员
 - 功能：管理员停用成员，或重新启用被停用成员。
 - 路径：`/internal/auth/tenant-members/{id}/disable`
 - 路径：`/internal/auth/tenant-members/{id}/enable`
@@ -148,38 +172,61 @@ TenantMember(ACTIVE) -> TenantMemberQualification(有效) -> QualificationType
   - `INVITED -> REVOKED`
   - `DISABLED -> ACTIVE`
 
-### 12. 当前用户租户列表
+### 14. 同步成员角色
+- 功能：把成员当前生效角色集合直接同步为请求中的 `role_codes`。
+- 路径：`/internal/auth/tenant-members/{id}/roles`
+- 方法：`POST`
+- 权限：`access.assign_tenant_member_role`
+- 请求体：`role_codes`
+- 实现要点：
+  1. 传入角色会写成 `GRANTED`
+  2. 未传入但已存在的角色绑定会改成 `REVOKED`
+  3. 当前实现不区分成员状态，按请求值直接同步绑定结果
+
+### 15. 当前用户租户列表
 - 功能：获取当前用户所有 `ACTIVE` 成员关系对应的租户列表。
 - 路径：`/internal/auth/me/tenants`
 - 方法：`GET`
 - 权限：登录用户
 
-### 13. 当前用户待处理邀请列表
+### 16. 当前用户待处理邀请列表
 - 功能：获取当前用户所有 `INVITED` 邀请。
 - 路径：`/internal/auth/me/invitations`
 - 方法：`GET`
 - 权限：登录用户
 - 实现要点：请求前会先将已过期邀请批量切成 `EXPIRED`
 
-### 14. 当前租户权限快照
+### 17. 当前租户权限快照
 - 功能：返回当前租户上下文下，当前用户聚合后的权限列表与 scope。
 - 路径：`/internal/auth/me/permissions`
 - 方法：`GET`
 - 权限：登录用户
+- 前置条件：请求必须携带当前租户上下文（`X-Tenant-Code`）
 - 响应核心字段：
   - `tenant_code`
   - `roles`
   - `items[].permission`
   - `items[].scope`
 
-### 15. 平台目录只读接口
+### 18. 平台目录只读接口
 - 功能：查看平台权限目录与角色目录。
 - 路径：`/internal/auth/permissions`
 - 路径：`/internal/auth/roles`
+- 路径：`/internal/auth/roles/{id}`
 - 方法：`GET`
 - 权限：
   - `access.view_permission_catalog`
   - `access.view_role`
+
+### 19. 审计日志查询
+- 功能：查看平台全量审计日志，或当前租户下的审计日志。
+- 路径：`/internal/auth/audit-logs`
+- 路径：`/internal/auth/tenant-audit-logs`
+- 方法：`GET`
+- 权限：
+  - 平台全量审计：`access.view_auth_audit_logs`
+  - 当前租户审计：登录用户 + 当前租户上下文 + `access.view_auth_audit_logs`
+- 查询参数：`action / target_type / actor_user_id / request_id / date_from / date_to`
 
 ---
 
