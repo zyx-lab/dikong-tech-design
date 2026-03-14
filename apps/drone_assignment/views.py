@@ -23,7 +23,7 @@ class DroneAssignmentViewSet(
 ):
     """无人机分配接口。"""
 
-    queryset = DroneAssignment.objects.select_related("drone", "staff", "staff__staff_type").all().order_by("-id")
+    queryset = DroneAssignment.objects.select_related("drone", "staff").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
     http_method_names = ["get", "post", "head", "options"]
 

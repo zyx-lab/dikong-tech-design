@@ -3,7 +3,13 @@ from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.access.models import AuditLog, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, StaffType, StaffTypeGroup
+from apps.access.models import AuditLog, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, SystemRoleGroup
+from apps.access.test_support import (
+    ensure_staff_profile,
+    ensure_tenant_member_position,
+    ensure_tenant_role_binding,
+    grant_role_permissions,
+)
 from apps.drone.models import Drone, DroneStatus
 from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
 
@@ -13,22 +19,26 @@ User = get_user_model()
 class DroneApiAuthzTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.staff_type = StaffType.objects.create(code="dispatcher_test", name="任务调度员", status=1)
         self.user = User.objects.create_user(username="drone_user", password="pass1234", status=1)
-        StaffProfile.objects.create(
-            user=self.user,
+        self.staff = ensure_staff_profile(
+            self.user,
             staff_no="D-001",
             name="调度员A",
-            employment_status=1,
-            staff_type=self.staff_type,
         )
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            role_code="drone_viewer_test_role",
+            role_name="无人机查看测试角色",
+            tenant_code="drone_authz_tenant",
+        )
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def _grant_permission(self, permission_code: str, with_scope: bool = True):
         app_label, codename = permission_code.split(".", 1)
         perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
         group = Group.objects.create(name=f"{permission_code}-group")
         group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.staff_type, group=group, status=ScopeStatus.ACTIVE)
+        SystemRoleGroup.objects.create(system_role=self.role, group=group, status=ScopeStatus.ACTIVE)
         if with_scope:
             GroupPermissionScope.objects.create(
                 group=group,
@@ -93,31 +103,27 @@ class SuperuserRootPermissionTests(TestCase):
 class DroneApiWriteTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.staff_type = StaffType.objects.create(code="ops_admin_test", name="Admin管理员", status=1)
         self.user = User.objects.create_user(username="drone_admin", password="pass1234", status=1)
-        self.staff = StaffProfile.objects.create(
-            user=self.user,
+        self.staff = ensure_staff_profile(
+            self.user,
             staff_no="D-100",
             name="Admin管理员A",
-            employment_status=1,
-            staff_type=self.staff_type,
+        )
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            role_code="drone_admin_test_role",
+            role_name="无人机管理测试角色",
+            tenant_code="drone_write_tenant",
         )
         self.client.force_authenticate(self.user)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def _grant_permissions(self, permission_codes: list[str]):
-        group = Group.objects.create(name="drone-admin-group")
-        StaffTypeGroup.objects.create(staff_type=self.staff_type, group=group, status=ScopeStatus.ACTIVE)
-
-        for permission_code in permission_codes:
-            app_label, codename = permission_code.split(".", 1)
-            perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-            group.permissions.add(perm)
-            GroupPermissionScope.objects.create(
-                group=group,
-                permission=perm,
-                scope_type=ScopeType.ALL,
-                status=ScopeStatus.ACTIVE,
-            )
+        grant_role_permissions(
+            self.role,
+            {permission_code: ScopeType.ALL for permission_code in permission_codes},
+            group_name="drone-admin-group",
+        )
 
     def _create_drone(self, *, code: str, status: str) -> Drone:
         return Drone.objects.create(
@@ -377,15 +383,20 @@ class DroneApiWriteTests(TestCase):
             created_by_staff_id=self.staff.id,
         )
 
-        pilot_type = StaffType.objects.create(code="pilot_operator", name="飞手操作员", status=1)
         pilot_user = User.objects.create_user(username="pilot_del_conflict", password="pass1234", status=1)
-        pilot_staff = StaffProfile.objects.create(
-            user=pilot_user,
+        pilot_staff = ensure_staff_profile(
+            pilot_user,
             staff_no="P-DEL-01",
             name="飞手删除冲突",
             employment_status=1,
-            staff_type=pilot_type,
         )
+        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手操作员",
+        )
+        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
         DroneAssignment.objects.create(
             drone=drone,
             staff=pilot_staff,
@@ -402,25 +413,19 @@ class DroneApiWriteTests(TestCase):
 class PilotAssignedScopeTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.pilot_staff_type = StaffType.objects.create(code="pilot_operator", name="飞手操作员", status=1)
         self.pilot_user = User.objects.create_user(username="pilot_a", password="pass1234", status=1)
-        self.pilot_staff = StaffProfile.objects.create(
-            user=self.pilot_user,
-            staff_no="P-001",
-            name="飞手A",
-            employment_status=1,
-            staff_type=self.pilot_staff_type,
+        self.pilot_staff = ensure_staff_profile(self.pilot_user, staff_no="P-001", name="飞手A", employment_status=1)
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant_code="drone_assigned_scope_tenant",
+            role_code="pilot_assigned_scope_role",
+            role_name="飞手按分配查看角色",
         )
-
-        group = Group.objects.create(name="无人机按分配查看组")
-        perm = Permission.objects.get(content_type__app_label="drone", codename="view_drone")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.pilot_staff_type, group=group, status=ScopeStatus.ACTIVE)
-        GroupPermissionScope.objects.create(
-            group=group,
-            permission=perm,
-            scope_type=ScopeType.ASSIGNED,
-            status=ScopeStatus.ACTIVE,
+        ensure_tenant_member_position(self.member, code="pilot_operator", name="飞手操作员")
+        grant_role_permissions(
+            self.role,
+            {"drone.view_drone": ScopeType.ASSIGNED},
+            group_name="无人机按分配查看组",
         )
 
         self.drone_assigned = Drone.objects.create(
@@ -443,6 +448,7 @@ class PilotAssignedScopeTests(TestCase):
             status=DroneAssignmentStatus.ACTIVE,
         )
         self.client.force_authenticate(self.pilot_user)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def test_pilot_should_only_list_assigned_drones(self):
         response = self.client.get("/api/v1/drones")
@@ -458,36 +464,40 @@ class PilotAssignedScopeTests(TestCase):
 class DroneHistoryApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.viewer_type = StaffType.objects.create(code="viewer_history", name="历史查看员", status=1)
         self.viewer_user = User.objects.create_user(username="history_viewer", password="pass1234", status=1)
-        self.viewer_staff = StaffProfile.objects.create(
-            user=self.viewer_user,
+        self.viewer_staff = ensure_staff_profile(
+            self.viewer_user,
             staff_no="H-001",
             name="历史查看员A",
             employment_status=1,
-            staff_type=self.viewer_type,
         )
-
-        self.pilot_type = StaffType.objects.create(code="pilot_operator", name="飞手操作员", status=1)
         self.pilot_user = User.objects.create_user(username="history_pilot", password="pass1234", status=1)
-        self.pilot_staff = StaffProfile.objects.create(
-            user=self.pilot_user,
+        self.pilot_staff = ensure_staff_profile(
+            self.pilot_user,
             staff_no="HP-001",
             name="历史飞手A",
             employment_status=1,
-            staff_type=self.pilot_type,
         )
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.viewer_user,
+            tenant_code="drone_history_tenant",
+            role_code="drone_history_viewer_role",
+            role_name="无人机历史查看角色",
+        )
+        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手操作员",
+        )
+        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def _grant_view_permission(self):
-        group = Group.objects.create(name="无人机历史查看组")
-        perm = Permission.objects.get(content_type__app_label="drone", codename="view_drone")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.viewer_type, group=group, status=ScopeStatus.ACTIVE)
-        GroupPermissionScope.objects.create(
-            group=group,
-            permission=perm,
-            scope_type=ScopeType.ALL,
-            status=ScopeStatus.ACTIVE,
+        grant_role_permissions(
+            self.role,
+            {"drone.view_drone": ScopeType.ALL},
+            group_name="无人机历史查看组",
         )
 
     def test_history_should_return_assignments(self):
@@ -548,36 +558,40 @@ class DroneHistoryApiTests(TestCase):
 class DroneActiveAssignmentsApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.viewer_type = StaffType.objects.create(code="viewer_active", name="当前分配查看员", status=1)
         self.viewer_user = User.objects.create_user(username="active_viewer", password="pass1234", status=1)
-        self.viewer_staff = StaffProfile.objects.create(
-            user=self.viewer_user,
+        self.viewer_staff = ensure_staff_profile(
+            self.viewer_user,
             staff_no="A-001",
             name="当前分配查看员A",
             employment_status=1,
-            staff_type=self.viewer_type,
         )
-
-        self.pilot_type = StaffType.objects.create(code="pilot_operator", name="飞手操作员", status=1)
         self.pilot_user = User.objects.create_user(username="active_pilot", password="pass1234", status=1)
-        self.pilot_staff = StaffProfile.objects.create(
-            user=self.pilot_user,
+        self.pilot_staff = ensure_staff_profile(
+            self.pilot_user,
             staff_no="AP-001",
             name="当前分配飞手A",
             employment_status=1,
-            staff_type=self.pilot_type,
         )
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.viewer_user,
+            tenant_code="drone_active_tenant",
+            role_code="drone_active_viewer_role",
+            role_name="无人机当前分配查看角色",
+        )
+        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手操作员",
+        )
+        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def _grant_view_permission(self):
-        group = Group.objects.create(name="无人机当前分配查看组")
-        perm = Permission.objects.get(content_type__app_label="drone", codename="view_drone")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.viewer_type, group=group, status=ScopeStatus.ACTIVE)
-        GroupPermissionScope.objects.create(
-            group=group,
-            permission=perm,
-            scope_type=ScopeType.ALL,
-            status=ScopeStatus.ACTIVE,
+        grant_role_permissions(
+            self.role,
+            {"drone.view_drone": ScopeType.ALL},
+            group_name="无人机当前分配查看组",
         )
 
     def test_active_assignments_should_only_return_active_records(self):
@@ -638,36 +652,40 @@ class DroneActiveAssignmentsApiTests(TestCase):
 class DroneLatestAssignmentApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.viewer_type = StaffType.objects.create(code="viewer_latest", name="最近分配查看员", status=1)
         self.viewer_user = User.objects.create_user(username="latest_viewer", password="pass1234", status=1)
-        self.viewer_staff = StaffProfile.objects.create(
-            user=self.viewer_user,
+        self.viewer_staff = ensure_staff_profile(
+            self.viewer_user,
             staff_no="L-001",
             name="最近分配查看员A",
             employment_status=1,
-            staff_type=self.viewer_type,
         )
-
-        self.pilot_type = StaffType.objects.create(code="pilot_latest", name="最近分配飞手", status=1)
         self.pilot_user = User.objects.create_user(username="latest_pilot", password="pass1234", status=1)
-        self.pilot_staff = StaffProfile.objects.create(
-            user=self.pilot_user,
+        self.pilot_staff = ensure_staff_profile(
+            self.pilot_user,
             staff_no="LP-001",
             name="最近分配飞手A",
             employment_status=1,
-            staff_type=self.pilot_type,
         )
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.viewer_user,
+            tenant_code="drone_latest_tenant",
+            role_code="drone_latest_viewer_role",
+            role_name="无人机最近分配查看角色",
+        )
+        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手操作员",
+        )
+        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def _grant_view_permission(self):
-        group = Group.objects.create(name="无人机最近分配查看组")
-        perm = Permission.objects.get(content_type__app_label="drone", codename="view_drone")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.viewer_type, group=group, status=ScopeStatus.ACTIVE)
-        GroupPermissionScope.objects.create(
-            group=group,
-            permission=perm,
-            scope_type=ScopeType.ALL,
-            status=ScopeStatus.ACTIVE,
+        grant_role_permissions(
+            self.role,
+            {"drone.view_drone": ScopeType.ALL},
+            group_name="无人机最近分配查看组",
         )
 
     def test_latest_assignment_should_return_latest_record(self):
@@ -747,44 +765,40 @@ class DroneLatestAssignmentApiTests(TestCase):
 class BusinessAdminApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.staff_type = StaffType.objects.create(code="business_admin", name="业务管理员", status=1)
         self.user = User.objects.create_user(username="biz_super_u", password="pass1234", status=1)
-        self.staff = StaffProfile.objects.create(
-            user=self.user,
-            staff_no="BS-900",
-            name="业务管理员U",
-            employment_status=1,
-            staff_type=self.staff_type,
-        )
-
-        self.pilot_type = StaffType.objects.create(code="pilot_operator", name="飞手操作员", status=1)
+        self.staff = ensure_staff_profile(self.user, staff_no="BS-900", name="业务管理员U", employment_status=1)
         self.pilot_user = User.objects.create_user(username="pilot_for_biz_super", password="pass1234", status=1)
-        self.pilot_staff = StaffProfile.objects.create(
-            user=self.pilot_user,
+        self.pilot_staff = ensure_staff_profile(
+            self.pilot_user,
             staff_no="P-900",
             name="飞手900",
             employment_status=1,
-            staff_type=self.pilot_type,
         )
-
-        group = Group.objects.create(name="业务管理员权限组")
-        permission_specs = [
-            ("drone", "view_drone"),
-            ("drone", "manage_drone"),
-            ("drone", "change_drone_status"),
-            ("drone_assignment", "manage_drone_assignment"),
-        ]
-        for app_label, codename in permission_specs:
-            perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-            group.permissions.add(perm)
-            GroupPermissionScope.objects.create(
-                group=group,
-                permission=perm,
-                scope_type=ScopeType.ALL,
-                status=ScopeStatus.ACTIVE,
-            )
-        StaffTypeGroup.objects.create(staff_type=self.staff_type, group=group, status=ScopeStatus.ACTIVE)
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            tenant_code="drone_business_admin_tenant",
+            role_code="business_admin_test_role",
+            role_name="业务管理员测试角色",
+        )
+        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手操作员",
+        )
+        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
+        grant_role_permissions(
+            self.role,
+            {
+                "drone.view_drone": ScopeType.ALL,
+                "drone.manage_drone": ScopeType.ALL,
+                "drone.change_drone_status": ScopeType.ALL,
+                "drone_assignment.manage_drone_assignment": ScopeType.ALL,
+            },
+            group_name="业务管理员权限组",
+        )
         self.client.force_authenticate(self.user)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def test_business_admin_can_access_business_apis(self):
         create_drone_resp = self.client.post(
@@ -824,28 +838,22 @@ class DroneBoundaryTests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.staff_type = StaffType.objects.create(code="drone_boundary", name="边界测试", status=1)
         self.user = User.objects.create_user(username="drone_bound", password="pass1234", status=1)
-        self.staff = StaffProfile.objects.create(
-            user=self.user,
-            staff_no="DB-001",
-            name="边界测试员",
-            employment_status=1,
-            staff_type=self.staff_type,
+        self.staff = ensure_staff_profile(self.user, staff_no="DB-001", name="边界测试员", employment_status=1)
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            tenant_code="drone_boundary_tenant",
+            role_code="drone_boundary_role",
+            role_name="无人机边界测试角色",
         )
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
         self._grant_permission("drone.manage_drone")
 
     def _grant_permission(self, permission_code: str):
-        app_label, codename = permission_code.split(".", 1)
-        perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-        group = Group.objects.create(name=f"{permission_code}-group-bound")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.staff_type, group=group, status=ScopeStatus.ACTIVE)
-        GroupPermissionScope.objects.create(
-            group=group,
-            permission=perm,
-            scope_type=ScopeType.ALL,
-            status=ScopeStatus.ACTIVE,
+        grant_role_permissions(
+            self.role,
+            {permission_code: ScopeType.ALL},
+            group_name=f"{permission_code}-group-bound",
         )
 
     def test_create_drone_max_name_length(self):

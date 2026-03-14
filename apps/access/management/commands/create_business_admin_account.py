@@ -3,13 +3,13 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils.crypto import get_random_string
 
-from apps.access.models import EmploymentStatus, StaffProfile, StaffType, UserStatus
+from apps.access.models import EmploymentStatus, StaffProfile, UserStatus
 
 User = get_user_model()
 
 
 class Command(BaseCommand):
-    help = "创建或更新业务管理员角色账号（普通业务账号，非 Django superuser）"
+    help = "创建或更新业务管理员账号（仅创建账号与业务档案，不直接授予租户权限）"
 
     def add_arguments(self, parser):
         parser.add_argument("--username", required=True, help="登录账号")
@@ -30,10 +30,6 @@ class Command(BaseCommand):
         username = options["username"].strip()
         if not username:
             raise CommandError("username cannot be empty")
-
-        staff_type = StaffType.objects.filter(code="business_admin").first()
-        if not staff_type:
-            raise CommandError("staff_type 'business_admin' not found, run seed_role_permissions first")
 
         password = options.get("password") or get_random_string(16)
         password_auto_generated = not bool(options.get("password"))
@@ -69,7 +65,7 @@ class Command(BaseCommand):
 
         staff = StaffProfile.objects.filter(user=user).first()
         if not staff:
-            # 一账号一 staff：首次创建时直接绑定业务管理员角色 staff_type。
+            # 一账号一 staff：仅维护业务档案，不直接授予租户角色权限。
             staff = StaffProfile.objects.create(
                 user=user,
                 staff_no=staff_no,
@@ -77,7 +73,6 @@ class Command(BaseCommand):
                 phone=phone,
                 email=email,
                 employment_status=EmploymentStatus.ACTIVE,
-                staff_type=staff_type,
                 org_id=org_id,
             )
             self.stdout.write(self.style.SUCCESS(f"created staff profile: {staff.staff_no} (id={staff.id})"))
@@ -87,7 +82,6 @@ class Command(BaseCommand):
             staff.phone = phone
             staff.email = email
             staff.employment_status = EmploymentStatus.ACTIVE
-            staff.staff_type = staff_type
             staff.org_id = org_id
             staff.save(
                 update_fields=[
@@ -96,7 +90,6 @@ class Command(BaseCommand):
                     "phone",
                     "email",
                     "employment_status",
-                    "staff_type",
                     "org_id",
                     "updated_at",
                 ]
@@ -104,6 +97,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f"updated staff profile: {staff.staff_no} (id={staff.id})"))
 
         self.stdout.write(self.style.SUCCESS("business admin account is ready"))
+        self.stdout.write("note=该命令不会分配租户角色；如需业务权限，请为用户创建 TenantMember 并分配 SystemRole")
         self.stdout.write(f"username={user.username}")
         if password_auto_generated:
             self.stdout.write(self.style.WARNING(f"generated_password={password}"))

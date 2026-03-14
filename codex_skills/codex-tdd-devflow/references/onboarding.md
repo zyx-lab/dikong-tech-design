@@ -234,6 +234,8 @@ codex_devflow_scaffold/
 - 不是长期手工维护的项目配置
 - 可以人工 override，但那是例外流程
 - `entity` 应由业务语义理解得出，而不是路径规则推断
+- 若本轮目标是修复旧接口，可在单行 JSON 中增加 `change_mode: "repair_api"`
+- `repair_api` 允许提名已注册或已观测到的接口；`new_api` 仍要求目标接口尚未进入当前 registry
 
 ### `cases/session_event_candidates.jsonl`
 

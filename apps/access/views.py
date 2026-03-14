@@ -19,9 +19,8 @@ from apps.access.models import (
     AuditLog,
     GroupPermissionScope,
     ScopeStatus,
-    StaffType,
-    StaffTypeGroup,
     SystemRole,
+    SystemRoleGroup,
     Tenant,
     TenantMember,
     TenantMemberRole,
@@ -39,9 +38,8 @@ from apps.access.serializers import (
     GroupSerializer,
     MePermissionSerializer,
     PermissionCodeSerializer,
-    StaffTypeGroupAssignSerializer,
-    StaffTypeSerializer,
     SystemRoleSerializer,
+    SystemRoleGroupAssignSerializer,
     TenantInitializeAdminSerializer,
     TenantMemberConfirmInvitationSerializer,
     TenantMemberCreateSerializer,
@@ -56,7 +54,7 @@ from apps.access.serializers import (
     UserSelfRegisterSerializer,
     UserManageSerializer,
 )
-from apps.access.services import AuthzService, IdentityService, log_action, snapshot
+from apps.access.services import AuthzService, log_action, snapshot
 
 
 def _permission_codes_for_group(group: Group) -> list[str]:
@@ -80,9 +78,9 @@ def _scope_payload_for_group(group: Group) -> list[dict]:
     ]
 
 
-def _group_payload_for_staff_type(staff_type: StaffType) -> list[dict]:
+def _group_payload_for_system_role(system_role: SystemRole) -> list[dict]:
     links = (
-        StaffTypeGroup.objects.filter(staff_type=staff_type, status=ScopeStatus.ACTIVE)
+        SystemRoleGroup.objects.filter(system_role=system_role, status=ScopeStatus.ACTIVE)
         .select_related("group")
         .order_by("group_id")
     )
@@ -105,8 +103,6 @@ def _user_payload(user: User) -> dict:
             "staff_no": staff.staff_no,
             "name": staff.name,
             "employment_status": staff.employment_status,
-            "staff_type_id": staff.staff_type_id,
-            "staff_type_name": staff.staff_type.name,
             "org_id": staff.org_id,
         }
     else:
@@ -124,20 +120,59 @@ def _parse_iso_datetime(value: str):
     return parsed
 
 
+def _get_current_tenant_member_context(request):
+    tenant = getattr(request, "tenant_context", None)
+    if tenant is None:
+        raise BusinessPermissionDenied("tenant context required", business_detail_code="TENANT_CONTEXT_REQUIRED")
+
+    member = (
+        TenantMember.objects.filter(
+            tenant=tenant,
+            user=request.user,
+            status=TenantMemberStatus.ACTIVE,
+        )
+        .select_related("tenant", "user")
+        .prefetch_related("role_bindings__system_role")
+        .first()
+    )
+    if member is None:
+        raise BusinessPermissionDenied("active tenant membership required", business_detail_code="TENANT_MEMBERSHIP_REQUIRED")
+
+    role_codes = list(
+        member.role_bindings.filter(status=TenantMemberRoleStatus.ACTIVE)
+        .order_by("id")
+        .values_list("system_role__code", flat=True)
+    )
+    return tenant, member, role_codes
+
+
 class MePermissionsView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = MePermissionSerializer
 
-    @extend_schema(responses=MePermissionSerializer(many=True))
+    @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
-        if not request.user.is_superuser:
-            identity_result = IdentityService.check_business_user(request.user)
-            if not identity_result.ok:
-                return Response({"detail": identity_result.reason_code}, status=status.HTTP_403_FORBIDDEN)
+        tenant = getattr(request, "tenant_context", None)
+        if tenant is None:
+            raise BusinessPermissionDenied("tenant context required", business_detail_code="TENANT_CONTEXT_REQUIRED")
 
-        permissions = AuthzService.get_permission_scope_map(request.user)
+        if request.user.is_superuser:
+            permissions = AuthzService.get_permission_scope_map(request)
+            role_codes: list[str] = []
+        else:
+            tenant, _member, role_codes = _get_current_tenant_member_context(request)
+            permissions = AuthzService.get_tenant_role_permission_scope_map(role_codes)
+
         serializer = self.get_serializer(permissions, many=True)
-        return Response({"items": serializer.data})
+        return Response(
+            {
+                "business_code": "SUCCESS",
+                "business_detail_code": "OK",
+                "tenant_code": tenant.code,
+                "roles": role_codes,
+                "items": serializer.data,
+            }
+        )
 
 
 class MeTenantListView(generics.GenericAPIView):
@@ -183,7 +218,7 @@ class MeInvitationListView(generics.GenericAPIView):
             )
             .exclude(invitation_token="")
             .select_related("tenant")
-            .prefetch_related("role_bindings__system_role")
+            .prefetch_related("role_bindings__system_role", "positions", "qualifications")
             .order_by("tenant_id", "id")
         )
         items = self.get_serializer(invitations, many=True).data
@@ -218,7 +253,7 @@ class ApiRootView(APIView):
                     "me_permissions": reverse("me-permissions", request=request),
                     "permission_catalog": reverse("permission-catalog", request=request),
                     "groups": reverse("group-list-create", request=request),
-                    "staff_types": reverse("staff-type-list-create", request=request),
+                    "system_roles": reverse("system-role-list-create", request=request),
                     "scope_matrix": reverse("scope-matrix", request=request),
                     "audit_logs": reverse("audit-log-list", request=request),
                     "tenant_audit_logs": reverse("tenant-audit-log-list", request=request),
@@ -379,7 +414,7 @@ class UserListCreateView(PermissionMapMixin, generics.ListCreateAPIView):
         "GET": "access.view_user",
         "POST": "access.manage_user_accounts",
     }
-    queryset = User.objects.select_related("staff_profile__staff_type").all().order_by("id")
+    queryset = User.objects.select_related("staff_profile").all().order_by("id")
 
     def perform_create(self, serializer):
         user = serializer.save()
@@ -400,7 +435,7 @@ class UserDetailView(PermissionMapMixin, generics.RetrieveUpdateAPIView):
         "PUT": "access.manage_user_accounts",
         "PATCH": "access.manage_user_accounts",
     }
-    queryset = User.objects.select_related("staff_profile__staff_type").all()
+    queryset = User.objects.select_related("staff_profile").all()
 
     def perform_update(self, serializer):
         before = _user_payload(self.get_object())
@@ -517,68 +552,6 @@ class GroupScopeAssignView(PermissionMapMixin, generics.GenericAPIView):
         return Response(after_data)
 
 
-class StaffTypeListCreateView(PermissionMapMixin, generics.ListCreateAPIView):
-    serializer_class = StaffTypeSerializer
-    permission_classes = [RequireInternalPermission]
-    required_permission = "access.manage_staff_type_groups"
-    queryset = StaffType.objects.all().order_by("id")
-
-    def perform_create(self, serializer):
-        staff_type = serializer.save()
-        log_action(
-            request=self.request,
-            action="STAFF_TYPE_CREATE",
-            target_type="staff_type",
-            target_id=staff_type.id,
-            after_data=snapshot(staff_type),
-        )
-
-
-class StaffTypeDetailView(PermissionMapMixin, generics.RetrieveUpdateAPIView):
-    serializer_class = StaffTypeSerializer
-    permission_classes = [RequireInternalPermission]
-    required_permission = "access.manage_staff_type_groups"
-    queryset = StaffType.objects.all()
-
-    def perform_update(self, serializer):
-        before = snapshot(self.get_object())
-        staff_type = serializer.save()
-        log_action(
-            request=self.request,
-            action="STAFF_TYPE_UPDATE",
-            target_type="staff_type",
-            target_id=staff_type.id,
-            before_data=before,
-            after_data=snapshot(staff_type),
-        )
-
-
-class StaffTypeGroupAssignView(PermissionMapMixin, generics.GenericAPIView):
-    permission_classes = [RequireInternalPermission]
-    required_permission = "access.manage_staff_type_groups"
-    serializer_class = StaffTypeGroupAssignSerializer
-
-    @extend_schema(request=StaffTypeGroupAssignSerializer, responses=OpenApiTypes.OBJECT)
-    def post(self, request, staff_type_id: int):
-        staff_type = get_object_or_404(StaffType, id=staff_type_id)
-        serializer = self.get_serializer(data=request.data, context={"staff_type": staff_type})
-        serializer.is_valid(raise_exception=True)
-
-        before_data = {"groups": _group_payload_for_staff_type(staff_type)}
-        serializer.save()
-        after_data = {"groups": _group_payload_for_staff_type(staff_type)}
-
-        log_action(
-            request=request,
-            action="STAFF_TYPE_GROUP_ASSIGN",
-            target_type="staff_type",
-            target_id=staff_type.id,
-            before_data=before_data,
-            after_data=after_data,
-        )
-        return Response(after_data)
-
-
 class AuditLogListView(PermissionMapMixin, generics.ListAPIView):
     serializer_class = AuditLogSerializer
     permission_classes = [RequireInternalPermission]
@@ -622,31 +595,12 @@ class TenantAuditLogListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     pagination_class = None
     queryset = AuditLog.objects.select_related("actor_user", "tenant").all()
-    allowed_role_codes = {"tenant_admin", "business_admin"}
 
     def _get_current_tenant(self):
-        tenant = getattr(self.request, "tenant_context", None)
-        if tenant is None:
-            raise BusinessPermissionDenied("tenant context required", business_detail_code="TENANT_CONTEXT_REQUIRED")
-
-        member = (
-            TenantMember.objects.filter(
-                tenant=tenant,
-                user=self.request.user,
-                status=TenantMemberStatus.ACTIVE,
-            )
-            .prefetch_related("role_bindings__system_role")
-            .first()
-        )
-        if member is None:
-            raise BusinessPermissionDenied("active tenant membership required", business_detail_code="TENANT_MEMBERSHIP_REQUIRED")
-
-        role_codes = set(
-            member.role_bindings.filter(status=TenantMemberRoleStatus.ACTIVE).values_list("system_role__code", flat=True)
-        )
-        if not role_codes.intersection(self.allowed_role_codes):
-            raise BusinessPermissionDenied("tenant audit permission denied", business_detail_code="TENANT_AUDIT_FORBIDDEN")
-
+        decision = AuthzService.authorize(self.request, "access.view_auth_audit_logs")
+        if not decision.allowed:
+            raise BusinessPermissionDenied("tenant audit permission denied", business_detail_code=decision.reason_code)
+        tenant, _member, _role_codes = _get_current_tenant_member_context(self.request)
         return tenant
 
     def get_queryset(self):
@@ -1006,6 +960,32 @@ class SystemRoleDetailView(PermissionMapMixin, generics.RetrieveUpdateAPIView):
     queryset = SystemRole.objects.all()
 
 
+class SystemRoleGroupAssignView(PermissionMapMixin, generics.GenericAPIView):
+    permission_classes = [RequireInternalPermission]
+    required_permission = "access.manage_system_role"
+    serializer_class = SystemRoleGroupAssignSerializer
+
+    @extend_schema(request=SystemRoleGroupAssignSerializer, responses=OpenApiTypes.OBJECT)
+    def post(self, request, pk: int):
+        system_role = get_object_or_404(SystemRole, id=pk)
+        serializer = self.get_serializer(data=request.data, context={"system_role": system_role})
+        serializer.is_valid(raise_exception=True)
+
+        before_data = {"groups": _group_payload_for_system_role(system_role)}
+        serializer.save()
+        after_data = {"groups": _group_payload_for_system_role(system_role)}
+
+        log_action(
+            request=request,
+            action="SYSTEM_ROLE_GROUP_ASSIGN",
+            target_type="system_role",
+            target_id=system_role.id,
+            before_data=before_data,
+            after_data=after_data,
+        )
+        return Response(after_data)
+
+
 # ========== 租户成员管理 API ==========
 
 class TenantMemberListCreateView(PermissionMapMixin, generics.ListCreateAPIView):
@@ -1019,7 +999,7 @@ class TenantMemberListCreateView(PermissionMapMixin, generics.ListCreateAPIView)
     }
 
     def get_queryset(self):
-        qs = TenantMember.objects.select_related("tenant", "user").all()
+        qs = TenantMember.objects.select_related("tenant", "user").prefetch_related("positions", "qualifications").all()
         tenant_id = self.request.query_params.get("tenant_id")
         status = self.request.query_params.get("status")
         if tenant_id:
@@ -1191,7 +1171,7 @@ class TenantMemberDisableView(PermissionMapMixin, generics.GenericAPIView):
     method_permission_map = {
         "POST": "access.manage_tenant_member",
     }
-    queryset = TenantMember.objects.select_related("tenant", "user")
+    queryset = TenantMember.objects.select_related("tenant", "user").prefetch_related("positions", "qualifications")
 
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, pk: int):
@@ -1248,7 +1228,7 @@ class TenantMemberEnableView(PermissionMapMixin, generics.GenericAPIView):
     method_permission_map = {
         "POST": "access.manage_tenant_member",
     }
-    queryset = TenantMember.objects.select_related("tenant", "user")
+    queryset = TenantMember.objects.select_related("tenant", "user").prefetch_related("positions", "qualifications")
 
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, pk: int):
@@ -1310,7 +1290,7 @@ class TenantMemberDetailView(PermissionMapMixin, generics.RetrieveUpdateDestroyA
         "PATCH": "access.manage_tenant_member",
         "DELETE": "access.manage_tenant_member",
     }
-    queryset = TenantMember.objects.select_related("tenant", "user")
+    queryset = TenantMember.objects.select_related("tenant", "user").prefetch_related("positions", "qualifications")
 
     def perform_destroy(self, instance):
         log_action(
@@ -1338,5 +1318,5 @@ class TenantMemberRoleAssignView(PermissionMapMixin, generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         # 重新获取成员信息
-        member = TenantMember.objects.select_related("tenant", "user").get(id=pk)
+        member = TenantMember.objects.select_related("tenant", "user").prefetch_related("positions", "qualifications").get(id=pk)
         return Response(TenantMemberSerializer(member).data)

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from apps.access.models import EmploymentStatus
+from apps.access.services import staff_has_position_in_tenant
 from apps.drone.models import DroneStatus
 from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
 
@@ -42,7 +43,10 @@ class DroneAssignmentCreateSerializer(serializers.ModelSerializer):
         if staff.employment_status != EmploymentStatus.ACTIVE:
             raise serializers.ValidationError({"staff": "仅允许分配给在职人员"})
 
-        if staff.staff_type.code != "pilot_operator":
+        tenant = drone.tenant
+        if tenant is None and self.context.get("request") is not None:
+            tenant = getattr(self.context["request"], "tenant_context", None)
+        if not staff_has_position_in_tenant(staff, tenant, "pilot_operator"):
             raise serializers.ValidationError({"staff": "仅允许分配给飞手类型（pilot_operator）"})
 
         if DroneAssignment.objects.filter(

@@ -6,12 +6,15 @@ from rest_framework.test import APIClient
 from apps.access.models import (
     AuditLog,
     EmploymentStatus,
-    GroupPermissionScope,
-    ScopeStatus,
     ScopeType,
     StaffProfile,
-    StaffType,
-    StaffTypeGroup,
+    SystemRoleGroup,
+)
+from apps.access.test_support import (
+    ensure_staff_profile,
+    ensure_tenant_member_position,
+    ensure_tenant_role_binding,
+    grant_role_permissions,
 )
 from apps.drone.models import Drone, DroneStatus
 from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
@@ -23,46 +26,68 @@ class DroneAssignmentApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-        self.dispatcher_type = StaffType.objects.create(code="dispatcher", name="任务调度员", status=1)
         self.dispatcher_user = User.objects.create_user(username="dispatcher_a", password="pass1234", status=1)
-        self.dispatcher_staff = StaffProfile.objects.create(
-            user=self.dispatcher_user,
+        self.dispatcher_staff = ensure_staff_profile(
+            self.dispatcher_user,
             staff_no="D-200",
             name="调度员A",
             employment_status=EmploymentStatus.ACTIVE,
-            staff_type=self.dispatcher_type,
         )
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.dispatcher_user,
+            tenant_code="drone_assignment_test_tenant",
+            role_code="drone_assignment_test_role",
+            role_name="无人机分配测试角色",
+        )
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
-        self.pilot_type = StaffType.objects.create(code="pilot_operator", name="飞手操作员", status=1)
         self.pilot_user = User.objects.create_user(username="pilot_b", password="pass1234", status=1)
-        self.pilot_staff = StaffProfile.objects.create(
-            user=self.pilot_user,
+        self.pilot_staff = ensure_staff_profile(
+            self.pilot_user,
             staff_no="P-200",
             name="飞手B",
             employment_status=EmploymentStatus.ACTIVE,
-            staff_type=self.pilot_type,
         )
+        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手操作员",
+        )
+        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
 
         self.inactive_pilot_user = User.objects.create_user(username="pilot_inactive", password="pass1234", status=1)
-        self.inactive_pilot_staff = StaffProfile.objects.create(
-            user=self.inactive_pilot_user,
+        self.inactive_pilot_staff = ensure_staff_profile(
+            self.inactive_pilot_user,
             staff_no="P-201",
             name="离职飞手",
             employment_status=EmploymentStatus.INACTIVE,
-            staff_type=self.pilot_type,
         )
+        _inactive_tenant, inactive_member, _inactive_role = ensure_tenant_role_binding(
+            self.inactive_pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手操作员",
+        )
+        ensure_tenant_member_position(inactive_member, code="pilot_operator", name="飞手操作员")
 
-        self.observer_type = StaffType.objects.create(code="route_planner", name="航线规划员", status=1)
         self.observer_user = User.objects.create_user(username="planner_a", password="pass1234", status=1)
-        self.observer_staff = StaffProfile.objects.create(
-            user=self.observer_user,
+        self.observer_staff = ensure_staff_profile(
+            self.observer_user,
             staff_no="R-200",
             name="规划员A",
             employment_status=EmploymentStatus.ACTIVE,
-            staff_type=self.observer_type,
         )
+        _observer_tenant, observer_member, _observer_role = ensure_tenant_role_binding(
+            self.observer_user,
+            tenant=self.tenant,
+            role_code="route_planner",
+            role_name="航线规划员",
+        )
+        ensure_tenant_member_position(observer_member, code="route_planner", name="航线规划员")
 
         self.drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-A-01",
             name="调度分配测试机",
             model="Matrice 300",
@@ -70,6 +95,7 @@ class DroneAssignmentApiTests(TestCase):
             status=DroneStatus.ENABLED,
         )
         self.secondary_drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-A-02",
             name="调度分配测试机2",
             model="Matrice 30",
@@ -77,6 +103,7 @@ class DroneAssignmentApiTests(TestCase):
             status=DroneStatus.ENABLED,
         )
         self.retired_drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-A-03",
             name="已退役无人机",
             model="Matrice 4",
@@ -85,17 +112,21 @@ class DroneAssignmentApiTests(TestCase):
         )
 
     def _grant_manage_permission(self, *, with_scope: bool = True):
-        group = Group.objects.create(name="无人机分配管理组")
-        perm = Permission.objects.get(content_type__app_label="drone_assignment", codename="manage_drone_assignment")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.dispatcher_type, group=group, status=ScopeStatus.ACTIVE)
         if with_scope:
-            GroupPermissionScope.objects.create(
-                group=group,
-                permission=perm,
-                scope_type=ScopeType.ALL,
-                status=ScopeStatus.ACTIVE,
+            grant_role_permissions(
+                self.role,
+                {"drone_assignment.manage_drone_assignment": ScopeType.ALL},
+                group_name="无人机分配管理组",
             )
+            return
+
+        group = Group.objects.create(name="无人机分配管理组-无scope")
+        permission = Permission.objects.get(
+            content_type__app_label="drone_assignment",
+            codename="manage_drone_assignment",
+        )
+        group.permissions.add(permission)
+        SystemRoleGroup.objects.create(system_role=self.role, group=group, status=1)
 
     def _authenticate_dispatcher(self):
         self.client.force_authenticate(self.dispatcher_user)

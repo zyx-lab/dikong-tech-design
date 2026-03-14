@@ -1,17 +1,17 @@
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.access.models import (
     AuditLog,
     EmploymentStatus,
-    GroupPermissionScope,
-    ScopeStatus,
     ScopeType,
-    StaffProfile,
-    StaffType,
-    StaffTypeGroup,
+)
+from apps.access.test_support import (
+    ensure_staff_profile,
+    ensure_tenant_member_position,
+    ensure_tenant_role_binding,
+    grant_role_permissions,
 )
 from apps.drone.models import Drone, DroneStatus
 from apps.mission.models import Mission, MissionStatus
@@ -24,25 +24,31 @@ User = get_user_model()
 class RouteApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.staff_type = StaffType.objects.create(code="route_admin_test", name="航线管理员", status=1)
-        self.pilot_staff_type = StaffType.objects.create(code="route_pilot_test", name="飞手", status=1)
         self.user = User.objects.create_user(username="route_admin", password="pass1234", status=1)
         self.pilot_user = User.objects.create_user(username="route_pilot", password="pass1234", status=1)
-        self.staff = StaffProfile.objects.create(
-            user=self.user,
-            staff_no="R-001",
-            name="航线管理员A",
-            employment_status=1,
-            staff_type=self.staff_type,
-        )
-        self.pilot_staff = StaffProfile.objects.create(
-            user=self.pilot_user,
+        self.staff = ensure_staff_profile(self.user, staff_no="R-001", name="航线管理员A", employment_status=1)
+        self.pilot_staff = ensure_staff_profile(
+            self.pilot_user,
             staff_no="P-001",
             name="飞手A",
             employment_status=EmploymentStatus.ACTIVE,
-            staff_type=self.pilot_staff_type,
         )
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            tenant_code="route_test_tenant",
+            role_code="route_test_role",
+            role_name="航线测试角色",
+        )
+        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手")
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
         self.drone = Drone.objects.create(
+            tenant=self.tenant,
             code="ROUTE-DRN-001",
             name="航线测试机",
             model="M300",
@@ -51,21 +57,16 @@ class RouteApiTests(TestCase):
         )
 
     def _grant_permission(self, permission_code: str, with_scope: bool = True):
-        app_label, codename = permission_code.split(".", 1)
-        perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-        group = Group.objects.create(name=f"{permission_code}-group")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.staff_type, group=group, status=ScopeStatus.ACTIVE)
         if with_scope:
-            GroupPermissionScope.objects.create(
-                group=group,
-                permission=perm,
-                scope_type=ScopeType.ALL,
-                status=ScopeStatus.ACTIVE,
+            grant_role_permissions(
+                self.role,
+                {permission_code: ScopeType.ALL},
+                group_name=f"{permission_code}-group",
             )
 
     def _create_route(self, *, name: str, status: int = RouteStatus.ACTIVE, route_type: int = RouteType.PENDING_EXTENSION) -> Route:
         return Route.objects.create(
+            tenant=self.tenant,
             name=name,
             route_type=route_type,
             status=status,
@@ -83,6 +84,7 @@ class RouteApiTests(TestCase):
 
     def _create_mission(self, route: Route, *, name: str = "引用航线任务", status: int = MissionStatus.PENDING) -> Mission:
         return Mission.objects.create(
+            tenant=self.tenant,
             name=name,
             route=route,
             route_name=route.name,

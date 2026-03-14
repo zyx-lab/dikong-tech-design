@@ -1,12 +1,17 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.access.models import AuditLog, EmploymentStatus, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, StaffType, StaffTypeGroup
+from apps.access.models import AuditLog, EmploymentStatus, ScopeType
+from apps.access.test_support import (
+    ensure_staff_profile,
+    ensure_tenant_member_position,
+    ensure_tenant_role_binding,
+    grant_role_permissions,
+)
 from apps.drone.models import Drone, DroneStatus
 from apps.flight_record.models import FlightRecord, FlightRecordStatus
 from apps.mission.models import Mission, MissionStatus
@@ -20,29 +25,39 @@ class FlightRecordApiTests(TestCase):
         self.client = APIClient()
         self._flight_no_seq = 1
 
-        self.viewer_staff_type = StaffType.objects.create(code="flight_record_viewer_test", name="飞行记录查看员", status=1)
-        self.pilot_staff_type = StaffType.objects.create(code="pilot_operator", name="飞手", status=1)
-
         self.viewer_user = User.objects.create_user(username="flight_record_viewer", password="pass1234", status=1)
-        self.viewer_staff = StaffProfile.objects.create(
-            user=self.viewer_user,
+        self.viewer_staff = ensure_staff_profile(
+            self.viewer_user,
             staff_no="FR-001",
             name="记录查看员A",
             employment_status=EmploymentStatus.ACTIVE,
-            staff_type=self.viewer_staff_type,
         )
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.viewer_user,
+            tenant_code="flight_record_test_tenant",
+            role_code="flight_record_test_role",
+            role_name="飞行记录测试角色",
+        )
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
         self.pilot_user = User.objects.create_user(username="flight_record_pilot", password="pass1234", status=1)
-        self.pilot_staff = StaffProfile.objects.create(
-            user=self.pilot_user,
+        self.pilot_staff = ensure_staff_profile(
+            self.pilot_user,
             staff_no="FR-P-001",
             name="飞手A",
             employment_status=EmploymentStatus.ACTIVE,
-            staff_type=self.pilot_staff_type,
         )
+        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手")
 
-        self.route = Route.objects.create(name="飞行记录测试航线", status=RouteStatus.ACTIVE)
+        self.route = Route.objects.create(tenant=self.tenant, name="飞行记录测试航线", status=RouteStatus.ACTIVE)
         self.drone = Drone.objects.create(
+            tenant=self.tenant,
             code="FR-DRN-001",
             name="飞行记录测试机",
             model="M300",
@@ -50,6 +65,7 @@ class FlightRecordApiTests(TestCase):
             status=DroneStatus.ENABLED,
         )
         self.mission = Mission.objects.create(
+            tenant=self.tenant,
             name="飞行记录测试任务",
             route=self.route,
             route_name=self.route.name,
@@ -61,16 +77,10 @@ class FlightRecordApiTests(TestCase):
         )
 
     def _grant_permission(self, permission_code: str):
-        app_label, codename = permission_code.split(".", 1)
-        perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-        group = Group.objects.create(name=f"{permission_code}-group")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.viewer_staff_type, group=group, status=ScopeStatus.ACTIVE)
-        GroupPermissionScope.objects.create(
-            group=group,
-            permission=perm,
-            scope_type=ScopeType.ALL,
-            status=ScopeStatus.ACTIVE,
+        grant_role_permissions(
+            self.role,
+            {permission_code: ScopeType.ALL},
+            group_name=f"{permission_code}-group",
         )
 
     def _create_flight_record(self, *, status: int = FlightRecordStatus.COMPLETED, mission: Mission | None = None) -> FlightRecord:

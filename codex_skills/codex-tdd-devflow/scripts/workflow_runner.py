@@ -55,6 +55,9 @@ LOGICAL_STAGE_NAMES = {
     7: "回退",
 }
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
+STAGE0_NEW_API_MODE = "new_api"
+STAGE0_REPAIR_API_MODE = "repair_api"
+STAGE0_BOOTSTRAP_MODE = "bootstrap_seed"
 SKILL_FILE = Path(__file__).resolve()
 SKILL_NAME = SKILL_FILE.parent.parent.name
 REPO_ROOT_ENV_VARS = ("CODEX_DEVFLOW_ROOT", "CODEX_WORKSPACE_ROOT")
@@ -396,6 +399,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "status": "idle",
     "current_stage": 0,
     "running_iteration": 1,
+    "iteration_delivery_mode": "",
     "running_stage": None,
     "running_started_at": "",
     "running_pid": None,
@@ -2079,6 +2083,51 @@ def normalize_business_code_list(raw: Any, allowed_codes: list[str] | None = Non
     }
     return [item for item in normalized if item in allowed]
 
+
+def normalize_stage0_change_mode(raw: Any) -> str:
+    value = str(raw).strip().lower().replace("-", "_").replace(" ", "_")
+    if value in {
+        "",
+        "new",
+        "new_api",
+        "feature",
+        "feature_api",
+        "新增",
+        "新增接口",
+        "default",
+    }:
+        return STAGE0_NEW_API_MODE
+    if value in {
+        "repair",
+        "repair_api",
+        "fix",
+        "fix_api",
+        "hotfix",
+        "existing_api_fix",
+        "修复",
+        "修复链路",
+        "修复接口",
+    }:
+        return STAGE0_REPAIR_API_MODE
+    return STAGE0_NEW_API_MODE
+
+
+def summarize_stage0_delivery_mode(candidates: list[dict[str, Any]], *, bootstrap_mode: bool) -> str:
+    if bootstrap_mode:
+        return STAGE0_BOOTSTRAP_MODE
+    modes = dedupe_keep_order(
+        [
+            normalize_stage0_change_mode(item.get("change_mode", STAGE0_NEW_API_MODE))
+            for item in candidates
+            if isinstance(item, dict)
+        ]
+    )
+    if not modes:
+        return ""
+    if len(modes) == 1:
+        return modes[0]
+    return "mixed"
+
 def _normalize_stage0_session_api_candidate(
     paths: Paths,
     raw: dict[str, Any],
@@ -2114,6 +2163,10 @@ def _normalize_stage0_session_api_candidate(
     risk = str(raw.get("risk", "medium")).strip().lower()
     if risk not in {"low", "medium", "high"}:
         risk = "medium"
+    raw_change_mode = raw.get("change_mode", raw.get("delivery_mode", raw.get("candidate_mode", raw.get("lane", ""))))
+    if not raw_change_mode and bool(raw.get("repair", False)):
+        raw_change_mode = STAGE0_REPAIR_API_MODE
+    change_mode = normalize_stage0_change_mode(raw_change_mode)
 
     return {
         "entity": entity,
@@ -2123,6 +2176,7 @@ def _normalize_stage0_session_api_candidate(
         "semantic_description": semantic_description,
         "reason": reason,
         "risk": risk,
+        "change_mode": change_mode,
         "source": "session_semantic",
         "index": idx,
     }
@@ -2156,12 +2210,24 @@ def load_stage0_session_api_candidates(
         if api_key in seen_api_keys:
             warnings.append(f"line_{idx}: duplicated_api_key")
             continue
-        if api_key in existing_api_keys:
-            warnings.append(f"line_{idx}: already_registered")
-            continue
-        if api_key in observed_api_keys:
-            warnings.append(f"line_{idx}: already_observed_in_codebase")
-            continue
+        change_mode = normalize_stage0_change_mode(candidate.get("change_mode", STAGE0_NEW_API_MODE))
+        candidate["change_mode"] = change_mode
+        already_registered = api_key in existing_api_keys
+        already_observed = api_key in observed_api_keys
+
+        if change_mode == STAGE0_REPAIR_API_MODE:
+            if not already_registered and not already_observed:
+                warnings.append(f"line_{idx}: repair_target_not_found")
+                continue
+            if already_observed and not already_registered:
+                warnings.append(f"line_{idx}: repair_target_observed_but_not_registered")
+        else:
+            if already_registered:
+                warnings.append(f"line_{idx}: already_registered_use_change_mode_repair_api")
+                continue
+            if already_observed:
+                warnings.append(f"line_{idx}: already_observed_in_codebase")
+                continue
 
         seen_api_keys.add(api_key)
         normalized.append(candidate)
@@ -3632,6 +3698,8 @@ def summarize_stage_artifact(stage: int, artifact: dict[str, Any] | None, paths:
                 "risk_assessment",
                 "semantic_gap_report",
                 "candidate_source",
+                "candidate_change_modes",
+                "iteration_delivery_mode",
                 "session_api_candidate_file",
                 "session_api_candidate_count",
                 "session_api_warnings",
@@ -3801,6 +3869,10 @@ def build_stage_brief(stage: int, artifact: dict[str, Any] | None) -> dict[str, 
                 "candidate_count": len(candidates) if isinstance(candidates, list) else 0,
                 "candidate_api": first_candidate.get("api_key") if isinstance(first_candidate, dict) else "",
                 "candidate_source": artifact.get("candidate_source", ""),
+                "candidate_change_mode": (
+                    first_candidate.get("change_mode", STAGE0_NEW_API_MODE) if isinstance(first_candidate, dict) else ""
+                ),
+                "iteration_delivery_mode": artifact.get("iteration_delivery_mode", ""),
                 "touched_entities": touched_entities if isinstance(touched_entities, list) else [],
             }
         )
@@ -3812,6 +3884,7 @@ def build_stage_brief(stage: int, artifact: dict[str, Any] | None) -> dict[str, 
             {
                 "task_count": len(tasks) if isinstance(tasks, list) else 0,
                 "touched_entities": artifact.get("touched_entities", []),
+                "iteration_delivery_mode": artifact.get("iteration_delivery_mode", ""),
             }
         )
         return brief
@@ -3937,6 +4010,7 @@ def build_running_stage_brief(state: dict[str, Any]) -> dict[str, Any]:
         "logical_stage": logical_stage_for_internal(stage),
         "stage_name": logical_stage_name(stage),
         "status": "running",
+        "iteration_delivery_mode": str(state.get("iteration_delivery_mode", "")).strip(),
         "running_started_at": str(state.get("running_started_at", "")).strip(),
         "trigger_source": str(state.get("running_trigger_source", "")).strip(),
         "latest_completed_stage": state.get("last_completed_stage"),
@@ -4119,6 +4193,7 @@ def _build_status_brief_payload_unlocked(paths: Paths) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "status": state.get("status"),
         "iteration": int(state.get("running_iteration", 1)),
+        "iteration_delivery_mode": str(state.get("iteration_delivery_mode", "")).strip(),
         "logical_stage": logical_stage_for_internal(internal_stage),
         "stage_name": logical_stage_name(internal_stage),
         "internal_stage": internal_stage,
@@ -4155,6 +4230,7 @@ def _build_gate_brief_payload_unlocked(paths: Paths) -> dict[str, Any]:
 
     return {
         "status": "waiting_decision",
+        "iteration_delivery_mode": str(state.get("iteration_delivery_mode", "")).strip(),
         "logical_stage": logical_stage_for_internal(stage),
         "stage_name": logical_stage_name(stage),
         "internal_stage": stage,
@@ -4728,6 +4804,7 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
                     "expected_business_codes": [],
                     "semantic_title": "",
                     "semantic_description": "",
+                    "change_mode": STAGE0_NEW_API_MODE,
                 }
                 for api_key in observed_api_keys
                 if api_key not in existing_api_keys
@@ -4745,12 +4822,21 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
     max_new_api = int(spec.get("max_new_api_per_iteration", 1))
     if not bootstrap_mode:
         selected_candidates = selected_candidates[: max(1, max_new_api)]
+    candidate_change_modes = dedupe_keep_order(
+        [
+            normalize_stage0_change_mode(item.get("change_mode", STAGE0_NEW_API_MODE))
+            for item in selected_candidates
+            if isinstance(item, dict)
+        ]
+    )
+    iteration_delivery_mode = summarize_stage0_delivery_mode(selected_candidates, bootstrap_mode=bootstrap_mode)
     for item in selected_candidates:
         reason = str(item.get("reason", "")).strip() or "由当前 Codex session 基于业务语义提名，需人工 review"
         risk = str(item.get("risk", "medium")).strip().lower()
         if risk not in {"low", "medium", "high"}:
             risk = "medium"
         entity = normalize_entity_name(str(item.get("entity", "")))
+        change_mode = normalize_stage0_change_mode(item.get("change_mode", STAGE0_NEW_API_MODE))
         if bootstrap_mode and observed_set and item["api_key"] in observed_set:
             reason = "bootstrap 扫描发现存量 API，按流程批量初始化处理"
             risk = "medium"
@@ -4763,6 +4849,7 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
                 "semantic_description": str(item.get("semantic_description", "")).strip(),
                 "reason": reason,
                 "risk": risk,
+                "change_mode": change_mode,
             }
         )
 
@@ -4802,6 +4889,8 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
         "semantic_gap_report": semantic_gap_report,
         "api_registry_items": len(existing_api_keys),
         "candidate_source": candidate_source,
+        "candidate_change_modes": candidate_change_modes,
+        "iteration_delivery_mode": iteration_delivery_mode,
         "session_api_candidate_file": rel_path(paths, paths.session_api_candidates),
         "session_api_candidate_count": len(session_candidates),
         "session_api_warnings": session_api_warnings,
@@ -4823,11 +4912,15 @@ def stage0(paths: Paths, spec: dict[str, Any]) -> StageResult:
 def stage1(paths: Paths, spec: dict[str, Any]) -> StageResult:
     stage0_artifact = read_json(paths.stage_artifact(0), {})
     candidate = None
+    candidate_change_mode = STAGE0_NEW_API_MODE
+    iteration_delivery_mode = ""
     touched_entities: list[str] = []
     if isinstance(stage0_artifact, dict):
         candidates = stage0_artifact.get("api_candidates", [])
         if isinstance(candidates, list) and candidates:
             candidate = candidates[0]
+            candidate_change_mode = normalize_stage0_change_mode(candidate.get("change_mode", STAGE0_NEW_API_MODE))
+        iteration_delivery_mode = str(stage0_artifact.get("iteration_delivery_mode", "")).strip()
         entities = stage0_artifact.get("touched_entities", [])
         if isinstance(entities, list):
             normalized_entities: list[str] = []
@@ -4837,19 +4930,30 @@ def stage1(paths: Paths, spec: dict[str, Any]) -> StageResult:
                     normalized_entities.append(normalized)
             touched_entities = dedupe_keep_order(normalized_entities)
 
+    if candidate_change_mode == STAGE0_REPAIR_API_MODE:
+        implementation_tasks = [
+            "围绕 stage0 focus API 修复既有 serializer/view/权限/业务状态码与返回契约",
+            "补充回归测试并确认既有 API 在线、行为与当前业务文档一致",
+        ]
+    else:
+        implementation_tasks = [
+            "根据 stage0 候选 API 完成 serializer/view/urls 与权限接入",
+            "补充对应测试与业务状态码处理",
+        ]
+
     artifact = {
         "stage": 1,
         "generated_at": now_iso(),
-        "implementation_tasks": [
-            "根据 stage0 候选 API 完成 serializer/view/urls 与权限接入",
-            "补充对应测试与业务状态码处理",
-        ],
+        "implementation_tasks": implementation_tasks,
         "changed_files": [],
         "notes": [
             "Runner 当前生成的是执行计划模板，具体代码变更由开发会话执行",
             f"candidate={candidate}",
+            f"iteration_delivery_mode={iteration_delivery_mode or candidate_change_mode}",
         ],
         "touched_entities": touched_entities,
+        "iteration_delivery_mode": iteration_delivery_mode or candidate_change_mode,
+        "focus_api_change_mode": candidate_change_mode,
     }
     return StageResult(stage=1, artifact=artifact, next_stage=2)
 
@@ -4921,34 +5025,34 @@ def _scan_api_from_local_schema(paths: Paths, command: list[str]) -> tuple[list[
 
 def discover_apis(paths: Paths, spec: dict[str, Any]) -> tuple[list[str], str, str]:
     business_api = spec.get("business_api", {})
+    internal_api = spec.get("internal_api", {})
     schema_url = str(business_api.get("schema_url", "")).strip()
     root_url = str(business_api.get("root_url", "")).strip()
     timeout_seconds = int(business_api.get("timeout_seconds", 5))
     ignore_patterns = configured_ignore_api_patterns(spec)
     errors: list[str] = []
+    all_scanned: list[str] = []
 
+    # 首先尝试 schema_url 或 root_url
     if schema_url:
         try:
             raw_scanned, source = _scan_api_from_schema(schema_url, timeout_seconds)
             scanned = filter_api_keys(raw_scanned, ignore_patterns)
             if scanned:
-                return scanned, source, ""
+                all_scanned.extend(scanned)
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError) as exc:
             errors.append(f"schema_error={exc}")
-        else:
-            errors.append("schema_error=schema_empty_after_ignore" if raw_scanned else "schema_error=schema_empty")
 
     if root_url:
         try:
             raw_scanned, source = _scan_api_from_root(root_url, timeout_seconds)
             scanned = filter_api_keys(raw_scanned, ignore_patterns)
             if scanned:
-                return scanned, source, ""
+                all_scanned.extend(scanned)
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError) as exc:
             errors.append(f"root_error={exc}")
-        else:
-            errors.append("root_error=root_empty_after_ignore" if raw_scanned else "root_error=root_empty")
 
+    # 扫描 business_api (local scan)
     local_enabled = bool(business_api.get("local_scan_enabled", True))
     if local_enabled:
         local_command = business_api.get("local_scan_command")
@@ -4975,18 +5079,47 @@ def discover_apis(paths: Paths, spec: dict[str, Any]) -> tuple[list[str], str, s
             raw_scanned, source = _scan_api_from_local_schema(paths, command)
             scanned = filter_api_keys(raw_scanned, ignore_patterns)
             if scanned:
-                return scanned, source, ""
-            errors.append(
-                "local_error=local_schema_empty_after_ignore" if raw_scanned else "local_error=local_schema_empty"
-            )
+                all_scanned.extend(scanned)
+            else:
+                errors.append(
+                    "local_error=local_schema_empty_after_ignore" if raw_scanned else "local_error=local_schema_empty"
+                )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             errors.append(f"local_error={exc}")
-    else:
-        errors.append("local_error=local_scan_disabled")
 
-    if not errors:
-        errors.append("scan_error=unknown")
-    return [], "none", "; ".join(errors)
+    # 扫描 internal_api (如果配置了)
+    internal_local_enabled = bool(internal_api.get("local_scan_enabled", False))
+    if internal_local_enabled:
+        internal_urlconf = str(internal_api.get("local_scan_urlconf", "")).strip()
+        if internal_urlconf:
+            internal_ignore_patterns = internal_api.get("ignore_api_patterns", [])
+            venv_python = paths.root / ".venv" / "bin" / "python"
+            python_bin = venv_python.as_posix() if venv_python.exists() else sys.executable
+            command = [
+                python_bin,
+                "manage.py",
+                "spectacular",
+                "--format",
+                "openapi-json",
+                "--urlconf",
+                internal_urlconf,
+            ]
+            try:
+                raw_scanned, _ = _scan_api_from_local_schema(paths, command)
+                # 应用 internal_api 特定的 ignore_patterns
+                scanned = filter_api_keys(raw_scanned, internal_ignore_patterns)
+                if scanned:
+                    all_scanned.extend(scanned)
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                errors.append(f"internal_local_error={exc}")
+
+    # 去重并返回结果
+    if all_scanned:
+        return sorted(set(all_scanned)), "local_openapi", ""
+    else:
+        if not errors:
+            errors.append("scan_error=unknown")
+        return [], "none", "; ".join(errors)
 
 
 def _extract_registry_api_keys(api_registry: dict[str, Any], ignore_patterns: list[str] | None = None) -> list[str]:
@@ -5165,6 +5298,7 @@ def stage0_candidate_api_items_from_artifact(stage0_artifact: dict[str, Any]) ->
                 "semantic_description": str(item.get("semantic_description", "")).strip(),
                 "reason": str(item.get("reason", "")).strip(),
                 "risk": str(item.get("risk", "")).strip().lower(),
+                "change_mode": normalize_stage0_change_mode(item.get("change_mode", STAGE0_NEW_API_MODE)),
             }
         )
     return items
@@ -7943,6 +8077,9 @@ def run_one_stage(
             if has_candidates and not semantic_blocking and not replan_blocking:
                 state["stage0_replan_required"] = False
                 state["stage0_last_replan_at"] = str(result.artifact.get("session_api_candidate_mtime", "")).strip()
+                state["iteration_delivery_mode"] = str(result.artifact.get("iteration_delivery_mode", "")).strip()
+            else:
+                state["iteration_delivery_mode"] = ""
 
         gate_policy = gate_for_stage(spec, stage) if result.gate else None
         if stage == 3 and result.gate and not gate_policy:
@@ -8350,6 +8487,7 @@ def resume(paths: Paths, auto_continue: bool) -> str:
         if next_stage == 0:
             state["stage0_replan_required"] = True
             state["stage0_entered_at"] = now_iso()
+            state["iteration_delivery_mode"] = ""
         pending_stage = int(pending.get("stage", -1))
         if should_increment_iteration_on_decision(pending_stage, next_stage, action):
             state["running_iteration"] = int(state.get("running_iteration", 1)) + 1

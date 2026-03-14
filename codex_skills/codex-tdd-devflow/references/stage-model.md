@@ -56,6 +56,7 @@ Stage0 到 Stage4 共同遵守：
 
 - 选择本轮 focus API
 - 为候选 API 显式确认 `entity`
+- 为候选 API 显式确认本轮链路：`new_api` 或 `repair_api`
 
 主要输入：
 
@@ -69,6 +70,13 @@ Stage0 到 Stage4 共同遵守：
 - `api_candidates`
 - `touched_entities`
 - `required_case_codes`
+- `iteration_delivery_mode`
+
+补充说明：
+
+- `new_api` 用于提名当前 registry 中还不存在的新增接口
+- `repair_api` 用于提名“已经注册或已在代码中暴露、但需要按当前业务语义修正”的既有接口
+- `repair_api` 不再因为 `already_registered` 被直接丢弃；runner 会把本轮状态标记为修复链路
 
 阻断信号：
 
@@ -82,6 +90,10 @@ Stage0 到 Stage4 共同遵守：
 
 - 实现、修正、优化 API
 - 确认 API 在系统中可观测
+
+补充说明：
+
+- 若 Stage0 进入 `repair_api` 链路，Stage1 的重点是修复既有路由的契约、权限、测试与文档一致性，而不是新增路由
 
 主要动作：
 

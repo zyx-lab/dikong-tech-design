@@ -74,6 +74,34 @@ PostgreSQL
 - ACTIVE = 1, "active"
 - DISABLED = 2, "disabled"
 
+### TenantMemberPosition 表 (tenant_member_positions)
+
+| 字段 | 类型 | 说明 |
+|-----|------|------|
+| id | BigAutoField | 主键 |
+| tenant_member | ForeignKey(TenantMember) | 所属租户成员 |
+| code | CharField(64) | 岗位编码 |
+| name | CharField(128) | 岗位名称 |
+| description | CharField(255) | 岗位描述 |
+| status | SmallIntegerField | 状态：0=disabled，1=active |
+| created_at | DateTimeField | 创建时间 |
+| updated_at | DateTimeField | 更新时间 |
+
+### TenantMemberQualification 表 (tenant_member_qualifications)
+
+| 字段 | 类型 | 说明 |
+|-----|------|------|
+| id | BigAutoField | 主键 |
+| tenant_member | ForeignKey(TenantMember) | 所属租户成员 |
+| code | CharField(64) | 资质编码 |
+| name | CharField(128) | 资质名称 |
+| description | CharField(255) | 资质描述 |
+| status | SmallIntegerField | 状态：0=disabled，1=active |
+| valid_until | DateField | 资质有效期截止日，可空 |
+| payload | JSONField | 资质扩展信息 |
+| created_at | DateTimeField | 创建时间 |
+| updated_at | DateTimeField | 更新时间 |
+
 ---
 
 ## API 实现
@@ -714,6 +742,46 @@ PostgreSQL
   4. 拒绝成功后删除该待确认成员记录，使其不再出现在邀请列表中
   5. 记录 `TENANT_MEMBER_REJECT_INVITATION` 租户级审计日志
 
+### 13.3 获取当前租户权限快照
+
+- 功能：已登录用户在当前租户上下文内读取自己的权限与 scope 快照
+- 路径：`/internal/auth/me/permissions`
+- 方法：`GET`
+- 权限：已登录用户
+- 请求头：
+```http
+X-Tenant-Code: tenant_a
+```
+- 响应（成功，200）：
+```json
+{
+  "business_code": "SUCCESS",
+  "business_detail_code": "OK",
+  "tenant_code": "tenant_a",
+  "roles": ["tenant_admin"],
+  "items": [
+    {
+      "permission": "access.manage_tenant_member",
+      "scope": "ALL",
+      "enabled": true
+    }
+  ]
+}
+```
+- 响应（权限不足，403）：
+```json
+{
+  "business_code": "PERMISSION_DENIED",
+  "business_detail_code": "TENANT_CONTEXT_REQUIRED"
+}
+```
+- 实现说明：
+  1. 依赖 `TenantContextMiddleware` 从 `X-Tenant-Code` 解析当前租户
+  2. 非 superuser 必须是当前租户下的 `ACTIVE` 成员；否则返回 `TENANT_MEMBERSHIP_REQUIRED`
+  3. 权限来源改为当前租户成员绑定的固定角色，多个角色的权限取并集，scope 取更高等级
+  4. 当前实现直接查询 `SystemRoleGroup -> GroupPermissionScope` 矩阵，不再桥接 `StaffType`
+  5. 响应统一补齐 `business_code`、`business_detail_code`、`tenant_code` 与当前角色列表
+
 ### 14. 查看租户级审计日志
 
 - 功能：在租户上下文内查看当前租户的治理审计日志
@@ -744,13 +812,13 @@ X-Tenant-Code: tenant_a
 ```json
 {
   "business_code": "PERMISSION_DENIED",
-  "business_detail_code": "TENANT_AUDIT_FORBIDDEN"
+  "business_detail_code": "PERMISSION_DENIED"
 }
 ```
 - 实现说明：
   1. 依赖 `TenantContextMiddleware` 从 `X-Tenant-Code` 解析当前租户
   2. 只允许当前租户下 `ACTIVE` 成员访问
-  3. 成员角色必须包含 `tenant_admin` 或 `business_admin`
+  3. 成员必须在当前租户内具备 `access.view_auth_audit_logs`
   4. 只返回 `AuditLog.tenant = request.tenant_context` 的记录
   5. 过滤掉其他租户与平台级审计日志
 

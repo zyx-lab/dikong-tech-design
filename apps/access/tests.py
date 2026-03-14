@@ -13,15 +13,15 @@ from apps.access.models import (
     ScopeStatus,
     ScopeType,
     StaffProfile,
-    StaffType,
-    StaffTypeGroup,
     SystemRole,
+    SystemRoleGroup,
     Tenant,
     TenantMember,
     TenantMemberStatus,
     TenantStatus,
 )
 from apps.access.services import AuthorizationReason, AuthzService
+from apps.access.test_support import build_request, ensure_staff_profile, ensure_tenant_role_binding, grant_role_permissions
 
 User = get_user_model()
 
@@ -34,37 +34,35 @@ class DummyOwnedObject:
 class AuthzServiceTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="u1", password="pass1234", status=1)
-        self.staff_type = StaffType.objects.create(code="dispatcher", name="Dispatcher", status=1)
-        self.staff = StaffProfile.objects.create(
-            user=self.user,
+        self.staff = ensure_staff_profile(
+            self.user,
             staff_no="S001",
             name="Alice",
-            employment_status=1,
-            staff_type=self.staff_type,
         )
-
-        self.group = Group.objects.create(name="cap_staff_self")
-        StaffTypeGroup.objects.create(staff_type=self.staff_type, group=self.group, status=ScopeStatus.ACTIVE)
-
-        self.permission = Permission.objects.get(content_type__app_label="auth", codename="view_group")
-        self.group.permissions.add(self.permission)
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            role_code="authz_service_test_role",
+            role_name="授权服务测试角色",
+            tenant_code="authz_service_tenant",
+        )
+        self.request = build_request(self.user, self.tenant)
 
     def test_authorize_with_own_scope_success(self):
-        GroupPermissionScope.objects.create(
-            group=self.group,
-            permission=self.permission,
-            scope_type=ScopeType.OWN,
-            status=ScopeStatus.ACTIVE,
-        )
+        grant_role_permissions(self.role, {"auth.view_group": ScopeType.OWN}, group_name="authz-own-group")
 
         obj = DummyOwnedObject(created_by_staff_id=self.staff.id)
-        decision = AuthzService.authorize(self.user, "auth.view_group", obj=obj)
+        decision = AuthzService.authorize(self.request, "auth.view_group", obj=obj)
 
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.scope, ScopeType.OWN)
 
     def test_authorize_denied_when_scope_missing(self):
-        decision = AuthzService.authorize(self.user, "auth.view_group")
+        permission = Permission.objects.get(content_type__app_label="auth", codename="view_group")
+        group = Group.objects.create(name="authz-no-scope-group")
+        group.permissions.add(permission)
+        SystemRoleGroup.objects.create(system_role=self.role, group=group, status=ScopeStatus.ACTIVE)
+
+        decision = AuthzService.authorize(self.request, "auth.view_group")
         self.assertFalse(decision.allowed)
         self.assertEqual(decision.reason_code, AuthorizationReason.SCOPE_NOT_CONFIGURED)
 
@@ -73,36 +71,27 @@ class AuthzApiSmokeTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.user = User.objects.create_user(username="admin", password="pass1234", status=1)
-
-        self.staff_type = StaffType.objects.create(code="ops_admin", name="Admin管理员", status=1)
-        StaffProfile.objects.create(
-            user=self.user,
+        self.staff = ensure_staff_profile(
+            self.user,
             staff_no="S002",
             name="Bob",
-            employment_status=1,
-            staff_type=self.staff_type,
         )
-
-        auth_group = Group.objects.create(name="cap_auth_admin")
-        StaffTypeGroup.objects.create(staff_type=self.staff_type, group=auth_group, status=ScopeStatus.ACTIVE)
-
-        manage_group_perm = Permission.objects.get(content_type__app_label="access", codename="manage_auth_groups")
-        manage_user_perm = Permission.objects.get(content_type__app_label="access", codename="manage_user_accounts")
-        auth_group.permissions.add(manage_group_perm, manage_user_perm)
-        GroupPermissionScope.objects.create(
-            group=auth_group,
-            permission=manage_group_perm,
-            scope_type=ScopeType.ALL,
-            status=ScopeStatus.ACTIVE,
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            role_code="iam_admin_test_role",
+            role_name="IAM 管理测试角色",
+            tenant_code="iam_admin_tenant",
         )
-        GroupPermissionScope.objects.create(
-            group=auth_group,
-            permission=manage_user_perm,
-            scope_type=ScopeType.ALL,
-            status=ScopeStatus.ACTIVE,
+        grant_role_permissions(
+            self.role,
+            {
+                "access.manage_auth_groups": ScopeType.ALL,
+                "access.manage_user_accounts": ScopeType.ALL,
+            },
+            group_name="iam-admin-group",
         )
-
         self.client.force_authenticate(self.user)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def test_group_list_api(self):
         response = self.client.get("/internal/auth/groups")
@@ -119,7 +108,6 @@ class AuthzApiSmokeTests(TestCase):
                 "staff_no": "S003",
                 "name": "Chris",
                 "employment_status": 1,
-                "staff_type": self.staff_type.id,
             },
         }
         response = self.client.post("/internal/auth/users", payload, format="json")
@@ -151,7 +139,6 @@ class AuthzApiSmokeTests(TestCase):
                 "staff_no": "S910",
                 "name": "Should Fail",
                 "employment_status": 1,
-                "staff_type": self.staff_type.id,
             },
         }
         response = self.client.post("/internal/auth/users", payload, format="json")
@@ -165,7 +152,6 @@ class AuthzApiSmokeTests(TestCase):
                 "staff_no": "S900",
                 "name": "Root Staff",
                 "employment_status": 1,
-                "staff_type": self.staff_type.id,
             }
         }
         response = self.client.patch(f"/internal/auth/users/{target.id}", payload, format="json")
@@ -179,7 +165,6 @@ class AuthzApiSmokeTests(TestCase):
             staff_no="S901",
             name="Clear Staff",
             employment_status=1,
-            staff_type=self.staff_type,
         )
         response = self.client.patch(f"/internal/auth/users/{target.id}", {"staff": None}, format="json")
         self.assertEqual(response.status_code, 400)
@@ -212,8 +197,6 @@ class UserSelfRegisterAPITests(TestCase):
         self.assertFalse(user.is_staff)
         self.assertEqual(user.staff_profile.name, "注册用户")
         self.assertEqual(user.staff_profile.phone, "13800138000")
-        self.assertEqual(user.staff_profile.staff_type.code, "pending_user")
-        self.assertEqual(user.staff_profile.staff_type.group_links.count(), 0)
 
         audit_log = AuditLog.objects.get(action="USER_REGISTER", target_id=str(user.id))
         self.assertEqual(audit_log.actor_user_id, user.id)
@@ -277,7 +260,6 @@ class UserPhoneRegisterAPITests(TestCase):
         self.assertTrue(user.is_active)
         self.assertEqual(user.staff_profile.phone, "13800138002")
         self.assertEqual(user.staff_profile.name, "手机用户8002")
-        self.assertEqual(user.staff_profile.staff_type.code, "pending_user")
 
         audit_log = AuditLog.objects.get(action="USER_REGISTER", target_id=str(user.id))
         self.assertEqual(audit_log.after_data["register_channel"], "phone")
@@ -466,6 +448,8 @@ class MeInvitationListAPITests(TestCase):
                     "tenant_name": "邀请租户A",
                     "display_name": "张三",
                     "roles": ["pilot_operator", "route_planner"],
+                    "positions": [],
+                    "qualifications": [],
                     "invitation_token": "invite-token-001",
                 }
             ],
@@ -508,6 +492,11 @@ class TenantAuditLogListAPITests(TestCase):
             joined_at=timezone.now(),
         )
         member.role_bindings.create(system_role=self.role_admin, status=1)
+        grant_role_permissions(
+            self.role_admin,
+            {"access.view_auth_audit_logs": ScopeType.ALL},
+            group_name="tenant-audit-admin-group",
+        )
 
         viewer_member = TenantMember.objects.create(
             tenant=self.tenant_a,
@@ -575,18 +564,105 @@ class TenantAuditLogListAPITests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "TENANT_AUDIT_FORBIDDEN")
+        self.assertEqual(response.data["business_detail_code"], "PERMISSION_DENIED")
+
+
+class MePermissionsAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="tenant_perm_user", password="pass1234", status=1)
+        self.tenant = Tenant.objects.create(code="tenant_perm_a", name="权限租户A", status=TenantStatus.ENABLED)
+
+        self.role_tenant_admin = SystemRole.objects.create(code="tenant_admin", name="租户管理员", status=1)
+        self.role_auditor = SystemRole.objects.create(code="auditor", name="审计员", status=1)
+
+        self.member = TenantMember.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            display_name="张三",
+            status=TenantMemberStatus.ACTIVE,
+            joined_at=timezone.now(),
+        )
+        self.member.role_bindings.create(system_role=self.role_tenant_admin, status=1)
+        self.member.role_bindings.create(system_role=self.role_auditor, status=1)
+
+        grant_role_permissions(
+            self.role_tenant_admin,
+            {
+                "access.view_user": ScopeType.ALL,
+                "access.view_tenant_member": ScopeType.ALL,
+                "access.manage_tenant_member": ScopeType.ALL,
+                "access.assign_tenant_member_role": ScopeType.ALL,
+            },
+            group_name="tenant-admin-me-permissions-group",
+        )
+        grant_role_permissions(
+            self.role_auditor,
+            {"access.view_auth_audit_logs": ScopeType.ALL},
+            group_name="auditor-me-permissions-group",
+        )
+
+    def test_auto__case_me_permissions_success(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get("/internal/auth/me/permissions", HTTP_X_TENANT_CODE=self.tenant.code)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["tenant_code"], self.tenant.code)
+        self.assertEqual(response.data["roles"], ["tenant_admin", "auditor"])
+        self.assertFalse(StaffProfile.objects.filter(user=self.user).exists())
+
+        items_by_permission = {item["permission"]: item for item in response.data["items"]}
+        self.assertEqual(items_by_permission["access.view_user"]["scope"], "ALL")
+        self.assertEqual(items_by_permission["access.view_auth_audit_logs"]["scope"], "ALL")
+        self.assertEqual(items_by_permission["access.view_tenant_member"]["scope"], "ALL")
+        self.assertEqual(items_by_permission["access.manage_tenant_member"]["scope"], "ALL")
+        self.assertEqual(items_by_permission["access.assign_tenant_member_role"]["scope"], "ALL")
+        self.assertTrue(all(item["enabled"] is True for item in response.data["items"]))
+
+    def test_auto__case_me_permissions_permission_denied_not_authenticated(self):
+        response = self.client.get("/internal/auth/me/permissions", HTTP_X_TENANT_CODE=self.tenant.code)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+
+    def test_auto__case_me_permissions_permission_denied_missing_tenant_context(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get("/internal/auth/me/permissions")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_CONTEXT_REQUIRED")
+
+    def test_auto__case_me_permissions_permission_denied_membership_required(self):
+        other_tenant = Tenant.objects.create(code="tenant_perm_b", name="权限租户B", status=TenantStatus.ENABLED)
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get("/internal/auth/me/permissions", HTTP_X_TENANT_CODE=other_tenant.code)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["business_detail_code"], "TENANT_MEMBERSHIP_REQUIRED")
 
 
 class SuperuserRootPolicyTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.superuser = User.objects.create_superuser(username="root_all", password="pass1234")
+        self.tenant = Tenant.objects.create(code="root_tenant_a", name="Root租户A", status=TenantStatus.ENABLED)
         self.client.force_authenticate(self.superuser)
 
     def test_me_permissions_should_return_all_for_superuser(self):
-        response = self.client.get("/internal/auth/me/permissions")
+        response = self.client.get("/internal/auth/me/permissions", HTTP_X_TENANT_CODE=self.tenant.code)
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["tenant_code"], self.tenant.code)
+        self.assertEqual(response.data["roles"], [])
         self.assertGreater(len(response.data["items"]), 0)
         self.assertTrue(all(item["scope"] == "ALL" for item in response.data["items"]))
         self.assertTrue(all(item["enabled"] is True for item in response.data["items"]))
@@ -596,25 +672,25 @@ class SeedRolePermissionsCommandTests(TestCase):
     def test_seed_role_permissions_replace_mode(self):
         call_command("seed_role_permissions")
 
-        ops_admin = StaffType.objects.get(code="ops_admin")
+        tenant_admin = SystemRole.objects.get(code="tenant_admin")
         self.assertEqual(
-            set(ops_admin.group_links.filter(status=ScopeStatus.ACTIVE).values_list("group__name", flat=True)),
-            {"权限策略管理组", "账号与人员查看组", "审计日志只读组", "无人机管理组"},
+            set(tenant_admin.group_links.filter(status=ScopeStatus.ACTIVE).values_list("group__name", flat=True)),
+            {"租户治理权限组", "业务管理员权限组"},
         )
 
-        dispatcher = StaffType.objects.get(code="dispatcher")
+        dispatcher = SystemRole.objects.get(code="dispatcher")
         self.assertEqual(
             set(dispatcher.group_links.filter(status=ScopeStatus.ACTIVE).values_list("group__name", flat=True)),
-            {"账号与人员查看组", "无人机全量查看组", "无人机分配管理组"},
+            {"任务调度权限组"},
         )
 
-        pilot_operator = StaffType.objects.get(code="pilot_operator")
+        pilot_operator = SystemRole.objects.get(code="pilot_operator")
         self.assertEqual(
             set(pilot_operator.group_links.filter(status=ScopeStatus.ACTIVE).values_list("group__name", flat=True)),
-            {"员工自助访问组", "无人机按分配查看组"},
+            {"飞手操作权限组"},
         )
 
-        business_admin = StaffType.objects.get(code="business_admin")
+        business_admin = SystemRole.objects.get(code="business_admin")
         self.assertEqual(
             set(
                 business_admin.group_links.filter(status=ScopeStatus.ACTIVE).values_list("group__name", flat=True)
@@ -625,7 +701,6 @@ class SeedRolePermissionsCommandTests(TestCase):
 
 class CreateBusinessAdminAccountCommandTests(TestCase):
     def test_create_business_admin_account(self):
-        call_command("seed_role_permissions")
         call_command(
             "create_business_admin_account",
             "--username",
@@ -646,7 +721,6 @@ class CreateBusinessAdminAccountCommandTests(TestCase):
         staff = StaffProfile.objects.get(user=user)
         self.assertEqual(staff.staff_no, "BS-001")
         self.assertEqual(staff.name, "业务管理员A")
-        self.assertEqual(staff.staff_type.code, "business_admin")
 
 
 class UserPermissionPolicyTests(TestCase):
@@ -663,7 +737,6 @@ class UserPermissionPolicyTests(TestCase):
             user.groups.add(group)
 
     def test_superuser_cannot_bind_staff_profile(self):
-        staff_type = StaffType.objects.create(code="policy_test", name="策略测试岗位", status=1)
         root = User.objects.create_superuser(username="root_policy", password="pass1234")
         with self.assertRaises(ValidationError):
             StaffProfile.objects.create(
@@ -671,7 +744,6 @@ class UserPermissionPolicyTests(TestCase):
                 staff_no="POL-001",
                 name="Root Policy",
                 employment_status=1,
-                staff_type=staff_type,
             )
 
 
@@ -902,7 +974,14 @@ class TenantInitializeAdminAPITests(TestCase):
     def test_auto__case_tenant_initialize_admin_success(self):
         response = self.client.post(
             f"/internal/auth/tenants/{self.tenant.id}/initialize-admin",
-            {"user_id": self.target_user.id, "display_name": "租户管理员A"},
+            {
+                "user_id": self.target_user.id,
+                "display_name": "租户管理员A",
+                "positions": [{"code": "tenant_lead", "name": "租户负责人"}],
+                "qualifications": [
+                    {"code": "security_training", "name": "安全培训", "valid_until": "2026-12-31"}
+                ],
+            },
             format="json",
         )
 
@@ -919,6 +998,8 @@ class TenantInitializeAdminAPITests(TestCase):
             list(member.role_bindings.filter(status=1).values_list("system_role__code", flat=True)),
             ["tenant_admin"],
         )
+        self.assertEqual(list(member.positions.values_list("code", flat=True)), ["tenant_lead"])
+        self.assertEqual(list(member.qualifications.values_list("code", flat=True)), ["security_training"])
 
         audit_log = AuditLog.objects.get(action="TENANT_ADMIN_INITIALIZE", target_id=str(member.id))
         self.assertIsNone(audit_log.tenant_id)
@@ -1221,6 +1302,8 @@ class TenantMemberInviteAPITests(TestCase):
                 "user_id": self.target_user.id,
                 "display_name": "张三",
                 "roles": ["pilot_operator"],
+                "positions": [{"code": "pilot_operator", "name": "飞手"}],
+                "qualifications": [{"code": "uav_license", "name": "无人机执照"}],
             },
             format="json",
         )
@@ -1235,6 +1318,8 @@ class TenantMemberInviteAPITests(TestCase):
         self.assertIsNone(member.joined_at)
         self.assertTrue(member.invitation_token)
         self.assertEqual(list(member.role_bindings.values_list("system_role__code", flat=True)), ["pilot_operator"])
+        self.assertEqual(list(member.positions.values_list("code", flat=True)), ["pilot_operator"])
+        self.assertEqual(list(member.qualifications.values_list("code", flat=True)), ["uav_license"])
 
         audit_log = AuditLog.objects.get(action="TENANT_MEMBER_INVITE", target_id=str(member.id))
         self.assertEqual(audit_log.tenant_id, self.tenant.id)

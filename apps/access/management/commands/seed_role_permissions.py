@@ -4,14 +4,8 @@ from django.contrib.auth.models import Group, Permission
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from apps.access.models import GroupPermissionScope, ScopeStatus, ScopeType, StaffType, StaffTypeGroup, StaffTypeStatus
-
-
-@dataclass(frozen=True)
-class StaffTypeDefinition:
-    code: str
-    name: str
-    description: str
+from apps.access.management.commands.seed_system_roles import SYSTEM_ROLE_DEFINITIONS
+from apps.access.models import GroupPermissionScope, ScopeStatus, ScopeType, SystemRole, SystemRoleGroup, SystemRoleStatus
 
 
 @dataclass(frozen=True)
@@ -19,60 +13,22 @@ class CapabilityGroupDefinition:
     display_name: str
 
 
-STAFF_TYPE_DEFINITIONS = {
-    "ops_admin": StaffTypeDefinition("ops_admin", "Admin管理员", "负责授权配置、账号治理与审计查看"),
-    "business_admin": StaffTypeDefinition("business_admin", "业务管理员", "负责业务平面全量权限操作"),
-    "route_planner": StaffTypeDefinition("route_planner", "航线规划员", "负责航线与航点规划"),
-    "dispatcher": StaffTypeDefinition("dispatcher", "任务调度员", "负责任务编排、调度与下发"),
-    "pilot_operator": StaffTypeDefinition("pilot_operator", "飞手操作员", "负责任务执行与飞行记录"),
-    "auditor": StaffTypeDefinition("auditor", "审计员", "负责审计查询与合规核查"),
-}
-
 CAPABILITY_GROUP_DEFINITIONS = {
-    "cap_auth_admin": CapabilityGroupDefinition("权限策略管理组"),
-    "cap_user_admin": CapabilityGroupDefinition("账号与人员查看组"),
-    "cap_staff_self": CapabilityGroupDefinition("员工自助访问组"),
-    "cap_audit_reader": CapabilityGroupDefinition("审计日志只读组"),
-    "cap_drone_admin": CapabilityGroupDefinition("无人机管理组"),
+    "cap_tenant_governance": CapabilityGroupDefinition("租户治理权限组"),
     "cap_business_admin": CapabilityGroupDefinition("业务管理员权限组"),
-    "cap_drone_viewer": CapabilityGroupDefinition("无人机全量查看组"),
-    "cap_drone_dispatch": CapabilityGroupDefinition("无人机分配管理组"),
-    "cap_drone_assigned_viewer": CapabilityGroupDefinition("无人机按分配查看组"),
+    "cap_route_planner": CapabilityGroupDefinition("航线规划权限组"),
+    "cap_dispatcher": CapabilityGroupDefinition("任务调度权限组"),
+    "cap_pilot_operator": CapabilityGroupDefinition("飞手操作权限组"),
+    "cap_auditor": CapabilityGroupDefinition("审计查看权限组"),
 }
 
 GROUP_MATRIX = {
-    # 这里定义“能力组 -> 权限码 + scope”矩阵，是权限系统的初始化基线。
-    "cap_auth_admin": {
-        "access.manage_auth_groups": ScopeType.ALL,
-        "access.manage_auth_scopes": ScopeType.ALL,
-        "access.manage_staff_type_groups": ScopeType.ALL,
-        "access.manage_user_accounts": ScopeType.ALL,
-    },
-    "cap_user_admin": {
-        "access.view_user": ScopeType.ALL,
-        "access.view_staffprofile": ScopeType.ALL,
-    },
-    "cap_staff_self": {
-        "access.view_staffprofile": ScopeType.OWN,
-    },
-    "cap_audit_reader": {
+    "cap_tenant_governance": {
+        "access.view_tenant_member": ScopeType.ALL,
+        "access.manage_tenant_member": ScopeType.ALL,
+        "access.assign_tenant_member_role": ScopeType.ALL,
         "access.view_auth_audit_logs": ScopeType.ALL,
-    },
-    "cap_drone_admin": {
-        "drone.view_drone": ScopeType.ALL,
-        "drone.manage_drone": ScopeType.ALL,
-        "drone.change_drone_status": ScopeType.ALL,
-        "drone_assignment.manage_drone_assignment": ScopeType.ALL,
-        "route.view_route": ScopeType.ALL,
-        "route.manage_route": ScopeType.ALL,
-        "waypoint.view_waypoint": ScopeType.ALL,
-        "waypoint.manage_waypoint": ScopeType.ALL,
-        "mission.view_mission": ScopeType.ALL,
-        "mission.manage_mission": ScopeType.ALL,
-        "flight_record.view_flight_record": ScopeType.ALL,
-        "flight_record.manage_flight_record": ScopeType.ALL,
-        "media_file.view_media_file": ScopeType.ALL,
-        "media_file.manage_media_file": ScopeType.ALL,
+        "access.view_user": ScopeType.ALL,
     },
     "cap_business_admin": {
         "drone.view_drone": ScopeType.ALL,
@@ -90,28 +46,46 @@ GROUP_MATRIX = {
         "media_file.view_media_file": ScopeType.ALL,
         "media_file.manage_media_file": ScopeType.ALL,
     },
-    "cap_drone_viewer": {
+    "cap_route_planner": {
         "drone.view_drone": ScopeType.ALL,
+        "route.view_route": ScopeType.ALL,
+        "route.manage_route": ScopeType.ALL,
+        "waypoint.view_waypoint": ScopeType.ALL,
+        "waypoint.manage_waypoint": ScopeType.ALL,
     },
-    "cap_drone_dispatch": {
-        "drone_assignment.manage_drone_assignment": ScopeType.ALL,
+    "cap_dispatcher": {
+        "drone.view_drone": ScopeType.ALL,
+        "mission.view_mission": ScopeType.ALL,
         "mission.manage_mission": ScopeType.ALL,
+        "drone_assignment.manage_drone_assignment": ScopeType.ALL,
+    },
+    "cap_pilot_operator": {
+        "drone.view_drone": ScopeType.ASSIGNED,
+        "mission.view_mission": ScopeType.ALL,
         "flight_record.view_flight_record": ScopeType.ALL,
         "flight_record.manage_flight_record": ScopeType.ALL,
         "media_file.view_media_file": ScopeType.ALL,
+        "media_file.manage_media_file": ScopeType.ALL,
     },
-    "cap_drone_assigned_viewer": {
-        "drone.view_drone": ScopeType.ASSIGNED,
+    "cap_auditor": {
+        "access.view_auth_audit_logs": ScopeType.ALL,
+        "drone.view_drone": ScopeType.ALL,
+        "route.view_route": ScopeType.ALL,
+        "waypoint.view_waypoint": ScopeType.ALL,
+        "mission.view_mission": ScopeType.ALL,
+        "flight_record.view_flight_record": ScopeType.ALL,
+        "media_file.view_media_file": ScopeType.ALL,
     },
 }
 
-STAFF_TYPE_GROUPS = {
-    "ops_admin": ["cap_auth_admin", "cap_user_admin", "cap_audit_reader", "cap_drone_admin"],
+SYSTEM_ROLE_GROUPS = {
+    "platform_admin": [],
+    "tenant_admin": ["cap_tenant_governance", "cap_business_admin"],
     "business_admin": ["cap_business_admin"],
-    "route_planner": ["cap_staff_self"],
-    "dispatcher": ["cap_user_admin", "cap_drone_viewer", "cap_drone_dispatch"],
-    "pilot_operator": ["cap_staff_self", "cap_drone_assigned_viewer"],
-    "auditor": ["cap_user_admin", "cap_audit_reader"],
+    "route_planner": ["cap_route_planner"],
+    "dispatcher": ["cap_dispatcher"],
+    "pilot_operator": ["cap_pilot_operator"],
+    "auditor": ["cap_auditor"],
 }
 
 
@@ -125,7 +99,7 @@ def _parse_permission_code(permission_code: str) -> tuple[str, str]:
 
 
 class Command(BaseCommand):
-    help = "初始化 staff_type -> group -> permission(scope) 权限矩阵"
+    help = "初始化 system_role -> group -> permission(scope) 权限矩阵"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -165,31 +139,16 @@ class Command(BaseCommand):
         group, _ = Group.objects.get_or_create(name=definition.display_name)
         return group
 
-    def _get_or_create_staff_type(self, definition: StaffTypeDefinition) -> StaffType:
-        staff_type, _ = StaffType.objects.get_or_create(
-            code=definition.code,
+    def _get_or_create_system_role(self, role_def: dict) -> SystemRole:
+        role, _ = SystemRole.objects.update_or_create(
+            code=role_def["code"],
             defaults={
-                "name": definition.name,
-                "description": definition.description,
-                "status": StaffTypeStatus.ACTIVE,
+                "name": role_def["name"],
+                "description": role_def["description"],
+                "status": SystemRoleStatus.ACTIVE,
             },
         )
-
-        changed = False
-        if staff_type.name != definition.name:
-            staff_type.name = definition.name
-            changed = True
-        if staff_type.description != definition.description:
-            staff_type.description = definition.description
-            changed = True
-        if staff_type.status != StaffTypeStatus.ACTIVE:
-            staff_type.status = StaffTypeStatus.ACTIVE
-            changed = True
-
-        if changed:
-            staff_type.save(update_fields=["name", "description", "status", "updated_at"])
-
-        return staff_type
+        return role
 
     @transaction.atomic
     def handle(self, *args, **options):
@@ -229,26 +188,26 @@ class Command(BaseCommand):
                 )
             )
 
-        for staff_type_code, definition in STAFF_TYPE_DEFINITIONS.items():
-            staff_type = self._get_or_create_staff_type(definition)
-            group_codes = STAFF_TYPE_GROUPS[staff_type_code]
+        for role_def in SYSTEM_ROLE_DEFINITIONS:
+            system_role = self._get_or_create_system_role(role_def)
+            group_codes = SYSTEM_ROLE_GROUPS.get(system_role.code, [])
             desired_group_ids = [group_map[group_code].id for group_code in group_codes]
 
             if mode == "replace":
-                StaffTypeGroup.objects.filter(staff_type=staff_type).exclude(group_id__in=desired_group_ids).update(
+                SystemRoleGroup.objects.filter(system_role=system_role).exclude(group_id__in=desired_group_ids).update(
                     status=ScopeStatus.DISABLED
                 )
 
             for group_code in group_codes:
-                StaffTypeGroup.objects.update_or_create(
-                    staff_type=staff_type,
+                SystemRoleGroup.objects.update_or_create(
+                    system_role=system_role,
                     group=group_map[group_code],
                     defaults={"status": ScopeStatus.ACTIVE},
                 )
 
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"staff_type_code={staff_type_code} staff_type_name={staff_type.name} groups={len(group_codes)} mode={mode} applied staff_type_id={staff_type.id}"
+                    f"system_role_code={system_role.code} system_role_name={system_role.name} groups={len(group_codes)} mode={mode} applied system_role_id={system_role.id}"
                 )
             )
 
@@ -256,4 +215,4 @@ class Command(BaseCommand):
             transaction.set_rollback(True)
             self.stdout.write(self.style.WARNING("dry-run enabled, changes rolled back"))
         else:
-            self.stdout.write(self.style.SUCCESS("staff_type-group-permission matrix initialized"))
+            self.stdout.write(self.style.SUCCESS("system_role-group-permission matrix initialized"))

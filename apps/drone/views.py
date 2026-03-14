@@ -271,7 +271,7 @@ class DroneViewSet(
     def history(self, request, *args, **kwargs):
         drone = self.get_object()
         assignments = (
-            DroneAssignment.objects.select_related("drone", "staff", "staff__staff_type")
+            DroneAssignment.objects.select_related("drone", "staff")
             .filter(drone=drone)
             .order_by("-id")
         )
@@ -304,7 +304,7 @@ class DroneViewSet(
         # 业务状态码字段 business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
         drone = self.get_object()
         assignments = (
-            DroneAssignment.objects.select_related("drone", "staff", "staff__staff_type")
+            DroneAssignment.objects.select_related("drone", "staff")
             .filter(drone=drone, status=DroneAssignmentStatus.ACTIVE)
             .order_by("-id")
         )
@@ -337,7 +337,7 @@ class DroneViewSet(
         # business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
         drone = self.get_object()
         latest = (
-            DroneAssignment.objects.select_related("drone", "staff", "staff__staff_type")
+            DroneAssignment.objects.select_related("drone", "staff")
             .filter(drone=drone)
             .order_by("-id")
             .first()

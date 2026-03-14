@@ -1,9 +1,14 @@
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.access.models import AuditLog, EmploymentStatus, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, StaffType, StaffTypeGroup
+from apps.access.models import AuditLog, EmploymentStatus, ScopeType
+from apps.access.test_support import (
+    ensure_staff_profile,
+    ensure_tenant_member_position,
+    ensure_tenant_role_binding,
+    grant_role_permissions,
+)
 from apps.drone.models import Drone, DroneStatus
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route, RouteStatus
@@ -15,29 +20,39 @@ class MissionApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-        self.dispatcher_staff_type = StaffType.objects.create(code="mission_dispatch_test", name="任务调度员", status=1)
-        self.pilot_staff_type = StaffType.objects.create(code="pilot_operator", name="飞手", status=1)
-
         self.dispatcher_user = User.objects.create_user(username="mission_dispatcher", password="pass1234", status=1)
-        self.dispatcher_staff = StaffProfile.objects.create(
-            user=self.dispatcher_user,
+        self.dispatcher_staff = ensure_staff_profile(
+            self.dispatcher_user,
             staff_no="M-001",
             name="任务调度员A",
             employment_status=EmploymentStatus.ACTIVE,
-            staff_type=self.dispatcher_staff_type,
         )
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.dispatcher_user,
+            tenant_code="mission_test_tenant",
+            role_code="mission_test_role",
+            role_name="任务测试角色",
+        )
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
         self.pilot_user = User.objects.create_user(username="mission_pilot", password="pass1234", status=1)
-        self.pilot_staff = StaffProfile.objects.create(
-            user=self.pilot_user,
+        self.pilot_staff = ensure_staff_profile(
+            self.pilot_user,
             staff_no="P-001",
             name="飞手A",
             employment_status=EmploymentStatus.ACTIVE,
-            staff_type=self.pilot_staff_type,
         )
+        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手")
 
-        self.route = Route.objects.create(name="城区巡检航线", status=RouteStatus.ACTIVE)
+        self.route = Route.objects.create(tenant=self.tenant, name="城区巡检航线", status=RouteStatus.ACTIVE)
         self.drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DRN-001",
             name="巡检机-001",
             model="M300",
@@ -46,20 +61,15 @@ class MissionApiTests(TestCase):
         )
 
     def _grant_permission(self, permission_code: str):
-        app_label, codename = permission_code.split(".", 1)
-        perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-        group = Group.objects.create(name=f"{permission_code}-group")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.dispatcher_staff_type, group=group, status=ScopeStatus.ACTIVE)
-        GroupPermissionScope.objects.create(
-            group=group,
-            permission=perm,
-            scope_type=ScopeType.ALL,
-            status=ScopeStatus.ACTIVE,
+        grant_role_permissions(
+            self.role,
+            {permission_code: ScopeType.ALL},
+            group_name=f"{permission_code}-group",
         )
 
     def _create_mission(self, *, name: str, status: int = MissionStatus.PENDING) -> Mission:
         return Mission.objects.create(
+            tenant=self.tenant,
             name=name,
             route=self.route,
             route_name=self.route.name,
@@ -167,13 +177,19 @@ class MissionApiTests(TestCase):
         self._grant_permission("mission.manage_mission")
         self.client.force_authenticate(self.dispatcher_user)
         inactive_pilot_user = User.objects.create_user(username="inactive_mission_pilot", password="pass1234", status=1)
-        inactive_pilot = StaffProfile.objects.create(
-            user=inactive_pilot_user,
+        inactive_pilot = ensure_staff_profile(
+            inactive_pilot_user,
             staff_no="P-002",
             name="离职飞手",
             employment_status=EmploymentStatus.INACTIVE,
-            staff_type=self.pilot_staff_type,
         )
+        _pilot_tenant, inactive_pilot_member, _pilot_role = ensure_tenant_role_binding(
+            inactive_pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(inactive_pilot_member, code="pilot_operator", name="飞手")
 
         response = self.client.post(
             "/api/v1/missions",
@@ -194,15 +210,20 @@ class MissionApiTests(TestCase):
     def test_create_mission_with_non_pilot_staff_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
         self.client.force_authenticate(self.dispatcher_user)
-        observer_staff_type = StaffType.objects.create(code="mission_observer_test", name="观察员", status=1)
         observer_user = User.objects.create_user(username="mission_observer", password="pass1234", status=1)
-        observer_staff = StaffProfile.objects.create(
-            user=observer_user,
+        observer_staff = ensure_staff_profile(
+            observer_user,
             staff_no="O-001",
             name="观察员A",
             employment_status=EmploymentStatus.ACTIVE,
-            staff_type=observer_staff_type,
         )
+        _observer_tenant, observer_member, _observer_role = ensure_tenant_role_binding(
+            observer_user,
+            tenant=self.tenant,
+            role_code="route_planner",
+            role_name="观察员",
+        )
+        ensure_tenant_member_position(observer_member, code="route_planner", name="观察员")
 
         response = self.client.post(
             "/api/v1/missions",

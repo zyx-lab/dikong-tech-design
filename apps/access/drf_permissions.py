@@ -1,6 +1,6 @@
 from rest_framework.permissions import BasePermission
 
-from apps.access.services import AuthzService, IdentityService, apply_scope_to_queryset, has_staff_type_permission
+from apps.access.services import AuthzService, IdentityService, apply_scope_to_queryset, has_request_permission
 
 
 class PermissionMapMixin:
@@ -28,14 +28,14 @@ class RequireInternalPermission(BasePermission):
 
     规则：
     - superuser：允许（root，全量权限）。
-    - 普通账号：必须具备有效 staff/staff_type，且命中声明的权限码。
+    - 普通账号：必须是有效账号，并在当前租户上下文中通过 `SystemRole -> Group -> Permission` 命中权限码。
     - 不做 scope 对象级限制（IAM 管理动作默认使用 ALL 管理语义）。
     """
 
     message = "permission denied"
 
     def has_permission(self, request, view):
-        identity_result = IdentityService.check_system_operator(request.user)
+        identity_result = IdentityService.check_account(request.user)
         if not identity_result.ok:
             self.message = identity_result.reason_code
             return False
@@ -48,7 +48,7 @@ class RequireInternalPermission(BasePermission):
             self.message = "PERMISSION_NOT_CONFIGURED"
             return False
 
-        if not has_staff_type_permission(request.user, perm_code):
+        if not has_request_permission(request, perm_code):
             self.message = "PERMISSION_DENIED"
             return False
 
@@ -66,7 +66,7 @@ class ScopedActionPermission(BasePermission):
             self.message = "PERMISSION_NOT_CONFIGURED"
             return False
 
-        decision = AuthzService.authorize(request.user, perm_code)
+        decision = AuthzService.authorize(request, perm_code)
         if not decision.allowed:
             self.message = decision.reason_code
             return False
@@ -80,7 +80,7 @@ class ScopedActionPermission(BasePermission):
             self.message = "PERMISSION_NOT_CONFIGURED"
             return False
 
-        decision = AuthzService.authorize(request.user, perm_code, obj=obj)
+        decision = AuthzService.authorize(request, perm_code, obj=obj)
         if not decision.allowed:
             self.message = decision.reason_code
             return False
@@ -101,7 +101,7 @@ class ScopedQuerysetMixin:
 
         decision = getattr(self.request, "_authz_decision", None)
         if decision is None:
-            decision = AuthzService.authorize(self.request.user, perm_code)
+            decision = AuthzService.authorize(self.request, perm_code)
 
         if not decision.allowed:
             return queryset.none()

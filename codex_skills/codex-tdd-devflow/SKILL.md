@@ -24,6 +24,7 @@ description: 用状态机推进 API 增量开发、旧项目纳管与陌生团�
 - 保留状态机，优先使用 `run-auto` 推进到当前门禁
 - `INTRO` 是 skill 协作阶段，不进入 runner 的 0-7 逻辑阶段
 - Stage0 到 Stage4 都必须参考当前代码实现、当前 API 暴露和当前测试现状
+- Stage0 同时支持两条链路：`new_api`（新增接口）和 `repair_api`（既有接口修复）
 - 业务语义优先来自 `overview`、`business` 和前序 stage 产物，不靠 path、HTTP method、目录名猜实体
 - 输出默认只保留本阶段最小摘要；只有在需要原始载荷时才追加 `--json`
 - `project_rules.json` 只补充项目说明，不改变 stage 功能
@@ -169,7 +170,7 @@ python3 codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --appro
 ## 关键运行时资产
 
 - `codex_devflow_scaffold/`: 状态、产物、门禁、决策、日志
-- `cases/session_api_candidates.jsonl`: Stage0 候选 API，会话级输入，默认由当前 Codex session 生成
+- `cases/session_api_candidates.jsonl`: Stage0 候选 API，会话级输入，默认由当前 Codex session 生成；可用 `change_mode=repair_api` 进入修复链路
 - `cases/session_event_candidates.jsonl`: Stage2 业务事件输入，会话产物，默认由当前 Codex session 生成
 - `cases/session_case_candidates.jsonl`: Stage3 测试用例输入，会话产物，默认由当前 Codex session 生成
 - `cases/session_entity_review.json`: Stage5 结算前调整 touched entities 的会话输入
@@ -180,8 +181,8 @@ python3 codex_skills/codex-tdd-devflow/scripts/workflow_runner.py decide --appro
 
 ## 阶段总览
 
-- Stage0 `提名API`: 基于业务语义和当前代码提名本轮 focus API，并显式确认 `entity`
-- Stage1 `实现API`: 实现、修正、优化 API，并确认它在系统中可观测
+- Stage0 `提名API`: 基于业务语义和当前代码提名本轮 focus API，并显式确认 `entity` 与本轮链路（新增 / 修复）
+- Stage1 `实现API`: 按 Stage0 的链路类型实现、修正、优化 API，并确认它在系统中可观测
 - Stage2 `业务事件`: 当前 Codex session 产出 `session_event_candidates.jsonl`，runner 只做校验和门禁
 - Stage3 `测试资产`: 当前 Codex session 产出 `session_case_candidates.jsonl` 与测试代码，runner 不兜底补 case
 - Stage4 `回归`: 运行 generated tests、项目内测试和全量回归

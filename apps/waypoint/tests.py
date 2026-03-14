@@ -1,9 +1,9 @@
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.access.models import AuditLog, GroupPermissionScope, ScopeStatus, ScopeType, StaffProfile, StaffType, StaffTypeGroup
+from apps.access.models import AuditLog, ScopeType
+from apps.access.test_support import ensure_staff_profile, ensure_tenant_role_binding, grant_role_permissions
 from apps.route.models import Route, RouteStatus
 from apps.waypoint.models import Waypoint
 
@@ -13,29 +13,33 @@ User = get_user_model()
 class WaypointApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.staff_type = StaffType.objects.create(code="waypoint_admin_test", name="航点管理员", status=1)
         self.user = User.objects.create_user(username="waypoint_admin", password="pass1234", status=1)
-        self.staff = StaffProfile.objects.create(
-            user=self.user,
-            staff_no="W-001",
-            name="航点管理员A",
-            employment_status=1,
-            staff_type=self.staff_type,
+        self.staff = ensure_staff_profile(self.user, staff_no="W-001", name="航点管理员A", employment_status=1)
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            tenant_code="waypoint_test_tenant",
+            role_code="waypoint_test_role",
+            role_name="航点测试角色",
         )
-        self.route_active = Route.objects.create(name="航点测试航线A", status=RouteStatus.ACTIVE, creator_name=self.staff.name)
-        self.route_disabled = Route.objects.create(name="航点测试航线B", status=RouteStatus.DISABLED, creator_name=self.staff.name)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
+        self.route_active = Route.objects.create(
+            tenant=self.tenant,
+            name="航点测试航线A",
+            status=RouteStatus.ACTIVE,
+            creator_name=self.staff.name,
+        )
+        self.route_disabled = Route.objects.create(
+            tenant=self.tenant,
+            name="航点测试航线B",
+            status=RouteStatus.DISABLED,
+            creator_name=self.staff.name,
+        )
 
     def _grant_permission(self, permission_code: str):
-        app_label, codename = permission_code.split(".", 1)
-        perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-        group = Group.objects.create(name=f"{permission_code}-group")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.staff_type, group=group, status=ScopeStatus.ACTIVE)
-        GroupPermissionScope.objects.create(
-            group=group,
-            permission=perm,
-            scope_type=ScopeType.ALL,
-            status=ScopeStatus.ACTIVE,
+        grant_role_permissions(
+            self.role,
+            {permission_code: ScopeType.ALL},
+            group_name=f"{permission_code}-group",
         )
 
     def _create_waypoint(
@@ -470,28 +474,27 @@ class WaypointBoundaryAndExtendedTests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.staff_type = StaffType.objects.create(code="waypoint_test_ext", name="航点测试", status=1)
         self.user = User.objects.create_user(username="waypoint_ext", password="pass1234", status=1)
-        self.staff = StaffProfile.objects.create(
-            user=self.user,
-            staff_no="W-EXT-001",
-            name="测试人员",
-            employment_status=1,
-            staff_type=self.staff_type,
+        self.staff = ensure_staff_profile(self.user, staff_no="W-EXT-001", name="测试人员", employment_status=1)
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            tenant_code="waypoint_ext_tenant",
+            role_code="waypoint_ext_role",
+            role_name="航点扩展测试角色",
         )
-        self.route = Route.objects.create(name="边界测试航线", status=RouteStatus.ACTIVE, creator_name=self.staff.name)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
+        self.route = Route.objects.create(
+            tenant=self.tenant,
+            name="边界测试航线",
+            status=RouteStatus.ACTIVE,
+            creator_name=self.staff.name,
+        )
 
     def _grant_permission(self, permission_code: str, scope=ScopeType.ALL):
-        app_label, codename = permission_code.split(".", 1)
-        perm = Permission.objects.get(content_type__app_label=app_label, codename=codename)
-        group = Group.objects.create(name=f"{permission_code}-group-ext")
-        group.permissions.add(perm)
-        StaffTypeGroup.objects.create(staff_type=self.staff_type, group=group, status=ScopeStatus.ACTIVE)
-        GroupPermissionScope.objects.create(
-            group=group,
-            permission=perm,
-            scope_type=scope,
-            status=ScopeStatus.ACTIVE,
+        grant_role_permissions(
+            self.role,
+            {permission_code: scope},
+            group_name=f"{permission_code}-group-ext",
         )
 
     def test_create_waypoint_boundary_latitude_min(self):

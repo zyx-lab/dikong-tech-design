@@ -195,6 +195,132 @@ class WorkflowRunnerSemanticFlowTests(unittest.TestCase):
         self.assertIn("Runner 不再补齐或生成默认 case", result.artifact["session_codegen_note"])
 
 
+class WorkflowRunnerStage0RepairTests(unittest.TestCase):
+    def _make_paths(self):
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        root = Path(tempdir.name)
+        scaffold = root / "codex_devflow_scaffold"
+        paths = workflow_runner.Paths(root=root, scaffold=scaffold)
+        workflow_runner.ensure_scaffold(paths, force=True)
+        return paths
+
+    def test_stage0_allows_registered_api_when_change_mode_is_repair(self):
+        paths = self._make_paths()
+        workflow_runner.write_json(
+            paths.api_registry,
+            {
+                "schema_version": 1,
+                "bootstrap_done": True,
+                "items": [{"api_key": "GET /internal/auth/me/permissions"}],
+            },
+        )
+        paths.session_api_candidates.write_text(
+            json.dumps(
+                {
+                    "api_key": "GET /internal/auth/me/permissions",
+                    "entity": "tenant",
+                    "change_mode": "repair_api",
+                    "semantic_title": "修复当前租户权限快照",
+                    "expected_business_codes": ["SUCCESS", "PERMISSION_DENIED"],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch.object(workflow_runner, "missing_semantic_directories", return_value=[]),
+            mock.patch.object(
+                workflow_runner,
+                "discover_apis",
+                return_value=(["GET /internal/auth/me/permissions"], "local_openapi", ""),
+            ),
+        ):
+            result = workflow_runner.stage0(paths, workflow_runner.DEFAULT_WORKFLOW_SPEC)
+
+        contract = workflow_runner.evaluate_stage_contract(paths, 0, result.artifact)
+
+        self.assertEqual(len(result.artifact["api_candidates"]), 1)
+        self.assertEqual(result.artifact["api_candidates"][0]["change_mode"], workflow_runner.STAGE0_REPAIR_API_MODE)
+        self.assertEqual(result.artifact["candidate_change_modes"], [workflow_runner.STAGE0_REPAIR_API_MODE])
+        self.assertEqual(result.artifact["iteration_delivery_mode"], workflow_runner.STAGE0_REPAIR_API_MODE)
+        self.assertEqual(contract["reason"], "stage_contract_satisfied")
+        self.assertTrue(contract["ready_for_next_stage"])
+
+    def test_stage0_rejects_registered_api_without_repair_mode(self):
+        paths = self._make_paths()
+        workflow_runner.write_json(
+            paths.api_registry,
+            {
+                "schema_version": 1,
+                "bootstrap_done": True,
+                "items": [{"api_key": "GET /internal/auth/me/permissions"}],
+            },
+        )
+        paths.session_api_candidates.write_text(
+            json.dumps(
+                {
+                    "api_key": "GET /internal/auth/me/permissions",
+                    "entity": "tenant",
+                    "semantic_title": "错误地把旧接口当成新接口提名",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch.object(workflow_runner, "missing_semantic_directories", return_value=[]),
+            mock.patch.object(
+                workflow_runner,
+                "discover_apis",
+                return_value=(["GET /internal/auth/me/permissions"], "local_openapi", ""),
+            ),
+        ):
+            result = workflow_runner.stage0(paths, workflow_runner.DEFAULT_WORKFLOW_SPEC)
+
+        contract = workflow_runner.evaluate_stage_contract(paths, 0, result.artifact)
+
+        self.assertEqual(result.artifact["api_candidates"], [])
+        self.assertIn(
+            "line_1: already_registered_use_change_mode_repair_api",
+            result.artifact["session_api_warnings"],
+        )
+        self.assertEqual(contract["reason"], "stage0_not_ready_for_stage1")
+        self.assertTrue(contract["blocking"])
+
+    def test_status_payload_exposes_iteration_delivery_mode(self):
+        paths = self._make_paths()
+        workflow_runner.write_json(
+            paths.stage_artifact(0),
+            {
+                "stage": 0,
+                "api_candidates": [
+                    {
+                        "api_key": "GET /internal/auth/me/permissions",
+                        "entity": "tenant",
+                        "change_mode": "repair_api",
+                    }
+                ],
+                "candidate_source": "session_semantic",
+                "iteration_delivery_mode": "repair_api",
+                "touched_entities": ["tenant"],
+            },
+        )
+        state = workflow_runner.load_state(paths)
+        state["status"] = "idle"
+        state["current_stage"] = 0
+        state["iteration_delivery_mode"] = "repair_api"
+        workflow_runner.save_state(paths, state)
+
+        payload = workflow_runner.build_status_brief_payload(paths)
+
+        self.assertEqual(payload["iteration_delivery_mode"], "repair_api")
+        self.assertEqual(payload["stage_brief"]["iteration_delivery_mode"], "repair_api")
+        self.assertEqual(payload["stage_brief"]["candidate_change_mode"], "repair_api")
+
+
 class WorkflowRunnerStage5Tests(unittest.TestCase):
     def _make_paths(self, project_test_roots=None):
         tempdir = tempfile.TemporaryDirectory()

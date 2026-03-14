@@ -38,7 +38,7 @@ PostgreSQL
 
 ## 阅读说明
 
-本数据字典覆盖当前已落地的业务表：`tenants`、`tenant_members`、`tenant_member_roles`。
+本数据字典覆盖当前已落地的业务表：`tenants`、`tenant_members`、`tenant_member_positions`、`tenant_member_qualifications`、`tenant_member_roles`、`system_role_groups`。
 
 ---
 
@@ -132,25 +132,115 @@ PostgreSQL
 
 ---
 
-## 4. 关系与外键
+## 4. tenant_member_positions（租户成员岗位）
 
-1. `tenant_members.tenant_id -> tenants.id`
-2. `tenant_members.user_id -> auth_users.id`
-3. `tenant_member_roles.tenant_member_id -> tenant_members.id`
-4. `tenant_member_roles.system_role_id -> system_roles.id`
+**说明**：记录租户成员在当前租户内承担的业务岗位，不参与授权矩阵，只用于业务校验与展示。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| tenant_member_id | bigint | NOT NULL, FK -> tenant_members.id | - | 所属租户成员 |
+| code | varchar(64) | NOT NULL | - | 岗位编码 |
+| name | varchar(128) | NOT NULL | - | 岗位名称 |
+| description | varchar(255) | - | '' | 岗位描述 |
+| status | smallint | NOT NULL | 1 | 岗位状态 |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+**status 状态值**：
+
+| 值 | 含义 |
+|----|------|
+| 0 | 禁用 |
+| 1 | 启用 |
+
+**业务规则**：
+1. `(tenant_member_id, code)` 唯一。
+2. 岗位是租户内属性，同一用户在不同租户可拥有不同岗位集合。
+3. 业务侧可基于岗位做校验，例如 `pilot_operator` 才允许被分配到飞行任务。
 
 ---
 
-## 5. 与实现对应
+## 5. tenant_member_qualifications（租户成员资质）
+
+**说明**：记录租户成员在当前租户内持有的业务资质，不参与授权矩阵，可附带有效期与扩展信息。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| tenant_member_id | bigint | NOT NULL, FK -> tenant_members.id | - | 所属租户成员 |
+| code | varchar(64) | NOT NULL | - | 资质编码 |
+| name | varchar(128) | NOT NULL | - | 资质名称 |
+| description | varchar(255) | - | '' | 资质描述 |
+| status | smallint | NOT NULL | 1 | 资质状态 |
+| valid_until | date | 可空 | null | 资质有效期截止日 |
+| payload | jsonb | NOT NULL | `{}` | 资质扩展信息 |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+**status 状态值**：
+
+| 值 | 含义 |
+|----|------|
+| 0 | 禁用 |
+| 1 | 启用 |
+
+**业务规则**：
+1. `(tenant_member_id, code)` 唯一。
+2. `valid_until` 为空表示长期有效；有值时需由业务自行解释到期规则。
+3. `payload` 用于承载证号、签发机构等扩展字段。
+
+---
+
+## 6. system_role_groups（固定角色能力组映射）
+
+**说明**：记录平台固定角色与能力组（Group）之间的绑定关系，是权限矩阵的角色入口。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| system_role_id | bigint | NOT NULL, FK -> system_roles.id | - | 平台固定角色 |
+| group_id | bigint | NOT NULL, FK -> auth_group.id | - | 能力组 |
+| status | smallint | NOT NULL | 1 | 绑定状态 |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+**status 状态值**：
+
+| 值 | 含义 |
+|----|------|
+| 0 | 禁用 |
+| 1 | 启用 |
+
+**业务规则**：
+1. `(system_role_id, group_id)` 唯一。
+2. 非 superuser 的权限计算统一从 `TenantMember -> TenantMemberRole -> SystemRoleGroup -> GroupPermissionScope` 进入。
+
+---
+
+## 7. 关系与外键
+
+1. `tenant_members.tenant_id -> tenants.id`
+2. `tenant_members.user_id -> auth_users.id`
+3. `tenant_member_positions.tenant_member_id -> tenant_members.id`
+4. `tenant_member_qualifications.tenant_member_id -> tenant_members.id`
+5. `tenant_member_roles.tenant_member_id -> tenant_members.id`
+6. `tenant_member_roles.system_role_id -> system_roles.id`
+7. `system_role_groups.system_role_id -> system_roles.id`
+8. `system_role_groups.group_id -> auth_group.id`
+
+---
+
+## 8. 与实现对应
 
 1. 模型：`apps/access/models.py` - `Tenant`
-2. 模型：`apps/access/models.py` - `TenantMember` / `TenantMemberRole`
+2. 模型：`apps/access/models.py` - `TenantMember` / `TenantMemberPosition` / `TenantMemberQualification` / `TenantMemberRole` / `SystemRoleGroup`
 3. 序列化与校验：`apps/access/serializers.py`
 4. 接口：`apps/access/views.py` - `TenantViewSet` / `TenantDisableView` / `TenantEnableView` / `TenantInitializeAdminView` / `TenantMemberInviteView` / `TenantMemberDisableView`
 
 ---
 
-## 6. 业务响应码字典（Business API）
+## 9. 业务响应码字典（Business API）
 
 说明：业务 API 响应体包含 `business_code`（主业务码）与 `business_detail_code`（细分原因码）。
 
@@ -191,9 +281,9 @@ PostgreSQL
 | INVITATION_ALREADY_CONFIRMED | 邀请已确认，重复提交 |
 | INVITATION_STATUS_INVALID | invitation 对应成员状态不是 pending |
 
-当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenants/{id}/enable`、`POST /internal/auth/tenants/{id}/initialize-admin`、`POST /internal/auth/tenants/{id}/set-plan`、`POST /internal/auth/users/register`、`POST /internal/auth/users/register/by-phone`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation`、`POST /internal/auth/me/invitations/reject`、`POST /internal/auth/tenant-members/{id}/disable`、`POST /internal/auth/tenant-members/{id}/enable`、`GET /internal/auth/me/invitations` 与 `GET /internal/auth/me/tenants` 都返回 `business_code + business_detail_code`。
+当前实现中，`POST /internal/auth/tenants`、`POST /internal/auth/tenants/{id}/disable`、`POST /internal/auth/tenants/{id}/enable`、`POST /internal/auth/tenants/{id}/initialize-admin`、`POST /internal/auth/tenants/{id}/set-plan`、`POST /internal/auth/users/register`、`POST /internal/auth/users/register/by-phone`、`POST /internal/auth/tenant-members/invite`、`POST /internal/auth/tenant-members/confirm-invitation`、`POST /internal/auth/me/invitations/reject`、`POST /internal/auth/tenant-members/{id}/disable`、`POST /internal/auth/tenant-members/{id}/enable`、`GET /internal/auth/me/invitations`、`GET /internal/auth/me/tenants` 与 `GET /internal/auth/me/permissions` 都返回 `business_code + business_detail_code`。
 
-`GET /internal/auth/tenant-audit-logs` 同样返回 `business_code + business_detail_code`，并使用以下额外 detail code：
+`GET /internal/auth/me/permissions` 与 `GET /internal/auth/tenant-audit-logs` 同样返回 `business_code + business_detail_code`，并使用以下额外 detail code：
 
 | business_detail_code | 语义 |
 | ------ | ------ |

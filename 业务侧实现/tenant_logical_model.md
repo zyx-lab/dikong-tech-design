@@ -51,6 +51,8 @@ PostgreSQL
 |------|------|
 | tenants | 租户主表 |
 | tenant_members | 租户成员身份 |
+| tenant_member_positions | 租户成员岗位 |
+| tenant_member_qualifications | 租户成员资质 |
 | tenant_member_roles | 租户成员角色绑定 |
 
 ### tenants（租户主表）
@@ -61,6 +63,15 @@ PostgreSQL
 - 主键: id (BigAutoField)
 - 状态字段: status
 - 邀请确认字段: invitation_token
+
+### tenant_member_positions（租户成员岗位）
+- 主键: id (BigAutoField)
+- 状态字段: status
+
+### tenant_member_qualifications（租户成员资质）
+- 主键: id (BigAutoField)
+- 状态字段: status
+- 资质有效期字段: valid_until
 
 ---
 
@@ -90,11 +101,14 @@ PostgreSQL
 2. 租户禁用后，该租户所有业务数据不可通过 `X-Tenant-Code` 访问
 3. `tenant_members` 上 `(tenant_id, user_id)` 唯一，同一账号不能重复加入同一租户
 4. 邀请制成员在确认前必须处于 `PENDING`，且保留 `invitation_token`
+5. `tenant_member_positions` 上 `(tenant_member_id, code)` 唯一
+6. `tenant_member_qualifications` 上 `(tenant_member_id, code)` 唯一
 
 ### 跨表约束
 - 所有业务表（drones, routes, missions, flight_records, media_files, drone_assignments）通过 `tenant_id` 关联到 `tenants`
 - 业务表的外键必须在同一租户内
 - `tenant_member_roles` 必须绑定到有效的 `tenant_members`
+- 业务岗位与资质统一从 `TenantMember` 派生，不再通过 `StaffProfile.staff_type` 表达
 
 ---
 
@@ -114,6 +128,7 @@ PostgreSQL
 - `GET /internal/auth/me/invitations`: 获取当前用户待确认邀请列表
 - `POST /internal/auth/me/invitations/reject`: 当前用户拒绝租户邀请
 - `GET /internal/auth/me/tenants`: 获取当前用户可进入的租户列表
+- `GET /internal/auth/me/permissions`: 获取当前租户权限快照
 - `GET /internal/auth/tenant-audit-logs`: 查看租户级审计日志
 
 ---
@@ -202,7 +217,7 @@ PostgreSQL
 - 功能：终端用户在平台侧自助注册账号，等待后续租户邀请加入
 - 路径：`/internal/auth/users/register`
 - 方法：`POST`
-- 状态流转：N/A（创建平台账号与占位人员档案；待邀请状态通过“尚无 ACTIVE 租户成员关系”表达）
+- 状态流转：N/A（创建平台账号与全局人员档案；待邀请状态通过“尚无 ACTIVE 租户成员关系”表达）
 - 有效状态：请求体提供新的 `username`、`password`、`name`、`phone`
 - 无效状态：
   - `username` 已存在
@@ -216,7 +231,7 @@ PostgreSQL
 - 功能：终端用户通过手机号与短信验证码完成平台注册，等待后续租户邀请加入
 - 路径：`/internal/auth/users/register/by-phone`
 - 方法：`POST`
-- 状态流转：N/A（创建平台账号与占位人员档案；待邀请状态通过“尚无 ACTIVE 租户成员关系”表达）
+- 状态流转：N/A（创建平台账号与全局人员档案；待邀请状态通过“尚无 ACTIVE 租户成员关系”表达）
 - 有效状态：请求体提供新的 `phone` 与有效 `sms_code`
 - 无效状态：
   - `phone` 已存在
@@ -338,6 +353,23 @@ PostgreSQL
   - RESOURCE_NOT_FOUND: invitation token 不存在
   - STATE_CONFLICT: invitation 记录已不处于 pending 状态
 
+### 获取当前租户权限快照
+- 功能：已登录用户在当前租户上下文内读取自己的权限与 scope 快照
+- 路径：`/internal/auth/me/permissions`
+- 方法：`GET`
+- 状态流转：无状态变更，只读取当前租户下的成员角色与权限矩阵
+- 有效状态：
+  - 请求已认证
+  - `X-Tenant-Code` 解析出有效租户
+  - 当前用户是该租户的 `ACTIVE` 成员，或当前用户是 superuser
+- 无效状态：
+  - 当前请求未认证
+  - 未提供租户上下文
+  - 当前用户不是该租户的有效成员
+- 业务码：
+  - SUCCESS: 返回当前租户权限快照
+  - PERMISSION_DENIED: 未登录、缺少租户上下文或成员身份无效
+
 ### 查看租户级审计日志
 - 功能：在当前租户上下文内读取租户治理审计日志
 - 路径：`/internal/auth/tenant-audit-logs`
@@ -389,6 +421,8 @@ Tenant (平台级)
   ├── 1:N ──► TenantMember (租户成员)
   │              │
   │              └── N:N ──► SystemRole (角色)
+  │                               │
+  │                               └── N:N ──► Group (能力组)
   │
   └── 1:N ──► 业务表 (drones, routes, missions, ...)
               │

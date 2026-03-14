@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from apps.access.models import EmploymentStatus
+from apps.access.services import staff_has_position_in_tenant
 from apps.drone.models import DroneStatus
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import RouteStatus
@@ -44,7 +45,16 @@ class MissionWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"drone": "仅允许绑定启用状态无人机"})
         if pilot is not None and pilot.employment_status != EmploymentStatus.ACTIVE:
             raise serializers.ValidationError({"pilot": "仅允许分配给在职飞手"})
-        if pilot is not None and pilot.staff_type.code != "pilot_operator":
+        tenant = None
+        if route is not None and getattr(route, "tenant_id", None):
+            tenant = route.tenant
+        elif drone is not None and getattr(drone, "tenant_id", None):
+            tenant = drone.tenant
+        elif instance is not None and getattr(instance, "tenant_id", None):
+            tenant = instance.tenant
+        elif self.context.get("request") is not None:
+            tenant = getattr(self.context["request"], "tenant_context", None)
+        if pilot is not None and not staff_has_position_in_tenant(pilot, tenant, "pilot_operator"):
             raise serializers.ValidationError({"pilot": "仅允许分配给飞手类型（pilot_operator）"})
 
         return attrs
