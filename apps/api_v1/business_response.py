@@ -76,12 +76,6 @@ def _normalize_list_payload(data: Any) -> Any:
     if "list" in data and "total" in data:
         return dict(data)
 
-    if "results" in data and "count" in data:
-        normalized = {key: value for key, value in data.items() if key not in {"results", "count", "next", "previous"}}
-        normalized["list"] = data["results"]
-        normalized["total"] = data["count"]
-        return normalized
-
     return data
 
 

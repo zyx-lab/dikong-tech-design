@@ -705,8 +705,8 @@ class DroneViewSet(
         return Response(
             {
                 "drone_id": drone.id,
-                "count": len(serializer.data),
-                "results": serializer.data,
+                "list": serializer.data,
+                "total": len(serializer.data),
             },
             status=status.HTTP_200_OK,
         )
@@ -737,7 +737,7 @@ class DroneViewSet(
         # 3) 通过 get_object() 复用对象级权限与 scope 控制，越权场景返回 PERMISSION_DENIED。
         #
         # 响应语义：
-        # - HTTP 200: 查询成功（含 count=0 的空结果）
+        # - HTTP 200: 查询成功（含 total=0 的空结果）
         # - HTTP 404: 无人机不存在（RESOURCE_NOT_FOUND）
         # - HTTP 401/403: 未认证或无权限（PERMISSION_DENIED）
         # 响应由 BusinessApiResponseMixin 统一包装为 `code / msg / data`。
@@ -751,8 +751,8 @@ class DroneViewSet(
         return Response(
             {
                 "drone_id": drone.id,
-                "count": len(serializer.data),
-                "results": serializer.data,
+                "list": serializer.data,
+                "total": len(serializer.data),
             },
             status=status.HTTP_200_OK,
         )

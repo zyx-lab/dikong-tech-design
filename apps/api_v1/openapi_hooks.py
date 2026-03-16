@@ -14,20 +14,6 @@ def _clone(value):
     return copy.deepcopy(value)
 
 
-def _build_list_total_schema(items_schema, total_schema=None):
-    return {
-        "type": "object",
-        "properties": {
-            "list": {
-                "type": "array",
-                "items": _clone(items_schema),
-            },
-            "total": total_schema or {"type": "integer"},
-        },
-        "required": ["list", "total"],
-    }
-
-
 def _unwrap_standard_data_schema(schema, result):
     if not isinstance(schema, dict):
         return schema
@@ -95,12 +81,6 @@ def _strip_legacy_envelope(schema, result):
             "required": [name for name in ("list", "total") if name in required or name in properties],
         }
 
-    if "count" in properties and "results" in properties:
-        return _build_list_total_schema(
-            properties["results"].get("items", {}),
-            _clone(properties["count"]),
-        )
-
     return _clone(schema)
 
 
@@ -136,15 +116,6 @@ def _wrap_schema(schema, status_code, result):
 def _normalize_example_payload(value):
     if not isinstance(value, dict):
         return value
-
-    results = value.get("results")
-    if (
-        isinstance(results, list)
-        and len(results) == 1
-        and isinstance(results[0], dict)
-        and {"code", "msg", "data"}.issubset(results[0].keys())
-    ):
-        return results[0]
 
     return value
 
