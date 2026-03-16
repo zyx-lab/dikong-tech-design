@@ -12,3 +12,4 @@ db.sqlite3.bak.*
 .clj-kondo/
 逻辑设计/*.dbdiagram
 codex_devflow_scaffold
+frontend
