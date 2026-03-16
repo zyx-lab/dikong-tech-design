@@ -95,7 +95,7 @@ PostgreSQL
 | 创建 | POST /api/v1/drones | 新增无人机 |
 | 列表 | GET /api/v1/drones | 无人机列表查询 |
 | 详情 | GET /api/v1/drones/{id} | 无人机详情 |
-| 更新 | PATCH /api/v1/drones/{id} | 局部更新无人机 |
+| 更新 | PUT / PATCH /api/v1/drones/{id} | 全量或局部更新无人机 |
 | 删除 | DELETE /api/v1/drones/{id} | 删除无人机 |
 | 启用 | POST /api/v1/drones/{id}/enable | 启用无人机 |
 | 停用 | POST /api/v1/drones/{id}/disable | 停用无人机 |
@@ -117,22 +117,22 @@ PostgreSQL
 - 状态流转：DISABLED/MAINTENANCE -> ENABLED
 - 有效状态：DISABLED / MAINTENANCE
 - 无效状态：RETIRED
-- 业务码：SUCCESS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0201`, `C0404`, `A0401 / A0403`
 
 ### 退役无人机 POST /api/v1/drones/{id}/retire
 - 状态流转：任意 -> RETIRED
 - 有效状态：ENABLED / DISABLED / MAINTENANCE
 - 无效状态：（RETIRED 不可逆）
-- 业务码：SUCCESS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0201`, `C0404`, `A0401 / A0403`
 
 ### 取消分配 POST /api/v1/drone-assignments/{id}/cancel
 - 状态流转：ACTIVE -> INACTIVE
 - 有效状态：ACTIVE
 - 无效状态：INACTIVE
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
 ### 恢复分配 POST /api/v1/drone-assignments/{id}/reactivate
 - 状态流转：INACTIVE -> ACTIVE
 - 有效状态：INACTIVE
 - 无效状态：ACTIVE
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`

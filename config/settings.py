@@ -122,6 +122,9 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "双平面接口文档（Internal IAM + Business API）",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "POSTPROCESSING_HOOKS": [
+        "apps.api_v1.openapi_hooks.standardize_response_schema_hook",
+    ],
     "ENUM_NAME_OVERRIDES": {
         "ActiveDisabledStatusEnum": "apps.access.models.DirectoryStatus",
         "DroneAssignmentStatusEnum": "apps.drone_assignment.models.DroneAssignmentStatus",

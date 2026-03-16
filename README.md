@@ -1,6 +1,6 @@
 # 低空平台权限系统（V3）
 
-## 当前状态（对齐日期：2026-03-14）
+## 当前状态（对齐日期：2026-03-16）
 
 本仓库当前是一个 Django + DRF 的双平面 API 项目，代码已实现：
 
@@ -114,12 +114,12 @@ python manage.py runserver 0.0.0.0:8001
 
 5. Business API - 航点（waypoint）
 - `GET/POST /api/v1/waypoints`
-- `GET/PATCH /api/v1/waypoints/{id}`
+- `GET/PUT/PATCH /api/v1/waypoints/{id}`
 - `DELETE /api/v1/waypoints/{id}`
 
 6. Business API - 任务（mission）
 - `GET/POST /api/v1/missions`
-- `GET/PATCH /api/v1/missions/{id}`
+- `GET/PUT/PATCH /api/v1/missions/{id}`
 - `POST /api/v1/missions/{id}/start`
 - `POST /api/v1/missions/{id}/pause`
 - `POST /api/v1/missions/{id}/resume`
@@ -129,14 +129,38 @@ python manage.py runserver 0.0.0.0:8001
 
 7. Business API - 飞行记录（flight_record）
 - `GET/POST /api/v1/flight-records`
-- `GET/PATCH /api/v1/flight-records/{id}`
+- `GET/PUT/PATCH /api/v1/flight-records/{id}`
 - `POST /api/v1/flight-records/{id}/complete`
 - `POST /api/v1/flight-records/{id}/abort`
 
 8. Business API - 媒体文件（media_file）
 - `GET/POST /api/v1/media-files`
-- `GET/PATCH /api/v1/media-files/{id}`
+- `GET/PUT/PATCH /api/v1/media-files/{id}`
 - `DELETE /api/v1/media-files/{id}`
+
+## Business API 响应契约
+
+业务平面 `/api/v1/*` 统一返回：
+
+```json
+{
+  "code": "00000",
+  "msg": "success",
+  "data": {}
+}
+```
+
+- 列表接口统一返回 `data.list` 和 `data.total`
+- 详情、创建、更新、动作接口统一返回 `data=资源快照或动作结果`
+- 常用错误码：
+  - `A0401`：未登录或登录已失效
+  - `A0403`：无操作权限
+  - `B0001`：参数校验失败
+  - `C0101`：资源已存在或重复提交
+  - `C0201`：当前状态不允许操作
+  - `C0202`：当前数据已被引用，无法删除
+  - `C0404`：目标资源不存在
+  - `E0001`：系统异常
 
 ## 鉴权与授权边界
 

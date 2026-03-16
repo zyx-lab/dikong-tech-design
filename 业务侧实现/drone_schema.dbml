@@ -19,7 +19,7 @@
 
 Project low_altitude_business_current {
   database_type: 'PostgreSQL'
-  Note: '当前实现：无人机台账 + 无人机分配关系；业务API响应统一携带 business_code'
+  Note: '当前实现：无人机台账 + 无人机分配关系；业务 API 统一返回 code / msg / data'
 }
 
 // ============================================================
@@ -82,8 +82,8 @@ Table drone_assignments [note: '无人机与租户成员分配关系'] {
 //
 // 删除接口规则（逻辑约束）：
 // DELETE /api/v1/drones/{id} 仅允许空 body；
-// 当 drone 存在 ACTIVE 分配关系时返回 STATE_CONFLICT，不执行删除。
+// 当 drone 存在 ACTIVE 分配关系时返回 C0201，不执行删除。
 //
 // 业务响应字段（非库表字段，接口契约）：
-// business_code: SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND / STATE_CONFLICT / IDEMPOTENT_DUPLICATE
-// business_detail_code: OK / NOT_AUTHENTICATED / FORBIDDEN / NOT_FOUND / VALIDATION_ERROR / STATE_CONFLICT / DUPLICATE_REQUEST
+// response envelope: code / msg / data
+// common codes: 00000 / A0401 / A0403 / B0001 / C0101 / C0201 / C0404 / E0001

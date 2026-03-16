@@ -44,16 +44,14 @@ WAYPOINT_PERMISSION_DENIED_RESPONSE = business_error_response(
     examples=[
         business_error_example(
             "未登录",
-            business_code="PERMISSION_DENIED",
-            business_detail_code="NOT_AUTHENTICATED",
-            detail="Authentication credentials were not provided.",
+            code="A0401",
+            msg="登录状态已失效",
             status_codes=["401"],
         ),
         business_error_example(
             "无权限",
-            business_code="PERMISSION_DENIED",
-            business_detail_code="FORBIDDEN",
-            detail="PERMISSION_DENIED",
+            code="A0403",
+            msg="无操作权限",
             status_codes=["403"],
         ),
     ],
@@ -64,27 +62,24 @@ WAYPOINT_INVALID_PARAMS_RESPONSE = business_error_response(
     examples=[
         business_error_example(
             "航线不属于当前租户",
-            business_code="INVALID_PARAMS",
-            business_detail_code="VALIDATION_ERROR",
-            detail="参数校验失败",
+            code="B0001",
+            msg="参数校验失败",
             status_codes=["400"],
-            extras={"errors": {"route": ["仅允许绑定当前租户下的航线"]}},
+            data={"route": ["仅允许绑定当前租户下的航线"]},
         ),
         business_error_example(
             "航线已禁用",
-            business_code="INVALID_PARAMS",
-            business_detail_code="VALIDATION_ERROR",
-            detail="参数校验失败",
+            code="B0001",
+            msg="参数校验失败",
             status_codes=["400"],
-            extras={"errors": {"route": ["仅允许向状态为正常的航线新增航点"]}},
+            data={"route": ["仅允许向状态为正常的航线新增航点"]},
         ),
         business_error_example(
             "航点序号重复",
-            business_code="IDEMPOTENT_DUPLICATE",
-            business_detail_code="DUPLICATE_REQUEST",
-            detail="重复提交，资源已存在",
+            code="C0101",
+            msg="资源已存在",
             status_codes=["400"],
-            extras={"non_field_errors": ["The fields route, sequence must make a unique set."]},
+            data={"non_field_errors": ["The fields route, sequence must make a unique set."]},
         ),
     ],
 )
@@ -94,9 +89,8 @@ WAYPOINT_NOT_FOUND_RESPONSE = business_error_response(
     examples=[
         business_error_example(
             "航点不存在",
-            business_code="RESOURCE_NOT_FOUND",
-            business_detail_code="NOT_FOUND",
-            detail="No Waypoint matches the given query.",
+            code="C0404",
+            msg="资源不存在",
             status_codes=["404"],
         )
     ],
@@ -156,6 +150,21 @@ WAYPOINT_NOT_FOUND_RESPONSE = business_error_response(
         },
         tags=["Business API - Waypoint"],
     ),
+    update=extend_schema(
+        summary="全量更新航点",
+        description="按航点 ID 全量更新 sequence/latitude/longitude/altitude，不支持切换所属航线。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=WaypointPatchSerializer,
+        responses={
+            200: OpenApiResponse(response=WAYPOINT_DETAIL_RESPONSE, description="更新成功。"),
+            400: WAYPOINT_INVALID_PARAMS_RESPONSE,
+            401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            404: WAYPOINT_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Waypoint"],
+    ),
     partial_update=extend_schema(
         summary="局部更新航点",
         description="按航点 ID 局部更新 sequence/latitude/longitude/altitude，不支持切换所属航线。",
@@ -208,13 +217,14 @@ class WaypointViewSet(
 
     queryset = Waypoint.objects.select_related("route").all().order_by("route_id", "sequence", "id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
     tenant_lookup = "route__tenant"
 
     permission_map = {
         "list": "waypoint.view_waypoint",
         "retrieve": "waypoint.view_waypoint",
         "create": "waypoint.manage_waypoint",
+        "update": "waypoint.manage_waypoint",
         "partial_update": "waypoint.manage_waypoint",
         "destroy": "waypoint.manage_waypoint",
     }
@@ -222,7 +232,7 @@ class WaypointViewSet(
     def get_serializer_class(self):
         if self.action == "create":
             return WaypointCreateSerializer
-        if self.action == "partial_update":
+        if self.action in {"update", "partial_update"}:
             return WaypointPatchSerializer
         return WaypointReadSerializer
 
@@ -237,7 +247,7 @@ class WaypointViewSet(
         # 设计边界：
         # 1) 仅做列表读取，不承担航点编辑、删除、重排等编排行为；
         # 2) 过滤参数仅提供基础维度，复杂业务编排由外部系统组合实现；
-        # 3) 返回统一携带 business_code/business_detail_code。
+        # 3) 返回统一携带 code/msg/data。
         route_id = params.get("route_id")
         sequence = params.get("sequence")
         if route_id:
@@ -248,8 +258,8 @@ class WaypointViewSet(
 
     def list(self, request, *args, **kwargs):
         # 返回语义：
-        # 1) 有查看权限：HTTP 200 + business_code=SUCCESS；
-        # 2) 未认证或无权限：HTTP 401/403 + business_code=PERMISSION_DENIED。
+        # 1) 有查看权限：HTTP 200 + code=00000；
+        # 2) 未认证或无权限：HTTP 401/403 + code=A0401/A0403。
         return super().list(request, *args, **kwargs)
 
     def retrieve(self, request, *args, **kwargs):
@@ -260,7 +270,7 @@ class WaypointViewSet(
         # 设计边界：
         # 1) 只做单条读取，不承担状态流转、编辑、删除等动作；
         # 2) 不新增业务编排语义，仅暴露最小读能力；
-        # 3) 成功/失败均由统一响应层补齐 business_code/business_detail_code。
+        # 3) 成功/失败均由统一响应层补齐 code/msg/data。
         return super().retrieve(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
@@ -271,7 +281,7 @@ class WaypointViewSet(
         # 设计边界：
         # 1) 本接口只负责新增单条航点，不承担航点批量导入、航线重排、任务编排等职责；
         # 2) 仅允许写入 ACTIVE 航线，并保证同一航线下 sequence 不重复；
-        # 3) 成功返回航点快照，business_code/business_detail_code 由统一响应层补齐。
+        # 3) 成功返回航点快照，code/msg/data 由统一响应层补齐。
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         waypoint = self.perform_create(serializer)
@@ -288,9 +298,21 @@ class WaypointViewSet(
         # 适用边界：
         # 1) 不支持通过该接口切换所属航线，跨航线调整应由外部组合“新建+停用旧数据”等流程实现；
         # 2) 仅允许更新 ACTIVE 航线下的航点；
-        # 3) 成功/失败响应统一包含 business_code/business_detail_code（SUCCESS、INVALID_PARAMS、RESOURCE_NOT_FOUND、PERMISSION_DENIED）。
+        # 3) 成功/失败响应统一包含 code/msg/data。
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        waypoint = self.perform_update(serializer)
+
+        if getattr(instance, "_prefetched_objects_cache", None):
+            instance._prefetched_objects_cache = {}
+
+        read_serializer = WaypointReadSerializer(waypoint, context={"request": request})
+        return Response(read_serializer.data, status=status.HTTP_200_OK)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
         waypoint = self.perform_update(serializer)
 
@@ -308,7 +330,7 @@ class WaypointViewSet(
         # 适用边界：
         # 1) 本接口只处理单条航点删除，不承担批量删除、历史归档、跨航线重排等编排能力；
         # 2) 删除后会同步回写 route.waypoint_count，保证航线冗余计数字段与实际数据一致；
-        # 3) 成功/失败响应统一包含 business_code/business_detail_code（SUCCESS、RESOURCE_NOT_FOUND、PERMISSION_DENIED）。
+        # 3) 成功/失败响应统一包含 code/msg/data。
         waypoint = self.get_object()
         waypoint_id = waypoint.id
         self.perform_destroy(waypoint)

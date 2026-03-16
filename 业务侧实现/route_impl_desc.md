@@ -63,11 +63,15 @@ PostgreSQL
 
 ## API 实现 (/api/v1/routes)
 
+统一响应契约：
+- 成功：`code=00000`，`msg=success`
+- 失败：统一返回 `code / msg / data`，常见错误码为 `A0401`、`A0403`、`B0001`、`C0404`
+
 ### 1. GET /api/v1/routes
 - 功能：航线列表查询
 - 筛选参数：status, route_type, name（模糊匹配）
 - 权限：route.view_route
-- 业务码：SUCCESS, PERMISSION_DENIED
+- 业务码：`00000`, `A0401 / A0403`
 
 ### 2. POST /api/v1/routes
 - 功能：创建航线
@@ -75,19 +79,19 @@ PostgreSQL
 - 可选：route_type, drone_type_id, total_distance, estimated_duration
 - 自动设置：status=ACTIVE, creator_name=当前用户姓名, waypoint_count=按航点链路回写
 - 权限：route.manage_route
-- 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `A0401 / A0403`
 
 ### 3. GET /api/v1/routes/{id}
 - 功能：航线详情
 - 权限：route.view_route
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
-### 4. PATCH /api/v1/routes/{id}
-- 功能：局部更新航线
+### 4. PUT / PATCH /api/v1/routes/{id}
+- 功能：全量或局部更新航线
 - 可写字段：name, route_type, drone_type_id, total_distance, estimated_duration
 - 约束：PATCH 请求体必须至少包含一个可写字段，status / creator_name / waypoint_count 不可写
 - 权限：route.manage_route
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
 ### 5. DELETE /api/v1/routes/{id}
 - 功能：删除航线
@@ -96,7 +100,7 @@ PostgreSQL
   - 若航线已被任务引用，则不物理删除，改为置为 DISABLED，返回 deleted=true, delete_mode=disabled
   - 若航线未被任务引用，则物理删除航线及其下属航点，返回 deleted=true, delete_mode=hard
 - 权限：route.manage_route
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
 ### 6. POST /api/v1/routes/{id}/enable
 - 功能：启用航线
@@ -104,7 +108,7 @@ PostgreSQL
 - 约束：请求体必须为空
 - 幂等：已处于 ACTIVE 的航线重复 enable 返回当前状态
 - 权限：route.manage_route
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 - 审计：ROUTE_ENABLE
 
 ### 7. POST /api/v1/routes/{id}/disable
@@ -112,12 +116,12 @@ PostgreSQL
 - 路径：/api/v1/routes/{id}/disable
 - 方法：POST
 - 状态流转：ACTIVE -> DISABLED
-- 请求体：必须为空；提交 body 返回 INVALID_PARAMS
+- 请求体：必须为空；提交 body 返回 `B0001`
 - 响应：返回最新 route 快照；若当前已是 DISABLED，则按幂等成功返回当前状态
 - 约束：仅处理 route.status 自身流转，不承担航点删除、任务解绑或批量停用编排
 - 幂等：已处于 DISABLED 的航线重复 disable 返回当前状态
 - 权限：route.manage_route
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 - 审计：ROUTE_DISABLE
 
 ---

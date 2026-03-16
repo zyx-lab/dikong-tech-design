@@ -66,7 +66,7 @@ PostgreSQL
 | 创建 | POST /api/v1/media-files | 新增媒体文件 |
 | 列表 | GET /api/v1/media-files | 媒体文件列表查询 |
 | 详情 | GET /api/v1/media-files/{id} | 媒体文件详情 |
-| 更新 | PATCH /api/v1/media-files/{id} | 局部更新媒体文件 |
+| 更新 | PUT / PATCH /api/v1/media-files/{id} | 全量或局部更新媒体文件 |
 | 删除 | DELETE /api/v1/media-files/{id} | 逻辑删除媒体文件 |
 
 ## 接口语义
@@ -75,15 +75,15 @@ PostgreSQL
 - 功能：创建媒体文件元数据记录
 - 必填：media_type, file_name, file_url
 - 约束：is_deleted 默认为 false
-- 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `A0401 / A0403`
 
-### 更新媒体文件 PATCH /api/v1/media-files/{id}
-- 功能：局部更新媒体文件元数据
+### 更新媒体文件 PUT / PATCH /api/v1/media-files/{id}
+- 功能：全量或局部更新媒体文件元数据
 - 可写字段：flight_record, media_type, file_name, file_url, thumbnail_url, file_size, latitude, longitude, captured_at
 - 约束：已逻辑删除的记录不参与更新
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
 ### 删除媒体文件 DELETE /api/v1/media-files/{id}
 - 功能：逻辑删除媒体文件
 - 约束：执行 is_deleted=true, deleted_at=当前时间，不做物理删除
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`

@@ -140,10 +140,10 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.get("/api/v1/media-files")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertIn("results", response.data)
-        self.assertEqual(len(response.data["results"]), 2)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertIn("list", response.data["data"])
+        self.assertEqual(len(response.data["data"]["list"]), 2)
 
     def test_create_media_file_should_return_success(self):
         self._grant_permission("media_file.manage_media_file")
@@ -163,12 +163,12 @@ class MediaFileApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["file_name"], "IMG_CREATE_OK.JPG")
-        self.assertFalse(response.data["is_deleted"])
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["file_name"], "IMG_CREATE_OK.JPG")
+        self.assertFalse(response.data["data"]["is_deleted"])
 
-        media_file = MediaFile.objects.get(id=response.data["id"])
+        media_file = MediaFile.objects.get(id=response.data["data"]["id"])
         self.assertEqual(media_file.flight_record_id, flight_record.id)
         self.assertFalse(media_file.is_deleted)
         self.assertIsNone(media_file.deleted_at)
@@ -208,8 +208,8 @@ class MediaFileApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertIn("flight_record", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("flight_record", response.data["data"])
 
     def test_model_should_reject_cross_tenant_flight_record(self):
         other_tenant, _, _ = ensure_tenant_role_binding(
@@ -299,9 +299,9 @@ class MediaFileApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("file_name", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("file_name", response.data["data"])
 
     def test_create_media_file_without_auth_should_return_permission_denied(self):
         flight_record = self._create_flight_record()
@@ -317,8 +317,8 @@ class MediaFileApiTests(TestCase):
             format="json",
         )
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_create_media_file_without_permission_should_return_permission_denied(self):
         flight_record = self._create_flight_record()
@@ -335,8 +335,8 @@ class MediaFileApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_list_media_files_with_filter_should_return_filtered_results(self):
         self._grant_permission("media_file.view_media_file")
@@ -347,10 +347,10 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.get("/api/v1/media-files", {"media_type": MediaType.VIDEO})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(len(response.data["results"]), 1)
-        self.assertEqual(response.data["results"][0]["media_type"], MediaType.VIDEO)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(len(response.data["data"]["list"]), 1)
+        self.assertEqual(response.data["data"]["list"][0]["media_type"], MediaType.VIDEO)
 
     def test_list_media_files_should_exclude_deleted_records(self):
         self._grant_permission("media_file.view_media_file")
@@ -361,10 +361,10 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.get("/api/v1/media-files")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(len(response.data["results"]), 1)
-        self.assertEqual(response.data["results"][0]["file_name"], "IMG_OK.JPG")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(len(response.data["data"]["list"]), 1)
+        self.assertEqual(response.data["data"]["list"][0]["file_name"], "IMG_OK.JPG")
 
     def test_list_media_files_without_auth_should_return_permission_denied(self):
         flight_record = self._create_flight_record()
@@ -372,8 +372,8 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.get("/api/v1/media-files")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_list_media_files_without_permission_should_return_permission_denied(self):
         flight_record = self._create_flight_record()
@@ -382,8 +382,8 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.get("/api/v1/media-files")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_retrieve_media_file_should_return_success(self):
         self._grant_permission("media_file.view_media_file")
@@ -393,10 +393,10 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/media-files/{media_file.id}")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["id"], media_file.id)
-        self.assertEqual(response.data["file_name"], "IMG_DETAIL_OK.JPG")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["id"], media_file.id)
+        self.assertEqual(response.data["data"]["file_name"], "IMG_DETAIL_OK.JPG")
 
     def test_retrieve_media_file_not_found_should_return_resource_not_found(self):
         self._grant_permission("media_file.view_media_file")
@@ -404,8 +404,8 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.get("/api/v1/media-files/999999")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
     def test_retrieve_media_file_deleted_should_return_resource_not_found(self):
         self._grant_permission("media_file.view_media_file")
         self.client.force_authenticate(self.viewer_user)
@@ -418,8 +418,8 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/media-files/{media_file.id}")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_retrieve_media_file_without_auth_should_return_permission_denied(self):
         flight_record = self._create_flight_record()
@@ -427,8 +427,8 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/media-files/{media_file.id}")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_retrieve_media_file_without_permission_should_return_permission_denied(self):
         flight_record = self._create_flight_record()
@@ -437,8 +437,8 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/media-files/{media_file.id}")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_delete_media_file_should_return_success_and_soft_delete(self):
         self._grant_permission("media_file.manage_media_file")
@@ -448,10 +448,10 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.delete(f"/api/v1/media-files/{media_file.id}")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["id"], media_file.id)
-        self.assertTrue(response.data["is_deleted"])
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["id"], media_file.id)
+        self.assertTrue(response.data["data"]["is_deleted"])
 
         media_file.refresh_from_db()
         self.assertTrue(media_file.is_deleted)
@@ -463,8 +463,8 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.delete("/api/v1/media-files/999999")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_delete_media_file_deleted_should_return_resource_not_found(self):
         self._grant_permission("media_file.manage_media_file")
@@ -478,8 +478,8 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.delete(f"/api/v1/media-files/{media_file.id}")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_delete_media_file_without_auth_should_return_permission_denied(self):
         flight_record = self._create_flight_record()
@@ -487,8 +487,8 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.delete(f"/api/v1/media-files/{media_file.id}")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_delete_media_file_without_permission_should_return_permission_denied(self):
         flight_record = self._create_flight_record()
@@ -497,8 +497,8 @@ class MediaFileApiTests(TestCase):
 
         response = self.client.delete(f"/api/v1/media-files/{media_file.id}")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_patch_media_file_should_return_success(self):
         self._grant_permission("media_file.manage_media_file")
@@ -521,12 +521,12 @@ class MediaFileApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["flight_record"], next_flight_record.id)
-        self.assertEqual(response.data["media_type"], MediaType.VIDEO)
-        self.assertEqual(response.data["file_name"], "IMG_PATCH_NEW.MP4")
-        self.assertEqual(response.data["file_size"], 8192)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["flight_record"], next_flight_record.id)
+        self.assertEqual(response.data["data"]["media_type"], MediaType.VIDEO)
+        self.assertEqual(response.data["data"]["file_name"], "IMG_PATCH_NEW.MP4")
+        self.assertEqual(response.data["data"]["file_size"], 8192)
         media_file.refresh_from_db()
         self.assertEqual(media_file.flight_record_id, next_flight_record.id)
         self.assertEqual(media_file.media_type, MediaType.VIDEO)
@@ -555,8 +555,8 @@ class MediaFileApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         media_file.refresh_from_db()
         self.assertEqual(media_file.file_name, "IMG_PATCH_EMPTY.JPG")
 
@@ -571,8 +571,8 @@ class MediaFileApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_patch_media_file_without_auth_should_return_permission_denied(self):
         flight_record = self._create_flight_record()
@@ -585,8 +585,8 @@ class MediaFileApiTests(TestCase):
         )
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_patch_media_file_without_permission_should_return_permission_denied(self):
         flight_record = self._create_flight_record()
@@ -600,8 +600,8 @@ class MediaFileApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
 
 class MediaFilePilotScopeTests(TestCase):
@@ -729,8 +729,8 @@ class MediaFilePilotScopeTests(TestCase):
         response = self.client.get("/api/v1/media-files")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["count"], 1)
-        self.assertEqual(response.data["results"][0]["id"], self.my_media.id)
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["id"], self.my_media.id)
 
     def test_pilot_create_media_for_other_flight_record_should_return_invalid_params(self):
         response = self.client.post(
@@ -745,5 +745,5 @@ class MediaFilePilotScopeTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertIn("flight_record", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("flight_record", response.data["data"])

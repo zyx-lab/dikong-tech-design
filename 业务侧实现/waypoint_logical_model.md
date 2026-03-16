@@ -66,7 +66,7 @@ PostgreSQL
 | 创建 | POST /api/v1/waypoints | 新增航点 |
 | 列表 | GET /api/v1/waypoints | 航点列表查询 |
 | 详情 | GET /api/v1/waypoints/{id} | 航点详情 |
-| 更新 | PATCH /api/v1/waypoints/{id} | 局部更新航点 |
+| 更新 | PUT / PATCH /api/v1/waypoints/{id} | 全量或局部更新航点 |
 | 删除 | DELETE /api/v1/waypoints/{id} | 删除航点 |
 
 ## 接口语义
@@ -75,15 +75,15 @@ PostgreSQL
 - 功能：向指定航线新增航点
 - 必填：route, sequence, latitude, longitude, altitude
 - 约束：仅允许写入 ACTIVE 航线
-- 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `A0401 / A0403`
 
-### 更新航点 PATCH /api/v1/waypoints/{id}
-- 功能：局部更新航点坐标或顺序
+### 更新航点 PUT / PATCH /api/v1/waypoints/{id}
+- 功能：全量或局部更新航点坐标或顺序
 - 可写字段：sequence, latitude, longitude, altitude
 - 约束：不支持切换所属航线，仅允许更新 ACTIVE 航线下的航点
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
 ### 删除航点 DELETE /api/v1/waypoints/{id}
 - 功能：删除单条航点
 - 约束：删除后自动更新 route.waypoint_count
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`

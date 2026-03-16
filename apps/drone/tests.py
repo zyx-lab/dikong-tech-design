@@ -51,14 +51,14 @@ class DroneApiAuthzTests(TestCase):
         self.client.force_authenticate(self.user)
         response = self.client.get("/api/v1/drones")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["detail"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["msg"], "无操作权限")
 
     def test_permission_without_scope_should_be_denied(self):
         self._grant_permission("drone.view_drone", with_scope=False)
         self.client.force_authenticate(self.user)
         response = self.client.get("/api/v1/drones")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["detail"], "PERMISSION_DENIED")
+        self.assertEqual(response.data["msg"], "无操作权限")
 
     def test_view_permission_with_all_scope_should_allow_list(self):
         self._grant_permission("drone.view_drone", with_scope=True)
@@ -82,7 +82,7 @@ class DroneApiAuthzTests(TestCase):
         self.client.force_authenticate(self.user)
         response = self.client.get("/api/v1/drones")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["count"], 2)
+        self.assertEqual(response.data["data"]["total"], 2)
 
     def test_list_should_only_return_current_tenant_drones(self):
         self._grant_permission("drone.view_drone", with_scope=True)
@@ -112,8 +112,8 @@ class DroneApiAuthzTests(TestCase):
         response = self.client.get("/api/v1/drones")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["count"], 1)
-        self.assertEqual(response.data["results"][0]["code"], "DJ-CURRENT-01")
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["code"], "DJ-CURRENT-01")
 
 
 class SuperuserRootPermissionTests(TestCase):
@@ -138,7 +138,7 @@ class SuperuserRootPermissionTests(TestCase):
         )
         response = self.client.get("/api/v1/drones")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["data"]["total"], 1)
 
     def test_superuser_should_create_drone_without_staff_binding(self):
         payload = {
@@ -237,12 +237,12 @@ class DroneApiWriteTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("status", response.data)
+        self.assertIn("status", response.data["data"])
         # 验证状态实际未改变
         drone.refresh_from_db()
         self.assertEqual(drone.status, original_status)
 
-    def test_put_should_not_be_exposed(self):
+    def test_put_should_update_drone(self):
         self._grant_permissions(["drone.manage_drone"])
         drone = Drone.objects.create(
             tenant=self.tenant,
@@ -265,10 +265,11 @@ class DroneApiWriteTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 405)
-        self.assertEqual(response.data["business_detail_code"], "METHOD_NOT_ALLOWED")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["data"]["name"], "无人机-PUT-更新")
         drone.refresh_from_db()
-        self.assertEqual(drone.name, "无人机-PUT")
+        self.assertEqual(drone.name, "无人机-PUT-更新")
 
     def test_enable_should_transition_disabled_drone_and_write_audit_log(self):
         self._grant_permissions(["drone.change_drone_status"])
@@ -277,9 +278,9 @@ class DroneApiWriteTests(TestCase):
         response = self.client.post(f"/api/v1/drones/{drone.id}/enable")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], DroneStatus.ENABLED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], DroneStatus.ENABLED)
         drone.refresh_from_db()
         self.assertEqual(drone.status, DroneStatus.ENABLED)
         self.assertTrue(
@@ -297,8 +298,8 @@ class DroneApiWriteTests(TestCase):
         response = self.client.post(f"/api/v1/drones/{drone.id}/enable")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
         drone.refresh_from_db()
         self.assertEqual(drone.status, DroneStatus.ENABLED)
 
@@ -309,9 +310,9 @@ class DroneApiWriteTests(TestCase):
         response = self.client.post(f"/api/v1/drones/{drone.id}/disable")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], DroneStatus.DISABLED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], DroneStatus.DISABLED)
         drone.refresh_from_db()
         self.assertEqual(drone.status, DroneStatus.DISABLED)
         self.assertTrue(
@@ -329,8 +330,8 @@ class DroneApiWriteTests(TestCase):
         response = self.client.post(f"/api/v1/drones/{drone.id}/disable")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
         drone.refresh_from_db()
         self.assertEqual(drone.status, DroneStatus.DISABLED)
 
@@ -341,9 +342,9 @@ class DroneApiWriteTests(TestCase):
         response = self.client.post(f"/api/v1/drones/{drone.id}/maintenance")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], DroneStatus.MAINTENANCE)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], DroneStatus.MAINTENANCE)
         drone.refresh_from_db()
         self.assertEqual(drone.status, DroneStatus.MAINTENANCE)
         self.assertTrue(
@@ -361,8 +362,8 @@ class DroneApiWriteTests(TestCase):
         response = self.client.post(f"/api/v1/drones/{drone.id}/maintenance")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
         drone.refresh_from_db()
         self.assertEqual(drone.status, DroneStatus.MAINTENANCE)
 
@@ -385,8 +386,8 @@ class DroneApiWriteTests(TestCase):
 
         enable_response = self.client.post(f"/api/v1/drones/{drone.id}/enable")
         self.assertEqual(enable_response.status_code, 409)
-        self.assertEqual(enable_response.data["business_code"], "STATE_CONFLICT")
-        self.assertIn("RETIRED", enable_response.data["detail"])
+        self.assertIn(enable_response.data["code"], {"C0201", "C0202"})
+        self.assertIn("RETIRED", enable_response.data["msg"])
 
         retire_again_response = self.client.post(f"/api/v1/drones/{drone.id}/retire")
         self.assertEqual(retire_again_response.status_code, 200)
@@ -428,7 +429,7 @@ class DroneApiWriteTests(TestCase):
 
         response = self.client.delete(f"/api/v1/drones/{drone.id}")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["code"], "00000")
         self.assertFalse(Drone.objects.filter(id=drone.id).exists())
         self.assertTrue(
             AuditLog.objects.filter(
@@ -452,7 +453,7 @@ class DroneApiWriteTests(TestCase):
 
         response = self.client.delete(f"/api/v1/drones/{drone.id}", {"unexpected": True}, format="json")
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["code"], "B0001")
         self.assertTrue(Drone.objects.filter(id=drone.id).exists())
 
     def test_delete_with_active_assignment_should_return_state_conflict(self):
@@ -491,7 +492,7 @@ class DroneApiWriteTests(TestCase):
 
         response = self.client.delete(f"/api/v1/drones/{drone.id}")
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
         self.assertTrue(Drone.objects.filter(id=drone.id).exists())
 
 
@@ -541,8 +542,8 @@ class PilotAssignedScopeTests(TestCase):
     def test_pilot_should_only_list_assigned_drones(self):
         response = self.client.get("/api/v1/drones")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["count"], 1)
-        self.assertEqual(response.data["results"][0]["id"], self.drone_assigned.id)
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["id"], self.drone_assigned.id)
 
     def test_pilot_retrieve_unassigned_drone_should_be_404(self):
         response = self.client.get(f"/api/v1/drones/{self.drone_unassigned.id}")
@@ -618,12 +619,12 @@ class DroneHistoryApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/history")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["drone_id"], drone.id)
-        self.assertEqual(response.data["count"], 2)
-        self.assertEqual(len(response.data["results"]), 2)
-        self.assertEqual({item["status"] for item in response.data["results"]}, {"ACTIVE", "INACTIVE"})
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["drone_id"], drone.id)
+        self.assertEqual(response.data["data"]["total"], 2)
+        self.assertEqual(len(response.data["data"]["list"]), 2)
+        self.assertEqual({item["status"] for item in response.data["data"]["list"]}, {"ACTIVE", "INACTIVE"})
 
     def test_history_without_auth_should_return_permission_denied(self):
         drone = Drone.objects.create(
@@ -636,16 +637,16 @@ class DroneHistoryApiTests(TestCase):
         )
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/history")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_history_not_found_should_return_resource_not_found(self):
         self._grant_view_permission()
         self.client.force_authenticate(self.viewer_user)
         response = self.client.get("/api/v1/drones/999999/assignments/history")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
 
 class DroneActiveAssignmentsApiTests(TestCase):
@@ -717,12 +718,12 @@ class DroneActiveAssignmentsApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/active")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["drone_id"], drone.id)
-        self.assertEqual(response.data["count"], 1)
-        self.assertEqual(len(response.data["results"]), 1)
-        self.assertEqual(response.data["results"][0]["status"], "ACTIVE")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["drone_id"], drone.id)
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(len(response.data["data"]["list"]), 1)
+        self.assertEqual(response.data["data"]["list"][0]["status"], "ACTIVE")
 
     def test_active_assignments_without_auth_should_return_permission_denied(self):
         drone = Drone.objects.create(
@@ -735,16 +736,16 @@ class DroneActiveAssignmentsApiTests(TestCase):
         )
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/active")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_active_assignments_not_found_should_return_resource_not_found(self):
         self._grant_view_permission()
         self.client.force_authenticate(self.viewer_user)
         response = self.client.get("/api/v1/drones/999999/assignments/active")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
 
 class DroneLatestAssignmentApiTests(TestCase):
@@ -816,13 +817,13 @@ class DroneLatestAssignmentApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/latest")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["drone_id"], drone.id)
-        self.assertTrue(response.data["has_record"])
-        self.assertIsNotNone(response.data["result"])
-        self.assertEqual(response.data["result"]["id"], latest_assignment.id)
-        self.assertEqual(response.data["result"]["status"], "INACTIVE")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["drone_id"], drone.id)
+        self.assertTrue(response.data["data"]["has_record"])
+        self.assertIsNotNone(response.data["data"]["result"])
+        self.assertEqual(response.data["data"]["result"]["id"], latest_assignment.id)
+        self.assertEqual(response.data["data"]["result"]["status"], "INACTIVE")
 
     def test_latest_assignment_should_return_null_when_no_record(self):
         self._grant_view_permission()
@@ -837,11 +838,11 @@ class DroneLatestAssignmentApiTests(TestCase):
         )
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/latest")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["drone_id"], drone.id)
-        self.assertFalse(response.data["has_record"])
-        self.assertIsNone(response.data["result"])
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["drone_id"], drone.id)
+        self.assertFalse(response.data["data"]["has_record"])
+        self.assertIsNone(response.data["data"]["result"])
 
     def test_latest_assignment_without_auth_should_return_permission_denied(self):
         drone = Drone.objects.create(
@@ -854,16 +855,16 @@ class DroneLatestAssignmentApiTests(TestCase):
         )
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/latest")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_latest_assignment_not_found_should_return_resource_not_found(self):
         self._grant_view_permission()
         self.client.force_authenticate(self.viewer_user)
         response = self.client.get("/api/v1/drones/999999/assignments/latest")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
 
 class BusinessAdminApiTests(TestCase):
@@ -920,7 +921,7 @@ class BusinessAdminApiTests(TestCase):
 
         list_resp = self.client.get("/api/v1/drones")
         self.assertEqual(list_resp.status_code, 200)
-        self.assertEqual(list_resp.data["count"], 1)
+        self.assertEqual(list_resp.data["data"]["total"], 1)
 
         assign_resp = self.client.post(
             "/api/v1/drone-assignments",
@@ -973,7 +974,7 @@ class DroneBoundaryTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["code"], "00000")
 
     def test_create_drone_exceed_name_length(self):
         """测试名称超过最大长度"""
@@ -988,7 +989,7 @@ class DroneBoundaryTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["code"], "B0001")
 
     def test_create_drone_duplicate_code(self):
         """测试重复业务编码"""
@@ -1012,9 +1013,9 @@ class DroneBoundaryTests(TestCase):
             "serial_no": "SN-DUP-002",
         })
         self.assertEqual(response2.status_code, 409)
-        self.assertEqual(response2.data["business_code"], "IDEMPOTENT_DUPLICATE")
-        self.assertEqual(response2.data["business_detail_code"], "DUPLICATE_REQUEST")
-        self.assertIn("code", response2.data["errors"])
+        self.assertEqual(response2.data["code"], "C0101")
+        self.assertEqual(response2.data["code"], "C0101")
+        self.assertIn("code", response2.data["data"])
 
     def test_create_drone_duplicate_code_in_other_tenant_should_be_allowed(self):
         """测试跨租户重复业务编码允许创建"""
@@ -1041,8 +1042,8 @@ class DroneBoundaryTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["code"], "DJ-CROSS-TENANT-CODE")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["data"]["code"], "DJ-CROSS-TENANT-CODE")
 
     def test_create_drone_duplicate_serial_no(self):
         """测试重复序列号"""
@@ -1064,9 +1065,9 @@ class DroneBoundaryTests(TestCase):
             "serial_no": serial,
         })
         self.assertEqual(response2.status_code, 409)
-        self.assertEqual(response2.data["business_code"], "IDEMPOTENT_DUPLICATE")
-        self.assertEqual(response2.data["business_detail_code"], "DUPLICATE_REQUEST")
-        self.assertIn("serial_no", response2.data["errors"])
+        self.assertEqual(response2.data["code"], "C0101")
+        self.assertEqual(response2.data["code"], "C0101")
+        self.assertIn("serial_no", response2.data["data"])
 
     def test_create_drone_duplicate_serial_no_in_other_tenant_should_be_allowed(self):
         """测试跨租户重复序列号允许创建"""
@@ -1093,8 +1094,8 @@ class DroneBoundaryTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["serial_no"], "SN-CROSS-TENANT-SHARED")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["data"]["serial_no"], "SN-CROSS-TENANT-SHARED")
 
     def test_create_drone_missing_required_field(self):
         """测试缺少必填字段"""

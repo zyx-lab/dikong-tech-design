@@ -105,10 +105,10 @@ PostgreSQL
 ### 4.4 恢复分配 `POST /api/v1/drone-assignments/{id}/reactivate`
 
 行为定义：
-1. 请求体必须为空；非空返回 `400 + INVALID_PARAMS`。  
+1. 请求体必须为空；非空返回 `400 + B0001`。  
 2. 目标记录为 `INACTIVE` 时，更新为 `ACTIVE` 且清空 `end_at`。  
 3. 目标记录已是 `ACTIVE` 时按幂等成功处理并返回当前记录。  
-4. 若激活触发唯一约束冲突，返回 `409 + STATE_CONFLICT`。  
+4. 若激活触发唯一约束冲突，返回 `409 + C0201`。  
 5. 写审计日志 `DRONE_ASSIGNMENT_REACTIVATE`。  
 
 ---
@@ -127,15 +127,16 @@ PostgreSQL
 ## 6. 响应契约
 
 业务 API 响应体统一包含：
-1. `business_code`  
-2. `business_detail_code`
+1. `code`
+2. `msg`
+3. `data`
 
 常见返回：
-1. 成功：`SUCCESS + OK`（200/201）。  
-2. 参数校验失败：`INVALID_PARAMS + VALIDATION_ERROR`（400）。  
-3. 重复创建：`IDEMPOTENT_DUPLICATE + DUPLICATE_REQUEST`（400/409）。  
-4. 无权限：`PERMISSION_DENIED + NOT_AUTHENTICATED/FORBIDDEN`（401/403）。  
-5. 资源不存在：`RESOURCE_NOT_FOUND + NOT_FOUND`（404）。  
+1. 成功：`00000`（200/201）。  
+2. 参数校验失败：`B0001`（400）。  
+3. 重复创建：`C0101`（409）。  
+4. 无权限：`A0401 / A0403`（401/403）。  
+5. 资源不存在：`C0404`（404）。  
 
 ---
 

@@ -65,8 +65,8 @@ Table drone_assignments [note: '无人机与租户成员分配关系'] {
 // 3) RETIRED 无人机不可创建分配
 // 4) cancel 动作幂等：INACTIVE 再次 cancel 仍返回成功态
 // 5) reactivate 动作支持 INACTIVE->ACTIVE；ACTIVE 再次 reactivate 幂等成功
-// 6) reactivate 请求体必须为空；非空返回 INVALID_PARAMS
+// 6) reactivate 请求体必须为空；非空返回 B0001
 
 // 业务响应契约（非数据库字段）：
-// business_code: SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND / STATE_CONFLICT / IDEMPOTENT_DUPLICATE
-// business_detail_code: OK / VALIDATION_ERROR / NOT_AUTHENTICATED / FORBIDDEN / NOT_FOUND / DUPLICATE_REQUEST
+// response envelope: code / msg / data
+// common codes: 00000 / A0401 / A0403 / B0001 / C0201 / C0404 / E0001

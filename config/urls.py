@@ -22,7 +22,7 @@ urlpatterns = [
     path("internal/docs/", SpectacularSwaggerView.as_view(url_name="internal-docs-schema"), name="internal-docs"),
     path(
         "api/v1/docs/schema/",
-        SpectacularAPIView.as_view(urlconf="config.business_api_urlconf"),
+        SpectacularJSONAPIView.as_view(urlconf="config.business_api_urlconf"),
         name="business-docs-schema",
     ),
     path("api/v1/docs/", SpectacularSwaggerView.as_view(url_name="business-docs-schema"), name="business-docs"),

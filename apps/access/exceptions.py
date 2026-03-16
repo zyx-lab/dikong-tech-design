@@ -5,6 +5,7 @@ from rest_framework.exceptions import APIException, AuthenticationFailed, NotAut
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
 
+from apps.api_v1.business_response import build_standard_response
 
 logger = logging.getLogger(__name__)
 
@@ -54,45 +55,63 @@ class BusinessPermissionDenied(BusinessAPIException):
 
 
 def custom_exception_handler(exc, context):
-    """Custom exception handler that formats permission denied with business_code."""
+    """DRF exception handler with a dedicated /api/v1 standard envelope."""
     response = exception_handler(exc, context)
+    request = context.get("request")
+    is_business_api = request is not None and request.path.startswith("/api/v1/")
 
     if response is not None:
-        if isinstance(exc, BusinessAPIException):
-            response.data = {
-                "business_code": exc.business_code,
-                "business_detail_code": exc.business_detail_code,
-                "detail": str(exc.detail),
-            }
-
-        # Some authentication failures are rendered as 403 by DRF,
-        # so check the exception type before falling back to generic forbidden.
-        elif isinstance(exc, (NotAuthenticated, AuthenticationFailed)) or response.status_code == 401:
-            response.data = {
-                "business_code": "PERMISSION_DENIED",
-                "business_detail_code": "NOT_AUTHENTICATED",
-                "detail": str(response.data.get('detail', 'Authentication required')),
-            }
-
-        # Check if it's a permission denied error (403)
-        elif response.status_code == 403:
-            # Extract the permission message if available
-            if hasattr(exc, 'message') and exc.message:
-                detail = exc.message
-            elif isinstance(response.data, dict) and 'detail' in response.data:
-                detail = str(response.data['detail'])
+        if is_business_api:
+            if isinstance(exc, BusinessAPIException):
+                payload = {"detail": str(exc.detail)}
+            elif isinstance(exc, (NotAuthenticated, AuthenticationFailed)) or response.status_code == 401:
+                payload = {"detail": str(response.data.get("detail", "Authentication required"))}
+            elif response.status_code == 403:
+                if hasattr(exc, "message") and exc.message:
+                    detail = exc.message
+                elif isinstance(response.data, dict) and "detail" in response.data:
+                    detail = str(response.data["detail"])
+                else:
+                    detail = "Permission denied"
+                payload = {"detail": detail}
             else:
-                detail = "Permission denied"
+                payload = response.data
+            response.data = build_standard_response(payload, response.status_code, trace_id=getattr(request, "trace_id", None))
+        else:
+            if isinstance(exc, BusinessAPIException):
+                response.data = {
+                    "business_code": exc.business_code,
+                    "business_detail_code": exc.business_detail_code,
+                    "detail": str(exc.detail),
+                }
 
-            response.data = {
-                "business_code": "PERMISSION_DENIED",
-                "business_detail_code": "FORBIDDEN",
-                "detail": detail,
-            }
+            # Some authentication failures are rendered as 403 by DRF,
+            # so check the exception type before falling back to generic forbidden.
+            elif isinstance(exc, (NotAuthenticated, AuthenticationFailed)) or response.status_code == 401:
+                response.data = {
+                    "business_code": "PERMISSION_DENIED",
+                    "business_detail_code": "NOT_AUTHENTICATED",
+                    "detail": str(response.data.get('detail', 'Authentication required')),
+                }
+
+            # Check if it's a permission denied error (403)
+            elif response.status_code == 403:
+                # Extract the permission message if available
+                if hasattr(exc, 'message') and exc.message:
+                    detail = exc.message
+                elif isinstance(response.data, dict) and 'detail' in response.data:
+                    detail = str(response.data['detail'])
+                else:
+                    detail = "Permission denied"
+
+                response.data = {
+                    "business_code": "PERMISSION_DENIED",
+                    "business_detail_code": "FORBIDDEN",
+                    "detail": detail,
+                }
 
         return response
 
-    request = context.get("request")
     if request is not None:
         logger.exception(
             "Unhandled API exception on %s %s",
@@ -102,6 +121,12 @@ def custom_exception_handler(exc, context):
         )
     else:
         logger.exception("Unhandled API exception", exc_info=exc)
+
+    if is_business_api:
+        return Response(
+            build_standard_response({"detail": "internal server error"}, 500, trace_id=getattr(request, "trace_id", None)),
+            status=500,
+        )
 
     return Response(
         {

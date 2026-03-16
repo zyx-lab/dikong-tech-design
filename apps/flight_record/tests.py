@@ -132,16 +132,16 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["flight_no"], "YJ202603080999")
-        self.assertEqual(response.data["mission"], self.mission.id)
-        self.assertEqual(response.data["drone"], self.drone.id)
-        self.assertEqual(response.data["pilot"], self.pilot_member.id)
-        self.assertEqual(response.data["mission_name"], self.mission.name)
-        self.assertEqual(response.data["drone_name"], self.drone.name)
-        self.assertEqual(response.data["pilot_name"], self.pilot_staff.name)
-        self.assertEqual(response.data["status"], FlightRecordStatus.COMPLETED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["flight_no"], "YJ202603080999")
+        self.assertEqual(response.data["data"]["mission"], self.mission.id)
+        self.assertEqual(response.data["data"]["drone"], self.drone.id)
+        self.assertEqual(response.data["data"]["pilot"], self.pilot_member.id)
+        self.assertEqual(response.data["data"]["mission_name"], self.mission.name)
+        self.assertEqual(response.data["data"]["drone_name"], self.drone.name)
+        self.assertEqual(response.data["data"]["pilot_name"], self.pilot_staff.name)
+        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.COMPLETED)
 
     def test_model_should_reject_cross_tenant_mission(self):
         other_tenant, _, _ = ensure_tenant_role_binding(
@@ -246,8 +246,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertIn("mission", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("mission", response.data["data"])
 
     def test_create_flight_record_invalid_params_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -264,9 +264,9 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("flight_no", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("flight_no", response.data["data"])
 
     def test_model_should_reject_end_time_before_start_time(self):
         start_time = timezone.now()
@@ -441,8 +441,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
-        self.assertEqual(response.data["business_detail_code"], "DUPLICATE_REQUEST")
+        self.assertEqual(response.data["code"], "C0101")
+        self.assertEqual(response.data["code"], "C0101")
 
     def test_create_flight_record_duplicate_in_other_tenant_should_be_allowed(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -517,8 +517,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["flight_no"], flight_no)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["data"]["flight_no"], flight_no)
 
     def test_create_flight_record_without_auth_should_return_permission_denied(self):
         response = self.client.post(
@@ -534,8 +534,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_create_flight_record_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.viewer_user)
@@ -553,8 +553,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_list_flight_records_should_return_success(self):
         self._grant_permission("flight_record.view_flight_record")
@@ -564,10 +564,10 @@ class FlightRecordApiTests(TestCase):
 
         response = self.client.get("/api/v1/flight-records")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertIn("results", response.data)
-        self.assertGreaterEqual(len(response.data["results"]), 2)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertIn("list", response.data["data"])
+        self.assertGreaterEqual(len(response.data["data"]["list"]), 2)
 
     def test_list_flight_records_with_status_filter_should_return_filtered_results(self):
         self._grant_permission("flight_record.view_flight_record")
@@ -577,18 +577,18 @@ class FlightRecordApiTests(TestCase):
 
         response = self.client.get("/api/v1/flight-records", {"status": FlightRecordStatus.ABORTED})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(len(response.data["results"]), 1)
-        self.assertEqual(response.data["results"][0]["status"], FlightRecordStatus.ABORTED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(len(response.data["data"]["list"]), 1)
+        self.assertEqual(response.data["data"]["list"][0]["status"], FlightRecordStatus.ABORTED)
 
     def test_list_flight_records_without_auth_should_return_permission_denied(self):
         self._create_flight_record()
 
         response = self.client.get("/api/v1/flight-records")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_list_flight_records_without_permission_should_return_permission_denied(self):
         self._create_flight_record()
@@ -596,8 +596,8 @@ class FlightRecordApiTests(TestCase):
 
         response = self.client.get("/api/v1/flight-records")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_retrieve_flight_record_should_return_success(self):
         self._grant_permission("flight_record.view_flight_record")
@@ -606,11 +606,11 @@ class FlightRecordApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/flight-records/{record.id}")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["id"], record.id)
-        self.assertEqual(response.data["flight_no"], record.flight_no)
-        self.assertEqual(response.data["status"], FlightRecordStatus.COMPLETED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["id"], record.id)
+        self.assertEqual(response.data["data"]["flight_no"], record.flight_no)
+        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.COMPLETED)
 
     def test_retrieve_flight_record_not_found_should_return_resource_not_found(self):
         self._grant_permission("flight_record.view_flight_record")
@@ -618,15 +618,15 @@ class FlightRecordApiTests(TestCase):
 
         response = self.client.get("/api/v1/flight-records/999999")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
     def test_retrieve_flight_record_without_auth_should_return_permission_denied(self):
         record = self._create_flight_record()
 
         response = self.client.get(f"/api/v1/flight-records/{record.id}")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_retrieve_flight_record_without_permission_should_return_permission_denied(self):
         record = self._create_flight_record()
@@ -634,8 +634,8 @@ class FlightRecordApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/flight-records/{record.id}")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_patch_flight_record_should_return_success(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -654,11 +654,11 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["airport_name"], "深圳宝安机场")
-        self.assertEqual(response.data["photo_count"], 16)
-        self.assertEqual(response.data["status"], FlightRecordStatus.IN_PROGRESS)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["airport_name"], "深圳宝安机场")
+        self.assertEqual(response.data["data"]["photo_count"], 16)
+        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.IN_PROGRESS)
         record.refresh_from_db()
         self.assertEqual(record.airport_name, "深圳宝安机场")
         self.assertEqual(record.photo_count, 16)
@@ -683,9 +683,9 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("status", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("status", response.data["data"])
         record.refresh_from_db()
         self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
 
@@ -701,8 +701,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
 
     def test_patch_flight_record_invalid_params_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -716,9 +716,9 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("end_time", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("end_time", response.data["data"])
 
     def test_patch_flight_record_not_found_should_return_resource_not_found(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -731,8 +731,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_patch_flight_record_without_auth_should_return_permission_denied(self):
         record = self._create_flight_record()
@@ -744,8 +744,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_patch_flight_record_without_permission_should_return_permission_denied(self):
         record = self._create_flight_record()
@@ -758,8 +758,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_complete_flight_record_should_return_success(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -769,9 +769,9 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], FlightRecordStatus.COMPLETED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.COMPLETED)
 
         record.refresh_from_db()
         self.assertEqual(record.status, FlightRecordStatus.COMPLETED)
@@ -791,9 +791,9 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], FlightRecordStatus.COMPLETED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.COMPLETED)
 
     def test_complete_flight_record_with_body_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -807,8 +807,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         record.refresh_from_db()
         self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
 
@@ -820,8 +820,8 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
 
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
-        self.assertEqual(response.data["business_detail_code"], "STATE_CONFLICT")
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
         record.refresh_from_db()
         self.assertEqual(record.status, FlightRecordStatus.ABORTED)
 
@@ -832,8 +832,8 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post("/api/v1/flight-records/999999/complete")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_complete_flight_record_without_auth_should_return_permission_denied(self):
         record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
@@ -841,8 +841,8 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_complete_flight_record_without_permission_should_return_permission_denied(self):
         record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
@@ -851,8 +851,8 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_abort_flight_record_should_return_success(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -862,9 +862,9 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], FlightRecordStatus.ABORTED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.ABORTED)
 
         record.refresh_from_db()
         self.assertEqual(record.status, FlightRecordStatus.ABORTED)
@@ -884,9 +884,9 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], FlightRecordStatus.ABORTED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.ABORTED)
 
     def test_abort_flight_record_with_body_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -900,8 +900,8 @@ class FlightRecordApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         record.refresh_from_db()
         self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
 
@@ -913,8 +913,8 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
 
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
-        self.assertEqual(response.data["business_detail_code"], "STATE_CONFLICT")
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
         record.refresh_from_db()
         self.assertEqual(record.status, FlightRecordStatus.COMPLETED)
 
@@ -925,8 +925,8 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post("/api/v1/flight-records/999999/abort")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_abort_flight_record_without_auth_should_return_permission_denied(self):
         record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
@@ -934,8 +934,8 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_abort_flight_record_without_permission_should_return_permission_denied(self):
         record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
@@ -944,8 +944,8 @@ class FlightRecordApiTests(TestCase):
         response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
 
 class FlightRecordPilotScopeTests(TestCase):
@@ -1057,8 +1057,8 @@ class FlightRecordPilotScopeTests(TestCase):
         response = self.client.get("/api/v1/flight-records")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["count"], 1)
-        self.assertEqual(response.data["results"][0]["id"], self.my_record.id)
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["id"], self.my_record.id)
 
     def test_pilot_create_flight_record_for_other_mission_should_return_invalid_params(self):
         response = self.client.post(
@@ -1075,5 +1075,5 @@ class FlightRecordPilotScopeTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertIn("pilot", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("pilot", response.data["data"])

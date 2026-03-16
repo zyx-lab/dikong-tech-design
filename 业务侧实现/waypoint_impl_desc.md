@@ -54,12 +54,16 @@ PostgreSQL
 
 ## API 实现 (/api/v1/waypoints)
 
+统一响应契约：
+- 成功：`code=00000`，`msg=success`
+- 失败：统一返回 `code / msg / data`，常见错误码为 `A0401`、`A0403`、`B0001`、`C0101`、`C0404`
+
 ### 1. GET /api/v1/waypoints
 - 功能：航点列表查询
 - 筛选参数：route_id, sequence
 - 排序：按 route_id, sequence, id 升序
 - 权限：waypoint.view_waypoint
-- 业务码：SUCCESS, PERMISSION_DENIED
+- 业务码：`00000`, `A0401 / A0403`
 
 ### 2. POST /api/v1/waypoints
 - 功能：创建航点
@@ -67,28 +71,28 @@ PostgreSQL
 - 约束：仅允许写入 ACTIVE 航线，同一航线下 sequence 不重复
 - 自动同步：创建后更新 route.waypoint_count
 - 权限：waypoint.manage_waypoint
-- 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0101`, `A0401 / A0403`
 
 ### 3. GET /api/v1/waypoints/{id}
 - 功能：航点详情
 - 权限：waypoint.view_waypoint
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
-### 4. PATCH /api/v1/waypoints/{id}
-- 功能：局部更新航点
+### 4. PUT / PATCH /api/v1/waypoints/{id}
+- 功能：全量或局部更新航点
 - 可写字段：sequence, latitude, longitude, altitude
 - 约束：
   - 不支持切换所属航线
   - 仅允许更新 ACTIVE 航线下的航点
   - PATCH 请求体必须至少包含一个可写字段
 - 权限：waypoint.manage_waypoint
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
 ### 5. DELETE /api/v1/waypoints/{id}
 - 功能：删除航点
 - 自动同步：删除后更新 route.waypoint_count
 - 权限：waypoint.manage_waypoint
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
 ---
 

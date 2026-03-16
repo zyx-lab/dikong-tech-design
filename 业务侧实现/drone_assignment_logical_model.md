@@ -84,16 +84,16 @@ PostgreSQL
 ### 创建分配 POST /api/v1/drone-assignments
 - 功能：创建无人机与租户成员的分配关系
 - 约束：`drone.status != RETIRED`，`tenant_member` 属于当前租户且为 `ACTIVE`，关联账号在职并持有 `pilot_operator` 角色，不存在同键 `ACTIVE` 记录
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `A0401 / A0403`
 
 ### 取消分配 POST /api/v1/drone-assignments/{id}/cancel
 - 状态流转：ACTIVE -> INACTIVE
 - 有效状态：ACTIVE
 - 无效状态：INACTIVE
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
 ### 恢复分配 POST /api/v1/drone-assignments/{id}/reactivate
 - 状态流转：INACTIVE -> ACTIVE
 - 有效状态：INACTIVE
 - 无效状态：ACTIVE
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`

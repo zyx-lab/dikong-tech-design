@@ -61,13 +61,17 @@ PostgreSQL
 
 ## API 实现 (/api/v1/media-files)
 
+统一响应契约：
+- 成功：`code=00000`，`msg=success`
+- 失败：统一返回 `code / msg / data`，常见错误码为 `A0401`、`A0403`、`B0001`、`C0404`
+
 ### 1. GET /api/v1/media-files
 - 功能：媒体文件列表查询
 - 筛选参数：flight_record_id, media_type, mission_id, drone_id, file_name
 - 过滤：仅返回 is_deleted=False 的记录
 - 说明：若调用方角色命中 `media_file.* = ASSIGNED`，则仅返回关联飞行记录属于当前飞手的媒体文件
 - 权限：media_file.view_media_file
-- 业务码：SUCCESS, PERMISSION_DENIED
+- 业务码：`00000`, `A0401 / A0403`
 
 ### 2. POST /api/v1/media-files
 - 功能：创建媒体文件记录
@@ -76,24 +80,24 @@ PostgreSQL
 - 默认：is_deleted=False, deleted_at=None
 - 约束：若调用方角色命中 `media_file.manage_media_file = ASSIGNED`，则只能写入当前飞手自己飞行记录下的媒体文件
 - 权限：media_file.manage_media_file
-- 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `A0401 / A0403`
 
 ### 3. GET /api/v1/media-files/{id}
 - 功能：媒体文件详情
 - 过滤：仅返回未删除记录，已删除返回 404
 - 说明：若调用方角色命中 `media_file.view_media_file = ASSIGNED`，则只能读取当前飞手自己的媒体文件
 - 权限：media_file.view_media_file
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
-### 4. PATCH /api/v1/media-files/{id}
-- 功能：局部更新媒体文件
+### 4. PUT / PATCH /api/v1/media-files/{id}
+- 功能：全量或局部更新媒体文件
 - 可写字段：flight_record, media_type, file_name, file_url, thumbnail_url, file_size, latitude, longitude, captured_at
 - 约束：
   - PATCH 请求体必须至少包含一个可写字段
   - 已逻辑删除记录不参与更新，按资源不存在处理
   - 若调用方角色命中 `media_file.manage_media_file = ASSIGNED`，则不能把媒体改绑到其他飞手的飞行记录下
 - 权限：media_file.manage_media_file
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 - 审计：MEDIA_FILE_UPDATE
 
 ### 5. DELETE /api/v1/media-files/{id}
@@ -101,7 +105,7 @@ PostgreSQL
 - 策略：更新 is_deleted=True, deleted_at=当前时间
 - 约束：不做物理删除
 - 权限：media_file.manage_media_file
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
 ---
 

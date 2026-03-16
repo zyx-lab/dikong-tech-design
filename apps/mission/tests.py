@@ -100,13 +100,13 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["name"], "前山河晨检任务")
-        self.assertEqual(response.data["status"], MissionStatus.PENDING)
-        self.assertEqual(response.data["route_name"], self.route.name)
-        self.assertEqual(response.data["drone_name"], self.drone.name)
-        self.assertEqual(response.data["pilot_name"], self.pilot_staff.name)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["name"], "前山河晨检任务")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.PENDING)
+        self.assertEqual(response.data["data"]["route_name"], self.route.name)
+        self.assertEqual(response.data["data"]["drone_name"], self.drone.name)
+        self.assertEqual(response.data["data"]["pilot_name"], self.pilot_staff.name)
 
     def test_create_mission_with_cross_tenant_route_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
@@ -131,8 +131,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertIn("route", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("route", response.data["data"])
 
     def test_model_should_reject_cross_tenant_route(self):
         other_tenant, _, _ = ensure_tenant_role_binding(
@@ -171,9 +171,9 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("name", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("name", response.data["data"])
 
     def test_create_mission_with_disabled_route_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
@@ -192,9 +192,9 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("route", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("route", response.data["data"])
 
     def test_model_should_reject_disabled_route(self):
         disabled_route = Route.objects.create(tenant=self.tenant, name="模型禁用航线", status=RouteStatus.DISABLED)
@@ -236,9 +236,9 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("drone", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("drone", response.data["data"])
 
     def test_model_should_reject_disabled_drone(self):
         disabled_drone = Drone.objects.create(
@@ -293,9 +293,9 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("pilot", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("pilot", response.data["data"])
 
     def test_model_should_reject_inactive_pilot(self):
         inactive_pilot_user = User.objects.create_user(username="inactive_mission_model_pilot", password="pass1234", status=1)
@@ -356,9 +356,9 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("pilot", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("pilot", response.data["data"])
 
     def test_model_should_reject_non_pilot_staff(self):
         observer_user = User.objects.create_user(username="mission_model_observer", password="pass1234", status=1)
@@ -413,7 +413,7 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["code"], "B0001")
 
     def test_create_mission_with_nonexistent_drone_should_return_invalid_params(self):
         """测试 drone 不存在"""
@@ -432,7 +432,7 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["code"], "B0001")
 
     def test_create_mission_with_nonexistent_pilot_should_return_invalid_params(self):
         """测试 pilot 不存在"""
@@ -451,7 +451,7 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["code"], "B0001")
 
     def test_create_mission_without_auth_should_return_permission_denied(self):
         response = self.client.post(
@@ -465,8 +465,8 @@ class MissionApiTests(TestCase):
             format="json",
         )
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_create_mission_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.dispatcher_user)
@@ -483,8 +483,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_patch_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -501,10 +501,10 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["name"], "更新后任务")
-        self.assertEqual(response.data["remark"], "调整执行窗口")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["name"], "更新后任务")
+        self.assertEqual(response.data["data"]["remark"], "调整执行窗口")
 
         mission.refresh_from_db()
         self.assertEqual(mission.name, "更新后任务")
@@ -522,9 +522,9 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("status", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("status", response.data["data"])
 
     def test_patch_mission_not_found_should_return_resource_not_found(self):
         self._grant_permission("mission.manage_mission")
@@ -537,8 +537,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_patch_mission_without_auth_should_return_permission_denied(self):
         mission = self._create_mission(name="未认证更新任务")
@@ -550,8 +550,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_patch_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限更新任务")
@@ -564,8 +564,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_list_missions_should_return_success(self):
         self._grant_permission("mission.view_mission")
@@ -575,10 +575,10 @@ class MissionApiTests(TestCase):
 
         response = self.client.get("/api/v1/missions")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertIn("results", response.data)
-        self.assertGreaterEqual(len(response.data["results"]), 2)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertIn("list", response.data["data"])
+        self.assertGreaterEqual(len(response.data["data"]["list"]), 2)
 
     def test_list_missions_with_status_filter_should_return_filtered_results(self):
         self._grant_permission("mission.view_mission")
@@ -588,24 +588,24 @@ class MissionApiTests(TestCase):
 
         response = self.client.get("/api/v1/missions", {"status": MissionStatus.RUNNING})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(len(response.data["results"]), 1)
-        self.assertEqual(response.data["results"][0]["name"], "执行中任务")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(len(response.data["data"]["list"]), 1)
+        self.assertEqual(response.data["data"]["list"][0]["name"], "执行中任务")
 
     def test_list_missions_without_auth_should_return_permission_denied(self):
         response = self.client.get("/api/v1/missions")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_list_missions_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.dispatcher_user)
 
         response = self.client.get("/api/v1/missions")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_retrieve_mission_should_return_success(self):
         self._grant_permission("mission.view_mission")
@@ -614,11 +614,11 @@ class MissionApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/missions/{mission.id}")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["id"], mission.id)
-        self.assertEqual(response.data["name"], "详情任务A")
-        self.assertEqual(response.data["status"], MissionStatus.RUNNING)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["id"], mission.id)
+        self.assertEqual(response.data["data"]["name"], "详情任务A")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.RUNNING)
 
     def test_retrieve_mission_not_found_should_return_resource_not_found(self):
         self._grant_permission("mission.view_mission")
@@ -626,16 +626,16 @@ class MissionApiTests(TestCase):
 
         response = self.client.get("/api/v1/missions/999999")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_retrieve_mission_without_auth_should_return_permission_denied(self):
         mission = self._create_mission(name="未认证详情任务")
 
         response = self.client.get(f"/api/v1/missions/{mission.id}")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_retrieve_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限详情任务")
@@ -643,8 +643,8 @@ class MissionApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/missions/{mission.id}")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_cancel_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -654,9 +654,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/cancel")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.CANCELED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.CANCELED)
 
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.CANCELED)
@@ -680,8 +680,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.PENDING)
 
@@ -693,8 +693,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/cancel")
 
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
-        self.assertEqual(response.data["business_detail_code"], "STATE_CONFLICT")
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.COMPLETED)
 
@@ -705,8 +705,8 @@ class MissionApiTests(TestCase):
         response = self.client.post("/api/v1/missions/999999/cancel")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_cancel_mission_without_auth_should_return_permission_denied(self):
         mission = self._create_mission(name="未认证取消任务", status=MissionStatus.RUNNING)
@@ -714,8 +714,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/cancel")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_cancel_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限取消任务", status=MissionStatus.RUNNING)
@@ -724,8 +724,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/cancel")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_start_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -735,9 +735,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/start")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.RUNNING)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.RUNNING)
 
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.RUNNING)
@@ -757,9 +757,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/start")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.RUNNING)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.RUNNING)
 
     def test_start_mission_with_body_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
@@ -773,8 +773,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.PENDING)
 
@@ -786,8 +786,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/start")
 
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
-        self.assertEqual(response.data["business_detail_code"], "STATE_CONFLICT")
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.CANCELED)
 
@@ -798,8 +798,8 @@ class MissionApiTests(TestCase):
         response = self.client.post("/api/v1/missions/999999/start")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_start_mission_without_auth_should_return_permission_denied(self):
         mission = self._create_mission(name="未认证启动任务", status=MissionStatus.PENDING)
@@ -807,8 +807,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/start")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_start_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限启动任务", status=MissionStatus.PENDING)
@@ -817,8 +817,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/start")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_pause_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -828,9 +828,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/pause")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.PAUSED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.PAUSED)
 
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.PAUSED)
@@ -850,9 +850,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/pause")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.PAUSED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.PAUSED)
 
     def test_pause_mission_with_body_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
@@ -866,8 +866,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.RUNNING)
 
@@ -879,8 +879,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/pause")
 
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
-        self.assertEqual(response.data["business_detail_code"], "STATE_CONFLICT")
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.PENDING)
 
@@ -891,8 +891,8 @@ class MissionApiTests(TestCase):
         response = self.client.post("/api/v1/missions/999999/pause")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_pause_mission_without_auth_should_return_permission_denied(self):
         mission = self._create_mission(name="未认证暂停任务", status=MissionStatus.RUNNING)
@@ -900,8 +900,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/pause")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_pause_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限暂停任务", status=MissionStatus.RUNNING)
@@ -910,8 +910,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/pause")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_resume_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -921,9 +921,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/resume")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.RUNNING)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.RUNNING)
 
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.RUNNING)
@@ -943,9 +943,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/resume")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.RUNNING)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.RUNNING)
 
     def test_resume_mission_with_body_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
@@ -959,8 +959,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.PAUSED)
 
@@ -972,8 +972,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/resume")
 
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
-        self.assertEqual(response.data["business_detail_code"], "STATE_CONFLICT")
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.PENDING)
 
@@ -984,8 +984,8 @@ class MissionApiTests(TestCase):
         response = self.client.post("/api/v1/missions/999999/resume")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_resume_mission_without_auth_should_return_permission_denied(self):
         mission = self._create_mission(name="未认证恢复任务", status=MissionStatus.PAUSED)
@@ -993,8 +993,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/resume")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_resume_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限恢复任务", status=MissionStatus.PAUSED)
@@ -1003,8 +1003,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/resume")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_complete_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -1014,9 +1014,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/complete")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.COMPLETED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.COMPLETED)
 
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.COMPLETED)
@@ -1036,9 +1036,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/complete")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.COMPLETED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.COMPLETED)
 
     def test_complete_mission_with_body_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
@@ -1052,8 +1052,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.RUNNING)
 
@@ -1065,8 +1065,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/complete")
 
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
-        self.assertEqual(response.data["business_detail_code"], "STATE_CONFLICT")
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.PAUSED)
 
@@ -1077,8 +1077,8 @@ class MissionApiTests(TestCase):
         response = self.client.post("/api/v1/missions/999999/complete")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_complete_mission_without_auth_should_return_permission_denied(self):
         mission = self._create_mission(name="未认证完成任务", status=MissionStatus.RUNNING)
@@ -1086,8 +1086,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/complete")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_complete_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限完成任务", status=MissionStatus.RUNNING)
@@ -1096,8 +1096,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/complete")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_fail_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -1107,9 +1107,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/fail")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.FAILED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.FAILED)
 
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.FAILED)
@@ -1128,9 +1128,9 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/fail")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], MissionStatus.FAILED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], MissionStatus.FAILED)
 
     def test_fail_mission_with_body_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
@@ -1144,8 +1144,8 @@ class MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.RUNNING)
 
@@ -1157,8 +1157,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/fail")
 
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["business_code"], "STATE_CONFLICT")
-        self.assertEqual(response.data["business_detail_code"], "STATE_CONFLICT")
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
+        self.assertIn(response.data["code"], {"C0201", "C0202"})
         mission.refresh_from_db()
         self.assertEqual(mission.status, MissionStatus.PAUSED)
 
@@ -1169,8 +1169,8 @@ class MissionApiTests(TestCase):
         response = self.client.post("/api/v1/missions/999999/fail")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_fail_mission_without_auth_should_return_permission_denied(self):
         mission = self._create_mission(name="未认证失败任务", status=MissionStatus.RUNNING)
@@ -1178,8 +1178,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/fail")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_fail_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限失败任务", status=MissionStatus.RUNNING)
@@ -1188,8 +1188,8 @@ class MissionApiTests(TestCase):
         response = self.client.post(f"/api/v1/missions/{mission.id}/fail")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
 
 class MissionPilotScopeTests(TestCase):
@@ -1268,8 +1268,8 @@ class MissionPilotScopeTests(TestCase):
         response = self.client.get("/api/v1/missions")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["count"], 1)
-        self.assertEqual(response.data["results"][0]["id"], self.my_mission.id)
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["id"], self.my_mission.id)
 
     def test_pilot_retrieve_other_mission_should_be_404(self):
         response = self.client.get(f"/api/v1/missions/{self.other_mission.id}")

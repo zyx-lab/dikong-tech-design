@@ -21,7 +21,7 @@
 // list_api: GET /api/v1/waypoints
 // read_api: GET /api/v1/waypoints/{id}
 // write_api: POST /api/v1/waypoints
-// patch_api: PATCH /api/v1/waypoints/{id}
+// update_api: PUT / PATCH /api/v1/waypoints/{id}
 // delete_api: DELETE /api/v1/waypoints/{id}
 
 Table waypoints {

@@ -4,40 +4,58 @@ from typing import Any
 
 from rest_framework.response import Response
 
-
-class BusinessCode:
-    SUCCESS = "SUCCESS"
-    INVALID_PARAMS = "INVALID_PARAMS"
-    PERMISSION_DENIED = "PERMISSION_DENIED"
-    RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-    STATE_CONFLICT = "STATE_CONFLICT"
-    IDEMPOTENT_DUPLICATE = "IDEMPOTENT_DUPLICATE"
-    INTERNAL_ERROR = "INTERNAL_ERROR"
+from apps.api_v1.pagination import StandardPageNumberPagination
 
 
-_KNOWN_CODES = {
-    BusinessCode.SUCCESS,
-    BusinessCode.INVALID_PARAMS,
-    BusinessCode.PERMISSION_DENIED,
-    BusinessCode.RESOURCE_NOT_FOUND,
-    BusinessCode.STATE_CONFLICT,
-    BusinessCode.IDEMPOTENT_DUPLICATE,
-    BusinessCode.INTERNAL_ERROR,
-}
+class StandardCode:
+    SUCCESS = "00000"
+    NOT_AUTHENTICATED = "A0401"
+    FORBIDDEN = "A0403"
+    INVALID_PARAMS = "B0001"
+    DUPLICATE = "C0101"
+    STATE_CONFLICT = "C0201"
+    RESOURCE_IN_USE = "C0202"
+    NOT_FOUND = "C0404"
+    INTERNAL_ERROR = "E0001"
+
 
 _DUPLICATE_HINTS = (
-    "idempotent_duplicate",
+    "duplicate",
     "already exists",
     "已存在",
     "unique",
     "重复",
 )
-
 _STATE_CONFLICT_HINTS = (
-    "state_conflict",
+    "state conflict",
     "状态冲突",
     "不可逆",
     "invalid state",
+)
+_RESOURCE_IN_USE_HINTS = (
+    "已被引用",
+    "无法删除",
+    "不能删除",
+    "被任务引用",
+)
+_NOT_FOUND_HINTS = (
+    "no ",
+    "not found",
+    "不存在",
+)
+_TENANT_CONTEXT_HINTS = (
+    "tenant context required",
+    "tenant_context_required",
+)
+_PLATFORM_ADMIN_HINTS = (
+    "platform admin cannot access tenant business api",
+)
+_AUTH_REQUIRED_HINTS = (
+    "authentication credentials were not provided",
+    "authentication required",
+    "not authenticated",
+    "身份认证信息未提供",
+    "未提供身份认证",
 )
 
 
@@ -45,136 +63,194 @@ def _normalized_text(payload: Any) -> str:
     return str(payload).strip().lower()
 
 
-def _normalize_detail_code(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip().upper().replace("-", "_")
-    return normalized or None
+def _contains_cjk(text: str | None) -> bool:
+    if not text:
+        return False
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
 
 
-def _extract_payload_detail_code(payload: Any) -> str | None:
-    if not isinstance(payload, dict):
-        return None
+def _normalize_list_payload(data: Any) -> Any:
+    if not isinstance(data, dict):
+        return data
 
-    declared = payload.get("business_detail_code")
-    normalized_declared = _normalize_detail_code(declared)
-    if normalized_declared:
-        return normalized_declared
+    if "list" in data and "total" in data:
+        return dict(data)
 
-    detail = payload.get("detail")
-    detail_code = getattr(detail, "code", None)
-    normalized_detail_code = _normalize_detail_code(detail_code)
-    if normalized_detail_code:
-        return normalized_detail_code
-    return None
-
-
-def _extract_declared_business_code(payload: Any) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-
-    value = payload.get("business_code")
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip().upper()
-    if normalized in _KNOWN_CODES:
+    if "results" in data and "count" in data:
+        normalized = {key: value for key, value in data.items() if key not in {"results", "count", "next", "previous"}}
+        normalized["list"] = data["results"]
+        normalized["total"] = data["count"]
         return normalized
+
+    return data
+
+
+def standard_success_payload(data: Any, *, trace_id: str | None = None) -> dict[str, Any]:
+    payload = {
+        "code": StandardCode.SUCCESS,
+        "msg": "success",
+        "data": _normalize_list_payload(data),
+    }
+    if trace_id:
+        payload["traceId"] = trace_id
+    return payload
+
+
+def standard_error_payload(code: str, msg: str, data: Any = None, *, trace_id: str | None = None) -> dict[str, Any]:
+    payload = {
+        "code": code,
+        "msg": msg,
+        "data": data,
+    }
+    if trace_id:
+        payload["traceId"] = trace_id
+    return payload
+
+
+def validation_error_payload(errors: Any, msg: str = "参数校验失败", *, trace_id: str | None = None) -> dict[str, Any]:
+    return standard_error_payload(StandardCode.INVALID_PARAMS, msg, errors, trace_id=trace_id)
+
+
+def _extract_detail(payload: Any) -> str | None:
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+        if detail is None:
+            detail = payload.get("error")
+        if detail is None:
+            return None
+        return str(detail)
+    if isinstance(payload, str):
+        return payload
     return None
 
 
-def infer_business_code(status_code: int, payload: Any) -> str:
-    declared = _extract_declared_business_code(payload)
-    if declared:
-        return declared
+def _extract_errors(payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return None
 
-    detail_code = _extract_payload_detail_code(payload)
-    if detail_code in {"DUPLICATE_REQUEST", "UNIQUE", "UNIQUE_VIOLATION"}:
-        return BusinessCode.IDEMPOTENT_DUPLICATE
-    if detail_code in {"STATE_CONFLICT"}:
-        return BusinessCode.STATE_CONFLICT
-    if detail_code in {"INTERNAL_ERROR", "INTERNAL_SERVER_ERROR"}:
-        return BusinessCode.INTERNAL_ERROR
+    if "errors" in payload:
+        return payload["errors"]
 
+    special_keys = {"detail", "error", "code", "msg", "data", "traceId"}
+    if not any(key in payload for key in special_keys):
+        return payload
+
+    return None
+
+
+def _infer_standard_code(status_code: int, payload: Any) -> str:
     text = _normalized_text(payload)
-    if any(hint in text for hint in _DUPLICATE_HINTS) and status_code in (400, 409):
-        return BusinessCode.IDEMPOTENT_DUPLICATE
-    if any(hint in text for hint in _STATE_CONFLICT_HINTS):
-        return BusinessCode.STATE_CONFLICT
 
     if 200 <= status_code < 400:
-        return BusinessCode.SUCCESS
-    if status_code in (401, 403):
-        return BusinessCode.PERMISSION_DENIED
+        return StandardCode.SUCCESS
+
+    if status_code == 401 or any(hint in text for hint in _AUTH_REQUIRED_HINTS):
+        return StandardCode.NOT_AUTHENTICATED
+    if status_code == 403:
+        return StandardCode.FORBIDDEN
     if status_code == 404:
-        return BusinessCode.RESOURCE_NOT_FOUND
+        return StandardCode.NOT_FOUND
+
+    if any(hint in text for hint in _DUPLICATE_HINTS):
+        return StandardCode.DUPLICATE
+
     if status_code == 409:
-        return BusinessCode.STATE_CONFLICT
+        if any(hint in text for hint in _RESOURCE_IN_USE_HINTS):
+            return StandardCode.RESOURCE_IN_USE
+        return StandardCode.STATE_CONFLICT
+
     if status_code == 400:
-        return BusinessCode.INVALID_PARAMS
-    if 400 <= status_code < 500:
-        return BusinessCode.INVALID_PARAMS
-    return BusinessCode.INTERNAL_ERROR
+        if any(hint in text for hint in _STATE_CONFLICT_HINTS):
+            return StandardCode.STATE_CONFLICT
+        return StandardCode.INVALID_PARAMS
+
+    if any(hint in text for hint in _NOT_FOUND_HINTS):
+        return StandardCode.NOT_FOUND
+
+    if status_code >= 500:
+        return StandardCode.INTERNAL_ERROR
+
+    return StandardCode.INVALID_PARAMS
 
 
-def infer_business_detail_code(status_code: int, payload: Any, business_code: str) -> str:
-    declared = _extract_payload_detail_code(payload)
-    if declared:
-        if business_code == BusinessCode.PERMISSION_DENIED and declared == "PERMISSION_DENIED":
-            return "FORBIDDEN"
-        if business_code == BusinessCode.RESOURCE_NOT_FOUND and declared == "RESOURCE_NOT_FOUND":
-            return "NOT_FOUND"
-        if business_code == BusinessCode.INTERNAL_ERROR and declared in {"ERROR", "INTERNAL_SERVER_ERROR"}:
-            return "INTERNAL_ERROR"
-        return declared
-
+def _preferred_error_message(payload: Any, standard_code: str) -> str:
+    detail = _extract_detail(payload)
     text = _normalized_text(payload)
-    if business_code == BusinessCode.SUCCESS:
-        return "OK"
-    if business_code == BusinessCode.PERMISSION_DENIED:
-        if "scope_not_configured" in text:
-            return "SCOPE_NOT_CONFIGURED"
-        if "permission_not_configured" in text:
-            return "PERMISSION_NOT_CONFIGURED"
-        if status_code == 401 or "not_authenticated" in text or "未提供" in text:
-            return "NOT_AUTHENTICATED"
-        return "FORBIDDEN"
-    if business_code == BusinessCode.RESOURCE_NOT_FOUND:
-        return "NOT_FOUND"
-    if business_code == BusinessCode.IDEMPOTENT_DUPLICATE:
-        return "DUPLICATE_REQUEST"
-    if business_code == BusinessCode.STATE_CONFLICT:
-        return "STATE_CONFLICT"
-    if business_code == BusinessCode.INTERNAL_ERROR:
-        return "INTERNAL_ERROR"
-    if status_code == 405:
-        return "METHOD_NOT_ALLOWED"
-    return "VALIDATION_ERROR"
+
+    if any(hint in text for hint in _TENANT_CONTEXT_HINTS):
+        return "缺少租户上下文"
+    if any(hint in text for hint in _PLATFORM_ADMIN_HINTS):
+        return "平台管理员不可访问租户业务接口"
+
+    fallback = {
+        StandardCode.NOT_AUTHENTICATED: "登录状态已失效",
+        StandardCode.FORBIDDEN: "无操作权限",
+        StandardCode.INVALID_PARAMS: "参数校验失败",
+        StandardCode.DUPLICATE: "资源已存在",
+        StandardCode.STATE_CONFLICT: "当前状态不允许操作",
+        StandardCode.RESOURCE_IN_USE: "当前数据已被引用，无法删除",
+        StandardCode.NOT_FOUND: "资源不存在",
+        StandardCode.INTERNAL_ERROR: "系统异常",
+    }.get(standard_code, "系统异常")
+
+    if standard_code == StandardCode.NOT_AUTHENTICATED:
+        return fallback
+
+    if _contains_cjk(detail):
+        return detail
+    return fallback
 
 
-def attach_business_code(payload: Any, status_code: int) -> Any:
-    business_code = infer_business_code(status_code, payload)
-    detail_code = infer_business_detail_code(status_code, payload, business_code)
+def _build_error_data(payload: Any, standard_code: str, msg: str) -> Any:
+    detail = _extract_detail(payload)
+    errors = _extract_errors(payload)
 
-    if isinstance(payload, dict):
-        normalized = dict(payload)
-        normalized.setdefault("business_code", business_code)
-        normalized.setdefault("business_detail_code", detail_code)
-        return normalized
+    if standard_code in {
+        StandardCode.NOT_AUTHENTICATED,
+        StandardCode.FORBIDDEN,
+        StandardCode.NOT_FOUND,
+        StandardCode.INTERNAL_ERROR,
+    }:
+        return None
 
-    if payload is None:
-        return {"business_code": business_code, "business_detail_code": detail_code}
+    if errors is not None:
+        return errors
 
-    if isinstance(payload, (list, tuple)):
-        return {"business_code": business_code, "business_detail_code": detail_code, "data": payload}
+    if detail and detail != msg and _contains_cjk(detail):
+        return {"detail": detail}
 
-    return {"business_code": business_code, "business_detail_code": detail_code, "detail": payload}
+    return None
+
+
+def build_standard_response(payload: Any, status_code: int, *, trace_id: str | None = None) -> dict[str, Any]:
+    if isinstance(payload, dict) and {"code", "msg", "data"}.issubset(payload.keys()):
+        return payload
+
+    if 200 <= status_code < 400:
+        return standard_success_payload(payload, trace_id=trace_id)
+
+    standard_code = _infer_standard_code(status_code, payload)
+    msg = _preferred_error_message(payload, standard_code)
+    data = _build_error_data(payload, standard_code, msg)
+    return standard_error_payload(standard_code, msg, data, trace_id=trace_id)
+
+
+def attach_standard_envelope(payload: Any, status_code: int) -> dict[str, Any]:
+    return build_standard_response(payload, status_code)
 
 
 class BusinessApiResponseMixin:
-    """为业务 API 输出统一补充 business_code 字段。"""
+    """为业务 API 输出统一 code/msg/data 响应结构。"""
+
+    pagination_class = StandardPageNumberPagination
 
     def finalize_response(self, request, response, *args, **kwargs):
         finalized = super().finalize_response(request, response, *args, **kwargs)
         if isinstance(finalized, Response):
-            finalized.data = attach_business_code(getattr(finalized, "data", None), int(finalized.status_code))
+            trace_id = getattr(request, "trace_id", None)
+            finalized.data = build_standard_response(
+                getattr(finalized, "data", None),
+                int(finalized.status_code),
+                trace_id=trace_id,
+            )
         return finalized

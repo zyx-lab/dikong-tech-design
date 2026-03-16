@@ -4,10 +4,7 @@ from apps.access.services import is_active_platform_admin
 
 def _ensure_business_api_actor(user):
     if is_active_platform_admin(user):
-        raise BusinessPermissionDenied(
-            "platform admin cannot access tenant business api",
-            business_detail_code="FORBIDDEN",
-        )
+        raise BusinessPermissionDenied("platform admin cannot access tenant business api")
 
 
 def get_request_tenant(context):
@@ -21,10 +18,7 @@ def get_request_tenant(context):
 def require_request_tenant(context):
     tenant = get_request_tenant(context)
     if tenant is None:
-        raise BusinessPermissionDenied(
-            "tenant context required",
-            business_detail_code="TENANT_CONTEXT_REQUIRED",
-        )
+        raise BusinessPermissionDenied("tenant context required")
     return tenant
 
 
@@ -37,10 +31,7 @@ class TenantScopedBusinessMixin:
         _ensure_business_api_actor(getattr(self.request, "user", None))
         tenant = getattr(self.request, "tenant_context", None)
         if tenant is None:
-            raise BusinessPermissionDenied(
-                "tenant context required",
-                business_detail_code="TENANT_CONTEXT_REQUIRED",
-            )
+            raise BusinessPermissionDenied("tenant context required")
         return tenant
 
     def scope_queryset_to_tenant(self, queryset):

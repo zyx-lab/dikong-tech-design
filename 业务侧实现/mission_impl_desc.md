@@ -66,13 +66,17 @@ PostgreSQL
 
 ## API 实现 (/api/v1/missions)
 
+统一响应契约：
+- 成功：`code=00000`，`msg=success`
+- 失败：统一返回 `code / msg / data`，常见错误码为 `A0401`、`A0403`、`B0001`、`C0201`、`C0404`
+
 ### 1. GET /api/v1/missions
 - 功能：任务列表查询
 - 筛选参数：route_id, drone_id, pilot_id, status
 - 说明：`pilot_id` 按 `TenantMember.id` 过滤
 - 说明：若调用方角色命中 `mission.view_mission = ASSIGNED`，则仅返回 `pilot_id = 当前 TenantMember.id` 的任务
 - 权限：mission.view_mission
-- 业务码：SUCCESS, PERMISSION_DENIED
+- 业务码：`00000`, `A0401 / A0403`
 
 ### 2. POST /api/v1/missions
 - 功能：创建任务
@@ -82,21 +86,21 @@ PostgreSQL
 - 自动填充：route_name, drone_name, pilot_name
 - 默认状态：status=PENDING
 - 权限：mission.manage_mission
-- 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `A0401 / A0403`
 
 ### 3. GET /api/v1/missions/{id}
 - 功能：任务详情
 - 说明：若调用方角色命中 `mission.view_mission = ASSIGNED`，则只能读取分配给当前飞手的任务
 - 权限：mission.view_mission
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
-### 4. PATCH /api/v1/missions/{id}
-- 功能：局部更新任务
+### 4. PUT / PATCH /api/v1/missions/{id}
+- 功能：全量或局部更新任务
 - 可写字段：name, route, drone, pilot, scheduled_at, remark
 - 约束：`pilot` 字段语义同创建接口，提交值为 `TenantMember.id`
 - 约束：status 不可写（状态通过专用动作接口变更）
 - 权限：mission.manage_mission
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
 ### 5. POST /api/v1/missions/{id}/start
 - 功能：启动任务
@@ -105,7 +109,7 @@ PostgreSQL
 - 幂等：已 RUNNING 的任务重复 start 返回当前状态
 - 禁止状态：PAUSED, COMPLETED, CANCELED, FAILED
 - 权限：mission.manage_mission
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 - 审计：MISSION_START
 
 ### 6. POST /api/v1/missions/{id}/pause
@@ -115,7 +119,7 @@ PostgreSQL
 - 幂等：已 PAUSED 的任务重复 pause 返回当前状态
 - 禁止状态：PENDING, COMPLETED, CANCELED, FAILED
 - 权限：mission.manage_mission
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 - 审计：MISSION_PAUSE
 
 ### 7. POST /api/v1/missions/{id}/resume
@@ -125,7 +129,7 @@ PostgreSQL
 - 幂等：已 RUNNING 的任务重复 resume 返回当前状态
 - 禁止状态：PENDING, COMPLETED, CANCELED, FAILED
 - 权限：mission.manage_mission
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 - 审计：MISSION_RESUME
 
 ### 8. POST /api/v1/missions/{id}/complete
@@ -135,7 +139,7 @@ PostgreSQL
 - 幂等：已 COMPLETED 的任务重复 complete 返回当前状态
 - 禁止状态：PENDING, PAUSED, CANCELED, FAILED
 - 权限：mission.manage_mission
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 - 审计：MISSION_COMPLETE
 
 ### 9. POST /api/v1/missions/{id}/fail
@@ -145,7 +149,7 @@ PostgreSQL
 - 幂等：已 FAILED 的任务重复 fail 返回当前状态
 - 禁止状态：PENDING, PAUSED, COMPLETED, CANCELED
 - 权限：mission.manage_mission
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 - 审计：MISSION_FAIL
 
 ### 10. POST /api/v1/missions/{id}/cancel
@@ -155,7 +159,7 @@ PostgreSQL
 - 幂等：已 CANCELED 的任务重复 cancel 返回当前状态
 - 禁止状态：COMPLETED, CANCELED, FAILED
 - 权限：mission.manage_mission
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 - 审计：MISSION_CANCEL
 
 ---

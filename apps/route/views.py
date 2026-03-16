@@ -6,7 +6,7 @@ from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiRespo
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import IdentityService, log_action
-from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.api_v1.schema import (
     BUSINESS_INTERNAL_ERROR_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
@@ -24,11 +24,9 @@ from apps.waypoint.models import Waypoint
 
 ROUTE_LIST_RESPONSE = paginated_envelope_serializer("RouteListResponse", RouteReadSerializer)
 ROUTE_DETAIL_RESPONSE = object_envelope_serializer("RouteDetailResponse", RouteReadSerializer)
-ROUTE_DELETE_RESPONSE = inline_serializer(
-    name="RouteDeleteResponse",
+ROUTE_DELETE_DATA = inline_serializer(
+    name="RouteDeleteData",
     fields={
-        "business_code": serializers.CharField(),
-        "business_detail_code": serializers.CharField(),
         "id": serializers.IntegerField(),
         "deleted": serializers.BooleanField(),
         "delete_mode": serializers.CharField(help_text="`disabled` 表示被任务引用时软删除为禁用；`hard` 表示直接物理删除。"),
@@ -45,6 +43,7 @@ ROUTE_DELETE_RESPONSE = inline_serializer(
         "updated_at": serializers.DateTimeField(required=False),
     },
 )
+ROUTE_DELETE_RESPONSE = object_envelope_serializer("RouteDeleteResponse", ROUTE_DELETE_DATA)
 
 ROUTE_FILTER_PARAMETERS = [
     TENANT_CODE_HEADER_PARAMETER,
@@ -75,47 +74,42 @@ ROUTE_PERMISSION_DENIED_RESPONSE = business_error_response(
     examples=[
         business_error_example(
             "未登录",
-            business_code="PERMISSION_DENIED",
-            business_detail_code="NOT_AUTHENTICATED",
-            detail="Authentication credentials were not provided.",
+            code="A0401",
+            msg="登录状态已失效",
             status_codes=["401"],
         ),
         business_error_example(
             "无权限",
-            business_code="PERMISSION_DENIED",
-            business_detail_code="FORBIDDEN",
-            detail="PERMISSION_DENIED",
+            code="A0403",
+            msg="无操作权限",
             status_codes=["403"],
         ),
     ],
 )
 
 ROUTE_INVALID_PARAMS_RESPONSE = business_error_response(
-    description="请求体不合法，business_code 通常为 INVALID_PARAMS。",
+    description="请求体不合法，code 固定为 B0001。",
     examples=[
         business_error_example(
             "缺少必填字段",
-            business_code="INVALID_PARAMS",
-            business_detail_code="VALIDATION_ERROR",
-            detail="参数校验失败",
+            code="B0001",
+            msg="参数校验失败",
             status_codes=["400"],
-            extras={"errors": {"name": ["该字段是必填项。"]}},
+            data={"name": ["该字段是必填项。"]},
         ),
         business_error_example(
             "PATCH 空请求体",
-            business_code="INVALID_PARAMS",
-            business_detail_code="VALIDATION_ERROR",
-            detail="PATCH 请求至少包含一个可写字段",
+            code="B0001",
+            msg="PATCH 请求至少包含一个可写字段",
             status_codes=["400"],
-            extras={"errors": {"body": "请至少提交一个可写字段"}},
+            data={"body": "请至少提交一个可写字段"},
         ),
         business_error_example(
             "DELETE 带 body",
-            business_code="INVALID_PARAMS",
-            business_detail_code="VALIDATION_ERROR",
-            detail="DELETE 请求不支持提交 body 参数",
+            code="B0001",
+            msg="DELETE 请求不支持提交 body 参数",
             status_codes=["400"],
-            extras={"errors": {"body": "不支持请求体，请移除 body 后重试"}},
+            data={"body": "不支持请求体，请移除 body 后重试"},
         ),
     ],
 )
@@ -125,9 +119,8 @@ ROUTE_NOT_FOUND_RESPONSE = business_error_response(
     examples=[
         business_error_example(
             "航线不存在",
-            business_code="RESOURCE_NOT_FOUND",
-            business_detail_code="NOT_FOUND",
-            detail="No Route matches the given query.",
+            code="C0404",
+            msg="资源不存在",
             status_codes=["404"],
         )
     ],
@@ -183,6 +176,21 @@ ROUTE_NOT_FOUND_RESPONSE = business_error_response(
             400: ROUTE_INVALID_PARAMS_RESPONSE,
             401: ROUTE_PERMISSION_DENIED_RESPONSE,
             403: ROUTE_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Route"],
+    ),
+    update=extend_schema(
+        summary="全量更新航线",
+        description="按航线 ID 全量更新主记录字段，未提交的可写字段将按 PUT 语义重置。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=RouteWriteSerializer,
+        responses={
+            200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE, description="更新成功。"),
+            400: ROUTE_INVALID_PARAMS_RESPONSE,
+            401: ROUTE_PERMISSION_DENIED_RESPONSE,
+            403: ROUTE_PERMISSION_DENIED_RESPONSE,
+            404: ROUTE_NOT_FOUND_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Route"],
@@ -243,12 +251,13 @@ class RouteViewSet(
 
     queryset = Route.objects.all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
 
     permission_map = {
         "list": "route.view_route",
         "retrieve": "route.view_route",
         "create": "route.manage_route",
+        "update": "route.manage_route",
         "partial_update": "route.manage_route",
         "enable": "route.manage_route",
         "disable": "route.manage_route",
@@ -256,7 +265,7 @@ class RouteViewSet(
     }
 
     def get_serializer_class(self):
-        if self.action in {"create", "partial_update"}:
+        if self.action in {"create", "update", "partial_update"}:
             return RouteWriteSerializer
         return RouteReadSerializer
 
@@ -269,7 +278,7 @@ class RouteViewSet(
 
         # 业务作用：
         # 提供航线列表读取能力，作为“航线台账创建后”的基础查询入口，供外部系统按需组合筛选。
-        # 本接口只负责只读检索，不承担航线创建/编辑等写操作；响应由统一 business_code 包装。
+        # 本接口只负责只读检索，不承担航线创建/编辑等写操作；响应统一采用 `code / msg / data`。
         # 常见业务码：
         # - SUCCESS/OK：查询成功，返回分页结果
         # - PERMISSION_DENIED/NOT_AUTHENTICATED 或 FORBIDDEN：未认证或无查看权限
@@ -289,7 +298,7 @@ class RouteViewSet(
     def retrieve(self, request, *args, **kwargs):
         # 业务作用：
         # 提供“按 route_id 读取单条航线详情”的基础能力，供任务编排在已选航线后做精确取数。
-        # 本接口是只读查询，不承担任何状态变更或业务编排；返回统一包含 business_code/business_detail_code。
+        # 本接口是只读查询，不承担任何状态变更或业务编排；返回统一包含 code/msg/data。
         #
         # 关键语义：
         # 1) 有权限且路由存在 -> SUCCESS/OK（HTTP 200）；
@@ -325,16 +334,27 @@ class RouteViewSet(
         # 3) 成功返回最新 route 快照，业务码由统一响应层补齐。
         if not request.data:
             return Response(
-                {
-                    "business_code": "INVALID_PARAMS",
-                    "detail": "PATCH 请求至少包含一个可写字段",
-                    "errors": {"body": "请至少提交一个可写字段"},
-                },
+                standard_error_payload(
+                    StandardCode.INVALID_PARAMS,
+                    "PATCH 请求至少包含一个可写字段",
+                    {"body": "请至少提交一个可写字段"},
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        route = self.perform_update(serializer)
+
+        if getattr(instance, "_prefetched_objects_cache", None):
+            instance._prefetched_objects_cache = {}
+
+        return Response(self._route_payload(route), status=status.HTTP_200_OK)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
         route = self.perform_update(serializer)
 
@@ -371,11 +391,11 @@ class RouteViewSet(
         # 3) 已处于 ACTIVE 的航线重复 enable 按幂等成功返回。
         if request.data:
             return Response(
-                {
-                    "business_code": BusinessCode.INVALID_PARAMS,
-                    "detail": "enable 请求不支持提交 body 参数",
-                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
-                },
+                standard_error_payload(
+                    StandardCode.INVALID_PARAMS,
+                    "enable 请求不支持提交 body 参数",
+                    {"body": "不支持请求体，请移除 body 后重试"},
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -434,11 +454,11 @@ class RouteViewSet(
         # 3) 已处于 DISABLED 的航线重复 disable 按幂等成功返回。
         if request.data:
             return Response(
-                {
-                    "business_code": BusinessCode.INVALID_PARAMS,
-                    "detail": "disable 请求不支持提交 body 参数",
-                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
-                },
+                standard_error_payload(
+                    StandardCode.INVALID_PARAMS,
+                    "disable 请求不支持提交 body 参数",
+                    {"body": "不支持请求体，请移除 body 后重试"},
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -480,11 +500,11 @@ class RouteViewSet(
         # 3) DELETE 请求体必须为空，避免把删除动作扩展成编排型接口。
         if request.data:
             return Response(
-                {
-                    "business_code": "INVALID_PARAMS",
-                    "detail": "DELETE 请求不支持提交 body 参数",
-                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
-                },
+                standard_error_payload(
+                    StandardCode.INVALID_PARAMS,
+                    "DELETE 请求不支持提交 body 参数",
+                    {"body": "不支持请求体，请移除 body 后重试"},
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

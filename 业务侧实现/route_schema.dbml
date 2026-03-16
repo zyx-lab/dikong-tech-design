@@ -18,10 +18,10 @@
 
 // updated_at: 2026-03-10T10:30:00Z
 // entity: route
-// 历史保留：上一轮已新增 PATCH /api/v1/routes/{id}，routes 表结构未变化
+// 历史保留：上一轮已新增 PUT / PATCH /api/v1/routes/{id}，routes 表结构未变化
 // 本轮增补：新增 POST /api/v1/routes/{id}/disable，仍不改 routes 表结构
 // 当前轮接口语义：按 route 主键显式把 status 从 ACTIVE 置为 DISABLED；请求体必须为空；重复 disable 幂等成功
-// 当前轮业务码：SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
+// 当前轮业务码：00000 / A0401 / A0403 / B0001 / C0404 / E0001
 
 Table routes {
   id bigint [pk, increment, note: 'ID']

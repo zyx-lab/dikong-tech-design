@@ -18,8 +18,8 @@
 
 // generated_at: 2026-03-08T09:24:39.176004Z
 // entity: flight_record
-// 当前轮增补：PATCH /api/v1/flight-records/{id}
-// 当前轮接口语义：按 flight_record 主键局部更新主记录元数据，返回 SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
+// 当前轮增补：PUT / PATCH /api/v1/flight-records/{id}
+// 当前轮接口语义：按 flight_record 主键更新主记录元数据，返回 00000 / A0401 / A0403 / B0001 / C0404 / E0001
 
 Table flight_records {
   id bigint [pk, increment, note: 'ID']
@@ -46,13 +46,13 @@ Table flight_records {
 // 唯一性口径：
 // unique(tenant, flight_no)
 
-// 本轮增补（PATCH /api/v1/flight-records/{id}）
-// 更新入口: PATCH /api/v1/flight-records/{id}
-// 业务码: SUCCESS / INVALID_PARAMS / PERMISSION_DENIED / RESOURCE_NOT_FOUND
+// 本轮增补（PUT / PATCH /api/v1/flight-records/{id}）
+// 更新入口: PUT / PATCH /api/v1/flight-records/{id}
+// 业务码: 00000 / A0401 / A0403 / B0001 / C0404 / E0001
 
 // stage6_doc_sync::flight_record::schema.dbml::start
 // focus_api_keys: POST /api/v1/flight-records/{id}/abort
 // business_events: EVT-001 异常终止飞行记录
-// required_codes: SUCCESS, INVALID_PARAMS, PERMISSION_DENIED, RESOURCE_NOT_FOUND, STATE_CONFLICT, IDEMPOTENT_DUPLICATE
+// required_codes: 00000, A0401, A0403, B0001, C0201, C0404, E0001
 // permission_boundary: 代码权限码: view_flight_record (可查看飞行记录), manage_flight_record (可新增与编辑飞行记录)
 // stage6_doc_sync::flight_record::schema.dbml::end

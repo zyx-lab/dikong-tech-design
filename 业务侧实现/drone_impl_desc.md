@@ -82,6 +82,10 @@ PostgreSQL
 
 ## API 实现
 
+统一响应契约：
+- 成功：`code=00000`，`msg=success`
+- 失败：统一返回 `code / msg / data`，常见错误码为 `A0401`、`A0403`、`B0001`、`C0101`、`C0201`、`C0404`
+
 ### 无人机台账 (/api/v1/drones)
 
 #### 1. GET /api/v1/drones
@@ -89,7 +93,7 @@ PostgreSQL
 - 筛选参数：code, name, model, status, org_id
 - Scope：`ASSIGNED` 用户只返回当前租户下分配给本人 `TenantMember` 的无人机
 - 权限：drone.view_drone
-- 业务码：SUCCESS, PERMISSION_DENIED
+- 业务码：`00000`, `A0401 / A0403`
 
 #### 2. POST /api/v1/drones
 - 功能：创建无人机
@@ -97,27 +101,27 @@ PostgreSQL
 - 自动设置：`created_by_tenant_member_id=当前租户成员`
 - 默认状态：status=DISABLED
 - 权限：drone.manage_drone
-- 业务码：SUCCESS, INVALID_PARAMS, IDEMPOTENT_DUPLICATE, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0101`, `A0401 / A0403`
 
 #### 3. GET /api/v1/drones/{id}
 - 功能：无人机详情
 - 权限：drone.view_drone
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
-#### 4. PATCH /api/v1/drones/{id}
-- 功能：局部更新无人机
+#### 4. PUT / PATCH /api/v1/drones/{id}
+- 功能：全量或局部更新无人机
 - 可写字段：code, name, model, serial_no
 - 约束：status 不可直接修改，需通过状态动作接口
 - 权限：drone.manage_drone
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
 #### 5. DELETE /api/v1/drones/{id}
 - 功能：删除无人机
 - 约束：
   - DELETE 请求体必须为空
-  - 若存在 ACTIVE 分配关系，返回 409 + STATE_CONFLICT
+  - 若存在 ACTIVE 分配关系，返回 409 + `C0201`
 - 权限：drone.manage_drone
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 
 #### 6. POST /api/v1/drones/{id}/enable
 - 功能：启用无人机
@@ -125,21 +129,21 @@ PostgreSQL
 - 约束：RETIRED 不可逆
 - 幂等：已 ENABLED 返回当前状态
 - 权限：drone.change_drone_status
-- 业务码：SUCCESS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0201`, `C0404`, `A0401 / A0403`
 
 #### 7. POST /api/v1/drones/{id}/disable
 - 功能：停用无人机
 - 状态流转：ENABLED/MAINTENANCE -> DISABLED
 - 幂等：已 DISABLED 返回当前状态
 - 权限：drone.change_drone_status
-- 业务码：SUCCESS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0201`, `C0404`, `A0401 / A0403`
 
 #### 8. POST /api/v1/drones/{id}/maintenance
 - 功能：设置维护中
 - 状态流转：ENABLED/DISABLED -> MAINTENANCE
 - 幂等：已 MAINTENANCE 返回当前状态
 - 权限：drone.change_drone_status
-- 业务码：SUCCESS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0201`, `C0404`, `A0401 / A0403`
 
 #### 9. POST /api/v1/drones/{id}/retire
 - 功能：退役无人机
@@ -147,26 +151,26 @@ PostgreSQL
 - 约束：RETIRED 不可逆，不可恢复为其他状态
 - 幂等：已 RETIRED 返回当前状态
 - 权限：drone.change_drone_status
-- 业务码：SUCCESS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0201`, `C0404`, `A0401 / A0403`
 
 #### 10. GET /api/v1/drones/{id}/assignments/history
 - 功能：获取无人机分配历史
 - 返回：所有分配记录（无论状态）
 - 权限：drone.view_drone
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
 #### 11. GET /api/v1/drones/{id}/assignments/active
 - 功能：获取无人机当前有效分配
 - 筛选：仅返回 status=ACTIVE 的记录
 - 权限：drone.view_drone
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
 #### 12. GET /api/v1/drones/{id}/assignments/latest
 - 功能：获取无人机最近一条分配记录
 - 返回：最新一条分配（可能是 ACTIVE 或 INACTIVE）
 - 无分配时返回 has_record: false
 - 权限：drone.view_drone
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
 ---
 
@@ -176,7 +180,7 @@ PostgreSQL
 - 功能：分配关系列表查询
 - 筛选参数：drone_id, tenant_member_id, status
 - 权限：drone_assignment.manage_drone_assignment
-- 业务码：SUCCESS, PERMISSION_DENIED
+- 业务码：`00000`, `A0401 / A0403`
 
 #### 2. POST /api/v1/drone-assignments
 - 功能：创建分配关系
@@ -184,12 +188,12 @@ PostgreSQL
 - 默认：status=ACTIVE, start_at=当前时间
 - 约束：同一无人机与同一租户成员不得重复存在 ACTIVE 分配
 - 权限：drone_assignment.manage_drone_assignment
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `A0401 / A0403`
 
 #### 3. GET /api/v1/drone-assignments/{id}
 - 功能：分配关系详情
 - 权限：drone_assignment.manage_drone_assignment
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
 #### 4. POST /api/v1/drone-assignments/{id}/cancel
 - 功能：取消分配
@@ -197,17 +201,17 @@ PostgreSQL
 - 自动设置：end_at=当前时间
 - 幂等：已 INACTIVE 返回当前状态
 - 权限：drone_assignment.manage_drone_assignment
-- 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 - 审计：DRONE_ASSIGNMENT_CANCEL
 
 #### 5. POST /api/v1/drone-assignments/{id}/reactivate
 - 功能：重新激活分配
 - 状态流转：INACTIVE -> ACTIVE
 - 自动清除：end_at=None
-- 约束：若存在同一无人机与飞手的 ACTIVE 分配，返回 409 + STATE_CONFLICT
+- 约束：若存在同一无人机与飞手的 ACTIVE 分配，返回 409 + `C0201`
 - 幂等：已 ACTIVE 返回当前状态
 - 权限：drone_assignment.manage_drone_assignment
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 - 审计：DRONE_ASSIGNMENT_REACTIVATE
 
 ---

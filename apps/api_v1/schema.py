@@ -4,19 +4,13 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiResponse, inline_serializer
 from rest_framework import serializers
 
+from apps.api_v1.business_response import standard_error_payload
+
 
 def _serializer_instance(serializer, *, many=False, allow_null=False):
     if isinstance(serializer, type):
         return serializer(many=many, allow_null=allow_null)
     return serializer.__class__(many=many, allow_null=allow_null)
-
-
-def _clone_fields(serializer):
-    serializer_instance = _serializer_instance(serializer)
-    return {
-        field_name: copy.deepcopy(field)
-        for field_name, field in serializer_instance.fields.items()
-    }
 
 
 TENANT_CODE_HEADER_PARAMETER = OpenApiParameter(
@@ -39,40 +33,42 @@ TENANT_CODE_HEADER_PARAMETER = OpenApiParameter(
 )
 
 
-class BusinessErrorResponseSerializer(serializers.Serializer):
-    business_code = serializers.CharField(help_text="稳定业务状态码，例如 INVALID_PARAMS、PERMISSION_DENIED、STATE_CONFLICT、INTERNAL_ERROR。")
-    business_detail_code = serializers.CharField(help_text="更细的业务细分码，例如 OK、NOT_AUTHENTICATED、FORBIDDEN、INTERNAL_ERROR。")
-    detail = serializers.CharField(required=False, help_text="对当前错误场景的简要解释。")
-    errors = serializers.JSONField(required=False, help_text="字段级校验错误明细；仅在校验失败场景返回。")
+class StandardErrorResponseSerializer(serializers.Serializer):
+    code = serializers.CharField(help_text="业务码。成功固定为 00000，失败按 A/B/C/E 码段区分。")
+    msg = serializers.CharField(help_text="响应消息。优先返回可直接展示的中文提示。")
+    data = serializers.JSONField(required=False, allow_null=True, help_text="错误上下文。校验失败时返回字段级错误，其他场景通常为 null。")
 
 
 class BusinessDeleteResultSerializer(serializers.Serializer):
-    business_code = serializers.CharField()
-    business_detail_code = serializers.CharField()
     id = serializers.IntegerField()
     deleted = serializers.BooleanField()
+
+
+def _standard_envelope(name, data_field):
+    return inline_serializer(
+        name=name,
+        fields={
+            "code": serializers.CharField(help_text="业务码。成功固定为 00000。"),
+            "msg": serializers.CharField(help_text="响应消息。成功通常为 success。"),
+            "data": data_field,
+        },
+    )
 
 
 def business_error_example(
     name,
     *,
-    business_code,
-    business_detail_code,
-    detail,
+    code,
+    msg,
     status_codes,
-    extras=None,
+    data=None,
     summary="",
 ):
-    value = {
-        "business_code": business_code,
-        "business_detail_code": business_detail_code,
-        "detail": detail,
-    }
-    value.update(extras or {})
+    resolved_payload = standard_error_payload(code, msg, data)
     return OpenApiExample(
         name=name,
-        value=value,
-        summary=summary or detail,
+        value=resolved_payload,
+        summary=summary or msg,
         response_only=True,
         status_codes=status_codes,
     )
@@ -80,77 +76,64 @@ def business_error_example(
 
 def business_error_response(*, description, examples):
     return OpenApiResponse(
-        response=BusinessErrorResponseSerializer,
+        response=StandardErrorResponseSerializer,
         description=description,
         examples=examples,
     )
 
 
 BUSINESS_INTERNAL_ERROR_RESPONSE = business_error_response(
-    description="服务内部错误或未处理异常，business_code 固定为 INTERNAL_ERROR。",
+    description="服务内部错误或未处理异常，code 固定为 E0001。",
     examples=[
         business_error_example(
             "内部错误",
-            business_code="INTERNAL_ERROR",
-            business_detail_code="INTERNAL_ERROR",
-            detail="internal server error",
+            code="E0001",
+            msg="系统异常",
             status_codes=["500"],
+            data=None,
         )
     ],
 )
 
 
 def object_envelope_serializer(name, serializer):
-    serializer_class = serializer if isinstance(serializer, type) else serializer.__class__
-    base_meta = getattr(serializer_class, "Meta", None)
-
-    if base_meta is not None and hasattr(base_meta, "fields") and base_meta.fields != "__all__":
-        class Meta(base_meta):
-            fields = tuple(base_meta.fields) + ("business_code", "business_detail_code")
-            read_only_fields = tuple(getattr(base_meta, "read_only_fields", ())) + ("business_code", "business_detail_code")
-    else:
-        class Meta:
-            fields = "__all__"
-
-    class EnvelopeSerializer(serializer_class):
-        business_code = serializers.CharField(help_text="稳定业务状态码。成功通常为 SUCCESS。")
-        business_detail_code = serializers.CharField(help_text="稳定业务细分码。成功通常为 OK。")
-
-    EnvelopeSerializer.__name__ = name
-    EnvelopeSerializer.Meta = Meta
-    return EnvelopeSerializer
+    return _standard_envelope(
+        name,
+        _serializer_instance(serializer),
+    )
 
 
 def paginated_envelope_serializer(name, item_serializer):
-    return inline_serializer(
-        name=name,
-        fields={
-            "business_code": serializers.CharField(help_text="稳定业务状态码。成功通常为 SUCCESS。"),
-            "business_detail_code": serializers.CharField(help_text="稳定业务细分码。成功通常为 OK。"),
-            "count": serializers.IntegerField(help_text="符合当前查询条件的总记录数。"),
-            "next": serializers.CharField(required=False, allow_null=True, help_text="下一页 URL；无下一页时为 null。"),
-            "previous": serializers.CharField(required=False, allow_null=True, help_text="上一页 URL；无上一页时为 null。"),
-            "results": _serializer_instance(item_serializer, many=True),
-        },
+    return _standard_envelope(
+        name,
+        inline_serializer(
+            name=f"{name}Data",
+            fields={
+                "list": _serializer_instance(item_serializer, many=True),
+                "total": serializers.IntegerField(help_text="符合当前查询条件的总记录数。"),
+            },
+        ),
     )
 
 
 def collection_envelope_serializer(name, item_serializer, *, extra_fields=None):
     fields = {
-        "business_code": serializers.CharField(help_text="稳定业务状态码。成功通常为 SUCCESS。"),
-        "business_detail_code": serializers.CharField(help_text="稳定业务细分码。成功通常为 OK。"),
-        "count": serializers.IntegerField(help_text="当前返回结果数量。"),
-        "results": _serializer_instance(item_serializer, many=True),
+        "list": _serializer_instance(item_serializer, many=True),
+        "total": serializers.IntegerField(help_text="当前返回结果数量。"),
     }
-    fields.update(extra_fields or {})
-    return inline_serializer(name=name, fields=fields)
+    fields.update(copy.deepcopy(extra_fields or {}))
+    return _standard_envelope(
+        name,
+        inline_serializer(name=f"{name}Data", fields=fields),
+    )
 
 
 def nullable_result_envelope_serializer(name, item_serializer, *, extra_fields=None):
     fields = {
-        "business_code": serializers.CharField(help_text="稳定业务状态码。成功通常为 SUCCESS。"),
-        "business_detail_code": serializers.CharField(help_text="稳定业务细分码。成功通常为 OK。"),
         "result": _serializer_instance(item_serializer, allow_null=True),
     }
-    fields.update(extra_fields or {})
-    return inline_serializer(name=name, fields=fields)
+    fields.update(copy.deepcopy(extra_fields or {}))
+    return _standard_envelope(
+        name,
+        inline_serializer(name=f"{name}Data", fields=fields),
+    )

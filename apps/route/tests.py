@@ -112,14 +112,14 @@ class RouteApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["name"], "城市中心巡检航线")
-        self.assertEqual(response.data["route_type"], RouteType.PENDING_EXTENSION)
-        self.assertEqual(response.data["status"], RouteStatus.ACTIVE)
-        self.assertEqual(response.data["creator_name"], self.staff.name)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["name"], "城市中心巡检航线")
+        self.assertEqual(response.data["data"]["route_type"], RouteType.PENDING_EXTENSION)
+        self.assertEqual(response.data["data"]["status"], RouteStatus.ACTIVE)
+        self.assertEqual(response.data["data"]["creator_name"], self.staff.name)
 
-        route = Route.objects.get(id=response.data["id"])
+        route = Route.objects.get(id=response.data["data"]["id"])
         self.assertEqual(route.creator_name, self.staff.name)
         self.assertTrue(
             AuditLog.objects.filter(
@@ -142,8 +142,8 @@ class RouteApiTests(TestCase):
 
         second = self.client.post("/api/v1/routes", payload, format="json")
         self.assertEqual(second.status_code, 201)
-        self.assertEqual(second.data["business_code"], "SUCCESS")
-        self.assertEqual(second.data["business_detail_code"], "OK")
+        self.assertEqual(second.data["code"], "00000")
+        self.assertEqual(second.data["msg"], "success")
 
     def test_create_route_with_waypoint_count_should_return_invalid_params(self):
         self._grant_permission("route.manage_route")
@@ -160,9 +160,9 @@ class RouteApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("waypoint_count", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("waypoint_count", response.data["data"])
 
     def test_create_route_invalid_params_should_return_invalid_params(self):
         self._grant_permission("route.manage_route")
@@ -175,9 +175,9 @@ class RouteApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("name", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("name", response.data["data"])
 
     def test_create_route_without_auth_should_return_permission_denied(self):
         response = self.client.post(
@@ -189,8 +189,8 @@ class RouteApiTests(TestCase):
             format="json",
         )
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_create_route_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
@@ -203,8 +203,8 @@ class RouteApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_list_routes_should_return_success(self):
         self._grant_permission("route.view_route")
@@ -214,10 +214,10 @@ class RouteApiTests(TestCase):
 
         response = self.client.get("/api/v1/routes")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertIn("results", response.data)
-        self.assertGreaterEqual(len(response.data["results"]), 2)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertIn("list", response.data["data"])
+        self.assertGreaterEqual(len(response.data["data"]["list"]), 2)
 
     def test_list_routes_with_name_filter_should_return_filtered_results(self):
         self._grant_permission("route.view_route")
@@ -227,23 +227,23 @@ class RouteApiTests(TestCase):
 
         response = self.client.get("/api/v1/routes", {"name": "海岸线"})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(len(response.data["results"]), 1)
-        self.assertEqual(response.data["results"][0]["name"], "海岸线巡查航线")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(len(response.data["data"]["list"]), 1)
+        self.assertEqual(response.data["data"]["list"][0]["name"], "海岸线巡查航线")
 
     def test_list_routes_without_auth_should_return_permission_denied(self):
         response = self.client.get("/api/v1/routes")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_list_routes_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
         response = self.client.get("/api/v1/routes")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_retrieve_route_should_return_success(self):
         self._grant_permission("route.view_route")
@@ -252,10 +252,10 @@ class RouteApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/routes/{route.id}")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["id"], route.id)
-        self.assertEqual(response.data["name"], "详情航线A")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["id"], route.id)
+        self.assertEqual(response.data["data"]["name"], "详情航线A")
 
     def test_retrieve_route_not_found_should_return_resource_not_found(self):
         self._grant_permission("route.view_route")
@@ -263,16 +263,16 @@ class RouteApiTests(TestCase):
 
         response = self.client.get("/api/v1/routes/999999")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_retrieve_route_without_auth_should_return_permission_denied(self):
         route = self._create_route(name="详情航线未认证")
 
         response = self.client.get(f"/api/v1/routes/{route.id}")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_retrieve_route_without_permission_should_return_permission_denied(self):
         route = self._create_route(name="详情航线无权限")
@@ -280,8 +280,8 @@ class RouteApiTests(TestCase):
 
         response = self.client.get(f"/api/v1/routes/{route.id}")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_patch_route_should_return_success(self):
         self._grant_permission("route.manage_route")
@@ -299,11 +299,11 @@ class RouteApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["name"], "已更新航线")
-        self.assertEqual(response.data["estimated_duration"], 1800)
-        self.assertEqual(response.data["total_distance"], "3560.80")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["name"], "已更新航线")
+        self.assertEqual(response.data["data"]["estimated_duration"], 1800)
+        self.assertEqual(response.data["data"]["total_distance"], "3560.80")
         route.refresh_from_db()
         self.assertEqual(route.name, "已更新航线")
         self.assertEqual(route.estimated_duration, 1800)
@@ -327,8 +327,8 @@ class RouteApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         route.refresh_from_db()
         self.assertEqual(route.name, "空更新航线")
 
@@ -360,8 +360,8 @@ class RouteApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_patch_route_without_auth_should_return_permission_denied(self):
         route = self._create_route(name="未认证更新航线")
@@ -373,8 +373,8 @@ class RouteApiTests(TestCase):
         )
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_patch_route_without_permission_should_return_permission_denied(self):
         route = self._create_route(name="无权限更新航线")
@@ -387,8 +387,8 @@ class RouteApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_enable_route_should_return_success(self):
         self._grant_permission("route.manage_route")
@@ -398,9 +398,9 @@ class RouteApiTests(TestCase):
         response = self.client.post(f"/api/v1/routes/{route.id}/enable")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], RouteStatus.ACTIVE)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], RouteStatus.ACTIVE)
 
         route.refresh_from_db()
         self.assertEqual(route.status, RouteStatus.ACTIVE)
@@ -420,9 +420,9 @@ class RouteApiTests(TestCase):
         response = self.client.post(f"/api/v1/routes/{route.id}/enable")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], RouteStatus.ACTIVE)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], RouteStatus.ACTIVE)
 
     def test_enable_route_with_body_should_return_invalid_params(self):
         self._grant_permission("route.manage_route")
@@ -436,8 +436,8 @@ class RouteApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         route.refresh_from_db()
         self.assertEqual(route.status, RouteStatus.DISABLED)
 
@@ -448,8 +448,8 @@ class RouteApiTests(TestCase):
         response = self.client.post("/api/v1/routes/999999/enable")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_enable_route_without_auth_should_return_permission_denied(self):
         route = self._create_route(name="未认证启用航线", status=RouteStatus.DISABLED)
@@ -457,8 +457,8 @@ class RouteApiTests(TestCase):
         response = self.client.post(f"/api/v1/routes/{route.id}/enable")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_enable_route_without_permission_should_return_permission_denied(self):
         route = self._create_route(name="无权限启用航线", status=RouteStatus.DISABLED)
@@ -467,8 +467,8 @@ class RouteApiTests(TestCase):
         response = self.client.post(f"/api/v1/routes/{route.id}/enable")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_disable_route_should_return_success(self):
         self._grant_permission("route.manage_route")
@@ -478,9 +478,9 @@ class RouteApiTests(TestCase):
         response = self.client.post(f"/api/v1/routes/{route.id}/disable")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], RouteStatus.DISABLED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], RouteStatus.DISABLED)
 
         route.refresh_from_db()
         self.assertEqual(route.status, RouteStatus.DISABLED)
@@ -500,9 +500,9 @@ class RouteApiTests(TestCase):
         response = self.client.post(f"/api/v1/routes/{route.id}/disable")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["status"], RouteStatus.DISABLED)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["status"], RouteStatus.DISABLED)
 
     def test_disable_route_with_body_should_return_invalid_params(self):
         self._grant_permission("route.manage_route")
@@ -516,8 +516,8 @@ class RouteApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         route.refresh_from_db()
         self.assertEqual(route.status, RouteStatus.ACTIVE)
 
@@ -528,8 +528,8 @@ class RouteApiTests(TestCase):
         response = self.client.post("/api/v1/routes/999999/disable")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_disable_route_without_auth_should_return_permission_denied(self):
         route = self._create_route(name="未认证禁用航线", status=RouteStatus.ACTIVE)
@@ -537,8 +537,8 @@ class RouteApiTests(TestCase):
         response = self.client.post(f"/api/v1/routes/{route.id}/disable")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_disable_route_without_permission_should_return_permission_denied(self):
         route = self._create_route(name="无权限禁用航线", status=RouteStatus.ACTIVE)
@@ -547,8 +547,8 @@ class RouteApiTests(TestCase):
         response = self.client.post(f"/api/v1/routes/{route.id}/disable")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_delete_route_should_hard_delete_route_and_waypoints(self):
         self._grant_permission("route.manage_route")
@@ -560,10 +560,10 @@ class RouteApiTests(TestCase):
         response = self.client.delete(f"/api/v1/routes/{route.id}")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["delete_mode"], "hard")
-        self.assertEqual(response.data["deleted_waypoint_count"], 2)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["delete_mode"], "hard")
+        self.assertEqual(response.data["data"]["deleted_waypoint_count"], 2)
         self.assertFalse(Route.objects.filter(id=route.id).exists())
         self.assertFalse(Waypoint.objects.filter(route_id=route.id).exists())
         self.assertTrue(
@@ -583,9 +583,9 @@ class RouteApiTests(TestCase):
         response = self.client.delete(f"/api/v1/routes/{route.id}")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["delete_mode"], "disabled")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["delete_mode"], "disabled")
         route.refresh_from_db()
         self.assertEqual(route.status, RouteStatus.DISABLED)
         self.assertTrue(Route.objects.filter(id=route.id).exists())
@@ -608,9 +608,9 @@ class RouteApiTests(TestCase):
         response = self.client.delete(f"/api/v1/routes/{route.id}")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["delete_mode"], "disabled")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["delete_mode"], "disabled")
         route.refresh_from_db()
         self.assertEqual(route.status, RouteStatus.DISABLED)
 
@@ -626,8 +626,8 @@ class RouteApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
         self.assertTrue(Route.objects.filter(id=route.id).exists())
 
     def test_delete_route_not_found_should_return_resource_not_found(self):
@@ -637,8 +637,8 @@ class RouteApiTests(TestCase):
         response = self.client.delete("/api/v1/routes/999999")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_delete_route_without_auth_should_return_permission_denied(self):
         route = self._create_route(name="删除未认证航线")
@@ -646,8 +646,8 @@ class RouteApiTests(TestCase):
         response = self.client.delete(f"/api/v1/routes/{route.id}")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_delete_route_without_permission_should_return_permission_denied(self):
         route = self._create_route(name="删除无权限航线")
@@ -656,5 +656,5 @@ class RouteApiTests(TestCase):
         response = self.client.delete(f"/api/v1/routes/{route.id}")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")

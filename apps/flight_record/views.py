@@ -6,7 +6,7 @@ from rest_framework.response import Response
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.services import log_action
-from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.api_v1.schema import (
     BUSINESS_INTERNAL_ERROR_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
@@ -63,30 +63,26 @@ FLIGHT_RECORD_PERMISSION_DENIED_RESPONSE = business_error_response(
     examples=[
         business_error_example(
             "未登录",
-            business_code="PERMISSION_DENIED",
-            business_detail_code="NOT_AUTHENTICATED",
-            detail="Authentication credentials were not provided.",
+            code="A0401",
+            msg="登录状态已失效",
             status_codes=["401"],
         ),
         business_error_example(
             "无权限",
-            business_code="PERMISSION_DENIED",
-            business_detail_code="FORBIDDEN",
-            detail="PERMISSION_DENIED",
+            code="A0403",
+            msg="无操作权限",
             status_codes=["403"],
         ),
         business_error_example(
             "缺少租户上下文",
-            business_code="PERMISSION_DENIED",
-            business_detail_code="TENANT_CONTEXT_REQUIRED",
-            detail="tenant context required",
+            code="A0403",
+            msg="缺少租户上下文",
             status_codes=["403"],
         ),
         business_error_example(
             "平台管理员访问业务 API",
-            business_code="PERMISSION_DENIED",
-            business_detail_code="FORBIDDEN",
-            detail="platform admin cannot access tenant business api",
+            code="A0403",
+            msg="平台管理员不可访问租户业务接口",
             status_codes=["403"],
         ),
     ],
@@ -97,35 +93,31 @@ FLIGHT_RECORD_INVALID_PARAMS_RESPONSE = business_error_response(
     examples=[
         business_error_example(
             "缺少架次编号",
-            business_code="INVALID_PARAMS",
-            business_detail_code="VALIDATION_ERROR",
-            detail="参数校验失败",
+            code="B0001",
+            msg="参数校验失败",
             status_codes=["400"],
-            extras={"errors": {"flight_no": ["该字段是必填项。"]}},
+            data={"flight_no": ["该字段是必填项。"]},
         ),
         business_error_example(
             "架次编号重复",
-            business_code="IDEMPOTENT_DUPLICATE",
-            business_detail_code="DUPLICATE_REQUEST",
-            detail="重复提交，资源已存在",
+            code="C0101",
+            msg="资源已存在",
             status_codes=["400"],
-            extras={"errors": {"flight_no": ["当前租户下已存在相同架次编号"]}},
+            data={"flight_no": ["当前租户下已存在相同架次编号"]},
         ),
         business_error_example(
             "PATCH 直接改状态",
-            business_code="INVALID_PARAMS",
-            business_detail_code="VALIDATION_ERROR",
-            detail="参数校验失败",
+            code="B0001",
+            msg="参数校验失败",
             status_codes=["400"],
-            extras={"errors": {"status": ["status 不可通过 PATCH 直接修改，请使用状态动作接口"]}},
+            data={"status": ["status 不可通过 PATCH 直接修改，请使用状态动作接口"]},
         ),
         business_error_example(
             "动作接口提交 body",
-            business_code="INVALID_PARAMS",
-            business_detail_code="VALIDATION_ERROR",
-            detail="complete 请求不支持提交 body 参数",
+            code="B0001",
+            msg="complete 请求不支持提交 body 参数",
             status_codes=["400"],
-            extras={"errors": {"body": "不支持请求体，请移除 body 后重试"}},
+            data={"body": "不支持请求体，请移除 body 后重试"},
         ),
     ],
 )
@@ -135,32 +127,29 @@ FLIGHT_RECORD_NOT_FOUND_RESPONSE = business_error_response(
     examples=[
         business_error_example(
             "飞行记录不存在",
-            business_code="RESOURCE_NOT_FOUND",
-            business_detail_code="NOT_FOUND",
-            detail="No FlightRecord matches the given query.",
+            code="C0404",
+            msg="资源不存在",
             status_codes=["404"],
         )
     ],
 )
 
 FLIGHT_RECORD_STATE_CONFLICT_RESPONSE = business_error_response(
-    description="飞行记录当前状态不允许本次流转，business_code 固定为 STATE_CONFLICT。",
+    description="飞行记录当前状态不允许本次流转，code 固定为 C0201 / C0202。",
     examples=[
         business_error_example(
             "异常终止后不可完成",
-            business_code="STATE_CONFLICT",
-            business_detail_code="STATE_CONFLICT",
-            detail="当前飞行记录状态不允许完成",
+            code="C0201",
+            msg="当前飞行记录状态不允许完成",
             status_codes=["409"],
-            extras={"flight_record_id": 101, "status": FlightRecordStatus.ABORTED},
+            data={"flight_record_id": 101, "status": FlightRecordStatus.ABORTED},
         ),
         business_error_example(
             "已完成后不可异常终止",
-            business_code="STATE_CONFLICT",
-            business_detail_code="STATE_CONFLICT",
-            detail="当前飞行记录状态不允许异常终止",
+            code="C0201",
+            msg="当前飞行记录状态不允许异常终止",
             status_codes=["409"],
-            extras={"flight_record_id": 102, "status": FlightRecordStatus.COMPLETED},
+            data={"flight_record_id": 102, "status": FlightRecordStatus.COMPLETED},
         ),
     ],
 )
@@ -243,6 +232,21 @@ def _flight_record_transition_schema(*, summary, description):
         },
         tags=["Business API - Flight Record"],
     ),
+    update=extend_schema(
+        summary="全量更新飞行记录",
+        description="按飞行记录 ID 全量更新执行结果元数据；不允许在该接口直接修改状态。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=FlightRecordWriteSerializer,
+        responses={
+            200: OpenApiResponse(response=FLIGHT_RECORD_DETAIL_RESPONSE, description="更新成功。"),
+            400: FLIGHT_RECORD_INVALID_PARAMS_RESPONSE,
+            401: FLIGHT_RECORD_PERMISSION_DENIED_RESPONSE,
+            403: FLIGHT_RECORD_PERMISSION_DENIED_RESPONSE,
+            404: FLIGHT_RECORD_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Flight Record"],
+    ),
     partial_update=extend_schema(
         summary="局部更新飞行记录",
         description="按飞行记录 ID 局部更新执行结果元数据；不允许在该接口直接修改状态。",
@@ -281,12 +285,13 @@ class FlightRecordViewSet(
 
     queryset = FlightRecord.objects.select_related("mission", "drone", "pilot__user__staff_profile").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "put", "patch", "head", "options"]
 
     permission_map = {
         "list": "flight_record.view_flight_record",
         "retrieve": "flight_record.view_flight_record",
         "create": "flight_record.manage_flight_record",
+        "update": "flight_record.manage_flight_record",
         "partial_update": "flight_record.manage_flight_record",
         "complete": "flight_record.manage_flight_record",
         "abort": "flight_record.manage_flight_record",
@@ -297,7 +302,7 @@ class FlightRecordViewSet(
         return {"pilot_id": tenant_member_id}
 
     def get_serializer_class(self):
-        if self.action in {"create", "partial_update"}:
+        if self.action in {"create", "update", "partial_update"}:
             return FlightRecordWriteSerializer
         return FlightRecordReadSerializer
 
@@ -329,16 +334,16 @@ class FlightRecordViewSet(
         if flight_no:
             queryset = queryset.filter(flight_no__icontains=flight_no)
 
-        if self.action in {"list", "retrieve", "partial_update", "complete", "abort"}:
+        if self.action in {"list", "retrieve", "update", "partial_update", "complete", "abort"}:
             return self.apply_scope(queryset)
 
         return queryset
 
     def list(self, request, *args, **kwargs):
         # 边界与返回语义：
-        # 1) 有查看权限：返回分页列表，business_code=SUCCESS（HTTP 200）；
-        # 2) 未认证或无查看权限：business_code=PERMISSION_DENIED（HTTP 401/403）。
-        # 业务码字段 business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
+        # 1) 有查看权限：返回分页列表，code=00000（HTTP 200）；
+        # 2) 未认证或无查看权限：code=A0401/A0403（HTTP 401/403）。
+        # 响应由 BusinessApiResponseMixin 统一包装为 `code / msg / data`。
         return super().list(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
@@ -349,7 +354,7 @@ class FlightRecordViewSet(
         # 适用边界：
         # 1) 本接口只创建单条 flight_record，不承担任务状态编排或批量导入；
         # 2) 可选绑定 mission/drone/pilot，若绑定则会自动回填冗余名称字段；
-        # 3) 响应统一携带 business_code/business_detail_code。
+        # 3) 响应统一携带 code/msg/data。
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         record = self.perform_create(serializer)
@@ -376,10 +381,10 @@ class FlightRecordViewSet(
         # 本接口只负责详情读取，不承担飞行记录创建、编辑、状态流转等写操作。
         #
         # 边界与返回语义：
-        # 1) 有查看权限且记录存在：返回飞行记录详情，business_code=SUCCESS（HTTP 200）；
-        # 2) 记录不存在：business_code=RESOURCE_NOT_FOUND（HTTP 404）；
-        # 3) 未认证或无查看权限：business_code=PERMISSION_DENIED（HTTP 401/403）。
-        # 业务码字段 business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
+        # 1) 有查看权限且记录存在：返回飞行记录详情，code=00000（HTTP 200）；
+        # 2) 记录不存在：code=C0404（HTTP 404）；
+        # 3) 未认证或无查看权限：code=A0401/A0403（HTTP 401/403）。
+        # 响应由 BusinessApiResponseMixin 统一包装为 `code / msg / data`。
         return super().retrieve(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
@@ -393,16 +398,28 @@ class FlightRecordViewSet(
         # 3) 成功返回最新 flight_record 快照，业务码由统一响应层补齐。
         if not request.data:
             return Response(
-                {
-                    "business_code": "INVALID_PARAMS",
-                    "detail": "PATCH 请求至少包含一个可写字段",
-                    "errors": {"body": "请至少提交一个可写字段"},
-                },
+                standard_error_payload(
+                    StandardCode.INVALID_PARAMS,
+                    "PATCH 请求至少包含一个可写字段",
+                    {"body": "请至少提交一个可写字段"},
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        record = self.perform_update(serializer)
+
+        if getattr(instance, "_prefetched_objects_cache", None):
+            instance._prefetched_objects_cache = {}
+
+        read_serializer = FlightRecordReadSerializer(record, context={"request": request})
+        return Response(read_serializer.data, status=status.HTTP_200_OK)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
         record = self.perform_update(serializer)
 
@@ -430,11 +447,11 @@ class FlightRecordViewSet(
         # 4) 已异常终止记录不允许 complete，返回状态冲突。
         if request.data:
             return Response(
-                {
-                    "business_code": BusinessCode.INVALID_PARAMS,
-                    "detail": "complete 请求不支持提交 body 参数",
-                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
-                },
+                standard_error_payload(
+                    StandardCode.INVALID_PARAMS,
+                    "complete 请求不支持提交 body 参数",
+                    {"body": "不支持请求体，请移除 body 后重试"},
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -454,13 +471,11 @@ class FlightRecordViewSet(
 
         if record.status == FlightRecordStatus.ABORTED:
             return Response(
-                {
-                    "business_code": BusinessCode.STATE_CONFLICT,
-                    "business_detail_code": "STATE_CONFLICT",
-                    "detail": "当前飞行记录状态不允许完成",
-                    "flight_record_id": record.id,
-                    "status": record.status,
-                },
+                standard_error_payload(
+                    StandardCode.STATE_CONFLICT,
+                    "当前飞行记录状态不允许完成",
+                    {"flight_record_id": record.id, "status": record.status},
+                ),
                 status=status.HTTP_409_CONFLICT,
             )
 
@@ -495,11 +510,11 @@ class FlightRecordViewSet(
         # 4) 已完成记录不允许 abort，返回状态冲突。
         if request.data:
             return Response(
-                {
-                    "business_code": BusinessCode.INVALID_PARAMS,
-                    "detail": "abort 请求不支持提交 body 参数",
-                    "errors": {"body": "不支持请求体，请移除 body 后重试"},
-                },
+                standard_error_payload(
+                    StandardCode.INVALID_PARAMS,
+                    "abort 请求不支持提交 body 参数",
+                    {"body": "不支持请求体，请移除 body 后重试"},
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -519,13 +534,11 @@ class FlightRecordViewSet(
 
         if record.status == FlightRecordStatus.COMPLETED:
             return Response(
-                {
-                    "business_code": BusinessCode.STATE_CONFLICT,
-                    "business_detail_code": "STATE_CONFLICT",
-                    "detail": "当前飞行记录状态不允许异常终止",
-                    "flight_record_id": record.id,
-                    "status": record.status,
-                },
+                standard_error_payload(
+                    StandardCode.STATE_CONFLICT,
+                    "当前飞行记录状态不允许异常终止",
+                    {"flight_record_id": record.id, "status": record.status},
+                ),
                 status=status.HTTP_409_CONFLICT,
             )
 

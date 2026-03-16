@@ -76,26 +76,26 @@ PostgreSQL
 | 创建 | POST /api/v1/flight-records | 新增飞行记录 |
 | 列表 | GET /api/v1/flight-records | 飞行记录列表查询 |
 | 详情 | GET /api/v1/flight-records/{id} | 飞行记录详情 |
-| 更新 | PATCH /api/v1/flight-records/{id} | 局部更新飞行记录 |
+| 更新 | PUT / PATCH /api/v1/flight-records/{id} | 全量或局部更新飞行记录 |
 | 完成 | POST /api/v1/flight-records/{id}/complete | 完成飞行记录 |
 | 异常终止 | POST /api/v1/flight-records/{id}/abort | 异常终止飞行记录 |
 
 ## 接口语义
 
-### 更新飞行记录 PATCH /api/v1/flight-records/{id}
-- 功能：局部更新飞行记录元数据
+### 更新飞行记录 PUT / PATCH /api/v1/flight-records/{id}
+- 功能：全量或局部更新飞行记录元数据
 - 可写字段：mission, drone, pilot, start_time, end_time, flight_duration, photo_count, video_count, airport_name
 - 约束：PATCH 请求体必须至少包含一个可写字段
-- 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
 ### 完成飞行记录 POST /api/v1/flight-records/{id}/complete
 - 状态流转：IN_PROGRESS -> COMPLETED
 - 有效状态：IN_PROGRESS
 - 无效状态：COMPLETED / ABORTED
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 
 ### 异常终止飞行记录 POST /api/v1/flight-records/{id}/abort
 - 状态流转：IN_PROGRESS -> ABORTED
 - 有效状态：IN_PROGRESS
 - 无效状态：COMPLETED / ABORTED
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`

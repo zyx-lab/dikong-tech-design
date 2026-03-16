@@ -76,12 +76,12 @@ class WaypointApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["route"], self.route_active.id)
-        self.assertEqual(response.data["sequence"], 1)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["route"], self.route_active.id)
+        self.assertEqual(response.data["data"]["sequence"], 1)
 
-        waypoint = Waypoint.objects.get(id=response.data["id"])
+        waypoint = Waypoint.objects.get(id=response.data["data"]["id"])
         self.assertEqual(waypoint.route_id, self.route_active.id)
         self.assertEqual(waypoint.sequence, 1)
         self.route_active.refresh_from_db()
@@ -123,8 +123,8 @@ class WaypointApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertIn("route", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("route", response.data["data"])
 
     def test_create_waypoint_invalid_params_should_return_invalid_params(self):
         self._grant_permission("waypoint.manage_waypoint")
@@ -141,9 +141,9 @@ class WaypointApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("latitude", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("latitude", response.data["data"])
 
     def test_create_waypoint_for_disabled_route_should_return_invalid_params(self):
         self._grant_permission("waypoint.manage_waypoint")
@@ -161,9 +161,9 @@ class WaypointApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("route", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("route", response.data["data"])
 
     def test_model_should_reject_disabled_route(self):
         with self.assertRaises(ValidationError):
@@ -193,7 +193,7 @@ class WaypointApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["code"], "B0001")
 
     def test_create_waypoint_duplicate_route_sequence_returns_idempotent_duplicate(self):
         """测试同一航线序号重复创建时返回幂等重复响应"""
@@ -221,9 +221,9 @@ class WaypointApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
-        self.assertEqual(response.data["business_detail_code"], "DUPLICATE_REQUEST")
-        self.assertIn("non_field_errors", response.data)
+        self.assertEqual(response.data["code"], "C0101")
+        self.assertEqual(response.data["code"], "C0101")
+        self.assertIn("non_field_errors", response.data["data"])
 
     def test_create_waypoint_without_auth_should_return_permission_denied(self):
         response = self.client.post(
@@ -238,8 +238,8 @@ class WaypointApiTests(TestCase):
             format="json",
         )
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_create_waypoint_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
@@ -256,8 +256,8 @@ class WaypointApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_patch_waypoint_should_return_success(self):
         self._grant_permission("waypoint.manage_waypoint")
@@ -275,12 +275,12 @@ class WaypointApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["id"], waypoint.id)
-        self.assertEqual(response.data["sequence"], 7)
-        self.assertEqual(response.data["latitude"], "22.28612399")
-        self.assertEqual(response.data["altitude"], "125.00")
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["id"], waypoint.id)
+        self.assertEqual(response.data["data"]["sequence"], 7)
+        self.assertEqual(response.data["data"]["latitude"], "22.28612399")
+        self.assertEqual(response.data["data"]["altitude"], "125.00")
 
         waypoint.refresh_from_db()
         self.assertEqual(waypoint.sequence, 7)
@@ -307,9 +307,9 @@ class WaypointApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
-        self.assertEqual(response.data["business_detail_code"], "DUPLICATE_REQUEST")
-        self.assertIn("sequence", response.data)
+        self.assertEqual(response.data["code"], "C0101")
+        self.assertEqual(response.data["code"], "C0101")
+        self.assertIn("sequence", response.data["data"])
 
     def test_patch_waypoint_with_unknown_field_should_return_invalid_params(self):
         self._grant_permission("waypoint.manage_waypoint")
@@ -323,9 +323,9 @@ class WaypointApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
-        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("route", response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("route", response.data["data"])
 
     def test_patch_waypoint_not_found_should_return_resource_not_found(self):
         self._grant_permission("waypoint.manage_waypoint")
@@ -338,8 +338,8 @@ class WaypointApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_patch_waypoint_without_auth_should_return_permission_denied(self):
         waypoint = self._create_waypoint(route=self.route_active, sequence=12)
@@ -350,8 +350,8 @@ class WaypointApiTests(TestCase):
             format="json",
         )
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_patch_waypoint_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
@@ -363,8 +363,8 @@ class WaypointApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_delete_waypoint_should_return_success_and_delete(self):
         self._grant_permission("waypoint.manage_waypoint")
@@ -376,10 +376,10 @@ class WaypointApiTests(TestCase):
         response = self.client.delete(f"/api/v1/waypoints/{waypoint.id}")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["id"], waypoint.id)
-        self.assertTrue(response.data["deleted"])
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["id"], waypoint.id)
+        self.assertTrue(response.data["data"]["deleted"])
 
         self.assertFalse(Waypoint.objects.filter(id=waypoint.id).exists())
         self.route_active.refresh_from_db()
@@ -399,8 +399,8 @@ class WaypointApiTests(TestCase):
         response = self.client.delete("/api/v1/waypoints/999999")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_delete_waypoint_without_auth_should_return_permission_denied(self):
         waypoint = self._create_waypoint(route=self.route_active, sequence=17)
@@ -408,8 +408,8 @@ class WaypointApiTests(TestCase):
         response = self.client.delete(f"/api/v1/waypoints/{waypoint.id}")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_delete_waypoint_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
@@ -418,8 +418,8 @@ class WaypointApiTests(TestCase):
         response = self.client.delete(f"/api/v1/waypoints/{waypoint.id}")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_list_waypoints_should_return_success(self):
         self._grant_permission("waypoint.view_waypoint")
@@ -429,10 +429,10 @@ class WaypointApiTests(TestCase):
 
         response = self.client.get("/api/v1/waypoints")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertIn("results", response.data)
-        self.assertEqual(len(response.data["results"]), 2)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertIn("list", response.data["data"])
+        self.assertEqual(len(response.data["data"]["list"]), 2)
 
     def test_list_waypoints_with_filter_should_return_filtered_results(self):
         self._grant_permission("waypoint.view_waypoint")
@@ -445,10 +445,10 @@ class WaypointApiTests(TestCase):
             {"route_id": self.route_active.id, "sequence": 2},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(len(response.data["results"]), 1)
-        self.assertEqual(response.data["results"][0]["sequence"], 2)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(len(response.data["data"]["list"]), 1)
+        self.assertEqual(response.data["data"]["list"][0]["sequence"], 2)
 
     def test_retrieve_waypoint_should_return_success(self):
         self._grant_permission("waypoint.view_waypoint")
@@ -458,11 +458,11 @@ class WaypointApiTests(TestCase):
         response = self.client.get(f"/api/v1/waypoints/{waypoint.id}")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
-        self.assertEqual(response.data["business_detail_code"], "OK")
-        self.assertEqual(response.data["id"], waypoint.id)
-        self.assertEqual(response.data["route"], self.route_active.id)
-        self.assertEqual(response.data["sequence"], 3)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.data["data"]["id"], waypoint.id)
+        self.assertEqual(response.data["data"]["route"], self.route_active.id)
+        self.assertEqual(response.data["data"]["sequence"], 3)
 
     def test_retrieve_waypoint_not_found_should_return_resource_not_found(self):
         self._grant_permission("waypoint.view_waypoint")
@@ -471,8 +471,8 @@ class WaypointApiTests(TestCase):
         response = self.client.get("/api/v1/waypoints/999999")
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
-        self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.data["code"], "C0404")
 
     def test_retrieve_waypoint_without_auth_should_return_permission_denied(self):
         waypoint = self._create_waypoint(route=self.route_active, sequence=4)
@@ -480,8 +480,8 @@ class WaypointApiTests(TestCase):
         response = self.client.get(f"/api/v1/waypoints/{waypoint.id}")
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_retrieve_waypoint_without_permission_should_return_permission_denied(self):
         waypoint = self._create_waypoint(route=self.route_active, sequence=5)
@@ -490,22 +490,22 @@ class WaypointApiTests(TestCase):
         response = self.client.get(f"/api/v1/waypoints/{waypoint.id}")
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
     def test_list_waypoints_without_auth_should_return_permission_denied(self):
         response = self.client.get("/api/v1/waypoints")
         self.assertIn(response.status_code, (401, 403))
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0401")
 
     def test_list_waypoints_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
 
         response = self.client.get("/api/v1/waypoints")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
+        self.assertIn(response.data["code"], {"A0401", "A0403"})
+        self.assertEqual(response.data["code"], "A0403")
 
 
 # ============================================================================
@@ -554,7 +554,7 @@ class WaypointBoundaryAndExtendedTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["code"], "00000")
 
     def test_create_waypoint_boundary_latitude_max(self):
         """测试纬度最大边界值（90）"""
@@ -570,7 +570,7 @@ class WaypointBoundaryAndExtendedTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["code"], "00000")
 
     def test_create_waypoint_invalid_latitude_out_of_range(self):
         """测试纬度超出范围（>90）"""
@@ -618,7 +618,7 @@ class WaypointBoundaryAndExtendedTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["code"], "00000")
 
     def test_create_waypoint_boundary_altitude_max(self):
         """测试高度最大边界值"""
@@ -634,7 +634,7 @@ class WaypointBoundaryAndExtendedTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["code"], "00000")
 
     def test_create_waypoint_invalid_negative_altitude(self):
         """测试负高度（允许或拒绝取决于业务规则）"""
@@ -666,7 +666,7 @@ class WaypointBoundaryAndExtendedTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["code"], "00000")
 
     def test_create_waypoint_large_sequence(self):
         """测试大序号"""
@@ -682,7 +682,7 @@ class WaypointBoundaryAndExtendedTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["code"], "00000")
 
     def test_create_waypoint_missing_required_field(self):
         """测试缺少必填字段"""
@@ -696,7 +696,7 @@ class WaypointBoundaryAndExtendedTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["code"], "B0001")
 
     def test_create_waypoint_invalid_coordinate_format(self):
         """测试无效坐标格式（非数字）"""
@@ -712,7 +712,7 @@ class WaypointBoundaryAndExtendedTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["code"], "B0001")
 
     def test_list_waypoints_filtered_by_route(self):
         """测试按航线筛选航点"""
@@ -734,7 +734,7 @@ class WaypointBoundaryAndExtendedTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         # 验证返回了多条航点
-        self.assertGreaterEqual(len(response.data["results"]), 2)
+        self.assertGreaterEqual(len(response.data["data"]["list"]), 2)
 
     def test_patch_waypoint_cannot_change_route(self):
         """测试不能通过PATCH切换航线"""

@@ -80,7 +80,7 @@ PostgreSQL
 | 创建 | POST /api/v1/missions | 新增任务 |
 | 列表 | GET /api/v1/missions | 任务列表查询 |
 | 详情 | GET /api/v1/missions/{id} | 任务详情 |
-| 更新 | PATCH /api/v1/missions/{id} | 局部更新任务 |
+| 更新 | PUT / PATCH /api/v1/missions/{id} | 全量或局部更新任务 |
 | 启动 | POST /api/v1/missions/{id}/start | 启动任务 |
 | 暂停 | POST /api/v1/missions/{id}/pause | 暂停任务 |
 | 恢复 | POST /api/v1/missions/{id}/resume | 恢复任务 |
@@ -94,34 +94,34 @@ PostgreSQL
 - 状态流转：PENDING -> RUNNING
 - 有效状态：PENDING
 - 无效状态：PAUSED / COMPLETED / CANCELED / FAILED
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 
 ### 暂停任务 POST /api/v1/missions/{id}/pause
 - 状态流转：RUNNING -> PAUSED
 - 有效状态：RUNNING
 - 无效状态：PENDING / COMPLETED / CANCELED / FAILED
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 
 ### 恢复任务 POST /api/v1/missions/{id}/resume
 - 状态流转：PAUSED -> RUNNING
 - 有效状态：PAUSED
 - 无效状态：PENDING / COMPLETED / CANCELED / FAILED
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 
 ### 完成任务 POST /api/v1/missions/{id}/complete
 - 状态流转：RUNNING -> COMPLETED
 - 有效状态：RUNNING
 - 无效状态：PENDING / PAUSED / CANCELED / FAILED
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 
 ### 标记失败 POST /api/v1/missions/{id}/fail
 - 状态流转：RUNNING -> FAILED
 - 有效状态：RUNNING
 - 无效状态：PENDING / PAUSED / COMPLETED / CANCELED
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
 
 ### 取消任务 POST /api/v1/missions/{id}/cancel
 - 状态流转：PENDING/RUNNING/PAUSED -> CANCELED
 - 有效状态：PENDING / RUNNING / PAUSED
 - 无效状态：COMPLETED / CANCELED / FAILED
-- 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, RESOURCE_NOT_FOUND, PERMISSION_DENIED
+- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`

@@ -96,23 +96,22 @@ PostgreSQL
 
 ---
 
-## 4. 业务响应码字典（Business API）
+## 4. 业务响应契约（Business API）
 
-说明：业务 API 响应体包含 `business_code`（主业务码）与 `business_detail_code`（细分原因码）。
+说明：业务 API 响应体统一包含 `code`、`msg`、`data` 三个字段。
 
-| business_code | 典型 HTTP | 语义 |
+| 字段 | 类型 | 说明 |
 | ------ | ------ | ------ |
-| SUCCESS | 200 / 201 | 业务处理成功 |
-| INVALID_PARAMS | 400 | 请求参数校验失败 |
-| PERMISSION_DENIED | 401 / 403 | 身份或权限不足 |
-| RESOURCE_NOT_FOUND | 404 | 目标资源不存在 |
-| STATE_CONFLICT | 409 | 状态机冲突 |
+| code | string | 业务码。成功固定为 `00000` |
+| msg | string | 响应消息。成功通常为 `success` |
+| data | object / array / null | 业务数据；失败时为错误上下文 |
 
-| business_detail_code | 语义 |
-| ------ | ------ |
-| OK | 成功 |
-| NOT_AUTHENTICATED | 未登录或认证信息缺失 |
-| FORBIDDEN | 已登录但无权限 |
-| NOT_FOUND | 资源不存在 |
-| VALIDATION_ERROR | 参数校验失败 |
-| STATE_CONFLICT | 业务状态冲突 |
+| code | 典型 HTTP | 语义 |
+| ------ | ------ | ------ |
+| 00000 | 200 / 201 | 业务处理成功 |
+| A0401 | 401 | 未登录或登录已失效 |
+| A0403 | 403 | 无操作权限 |
+| B0001 | 400 | 请求参数校验失败 |
+| C0201 | 409 | 当前状态不允许操作 |
+| C0404 | 404 | 目标资源不存在 |
+| E0001 | 500 | 系统异常 |
