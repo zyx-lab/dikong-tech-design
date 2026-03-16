@@ -1,11 +1,21 @@
 from django.db import transaction
-from rest_framework import mixins, status, viewsets
+from rest_framework import mixins, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ErrorDetail, MethodNotAllowed
 from rest_framework.response import Response
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
+from apps.api_v1.schema import (
+    TENANT_CODE_HEADER_PARAMETER,
+    BusinessDeleteResultSerializer,
+    business_error_example,
+    business_error_response,
+    collection_envelope_serializer,
+    nullable_result_envelope_serializer,
+    object_envelope_serializer,
+    paginated_envelope_serializer,
+)
 from apps.access.services import IdentityService, log_action, snapshot
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
@@ -15,6 +25,299 @@ from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
 from apps.drone_assignment.serializers import DroneAssignmentReadSerializer
 
 
+DRONE_LIST_RESPONSE = paginated_envelope_serializer("DroneListResponse", DroneReadSerializer)
+DRONE_DETAIL_RESPONSE = object_envelope_serializer("DroneDetailResponse", DroneReadSerializer)
+DRONE_ASSIGNMENT_HISTORY_RESPONSE = collection_envelope_serializer(
+    "DroneAssignmentHistoryResponse",
+    DroneAssignmentReadSerializer,
+    extra_fields={"drone_id": serializers.IntegerField(help_text="当前查询的无人机 ID。")},
+)
+DRONE_ASSIGNMENT_LATEST_RESPONSE = nullable_result_envelope_serializer(
+    "DroneAssignmentLatestResponse",
+    DroneAssignmentReadSerializer,
+    extra_fields={
+        "drone_id": serializers.IntegerField(help_text="当前查询的无人机 ID。"),
+        "has_record": serializers.BooleanField(help_text="是否存在至少一条分配记录。"),
+    },
+)
+
+DRONE_FILTER_PARAMETERS = [
+    TENANT_CODE_HEADER_PARAMETER,
+    OpenApiParameter(
+        name="code",
+        type=str,
+        location=OpenApiParameter.QUERY,
+        description="按无人机业务编码做模糊匹配，例如 `DJ-01`。",
+    ),
+    OpenApiParameter(
+        name="name",
+        type=str,
+        location=OpenApiParameter.QUERY,
+        description="按无人机名称做模糊匹配，例如 `巡检机`。",
+    ),
+    OpenApiParameter(
+        name="model",
+        type=str,
+        location=OpenApiParameter.QUERY,
+        description="按无人机型号做模糊匹配，例如 `Matrice 30`。",
+    ),
+    OpenApiParameter(
+        name="status",
+        type=str,
+        location=OpenApiParameter.QUERY,
+        description="按状态精确过滤。",
+        enum=[choice[0] for choice in DroneStatus.choices],
+    ),
+    OpenApiParameter(
+        name="org_id",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按业务组织 ID 精确过滤。",
+    ),
+]
+
+DRONE_PERMISSION_DENIED_RESPONSE = business_error_response(
+    description="未认证、无权限、缺少租户上下文，或 platform_admin 访问业务 API 被拒绝。",
+    examples=[
+        business_error_example(
+            "未登录",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="NOT_AUTHENTICATED",
+            detail="Authentication credentials were not provided.",
+            status_codes=["401"],
+        ),
+        business_error_example(
+            "无查看权限",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="FORBIDDEN",
+            detail="PERMISSION_DENIED",
+            status_codes=["403"],
+        ),
+        business_error_example(
+            "缺少租户上下文",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="TENANT_CONTEXT_REQUIRED",
+            detail="tenant context required",
+            status_codes=["403"],
+        ),
+        business_error_example(
+            "平台管理员访问业务 API",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="FORBIDDEN",
+            detail="platform admin cannot access tenant business api",
+            status_codes=["403"],
+        ),
+    ],
+)
+
+DRONE_INVALID_PARAMS_RESPONSE = business_error_response(
+    description="请求体或查询参数不合法，business_code 固定为 INVALID_PARAMS。",
+    examples=[
+        business_error_example(
+            "字段校验失败",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="参数校验失败",
+            status_codes=["400"],
+            extras={"errors": {"serial_no": ["当前租户下已存在相同出厂序列号"]}},
+        ),
+        business_error_example(
+            "DELETE 带 body",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="DELETE 请求不支持提交 body 参数",
+            status_codes=["400"],
+            extras={"errors": {"body": "不支持请求体，请移除 body 后重试"}},
+        ),
+    ],
+)
+
+DRONE_NOT_FOUND_RESPONSE = business_error_response(
+    description="目标无人机不存在，或当前租户上下文下不可见。",
+    examples=[
+        business_error_example(
+            "无人机不存在",
+            business_code="RESOURCE_NOT_FOUND",
+            business_detail_code="NOT_FOUND",
+            detail="No Drone matches the given query.",
+            status_codes=["404"],
+        )
+    ],
+)
+
+DRONE_STATE_CONFLICT_RESPONSE = business_error_response(
+    description="资源当前状态不允许本次操作，business_code 固定为 STATE_CONFLICT。",
+    examples=[
+        business_error_example(
+            "状态不可逆",
+            business_code="STATE_CONFLICT",
+            business_detail_code="STATE_CONFLICT",
+            detail="RETIRED 状态不可逆，不能变更为其他状态",
+            status_codes=["409"],
+            extras={"current_status": DroneStatus.RETIRED, "target_status": DroneStatus.ENABLED},
+        ),
+        business_error_example(
+            "存在生效分配",
+            business_code="STATE_CONFLICT",
+            business_detail_code="STATE_CONFLICT",
+            detail="无人机存在 ACTIVE 分配关系，不能删除",
+            status_codes=["409"],
+            extras={"drone_id": 101},
+        ),
+    ],
+)
+
+DRONE_DUPLICATE_RESPONSE = business_error_response(
+    description="重复提交或租户内唯一键冲突，business_code 固定为 IDEMPOTENT_DUPLICATE。",
+    examples=[
+        business_error_example(
+            "租户内编码重复",
+            business_code="IDEMPOTENT_DUPLICATE",
+            business_detail_code="DUPLICATE_REQUEST",
+            detail="重复提交，资源已存在",
+            status_codes=["409"],
+            extras={"errors": {"code": ["drone with this tenant and 业务编码 already exists."]}},
+        )
+    ],
+)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="查询无人机列表",
+        description=(
+            "按当前租户查询无人机台账，支持按业务编码、名称、型号、状态、组织 ID 过滤。"
+            " 返回统一携带 `business_code` / `business_detail_code`。"
+        ),
+        parameters=DRONE_FILTER_PARAMETERS,
+        responses={
+            200: OpenApiResponse(
+                response=DRONE_LIST_RESPONSE,
+                description="查询成功。`business_code=SUCCESS`，结果为分页列表。",
+                examples=[
+                    OpenApiExample(
+                        "列表成功示例",
+                        response_only=True,
+                        status_codes=["200"],
+                        value={
+                            "business_code": "SUCCESS",
+                            "business_detail_code": "OK",
+                            "count": 1,
+                            "next": None,
+                            "previous": None,
+                            "results": [
+                                {
+                                    "id": 1,
+                                    "code": "DJ-0001",
+                                    "name": "巡检一号机",
+                                    "model": "Matrice 30",
+                                    "serial_no": "SN-0001",
+                                    "status": DroneStatus.ENABLED,
+                                    "org_id": 1001,
+                                    "created_by_tenant_member_id": 12,
+                                    "created_at": "2026-03-16T09:00:00+08:00",
+                                    "updated_at": "2026-03-16T09:00:00+08:00",
+                                }
+                            ],
+                        },
+                    )
+                ],
+            ),
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    ),
+    retrieve=extend_schema(
+        summary="读取无人机详情",
+        description="按无人机 ID 读取单条台账详情。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        responses={
+            200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE, description="读取成功。"),
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            404: DRONE_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    ),
+    create=extend_schema(
+        summary="创建无人机",
+        description=(
+            "在当前租户下新增无人机台账。创建只允许写基础台账字段，"
+            " 状态字段由系统按默认值初始化，不允许在该接口直接写入。"
+        ),
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=DroneWriteSerializer,
+        examples=[
+            OpenApiExample(
+                "创建请求示例",
+                request_only=True,
+                value={
+                    "code": "DJ-0008",
+                    "name": "巡检备份机",
+                    "model": "Mavic 3E",
+                    "serial_no": "SN-0008",
+                    "org_id": 2001,
+                },
+            )
+        ],
+        responses={
+            201: OpenApiResponse(
+                response=DRONE_DETAIL_RESPONSE,
+                description="创建成功。`business_code=SUCCESS`，返回新建后的无人机快照。",
+            ),
+            400: DRONE_INVALID_PARAMS_RESPONSE,
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            409: DRONE_DUPLICATE_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    ),
+    partial_update=extend_schema(
+        summary="局部更新无人机",
+        description=(
+            "按无人机 ID 局部更新基础台账字段。"
+            " 该接口不允许直接修改 `status`，状态流转必须使用专用动作接口。"
+        ),
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=DroneWriteSerializer,
+        examples=[
+            OpenApiExample(
+                "PATCH 请求示例",
+                request_only=True,
+                value={"name": "巡检一号机-已校正", "org_id": 2002},
+            )
+        ],
+        responses={
+            200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE, description="更新成功。"),
+            400: DRONE_INVALID_PARAMS_RESPONSE,
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            404: DRONE_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    ),
+    destroy=extend_schema(
+        summary="删除无人机",
+        description=(
+            "按无人机 ID 删除台账。若该无人机仍存在 ACTIVE 分配关系，则返回状态冲突，不执行删除。"
+        ),
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                response=BusinessDeleteResultSerializer,
+                description="删除成功。`business_code=SUCCESS`，返回删除结果。",
+            ),
+            400: DRONE_INVALID_PARAMS_RESPONSE,
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            404: DRONE_NOT_FOUND_RESPONSE,
+            409: DRONE_STATE_CONFLICT_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    ),
+)
 class DroneViewSet(
     BusinessApiResponseMixin,
     TenantScopedBusinessMixin,
@@ -252,27 +555,91 @@ class DroneViewSet(
         )
         return self._status_response(drone)
 
-    @extend_schema(request=None, responses=DroneReadSerializer)
+    @extend_schema(
+        summary="启用无人机",
+        description="将指定无人机状态切换为 ENABLED。若当前已是 ENABLED，则按幂等成功返回。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE, description="状态切换成功或幂等命中。"),
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            404: DRONE_NOT_FOUND_RESPONSE,
+            409: DRONE_STATE_CONFLICT_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    )
     @action(detail=True, methods=["post"])
     def enable(self, request, *args, **kwargs):
         return self._change_status(self.get_object(), DroneStatus.ENABLED)
 
-    @extend_schema(request=None, responses=DroneReadSerializer)
+    @extend_schema(
+        summary="停用无人机",
+        description="将指定无人机状态切换为 DISABLED。若当前已是 DISABLED，则按幂等成功返回。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE, description="状态切换成功或幂等命中。"),
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            404: DRONE_NOT_FOUND_RESPONSE,
+            409: DRONE_STATE_CONFLICT_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    )
     @action(detail=True, methods=["post"])
     def disable(self, request, *args, **kwargs):
         return self._change_status(self.get_object(), DroneStatus.DISABLED)
 
-    @extend_schema(request=None, responses=DroneReadSerializer)
+    @extend_schema(
+        summary="置为维护中",
+        description="将指定无人机状态切换为 MAINTENANCE。若当前已是 MAINTENANCE，则按幂等成功返回。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE, description="状态切换成功或幂等命中。"),
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            404: DRONE_NOT_FOUND_RESPONSE,
+            409: DRONE_STATE_CONFLICT_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    )
     @action(detail=True, methods=["post"])
     def maintenance(self, request, *args, **kwargs):
         return self._change_status(self.get_object(), DroneStatus.MAINTENANCE)
 
-    @extend_schema(request=None, responses=DroneReadSerializer)
+    @extend_schema(
+        summary="退役无人机",
+        description="将指定无人机状态切换为 RETIRED。该状态不可逆，后续不能再切回其他状态。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE, description="状态切换成功或幂等命中。"),
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            404: DRONE_NOT_FOUND_RESPONSE,
+            409: DRONE_STATE_CONFLICT_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    )
     @action(detail=True, methods=["post"])
     def retire(self, request, *args, **kwargs):
         return self._change_status(self.get_object(), DroneStatus.RETIRED)
 
-    @extend_schema(request=None, responses=DroneAssignmentReadSerializer(many=True))
+    @extend_schema(
+        summary="查询分配历史",
+        description="返回指定无人机的全部历史分配记录，包含 ACTIVE 与 INACTIVE。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=DRONE_ASSIGNMENT_HISTORY_RESPONSE, description="查询成功。"),
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            404: DRONE_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    )
     @action(detail=True, methods=["get"], url_path="assignments/history")
     def history(self, request, *args, **kwargs):
         drone = self.get_object()
@@ -291,7 +658,19 @@ class DroneViewSet(
             status=status.HTTP_200_OK,
         )
 
-    @extend_schema(request=None, responses=DroneAssignmentReadSerializer(many=True))
+    @extend_schema(
+        summary="查询当前生效分配",
+        description="仅返回当前仍生效的分配记录（status=ACTIVE），常用于调度前核验当前占用情况。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=DRONE_ASSIGNMENT_HISTORY_RESPONSE, description="查询成功，空列表也是成功结果。"),
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            404: DRONE_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    )
     @action(detail=True, methods=["get"], url_path="assignments/active")
     def active_assignments(self, request, *args, **kwargs):
         # 业务作用：
@@ -324,7 +703,62 @@ class DroneViewSet(
             status=status.HTTP_200_OK,
         )
 
-    @extend_schema(request=None, responses=DroneAssignmentReadSerializer)
+    @extend_schema(
+        summary="查询最近一条分配记录",
+        description="按分配记录 ID 倒序返回最近一条记录；若从未分配过，则 `has_record=false` 且 `result=null`。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                response=DRONE_ASSIGNMENT_LATEST_RESPONSE,
+                description="查询成功，支持“无记录但成功返回”的场景。",
+                examples=[
+                    OpenApiExample(
+                        "存在最近记录",
+                        response_only=True,
+                        status_codes=["200"],
+                        value={
+                            "business_code": "SUCCESS",
+                            "business_detail_code": "OK",
+                            "drone_id": 1,
+                            "has_record": True,
+                            "result": {
+                                "id": 3,
+                                "drone": 1,
+                                "drone_code": "DJ-0001",
+                                "drone_name": "巡检一号机",
+                                "tenant_member": 9,
+                                "member_no": "P-200",
+                                "staff_name": "飞手A",
+                                "status": "ACTIVE",
+                                "start_at": "2026-03-16T10:00:00+08:00",
+                                "end_at": None,
+                                "created_by_tenant_member_id": 12,
+                                "created_at": "2026-03-16T10:00:00+08:00",
+                                "updated_at": "2026-03-16T10:00:00+08:00",
+                            },
+                        },
+                    ),
+                    OpenApiExample(
+                        "无分配记录",
+                        response_only=True,
+                        status_codes=["200"],
+                        value={
+                            "business_code": "SUCCESS",
+                            "business_detail_code": "OK",
+                            "drone_id": 1,
+                            "has_record": False,
+                            "result": None,
+                        },
+                    ),
+                ],
+            ),
+            401: DRONE_PERMISSION_DENIED_RESPONSE,
+            403: DRONE_PERMISSION_DENIED_RESPONSE,
+            404: DRONE_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    )
     @action(detail=True, methods=["get"], url_path="assignments/latest")
     def latest_assignment(self, request, *args, **kwargs):
         # 业务作用：

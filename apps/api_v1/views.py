@@ -19,6 +19,8 @@ class ApiV1RootView(BusinessApiResponseMixin, APIView):
                 "name": "Business API v1",
                 "version": "v1",
                 "endpoints": {
+                    "all_docs": reverse("docs", request=request),
+                    "all_docs_schema": reverse("docs-schema", request=request),
                     "docs": reverse("business-docs", request=request),
                     "health": reverse("api-v1-health", request=request),
                     "drones": reverse("drone-list", request=request),

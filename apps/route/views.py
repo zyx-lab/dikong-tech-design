@@ -1,18 +1,227 @@
 from django.db import transaction
-from rest_framework import mixins, status, viewsets
+from rest_framework import mixins, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view, inline_serializer
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import IdentityService, log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.api_v1.schema import (
+    TENANT_CODE_HEADER_PARAMETER,
+    business_error_example,
+    business_error_response,
+    object_envelope_serializer,
+    paginated_envelope_serializer,
+)
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.mission.models import Mission
-from apps.route.models import Route, RouteStatus
+from apps.route.models import Route, RouteStatus, RouteType
 from apps.route.serializers import RouteReadSerializer, RouteWriteSerializer
 from apps.waypoint.models import Waypoint
 
 
+ROUTE_LIST_RESPONSE = paginated_envelope_serializer("RouteListResponse", RouteReadSerializer)
+ROUTE_DETAIL_RESPONSE = object_envelope_serializer("RouteDetailResponse", RouteReadSerializer)
+ROUTE_DELETE_RESPONSE = inline_serializer(
+    name="RouteDeleteResponse",
+    fields={
+        "business_code": serializers.CharField(),
+        "business_detail_code": serializers.CharField(),
+        "id": serializers.IntegerField(),
+        "deleted": serializers.BooleanField(),
+        "delete_mode": serializers.CharField(help_text="`disabled` 表示被任务引用时软删除为禁用；`hard` 表示直接物理删除。"),
+        "deleted_waypoint_count": serializers.IntegerField(required=False, help_text="仅硬删除时返回，表示被连带删除的航点数量。"),
+        "name": serializers.CharField(required=False),
+        "route_type": serializers.IntegerField(required=False),
+        "drone_type_id": serializers.IntegerField(required=False, allow_null=True),
+        "total_distance": serializers.DecimalField(required=False, max_digits=12, decimal_places=2, allow_null=True),
+        "estimated_duration": serializers.IntegerField(required=False, allow_null=True),
+        "waypoint_count": serializers.IntegerField(required=False, allow_null=True),
+        "creator_name": serializers.CharField(required=False),
+        "status": serializers.IntegerField(required=False),
+        "created_at": serializers.DateTimeField(required=False),
+        "updated_at": serializers.DateTimeField(required=False),
+    },
+)
+
+ROUTE_FILTER_PARAMETERS = [
+    TENANT_CODE_HEADER_PARAMETER,
+    OpenApiParameter(
+        name="status",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按航线状态精确过滤。",
+        enum=[choice[0] for choice in RouteStatus.choices],
+    ),
+    OpenApiParameter(
+        name="route_type",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按航线类型扩展位精确过滤。",
+        enum=[choice[0] for choice in RouteType.choices],
+    ),
+    OpenApiParameter(
+        name="name",
+        type=str,
+        location=OpenApiParameter.QUERY,
+        description="按航线名称做模糊匹配。",
+    ),
+]
+
+ROUTE_PERMISSION_DENIED_RESPONSE = business_error_response(
+    description="未认证、无权限、缺少租户上下文，或 platform_admin 访问业务 API 被拒绝。",
+    examples=[
+        business_error_example(
+            "未登录",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="NOT_AUTHENTICATED",
+            detail="Authentication credentials were not provided.",
+            status_codes=["401"],
+        ),
+        business_error_example(
+            "无权限",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="FORBIDDEN",
+            detail="PERMISSION_DENIED",
+            status_codes=["403"],
+        ),
+    ],
+)
+
+ROUTE_INVALID_PARAMS_RESPONSE = business_error_response(
+    description="请求体不合法，business_code 通常为 INVALID_PARAMS。",
+    examples=[
+        business_error_example(
+            "缺少必填字段",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="参数校验失败",
+            status_codes=["400"],
+            extras={"errors": {"name": ["该字段是必填项。"]}},
+        ),
+        business_error_example(
+            "PATCH 空请求体",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="PATCH 请求至少包含一个可写字段",
+            status_codes=["400"],
+            extras={"errors": {"body": "请至少提交一个可写字段"}},
+        ),
+        business_error_example(
+            "DELETE 带 body",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="DELETE 请求不支持提交 body 参数",
+            status_codes=["400"],
+            extras={"errors": {"body": "不支持请求体，请移除 body 后重试"}},
+        ),
+    ],
+)
+
+ROUTE_NOT_FOUND_RESPONSE = business_error_response(
+    description="目标航线不存在，或当前租户上下文下不可见。",
+    examples=[
+        business_error_example(
+            "航线不存在",
+            business_code="RESOURCE_NOT_FOUND",
+            business_detail_code="NOT_FOUND",
+            detail="No Route matches the given query.",
+            status_codes=["404"],
+        )
+    ],
+)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="查询航线列表",
+        description="按当前租户查询航线台账，支持按状态、航线类型、名称过滤。",
+        parameters=ROUTE_FILTER_PARAMETERS,
+        responses={
+            200: OpenApiResponse(response=ROUTE_LIST_RESPONSE, description="查询成功。"),
+            401: ROUTE_PERMISSION_DENIED_RESPONSE,
+            403: ROUTE_PERMISSION_DENIED_RESPONSE,
+        },
+        tags=["Business API - Route"],
+    ),
+    retrieve=extend_schema(
+        summary="读取航线详情",
+        description="按航线 ID 读取单条航线详情。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        responses={
+            200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE, description="读取成功。"),
+            401: ROUTE_PERMISSION_DENIED_RESPONSE,
+            403: ROUTE_PERMISSION_DENIED_RESPONSE,
+            404: ROUTE_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Route"],
+    ),
+    create=extend_schema(
+        summary="创建航线",
+        description="在当前租户下新增航线主记录，作为任务编排前置资源。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=RouteWriteSerializer,
+        examples=[
+            OpenApiExample(
+                "创建航线请求",
+                request_only=True,
+                value={
+                    "name": "城市中心巡检航线",
+                    "route_type": RouteType.PENDING_EXTENSION,
+                    "drone_type_id": 1,
+                    "total_distance": "2063.50",
+                    "estimated_duration": 1200,
+                },
+            )
+        ],
+        responses={
+            201: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE, description="创建成功。"),
+            400: ROUTE_INVALID_PARAMS_RESPONSE,
+            401: ROUTE_PERMISSION_DENIED_RESPONSE,
+            403: ROUTE_PERMISSION_DENIED_RESPONSE,
+        },
+        tags=["Business API - Route"],
+    ),
+    partial_update=extend_schema(
+        summary="局部更新航线",
+        description="按航线 ID 局部更新台账字段，不承担状态流转或删除恢复。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=RouteWriteSerializer,
+        examples=[
+            OpenApiExample(
+                "PATCH 航线请求",
+                request_only=True,
+                value={"name": "城市中心巡检航线-修订版", "estimated_duration": 1500},
+            )
+        ],
+        responses={
+            200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE, description="更新成功。"),
+            400: ROUTE_INVALID_PARAMS_RESPONSE,
+            401: ROUTE_PERMISSION_DENIED_RESPONSE,
+            403: ROUTE_PERMISSION_DENIED_RESPONSE,
+            404: ROUTE_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Route"],
+    ),
+    destroy=extend_schema(
+        summary="删除航线",
+        description="按航线 ID 删除。若该航线已被任务引用，则退化为置为 DISABLED 并返回 `delete_mode=disabled`。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                response=ROUTE_DELETE_RESPONSE,
+                description="删除成功；可能是硬删除，也可能是被任务引用后的禁用删除。",
+            ),
+            400: ROUTE_INVALID_PARAMS_RESPONSE,
+            401: ROUTE_PERMISSION_DENIED_RESPONSE,
+            403: ROUTE_PERMISSION_DENIED_RESPONSE,
+            404: ROUTE_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Route"],
+    ),
+)
 class RouteViewSet(
     BusinessApiResponseMixin,
     TenantScopedBusinessMixin,
@@ -128,6 +337,20 @@ class RouteViewSet(
 
         return Response(self._route_payload(route), status=status.HTTP_200_OK)
 
+    @extend_schema(
+        summary="启用航线",
+        description="将指定航线状态切换为 ACTIVE；若已是 ACTIVE，则按幂等成功返回。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE, description="启用成功或幂等命中。"),
+            400: ROUTE_INVALID_PARAMS_RESPONSE,
+            401: ROUTE_PERMISSION_DENIED_RESPONSE,
+            403: ROUTE_PERMISSION_DENIED_RESPONSE,
+            404: ROUTE_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Route"],
+    )
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def enable(self, request, *args, **kwargs):
@@ -176,6 +399,20 @@ class RouteViewSet(
         )
         return Response(after_payload, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        summary="禁用航线",
+        description="将指定航线状态切换为 DISABLED；若已是 DISABLED，则按幂等成功返回。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE, description="禁用成功或幂等命中。"),
+            400: ROUTE_INVALID_PARAMS_RESPONSE,
+            401: ROUTE_PERMISSION_DENIED_RESPONSE,
+            403: ROUTE_PERMISSION_DENIED_RESPONSE,
+            404: ROUTE_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Route"],
+    )
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def disable(self, request, *args, **kwargs):

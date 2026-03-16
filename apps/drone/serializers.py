@@ -53,3 +53,10 @@ class DroneWriteSerializer(serializers.ModelSerializer):
             "serial_no",
             "org_id",
         ]
+        extra_kwargs = {
+            "code": {"help_text": "租户内业务编码，租户内唯一。支持创建和后续 PATCH 修正。"},
+            "name": {"help_text": "无人机展示名称，用于台账和业务界面展示。"},
+            "model": {"help_text": "无人机型号，例如 Matrice 30、Mavic 3E。"},
+            "serial_no": {"help_text": "出厂序列号，租户内唯一。"},
+            "org_id": {"help_text": "业务侧组织 ID，可为空；用于外部系统对齐组织树。"},
+        }

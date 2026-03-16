@@ -122,4 +122,13 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "双平面接口文档（Internal IAM + Business API）",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "ENUM_NAME_OVERRIDES": {
+        "ActiveDisabledStatusEnum": "apps.access.models.DirectoryStatus",
+        "DroneAssignmentStatusEnum": "apps.drone_assignment.models.DroneAssignmentStatus",
+        "DroneStatusEnum": "apps.drone.models.DroneStatus",
+        "FlightRecordStatusEnum": "apps.flight_record.models.FlightRecordStatus",
+        "MissionStatusEnum": "apps.mission.models.MissionStatus",
+        "RouteStatusEnum": "apps.route.models.RouteStatus",
+        "RouteTypeEnum": "apps.route.models.RouteType",
+    },
 }

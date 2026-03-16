@@ -21,6 +21,11 @@
   - 飞行记录（flight_record）：CRUD + 状态流转（完成/异常终止）
   - 媒体文件（media_file）：CRUD + 逻辑删除
 
+3. Unified OpenAPI Docs（统一文档）
+- Swagger UI：`/docs/`
+- OpenAPI Schema(JSON)：`/docs/schema/`
+- 用途：统一查看 internal + business 两套接口；`/docs/schema/` 可直接导入 Apifox
+
 ## 快速启动
 
 ```bash

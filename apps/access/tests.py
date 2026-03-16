@@ -1,13 +1,15 @@
 from datetime import timedelta
 
+from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission as AuthPermission
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from apps.access import admin as access_admin_module
 from apps.access.models import (
     AuditLog,
     DirectoryStatus,
@@ -20,6 +22,7 @@ from apps.access.models import (
     StaffProfile,
     Tenant,
     TenantMember,
+    TenantMemberRole,
     TenantMemberRoleStatus,
     TenantMemberStatus,
     TenantStatus,
@@ -1187,3 +1190,107 @@ class UserPermissionPolicyTests(TestCase):
                 responded_at=timezone.now(),
                 joined_at=timezone.now(),
             )
+
+
+class AdminConfigTests(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.superuser = User.objects.create_superuser(username="admin_root", password="pass1234")
+        self.role = Role.objects.create(code="admin_config_role", name="Admin Config Role", status=DirectoryStatus.ACTIVE)
+        self.permission_all = Permission.objects.create(
+            code="mission.view_mission",
+            name="view mission",
+            module="mission",
+            status=DirectoryStatus.ACTIVE,
+        )
+        self.permission_assigned = Permission.objects.create(
+            code="drone.view_drone",
+            name="view drone",
+            module="drone",
+            resource_code="drone",
+            status=DirectoryStatus.ACTIVE,
+        )
+        RolePermissionGrant.objects.create(role=self.role, permission=self.permission_all, scope_type=ScopeType.ALL)
+        RolePermissionGrant.objects.create(role=self.role, permission=self.permission_assigned, scope_type=ScopeType.ASSIGNED)
+        self.member_user = User.objects.create_user(username="admin_member", password="pass1234", status=1)
+        ensure_staff_profile(self.member_user, name="Admin Member")
+        self.tenant, self.member, _ = ensure_tenant_role_binding(
+            self.member_user,
+            tenant_code="admin_config_tenant",
+            role_code=self.role.code,
+            role_name=self.role.name,
+            member_no="M-001",
+        )
+        self.qualification_type = QualificationType.objects.create(
+            code="admin_qualification",
+            name="管理资质",
+            status=DirectoryStatus.ACTIVE,
+        )
+        TenantMemberQualification.objects.create(
+            tenant_member=self.member,
+            qualification_type=self.qualification_type,
+        )
+        self.user_admin = admin.site._registry[User]
+        self.role_admin = admin.site._registry[Role]
+        self.tenant_member_admin = admin.site._registry[TenantMember]
+        self._imported_admin_module_name = access_admin_module.__name__
+
+    def build_request(self, method="get"):
+        request = getattr(self.factory, method)("/admin/")
+        request.user = self.superuser
+        return request
+
+    def test_catalog_admins_should_be_read_only(self):
+        readonly_admins = (
+            admin.site._registry[Role],
+            admin.site._registry[Permission],
+            admin.site._registry[RolePermissionGrant],
+            admin.site._registry[TenantMemberRole],
+            admin.site._registry[AuditLog],
+        )
+        get_request = self.build_request("get")
+        post_request = self.build_request("post")
+
+        for model_admin in readonly_admins:
+            self.assertFalse(model_admin.has_add_permission(get_request))
+            self.assertTrue(model_admin.has_change_permission(get_request))
+            self.assertFalse(model_admin.has_change_permission(post_request))
+            self.assertFalse(model_admin.has_delete_permission(get_request))
+
+    def test_role_admin_should_render_permission_aggregation(self):
+        matrix_summary = str(self.role_admin.permission_matrix_summary(self.role))
+        module_summary = str(self.role_admin.module_scope_summary(self.role))
+
+        self.assertIn("mission.view_mission", matrix_summary)
+        self.assertIn("drone.view_drone", matrix_summary)
+        self.assertIn("ALL", matrix_summary)
+        self.assertIn("ASSIGNED", matrix_summary)
+        self.assertIn("mission", module_summary)
+        self.assertIn("drone", module_summary)
+
+    def test_tenant_member_admin_should_keep_role_and_qualification_inlines(self):
+        inline_models = [inline.model for inline in self.tenant_member_admin.inlines]
+        self.assertIn(TenantMemberRole, inline_models)
+        self.assertIn(TenantMemberQualification, inline_models)
+
+    def test_user_admin_should_render_tenant_membership_summary(self):
+        user = self.user_admin.get_queryset(self.build_request()).get(pk=self.member_user.pk)
+        membership_summary = str(self.user_admin.tenant_membership_summary(user))
+
+        self.assertIn("admin_config_tenant", membership_summary)
+        self.assertIn("M-001", membership_summary)
+        self.assertIn("admin_config_role", membership_summary)
+
+    def test_tenant_member_admin_should_render_qualification_summary(self):
+        member = self.tenant_member_admin.get_queryset(self.build_request()).get(pk=self.member.pk)
+        qualification_summary = str(self.tenant_member_admin.qualification_summary(member))
+
+        self.assertIn("admin_qualification", qualification_summary)
+        self.assertIn("active", qualification_summary)
+
+    def test_role_admin_should_render_member_binding_preview(self):
+        role = self.role_admin.get_queryset(self.build_request()).get(pk=self.role.pk)
+        member_binding_preview = str(self.role_admin.member_binding_preview(role))
+
+        self.assertIn("admin_config_tenant", member_binding_preview)
+        self.assertIn("M-001", member_binding_preview)

@@ -47,6 +47,13 @@ class WaypointCreateSerializer(serializers.ModelSerializer):
             "longitude",
             "altitude",
         ]
+        extra_kwargs = {
+            "route": {"help_text": "所属航线 ID；必须属于当前租户且状态为 ACTIVE。"},
+            "sequence": {"help_text": "航点序号；同一航线下必须唯一。"},
+            "latitude": {"help_text": "纬度，十进制度数。"},
+            "longitude": {"help_text": "经度，十进制度数。"},
+            "altitude": {"help_text": "飞行高度，单位米。"},
+        }
 
 
 class WaypointPatchSerializer(serializers.ModelSerializer):
@@ -79,3 +86,9 @@ class WaypointPatchSerializer(serializers.ModelSerializer):
             "longitude",
             "altitude",
         ]
+        extra_kwargs = {
+            "sequence": {"help_text": "新的航点序号；同一航线下必须唯一。"},
+            "latitude": {"help_text": "新的纬度，十进制度数。"},
+            "longitude": {"help_text": "新的经度，十进制度数。"},
+            "altitude": {"help_text": "新的飞行高度，单位米。"},
+        }

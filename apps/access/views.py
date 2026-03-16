@@ -245,6 +245,8 @@ class ApiRootView(APIView):
             {
                 "name": "Internal IAM API",
                 "endpoints": {
+                    "all_docs": reverse("docs", request=request),
+                    "all_docs_schema": reverse("docs-schema", request=request),
                     "swagger": reverse("internal-docs", request=request),
                     "business_api_v1": reverse("api-v1-root", request=request),
                     "business_docs_v1": reverse("business-docs", request=request),

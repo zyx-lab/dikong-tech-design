@@ -1,4 +1,5 @@
 from django.db import transaction
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -6,11 +7,268 @@ from rest_framework.response import Response
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.api_v1.schema import (
+    TENANT_CODE_HEADER_PARAMETER,
+    business_error_example,
+    business_error_response,
+    object_envelope_serializer,
+    paginated_envelope_serializer,
+)
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.mission.models import Mission, MissionStatus
 from apps.mission.serializers import MissionReadSerializer, MissionWriteSerializer
 
 
+MISSION_LIST_RESPONSE = paginated_envelope_serializer("MissionListResponse", MissionReadSerializer)
+MISSION_DETAIL_RESPONSE = object_envelope_serializer("MissionDetailResponse", MissionReadSerializer)
+
+MISSION_FILTER_PARAMETERS = [
+    TENANT_CODE_HEADER_PARAMETER,
+    OpenApiParameter(
+        name="route_id",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按绑定航线 ID 精确过滤。",
+    ),
+    OpenApiParameter(
+        name="drone_id",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按绑定无人机 ID 精确过滤。",
+    ),
+    OpenApiParameter(
+        name="pilot_id",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按绑定飞手成员 ID 精确过滤。",
+    ),
+    OpenApiParameter(
+        name="status",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按任务状态精确过滤。",
+        enum=[choice[0] for choice in MissionStatus.choices],
+    ),
+]
+
+MISSION_PERMISSION_DENIED_RESPONSE = business_error_response(
+    description="未认证、无权限、缺少租户上下文，或 platform_admin 访问业务 API 被拒绝。",
+    examples=[
+        business_error_example(
+            "未登录",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="NOT_AUTHENTICATED",
+            detail="Authentication credentials were not provided.",
+            status_codes=["401"],
+        ),
+        business_error_example(
+            "无权限",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="FORBIDDEN",
+            detail="PERMISSION_DENIED",
+            status_codes=["403"],
+        ),
+        business_error_example(
+            "缺少租户上下文",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="TENANT_CONTEXT_REQUIRED",
+            detail="tenant context required",
+            status_codes=["403"],
+        ),
+        business_error_example(
+            "平台管理员访问业务 API",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="FORBIDDEN",
+            detail="platform admin cannot access tenant business api",
+            status_codes=["403"],
+        ),
+    ],
+)
+
+MISSION_INVALID_PARAMS_RESPONSE = business_error_response(
+    description="请求体不合法或资源不满足绑定条件，business_code 固定为 INVALID_PARAMS。",
+    examples=[
+        business_error_example(
+            "航线不属于当前租户",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="参数校验失败",
+            status_codes=["400"],
+            extras={"errors": {"route": ["仅允许绑定当前租户下的航线"]}},
+        ),
+        business_error_example(
+            "无人机未启用",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="参数校验失败",
+            status_codes=["400"],
+            extras={"errors": {"drone": ["仅允许绑定启用状态无人机"]}},
+        ),
+        business_error_example(
+            "飞手不具备角色",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="参数校验失败",
+            status_codes=["400"],
+            extras={"errors": {"pilot": ["仅允许分配给飞手类型（pilot_operator）"]}},
+        ),
+        business_error_example(
+            "提交不可写字段",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="参数校验失败",
+            status_codes=["400"],
+            extras={"errors": {"status": ["该字段在此接口不可写"]}},
+        ),
+        business_error_example(
+            "动作接口提交 body",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="start 请求不支持提交 body 参数",
+            status_codes=["400"],
+            extras={"errors": {"body": "不支持请求体，请移除 body 后重试"}},
+        ),
+    ],
+)
+
+MISSION_NOT_FOUND_RESPONSE = business_error_response(
+    description="目标任务不存在，或在当前租户/授权作用域下不可见。",
+    examples=[
+        business_error_example(
+            "任务不存在",
+            business_code="RESOURCE_NOT_FOUND",
+            business_detail_code="NOT_FOUND",
+            detail="No Mission matches the given query.",
+            status_codes=["404"],
+        )
+    ],
+)
+
+MISSION_STATE_CONFLICT_RESPONSE = business_error_response(
+    description="任务当前状态不允许本次流转，business_code 固定为 STATE_CONFLICT。",
+    examples=[
+        business_error_example(
+            "已完成任务不可启动",
+            business_code="STATE_CONFLICT",
+            business_detail_code="STATE_CONFLICT",
+            detail="当前任务状态不允许启动",
+            status_codes=["409"],
+            extras={"mission_id": 101, "status": MissionStatus.COMPLETED},
+        ),
+        business_error_example(
+            "待执行任务不可暂停",
+            business_code="STATE_CONFLICT",
+            business_detail_code="STATE_CONFLICT",
+            detail="当前任务状态不允许暂停",
+            status_codes=["409"],
+            extras={"mission_id": 102, "status": MissionStatus.PENDING},
+        ),
+        business_error_example(
+            "已取消任务不可恢复",
+            business_code="STATE_CONFLICT",
+            business_detail_code="STATE_CONFLICT",
+            detail="当前任务状态不允许恢复",
+            status_codes=["409"],
+            extras={"mission_id": 103, "status": MissionStatus.CANCELED},
+        ),
+    ],
+)
+
+
+def _mission_transition_schema(*, summary, description):
+    return extend_schema(
+        summary=summary,
+        description=description,
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE, description="状态流转成功；若命中幂等条件，返回当前任务快照。"),
+            400: MISSION_INVALID_PARAMS_RESPONSE,
+            401: MISSION_PERMISSION_DENIED_RESPONSE,
+            403: MISSION_PERMISSION_DENIED_RESPONSE,
+            404: MISSION_NOT_FOUND_RESPONSE,
+            409: MISSION_STATE_CONFLICT_RESPONSE,
+        },
+        tags=["Business API - Mission"],
+    )
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="查询任务列表",
+        description=(
+            "按当前租户查询任务，支持按航线、无人机、飞手、状态过滤。"
+            " 若当前角色是 `ASSIGNED` 作用域，则仅返回 `pilot_id=当前成员` 的任务。"
+        ),
+        parameters=MISSION_FILTER_PARAMETERS,
+        responses={
+            200: OpenApiResponse(response=MISSION_LIST_RESPONSE, description="查询成功。"),
+            401: MISSION_PERMISSION_DENIED_RESPONSE,
+            403: MISSION_PERMISSION_DENIED_RESPONSE,
+        },
+        tags=["Business API - Mission"],
+    ),
+    retrieve=extend_schema(
+        summary="读取任务详情",
+        description="按任务 ID 读取单条任务详情；若不在当前租户或作用域内，会按不可见处理。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        responses={
+            200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE, description="读取成功。"),
+            401: MISSION_PERMISSION_DENIED_RESPONSE,
+            403: MISSION_PERMISSION_DENIED_RESPONSE,
+            404: MISSION_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Mission"],
+    ),
+    create=extend_schema(
+        summary="创建任务",
+        description="创建一条任务执行计划，绑定航线、无人机和飞手成员；任务初始状态固定为 PENDING。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=MissionWriteSerializer,
+        examples=[
+            OpenApiExample(
+                "创建任务请求",
+                request_only=True,
+                value={
+                    "name": "园区巡检-上午批次",
+                    "route": 1,
+                    "drone": 2,
+                    "pilot": 8,
+                    "scheduled_at": "2026-03-16T10:30:00+08:00",
+                    "remark": "起飞前检查电池",
+                },
+            )
+        ],
+        responses={
+            201: OpenApiResponse(response=MISSION_DETAIL_RESPONSE, description="创建成功。"),
+            400: MISSION_INVALID_PARAMS_RESPONSE,
+            401: MISSION_PERMISSION_DENIED_RESPONSE,
+            403: MISSION_PERMISSION_DENIED_RESPONSE,
+        },
+        tags=["Business API - Mission"],
+    ),
+    partial_update=extend_schema(
+        summary="局部更新任务",
+        description="按任务 ID 局部更新任务基础字段或重新绑定资源；不允许在该接口直接修改状态。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=MissionWriteSerializer,
+        examples=[
+            OpenApiExample(
+                "PATCH 任务请求",
+                request_only=True,
+                value={"scheduled_at": "2026-03-16T11:00:00+08:00", "remark": "改为 11 点起飞"},
+            )
+        ],
+        responses={
+            200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE, description="更新成功。"),
+            400: MISSION_INVALID_PARAMS_RESPONSE,
+            401: MISSION_PERMISSION_DENIED_RESPONSE,
+            403: MISSION_PERMISSION_DENIED_RESPONSE,
+            404: MISSION_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Mission"],
+    ),
+)
 class MissionViewSet(
     BusinessApiResponseMixin,
     TenantScopedBusinessMixin,
@@ -118,6 +376,10 @@ class MissionViewSet(
         # 业务码字段 business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
         return super().retrieve(request, *args, **kwargs)
 
+    @_mission_transition_schema(
+        summary="取消任务",
+        description="将任务状态切换为 CANCELED。仅处理任务自身状态流转，请求体必须为空。",
+    )
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def cancel(self, request, *args, **kwargs):
@@ -167,6 +429,10 @@ class MissionViewSet(
         )
         return Response(after_payload, status=status.HTTP_200_OK)
 
+    @_mission_transition_schema(
+        summary="启动任务",
+        description="将 PENDING 任务切换为 RUNNING；若已是 RUNNING，则按幂等成功返回当前任务快照。",
+    )
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def start(self, request, *args, **kwargs):
@@ -228,6 +494,10 @@ class MissionViewSet(
         )
         return Response(after_payload, status=status.HTTP_200_OK)
 
+    @_mission_transition_schema(
+        summary="暂停任务",
+        description="将 RUNNING 任务切换为 PAUSED；若已是 PAUSED，则按幂等成功返回当前任务快照。",
+    )
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def pause(self, request, *args, **kwargs):
@@ -289,6 +559,10 @@ class MissionViewSet(
         )
         return Response(after_payload, status=status.HTTP_200_OK)
 
+    @_mission_transition_schema(
+        summary="恢复任务",
+        description="将 PAUSED 任务切换回 RUNNING；若已是 RUNNING，则按幂等成功返回当前任务快照。",
+    )
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def resume(self, request, *args, **kwargs):
@@ -350,6 +624,10 @@ class MissionViewSet(
         )
         return Response(after_payload, status=status.HTTP_200_OK)
 
+    @_mission_transition_schema(
+        summary="完成任务",
+        description="将 RUNNING 任务切换为 COMPLETED；若已是 COMPLETED，则按幂等成功返回当前任务快照。",
+    )
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def complete(self, request, *args, **kwargs):
@@ -411,6 +689,10 @@ class MissionViewSet(
         )
         return Response(after_payload, status=status.HTTP_200_OK)
 
+    @_mission_transition_schema(
+        summary="标记任务失败",
+        description="将 RUNNING 任务切换为 FAILED；若已是 FAILED，则按幂等成功返回当前任务快照。",
+    )
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def fail(self, request, *args, **kwargs):

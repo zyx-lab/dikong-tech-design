@@ -1,15 +1,192 @@
 from django.db import transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.response import Response
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin
+from apps.api_v1.schema import (
+    TENANT_CODE_HEADER_PARAMETER,
+    BusinessDeleteResultSerializer,
+    business_error_example,
+    business_error_response,
+    object_envelope_serializer,
+    paginated_envelope_serializer,
+)
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.waypoint.models import Waypoint
 from apps.waypoint.serializers import WaypointCreateSerializer, WaypointPatchSerializer, WaypointReadSerializer
 
 
+WAYPOINT_LIST_RESPONSE = paginated_envelope_serializer("WaypointListResponse", WaypointReadSerializer)
+WAYPOINT_DETAIL_RESPONSE = object_envelope_serializer("WaypointDetailResponse", WaypointReadSerializer)
+
+WAYPOINT_FILTER_PARAMETERS = [
+    TENANT_CODE_HEADER_PARAMETER,
+    OpenApiParameter(
+        name="route_id",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按所属航线 ID 精确过滤。",
+    ),
+    OpenApiParameter(
+        name="sequence",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按航点序号精确过滤。",
+    ),
+]
+
+WAYPOINT_PERMISSION_DENIED_RESPONSE = business_error_response(
+    description="未认证、无权限、缺少租户上下文，或 platform_admin 访问业务 API 被拒绝。",
+    examples=[
+        business_error_example(
+            "未登录",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="NOT_AUTHENTICATED",
+            detail="Authentication credentials were not provided.",
+            status_codes=["401"],
+        ),
+        business_error_example(
+            "无权限",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="FORBIDDEN",
+            detail="PERMISSION_DENIED",
+            status_codes=["403"],
+        ),
+    ],
+)
+
+WAYPOINT_INVALID_PARAMS_RESPONSE = business_error_response(
+    description="请求体不合法。业务码可能是 INVALID_PARAMS，也可能在重复提交时为 IDEMPOTENT_DUPLICATE。",
+    examples=[
+        business_error_example(
+            "航线不属于当前租户",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="参数校验失败",
+            status_codes=["400"],
+            extras={"errors": {"route": ["仅允许绑定当前租户下的航线"]}},
+        ),
+        business_error_example(
+            "航线已禁用",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="参数校验失败",
+            status_codes=["400"],
+            extras={"errors": {"route": ["仅允许向状态为正常的航线新增航点"]}},
+        ),
+        business_error_example(
+            "航点序号重复",
+            business_code="IDEMPOTENT_DUPLICATE",
+            business_detail_code="DUPLICATE_REQUEST",
+            detail="重复提交，资源已存在",
+            status_codes=["400"],
+            extras={"non_field_errors": ["The fields route, sequence must make a unique set."]},
+        ),
+    ],
+)
+
+WAYPOINT_NOT_FOUND_RESPONSE = business_error_response(
+    description="目标航点不存在，或在当前租户上下文下不可见。",
+    examples=[
+        business_error_example(
+            "航点不存在",
+            business_code="RESOURCE_NOT_FOUND",
+            business_detail_code="NOT_FOUND",
+            detail="No Waypoint matches the given query.",
+            status_codes=["404"],
+        )
+    ],
+)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="查询航点列表",
+        description="按当前租户查询航点，支持按航线 ID 和航点序号过滤。",
+        parameters=WAYPOINT_FILTER_PARAMETERS,
+        responses={
+            200: OpenApiResponse(response=WAYPOINT_LIST_RESPONSE, description="查询成功。"),
+            401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+        },
+        tags=["Business API - Waypoint"],
+    ),
+    retrieve=extend_schema(
+        summary="读取航点详情",
+        description="按航点 ID 读取单条航点详情。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        responses={
+            200: OpenApiResponse(response=WAYPOINT_DETAIL_RESPONSE, description="读取成功。"),
+            401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            404: WAYPOINT_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Waypoint"],
+    ),
+    create=extend_schema(
+        summary="创建航点",
+        description="向指定 ACTIVE 航线新增单条航点；同一航线下 `sequence` 必须唯一。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=WaypointCreateSerializer,
+        examples=[
+            OpenApiExample(
+                "创建航点请求",
+                request_only=True,
+                value={
+                    "route": 1,
+                    "sequence": 3,
+                    "latitude": "22.28612345",
+                    "longitude": "113.56781234",
+                    "altitude": "120.50",
+                },
+            )
+        ],
+        responses={
+            201: OpenApiResponse(response=WAYPOINT_DETAIL_RESPONSE, description="创建成功。"),
+            400: WAYPOINT_INVALID_PARAMS_RESPONSE,
+            401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+        },
+        tags=["Business API - Waypoint"],
+    ),
+    partial_update=extend_schema(
+        summary="局部更新航点",
+        description="按航点 ID 局部更新 sequence/latitude/longitude/altitude，不支持切换所属航线。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=WaypointPatchSerializer,
+        examples=[
+            OpenApiExample(
+                "PATCH 航点请求",
+                request_only=True,
+                value={"sequence": 4, "altitude": "125.00"},
+            )
+        ],
+        responses={
+            200: OpenApiResponse(response=WAYPOINT_DETAIL_RESPONSE, description="更新成功。"),
+            400: WAYPOINT_INVALID_PARAMS_RESPONSE,
+            401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            404: WAYPOINT_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Waypoint"],
+    ),
+    destroy=extend_schema(
+        summary="删除航点",
+        description="按航点 ID 删除单条航点，并同步回写所属航线的 waypoint_count。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=BusinessDeleteResultSerializer, description="删除成功。"),
+            401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            404: WAYPOINT_NOT_FOUND_RESPONSE,
+        },
+        tags=["Business API - Waypoint"],
+    ),
+)
 class WaypointViewSet(
     BusinessApiResponseMixin,
     TenantScopedBusinessMixin,

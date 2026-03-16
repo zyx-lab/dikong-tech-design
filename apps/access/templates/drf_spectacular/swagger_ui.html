@@ -58,6 +58,11 @@
           banner.className = cls;
         }
 
+        if (pathname.startsWith('/docs/')) {
+          setBanner('当前为统一 OpenAPI 文档页，包含 internal + business 两套接口。导入 Apifox 请使用 /docs/schema/。', 'warn');
+          return;
+        }
+
         if (!pathname.startsWith('/internal/docs/')) {
           setBanner('当前为业务 API 文档页。业务接口是否可用由业务认证与权限策略决定。', 'warn');
           return;

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMember, TenantMemberRoleStatus, TenantMemberStatus
 from apps.api_v1.tenant_scope import require_request_tenant
@@ -12,6 +13,7 @@ class DroneAssignmentReadSerializer(serializers.ModelSerializer):
     member_no = serializers.CharField(source="tenant_member.member_no", read_only=True)
     staff_name = serializers.SerializerMethodField(read_only=True)
 
+    @extend_schema_field(serializers.CharField())
     def get_staff_name(self, obj):
         staff = getattr(obj.tenant_member.user, "staff_profile", None)
         if staff is not None and staff.name:
@@ -91,3 +93,7 @@ class DroneAssignmentCreateSerializer(serializers.ModelSerializer):
             "tenant_member",
         ]
         read_only_fields = ["id"]
+        extra_kwargs = {
+            "drone": {"help_text": "当前租户下要分配的无人机 ID；不允许传其他租户或已退役无人机。"},
+            "tenant_member": {"help_text": "当前租户下要接收分配的成员 ID；必须是 ACTIVE 且具备 pilot_operator 角色。"},
+        }

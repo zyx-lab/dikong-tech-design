@@ -3,6 +3,7 @@ from uuid import uuid4
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from apps.access.exceptions import (
     BusinessIdempotentDuplicate,
@@ -398,6 +399,11 @@ class MePermissionSerializer(serializers.Serializer):
     enabled = serializers.BooleanField()
 
 
+class RolePermissionGrantSummarySerializer(serializers.Serializer):
+    permission = serializers.CharField()
+    scope_type = serializers.CharField()
+
+
 class CurrentUserTenantSerializer(serializers.ModelSerializer):
     tenant_id = serializers.IntegerField(source="tenant.id", read_only=True)
     tenant_code = serializers.CharField(source="tenant.code", read_only=True)
@@ -408,6 +414,7 @@ class CurrentUserTenantSerializer(serializers.ModelSerializer):
         model = TenantMember
         fields = ["tenant_id", "tenant_code", "tenant_name", "roles"]
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_roles(self, obj):
         return list(
             obj.role_bindings.filter(status=TenantMemberRoleStatus.GRANTED)
@@ -439,6 +446,7 @@ class CurrentUserInvitationSerializer(serializers.ModelSerializer):
             "expires_at",
         ]
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_roles(self, obj):
         return list(
             obj.role_bindings.filter(status=TenantMemberRoleStatus.GRANTED)
@@ -498,6 +506,7 @@ class RoleSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    @extend_schema_field(RolePermissionGrantSummarySerializer(many=True))
     def get_permission_grants(self, obj):
         grants = obj.permission_grants.select_related("permission").order_by("permission__code")
         return [
@@ -553,6 +562,7 @@ class TenantMemberSerializer(TenantMemberAttributeMixin, serializers.ModelSerial
             "updated_at",
         ]
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_roles(self, obj):
         return list(
             obj.role_bindings.filter(status=TenantMemberRoleStatus.GRANTED)
