@@ -8,6 +8,7 @@ from drf_spectacular.utils import extend_schema
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.services import IdentityService, log_action, snapshot
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.drone.models import Drone, DroneStatus
 from apps.drone.serializers import DroneReadSerializer, DroneWriteSerializer
 from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
@@ -16,6 +17,7 @@ from apps.drone_assignment.serializers import DroneAssignmentReadSerializer
 
 class DroneViewSet(
     BusinessApiResponseMixin,
+    TenantScopedBusinessMixin,
     PermissionMapMixin,
     ScopedQuerysetMixin,
     mixins.ListModelMixin,
@@ -48,9 +50,9 @@ class DroneViewSet(
     }
 
     @staticmethod
-    def assigned_scope_filter_builder(staff_id: int) -> dict:
+    def assigned_scope_filter_builder(tenant_member_id: int) -> dict:
         return {
-            "assignments__staff_id": staff_id,
+            "assignments__tenant_member_id": tenant_member_id,
             "assignments__status": DroneAssignmentStatus.ACTIVE,
         }
 
@@ -60,7 +62,7 @@ class DroneViewSet(
         return DroneWriteSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = self.scope_queryset_to_tenant(super().get_queryset())
         params = self.request.query_params
 
         code = params.get("code")
@@ -141,8 +143,12 @@ class DroneViewSet(
 
     @transaction.atomic
     def perform_create(self, serializer):
-        staff = IdentityService.get_staff(self.request.user)
-        drone = serializer.save(created_by_staff_id=staff.id if staff else None)
+        tenant = self.get_current_tenant()
+        tenant_member = IdentityService.get_active_tenant_member(self.request.user, tenant)
+        drone = serializer.save(
+            tenant=tenant,
+            created_by_tenant_member_id=tenant_member.id if tenant_member else None,
+        )
         log_action(
             request=self.request,
             action="DRONE_CREATE",
@@ -271,8 +277,8 @@ class DroneViewSet(
     def history(self, request, *args, **kwargs):
         drone = self.get_object()
         assignments = (
-            DroneAssignment.objects.select_related("drone", "staff")
-            .filter(drone=drone)
+            DroneAssignment.objects.select_related("drone", "tenant_member__user__staff_profile")
+            .filter(drone=drone, tenant=self.get_current_tenant())
             .order_by("-id")
         )
         serializer = DroneAssignmentReadSerializer(assignments, many=True, context={"request": request})
@@ -304,8 +310,8 @@ class DroneViewSet(
         # 业务状态码字段 business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
         drone = self.get_object()
         assignments = (
-            DroneAssignment.objects.select_related("drone", "staff")
-            .filter(drone=drone, status=DroneAssignmentStatus.ACTIVE)
+            DroneAssignment.objects.select_related("drone", "tenant_member__user__staff_profile")
+            .filter(drone=drone, tenant=self.get_current_tenant(), status=DroneAssignmentStatus.ACTIVE)
             .order_by("-id")
         )
         serializer = DroneAssignmentReadSerializer(assignments, many=True, context={"request": request})
@@ -337,8 +343,8 @@ class DroneViewSet(
         # business_code/business_detail_code 由 BusinessApiResponseMixin 统一补齐。
         drone = self.get_object()
         latest = (
-            DroneAssignment.objects.select_related("drone", "staff")
-            .filter(drone=drone)
+            DroneAssignment.objects.select_related("drone", "tenant_member__user__staff_profile")
+            .filter(drone=drone, tenant=self.get_current_tenant())
             .order_by("-id")
             .first()
         )

@@ -6,12 +6,14 @@ from rest_framework.response import Response
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.mission.models import Mission, MissionStatus
 from apps.mission.serializers import MissionReadSerializer, MissionWriteSerializer
 
 
 class MissionViewSet(
     BusinessApiResponseMixin,
+    TenantScopedBusinessMixin,
     PermissionMapMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
@@ -21,7 +23,7 @@ class MissionViewSet(
 ):
     """任务业务接口（V1）。"""
 
-    queryset = Mission.objects.select_related("route", "drone", "pilot").all().order_by("-id")
+    queryset = Mission.objects.select_related("route", "drone", "pilot__user__staff_profile").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
     http_method_names = ["get", "post", "patch", "head", "options"]
 
@@ -47,7 +49,7 @@ class MissionViewSet(
         return dict(MissionReadSerializer(mission, context={"request": self.request}).data)
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = self.scope_queryset_to_tenant(super().get_queryset())
         params = self.request.query_params
 
         # 业务作用：
@@ -465,7 +467,7 @@ class MissionViewSet(
 
     @transaction.atomic
     def perform_create(self, serializer):
-        mission = serializer.save()
+        mission = serializer.save(tenant=self.get_current_tenant())
         mission_payload = self._mission_payload(mission)
         log_action(
             request=self.request,

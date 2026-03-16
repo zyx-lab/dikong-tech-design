@@ -14,9 +14,6 @@ ROLE_PERMISSION_MATRIX = {
         "access.manage_role": ScopeType.ALL,
         "access.view_tenant": ScopeType.ALL,
         "access.manage_tenant": ScopeType.ALL,
-        "access.view_tenant_member": ScopeType.ALL,
-        "access.manage_tenant_member": ScopeType.ALL,
-        "access.assign_tenant_member_role": ScopeType.ALL,
         "access.view_auth_audit_logs": ScopeType.ALL,
     },
     "tenant_admin": {

@@ -1,6 +1,6 @@
 # 任务逻辑模型
 
-- updated_at: 2026-03-09T09:30:00+08:00
+- updated_at: 2026-03-15T14:20:00+08:00
 - entity: mission
 
 ## 数据库
@@ -64,10 +64,14 @@ PostgreSQL
 
 ## 关系与约束
 
+- tenant -> access.Tenant（FK, CASCADE）
 - route -> route.Route（FK, PROTECT）
 - drone -> drone.Drone（FK, PROTECT）
-- pilot -> access.StaffProfile（FK, PROTECT）
-- 创建约束：route.status=ACTIVE, drone.status=ENABLED, pilot在职且为pilot_operator
+- pilot -> access.TenantMember（FK, PROTECT）
+- 创建约束：`route`、`drone`、`pilot` 必须属于当前 `tenant`
+- 创建约束：`route.status=ACTIVE`，`drone.status=ENABLED`
+- 创建约束：`pilot.status=ACTIVE`，且其账号存在在职 `staff_profile`
+- 创建约束：`pilot` 必须已绑定 `pilot_operator`
 
 ## 生命周期入口
 

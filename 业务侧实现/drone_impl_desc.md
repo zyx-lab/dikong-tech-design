@@ -46,7 +46,7 @@ PostgreSQL
 | serial_no | CharField(128) | 出厂序列号，唯一 |
 | status | CharField(16) | 状态：ENABLED/DISABLED/MAINTENANCE/RETIRED |
 | org_id | BigIntegerField | 组织 ID（预留） |
-| created_by_staff_id | BigIntegerField | 创建人 Staff ID（预留） |
+| created_by_tenant_member_id | BigIntegerField | 创建人 TenantMember ID |
 | created_at | DateTimeField | 创建时间 |
 | updated_at | DateTimeField | 更新时间 |
 
@@ -62,11 +62,11 @@ PostgreSQL
 |-----|------|------|
 | id | BigAutoField | 主键 |
 | drone | ForeignKey | 关联无人机 |
-| staff | ForeignKey | 关联飞手 |
+| tenant_member | ForeignKey | 关联租户成员 |
 | status | CharField(16) | 分配状态：ACTIVE/INACTIVE |
 | start_at | DateTimeField | 分配开始时间 |
 | end_at | DateTimeField | 分配结束时间（可选） |
-| created_by_staff_id | BigIntegerField | 创建人 Staff ID |
+| created_by_tenant_member_id | BigIntegerField | 创建人 TenantMember ID |
 | created_at | DateTimeField | 创建时间 |
 | updated_at | DateTimeField | 更新时间 |
 
@@ -75,7 +75,8 @@ PostgreSQL
 - INACTIVE = "INACTIVE", "已失效"
 
 ### 约束
-- 同一 (drone, staff) 在 ACTIVE 状态下唯一
+- 同一 `(drone, tenant_member)` 在 `ACTIVE` 状态下唯一
+- `ASSIGNED` 范围统一按 `tenant_member_id` 命中
 
 ---
 
@@ -86,14 +87,14 @@ PostgreSQL
 #### 1. GET /api/v1/drones
 - 功能：无人机列表查询
 - 筛选参数：code, name, model, status, org_id
-- Scope：ASSIGNED 用户只返回本人分配到的无人机
+- Scope：`ASSIGNED` 用户只返回当前租户下分配给本人 `TenantMember` 的无人机
 - 权限：drone.view_drone
 - 业务码：SUCCESS, PERMISSION_DENIED
 
 #### 2. POST /api/v1/drones
 - 功能：创建无人机
 - 必填：code, name, model, serial_no
-- 自动设置：created_by_staff_id=当前用户
+- 自动设置：`created_by_tenant_member_id=当前租户成员`
 - 默认状态：status=DISABLED
 - 权限：drone.manage_drone
 - 业务码：SUCCESS, INVALID_PARAMS, IDEMPOTENT_DUPLICATE, PERMISSION_DENIED
@@ -173,15 +174,15 @@ PostgreSQL
 
 #### 1. GET /api/v1/drone-assignments
 - 功能：分配关系列表查询
-- 筛选参数：drone_id, staff_id, status
+- 筛选参数：drone_id, tenant_member_id, status
 - 权限：drone_assignment.manage_drone_assignment
 - 业务码：SUCCESS, PERMISSION_DENIED
 
 #### 2. POST /api/v1/drone-assignments
 - 功能：创建分配关系
-- 必填：drone, staff
+- 必填：drone, tenant_member
 - 默认：status=ACTIVE, start_at=当前时间
-- 约束：同一无人机与飞手不得重复存在 ACTIVE 分配
+- 约束：同一无人机与同一租户成员不得重复存在 ACTIVE 分配
 - 权限：drone_assignment.manage_drone_assignment
 - 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, PERMISSION_DENIED
 

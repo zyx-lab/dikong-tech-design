@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -14,8 +15,6 @@ class MediaFile(models.Model):
         on_delete=models.CASCADE,
         related_name="media_files",
         verbose_name="租户",
-        null=True,
-        blank=True,
     )
     flight_record = models.ForeignKey(
         "flight_record.FlightRecord",
@@ -48,3 +47,15 @@ class MediaFile(models.Model):
 
     def __str__(self):
         return f"{self.id}-{self.file_name}"
+
+    def clean(self):
+        if self.tenant_id and self.flight_record_id and self.flight_record.tenant_id != self.tenant_id:
+            raise ValidationError({"flight_record": "flight_record 必须属于当前 tenant"})
+        if self.is_deleted and self.deleted_at is None:
+            raise ValidationError({"deleted_at": "逻辑删除记录必须提供 deleted_at"})
+        if not self.is_deleted and self.deleted_at is not None:
+            raise ValidationError({"deleted_at": "未删除记录不允许写入 deleted_at"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)

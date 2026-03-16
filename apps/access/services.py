@@ -57,7 +57,7 @@ class AuthorizationDecision:
     allowed: bool
     reason_code: str
     scope: Optional[str] = None
-    staff_id: Optional[int] = None
+    tenant_member_id: Optional[int] = None
 
 
 class AuthorizationReason:
@@ -74,6 +74,8 @@ _SCOPE_RANK = {
     ScopeType.ASSIGNED: 2,
     ScopeType.ALL: 3,
 }
+
+PLATFORM_ADMIN_ROLE_CODE = "platform_admin"
 
 
 def _dedupe_keep_order(values: list[str]) -> list[str]:
@@ -155,11 +157,13 @@ def _resolve_client_ip(request) -> Optional[str]:
     if request is None:
         return None
 
-    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    meta = getattr(request, "META", {}) or {}
+
+    forwarded_for = meta.get("HTTP_X_FORWARDED_FOR", "")
     if forwarded_for:
         return forwarded_for.split(",")[0].strip()
 
-    return request.META.get("REMOTE_ADDR")
+    return meta.get("REMOTE_ADDR")
 
 
 def log_action(
@@ -177,6 +181,8 @@ def log_action(
 
     if actor_user is None and request is not None:
         actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+    if tenant is None and request is not None:
+        tenant = getattr(request, "tenant_context", None)
 
     return AuditLog.objects.create(
         tenant=tenant,
@@ -224,6 +230,16 @@ def _is_active_superuser(user) -> bool:
         user
         and getattr(user, "is_authenticated", False)
         and getattr(user, "is_superuser", False)
+        and getattr(user, "is_active", False)
+        and getattr(user, "status", None) == UserStatus.ACTIVE
+    )
+
+
+def is_active_platform_admin(user) -> bool:
+    return bool(
+        user
+        and getattr(user, "is_authenticated", False)
+        and getattr(user, "is_platform_admin", False)
         and getattr(user, "is_active", False)
         and getattr(user, "status", None) == UserStatus.ACTIVE
     )
@@ -357,6 +373,15 @@ def resolve_effective_scope(request, permission_code: str) -> Optional[str]:
     if _is_active_superuser(user):
         return ScopeType.ALL
 
+    if is_active_platform_admin(user):
+        scopes = list(
+            _role_grants_queryset(
+                role_codes=[PLATFORM_ADMIN_ROLE_CODE],
+                permission_code=permission_code,
+            ).values_list("scope_type", flat=True)
+        )
+        return _pick_max_scope(scopes)
+
     tenant_access = resolve_tenant_access_context(request)
     if not tenant_access.ok:
         return None
@@ -369,6 +394,18 @@ def get_request_permission_codes(request) -> list[str]:
     user = getattr(request, "user", None)
     if _is_active_superuser(user):
         return list(Permission.objects.filter(status=DirectoryStatus.ACTIVE).order_by("code").values_list("code", flat=True))
+
+    if is_active_platform_admin(user):
+        permissions = (
+            Permission.objects.filter(
+                status=DirectoryStatus.ACTIVE,
+                role_grants__role__code=PLATFORM_ADMIN_ROLE_CODE,
+                role_grants__role__status=DirectoryStatus.ACTIVE,
+            )
+            .distinct()
+            .order_by("code")
+        )
+        return list(permissions.values_list("code", flat=True))
 
     tenant_access = resolve_tenant_access_context(request)
     if not tenant_access.ok:
@@ -397,6 +434,9 @@ def has_request_permission(request, permission_code: str) -> bool:
     if _is_active_superuser(user):
         return True
 
+    if is_active_platform_admin(user):
+        return _role_has_permission([PLATFORM_ADMIN_ROLE_CODE], permission_code)
+
     tenant_access = resolve_tenant_access_context(request)
     if not tenant_access.ok:
         return False
@@ -404,39 +444,39 @@ def has_request_permission(request, permission_code: str) -> bool:
     return _role_has_permission(tenant_access.role_codes, permission_code)
 
 
-def _is_owner(obj, staff_id: int) -> bool:
-    return getattr(obj, "created_by_staff_id", None) == staff_id
+def _is_owner(obj, tenant_member_id: int) -> bool:
+    return getattr(obj, "created_by_tenant_member_id", None) == tenant_member_id
 
 
-def _is_assigned(obj, staff_id: int) -> bool:
-    if getattr(obj, "assigned_staff_id", None) == staff_id:
+def _is_assigned(obj, tenant_member_id: int) -> bool:
+    if getattr(obj, "assigned_tenant_member_id", None) == tenant_member_id:
         return True
 
     assignments = getattr(obj, "assignments", None)
     if assignments is None or not hasattr(assignments, "filter"):
         return False
 
-    qs = assignments.filter(staff_id=staff_id)
+    qs = assignments.filter(tenant_member_id=tenant_member_id)
     model_fields = {field.name for field in assignments.model._meta.fields}
     if "status" in model_fields:
         qs = qs.filter(status="ACTIVE")
     return qs.exists()
 
 
-def is_obj_in_scope(obj, scope: str, staff_id: int) -> bool:
+def is_obj_in_scope(obj, scope: str, tenant_member_id: int) -> bool:
     if scope == ScopeType.ALL:
         return True
     if scope == ScopeType.OWN:
-        return _is_owner(obj, staff_id)
+        return _is_owner(obj, tenant_member_id)
     if scope == ScopeType.ASSIGNED:
-        return _is_assigned(obj, staff_id)
+        return _is_assigned(obj, tenant_member_id)
     return False
 
 
 def apply_scope_to_queryset(
     queryset: QuerySet,
     scope: str,
-    staff_id: int,
+    tenant_member_id: int,
     assigned_filter_builder: Optional[Callable[[int], dict]] = None,
 ) -> QuerySet:
     """在列表层提前收敛数据范围，避免先查全量再逐条判定。"""
@@ -447,18 +487,18 @@ def apply_scope_to_queryset(
     field_names = {field.name for field in queryset.model._meta.get_fields()}
 
     if scope == ScopeType.OWN:
-        if "created_by_staff_id" in field_names or "created_by_staff" in field_names:
-            return queryset.filter(created_by_staff_id=staff_id)
+        if "created_by_tenant_member_id" in field_names:
+            return queryset.filter(created_by_tenant_member_id=tenant_member_id)
         return queryset.none()
 
     if scope == ScopeType.ASSIGNED:
         if assigned_filter_builder:
-            return queryset.filter(**assigned_filter_builder(staff_id)).distinct()
+            return queryset.filter(**assigned_filter_builder(tenant_member_id)).distinct()
 
-        if "assigned_staff_id" in field_names:
-            return queryset.filter(assigned_staff_id=staff_id)
+        if "assigned_tenant_member_id" in field_names:
+            return queryset.filter(assigned_tenant_member_id=tenant_member_id)
         if "assignments" in field_names:
-            return queryset.filter(assignments__staff_id=staff_id, assignments__status="ACTIVE").distinct()
+            return queryset.filter(assignments__tenant_member_id=tenant_member_id, assignments__status="ACTIVE").distinct()
 
         return queryset.none()
 
@@ -475,6 +515,21 @@ class AuthzService:
             if biz_checker is not None and not biz_checker(user, obj):
                 return AuthorizationDecision(False, AuthorizationReason.BIZ_RULE_DENIED, scope=ScopeType.ALL)
             return AuthorizationDecision(True, AuthorizationReason.OK, scope=ScopeType.ALL)
+
+        if is_active_platform_admin(user):
+            if not _role_has_permission([PLATFORM_ADMIN_ROLE_CODE], permission_code):
+                return AuthorizationDecision(False, AuthorizationReason.PERMISSION_DENIED)
+
+            scope = resolve_effective_scope(request, permission_code)
+            if not scope:
+                return AuthorizationDecision(False, AuthorizationReason.SCOPE_NOT_CONFIGURED)
+            if scope != ScopeType.ALL:
+                return AuthorizationDecision(False, AuthorizationReason.SCOPE_DENIED, scope=scope)
+
+            if biz_checker is not None and not biz_checker(user, obj):
+                return AuthorizationDecision(False, AuthorizationReason.BIZ_RULE_DENIED, scope=scope)
+
+            return AuthorizationDecision(True, AuthorizationReason.OK, scope=scope)
 
         permission = get_permission_obj(permission_code)
         if not permission:
@@ -493,20 +548,15 @@ class AuthzService:
         if not scope:
             return AuthorizationDecision(False, AuthorizationReason.SCOPE_NOT_CONFIGURED)
 
-        staff_id: Optional[int] = None
-        if scope != ScopeType.ALL:
-            actor_result = IdentityService.check_staff_actor(user)
-            if not actor_result.ok:
-                return AuthorizationDecision(False, actor_result.reason_code, scope=scope)
-            staff_id = actor_result.staff.id
+        tenant_member_id: Optional[int] = tenant_access.member.id if scope != ScopeType.ALL else None
 
-        if obj is not None and scope != ScopeType.ALL and not is_obj_in_scope(obj, scope, staff_id):
-            return AuthorizationDecision(False, AuthorizationReason.SCOPE_DENIED, scope=scope, staff_id=staff_id)
+        if obj is not None and scope != ScopeType.ALL and not is_obj_in_scope(obj, scope, tenant_member_id):
+            return AuthorizationDecision(False, AuthorizationReason.SCOPE_DENIED, scope=scope, tenant_member_id=tenant_member_id)
 
         if biz_checker is not None and not biz_checker(user, obj):
-            return AuthorizationDecision(False, AuthorizationReason.BIZ_RULE_DENIED, scope=scope, staff_id=staff_id)
+            return AuthorizationDecision(False, AuthorizationReason.BIZ_RULE_DENIED, scope=scope, tenant_member_id=tenant_member_id)
 
-        return AuthorizationDecision(True, AuthorizationReason.OK, scope=scope, staff_id=staff_id)
+        return AuthorizationDecision(True, AuthorizationReason.OK, scope=scope, tenant_member_id=tenant_member_id)
 
     @staticmethod
     def get_permission_scope_map(request) -> list[dict]:

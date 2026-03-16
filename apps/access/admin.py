@@ -17,15 +17,15 @@ from apps.access.models import (
 
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):
-    list_display = ("id", "username", "status", "is_staff", "is_superuser", "is_active")
+    list_display = ("id", "username", "status", "is_staff", "is_superuser", "is_platform_admin", "is_active")
     search_fields = ("username",)
-    list_filter = ("status", "is_staff", "is_superuser", "is_active")
+    list_filter = ("status", "is_staff", "is_superuser", "is_platform_admin", "is_active")
 
 
 @admin.register(StaffProfile)
 class StaffProfileAdmin(admin.ModelAdmin):
-    list_display = ("id", "staff_no", "name", "user", "employment_status")
-    search_fields = ("staff_no", "name", "user__username", "phone", "email")
+    list_display = ("id", "name", "user", "employment_status")
+    search_fields = ("name", "user__username", "phone", "email")
     list_filter = ("employment_status",)
 
 

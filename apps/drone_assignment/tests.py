@@ -1,5 +1,7 @@
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import (
@@ -7,7 +9,7 @@ from apps.access.models import (
     EmploymentStatus,
     Permission,
     ScopeType,
-    StaffProfile,
+    TenantMember,
 )
 from apps.access.test_support import (
     ensure_staff_profile,
@@ -47,13 +49,14 @@ class DroneAssignmentApiTests(TestCase):
             name="飞手B",
             employment_status=EmploymentStatus.ACTIVE,
         )
-        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+        _pilot_tenant, self.pilot_member, _pilot_role = ensure_tenant_role_binding(
             self.pilot_user,
             tenant=self.tenant,
             role_code="pilot_operator",
             role_name="飞手操作员",
+            member_no="P-200",
         )
-        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
+        ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手操作员")
 
         self.inactive_pilot_user = User.objects.create_user(username="pilot_inactive", password="pass1234", status=1)
         self.inactive_pilot_staff = ensure_staff_profile(
@@ -62,13 +65,13 @@ class DroneAssignmentApiTests(TestCase):
             name="离职飞手",
             employment_status=EmploymentStatus.INACTIVE,
         )
-        _inactive_tenant, inactive_member, _inactive_role = ensure_tenant_role_binding(
+        _inactive_tenant, self.inactive_pilot_member, _inactive_role = ensure_tenant_role_binding(
             self.inactive_pilot_user,
             tenant=self.tenant,
             role_code="pilot_operator",
             role_name="飞手操作员",
         )
-        ensure_tenant_member_position(inactive_member, code="pilot_operator", name="飞手操作员")
+        ensure_tenant_member_position(self.inactive_pilot_member, code="pilot_operator", name="飞手操作员")
 
         self.observer_user = User.objects.create_user(username="planner_a", password="pass1234", status=1)
         self.observer_staff = ensure_staff_profile(
@@ -77,13 +80,13 @@ class DroneAssignmentApiTests(TestCase):
             name="规划员A",
             employment_status=EmploymentStatus.ACTIVE,
         )
-        _observer_tenant, observer_member, _observer_role = ensure_tenant_role_binding(
+        _observer_tenant, self.observer_member, _observer_role = ensure_tenant_role_binding(
             self.observer_user,
             tenant=self.tenant,
             role_code="route_planner",
             role_name="航线规划员",
         )
-        ensure_tenant_member_position(observer_member, code="route_planner", name="航线规划员")
+        ensure_tenant_member_position(self.observer_member, code="route_planner", name="航线规划员")
 
         self.drone = Drone.objects.create(
             tenant=self.tenant,
@@ -135,14 +138,16 @@ class DroneAssignmentApiTests(TestCase):
         self,
         *,
         drone: Drone | None = None,
-        staff: StaffProfile | None = None,
+        tenant_member: TenantMember | None = None,
         status: str = DroneAssignmentStatus.ACTIVE,
     ) -> DroneAssignment:
         return DroneAssignment.objects.create(
+            tenant=self.tenant,
             drone=drone or self.drone,
-            staff=staff or self.pilot_staff,
+            tenant_member=tenant_member or self.pilot_member,
             status=status,
-            created_by_staff_id=self.dispatcher_staff.id,
+            end_at=timezone.now() if status == DroneAssignmentStatus.INACTIVE else None,
+            created_by_tenant_member_id=self.member.id,
         )
 
     def test_list_assignments_should_return_success(self):
@@ -158,6 +163,59 @@ class DroneAssignmentApiTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "OK")
         self.assertEqual(response.data["count"], 2)
         self.assertEqual(len(response.data["results"]), 2)
+
+    def test_create_assignment_with_cross_tenant_drone_should_return_invalid_params(self):
+        self._grant_manage_permission()
+        self._authenticate_dispatcher()
+        other_tenant, _, _ = ensure_tenant_role_binding(
+            self.dispatcher_user,
+            tenant_code="drone_assignment_other_tenant",
+            role_code="drone_assignment_other_role",
+            role_name="无人机分配其他租户角色",
+        )
+        other_drone = Drone.objects.create(
+            tenant=other_tenant,
+            code="DJ-OTHER-ASSIGN-01",
+            name="其他租户无人机",
+            model="Matrice 4",
+            serial_no="OTHER-ASSIGN-SN-01",
+            status=DroneStatus.ENABLED,
+        )
+
+        response = self.client.post(
+            "/api/v1/drone-assignments",
+            {"drone": other_drone.id, "tenant_member": self.pilot_member.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertIn("drone", response.data)
+
+    def test_model_should_reject_cross_tenant_drone(self):
+        other_tenant, _, _ = ensure_tenant_role_binding(
+            self.dispatcher_user,
+            tenant_code="drone_assignment_model_other_tenant",
+            role_code="drone_assignment_model_other_role",
+            role_name="无人机分配模型其他租户角色",
+        )
+        other_drone = Drone.objects.create(
+            tenant=other_tenant,
+            code="DJ-OTHER-ASSIGN-MODEL-01",
+            name="其他租户模型无人机",
+            model="Matrice 4",
+            serial_no="OTHER-ASSIGN-MODEL-SN-01",
+            status=DroneStatus.ENABLED,
+        )
+
+        with self.assertRaises(ValidationError):
+            DroneAssignment.objects.create(
+                tenant=self.tenant,
+                drone=other_drone,
+                tenant_member=self.pilot_member,
+                status=DroneAssignmentStatus.ACTIVE,
+                created_by_tenant_member_id=self.member.id,
+            )
 
     def test_list_assignments_with_filters_should_return_filtered_results(self):
         self._grant_manage_permission()
@@ -215,7 +273,8 @@ class DroneAssignmentApiTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "OK")
         self.assertEqual(response.data["id"], assignment.id)
         self.assertEqual(response.data["drone"], self.drone.id)
-        self.assertEqual(response.data["staff"], self.pilot_staff.id)
+        self.assertEqual(response.data["tenant_member"], self.pilot_member.id)
+        self.assertEqual(response.data["member_no"], "P-200")
 
     def test_retrieve_assignment_not_found_should_return_resource_not_found(self):
         self._grant_manage_permission()
@@ -252,13 +311,14 @@ class DroneAssignmentApiTests(TestCase):
 
         response = self.client.post(
             "/api/v1/drone-assignments",
-            {"drone": self.drone.id, "staff": self.pilot_staff.id},
+            {"drone": self.drone.id, "tenant_member": self.pilot_member.id},
             format="json",
         )
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["business_code"], "SUCCESS")
         self.assertEqual(response.data["business_detail_code"], "OK")
+        self.assertEqual(response.data["member_no"], "P-200")
         assignment = DroneAssignment.objects.get(id=response.data["id"])
         self.assertEqual(assignment.status, DroneAssignmentStatus.ACTIVE)
         self.assertIsNone(assignment.end_at)
@@ -276,7 +336,7 @@ class DroneAssignmentApiTests(TestCase):
 
         response = self.client.post(
             "/api/v1/drone-assignments",
-            {"drone": self.retired_drone.id, "staff": self.pilot_staff.id},
+            {"drone": self.retired_drone.id, "tenant_member": self.pilot_member.id},
             format="json",
         )
 
@@ -285,35 +345,75 @@ class DroneAssignmentApiTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
         self.assertIn("drone", response.data)
 
-    def test_create_assignment_with_inactive_staff_should_return_invalid_params(self):
+    def test_model_should_reject_retired_drone(self):
+        with self.assertRaises(ValidationError):
+            DroneAssignment.objects.create(
+                tenant=self.tenant,
+                drone=self.retired_drone,
+                tenant_member=self.pilot_member,
+                status=DroneAssignmentStatus.ACTIVE,
+                created_by_tenant_member_id=self.member.id,
+            )
+
+    def test_create_assignment_with_inactive_tenant_member_should_return_invalid_params(self):
         self._grant_manage_permission()
         self._authenticate_dispatcher()
 
         response = self.client.post(
             "/api/v1/drone-assignments",
-            {"drone": self.drone.id, "staff": self.inactive_pilot_staff.id},
+            {"drone": self.drone.id, "tenant_member": self.inactive_pilot_member.id},
             format="json",
         )
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("staff", response.data)
+        self.assertIn("tenant_member", response.data)
 
-    def test_create_assignment_with_non_pilot_staff_should_return_invalid_params(self):
+    def test_model_should_reject_inactive_tenant_member(self):
+        with self.assertRaises(ValidationError):
+            DroneAssignment.objects.create(
+                tenant=self.tenant,
+                drone=self.drone,
+                tenant_member=self.inactive_pilot_member,
+                status=DroneAssignmentStatus.ACTIVE,
+                created_by_tenant_member_id=self.member.id,
+            )
+
+    def test_create_assignment_with_non_pilot_tenant_member_should_return_invalid_params(self):
         self._grant_manage_permission()
         self._authenticate_dispatcher()
 
         response = self.client.post(
             "/api/v1/drone-assignments",
-            {"drone": self.drone.id, "staff": self.observer_staff.id},
+            {"drone": self.drone.id, "tenant_member": self.observer_member.id},
             format="json",
         )
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
-        self.assertIn("staff", response.data)
+        self.assertIn("tenant_member", response.data)
+
+    def test_model_should_reject_non_pilot_tenant_member(self):
+        with self.assertRaises(ValidationError):
+            DroneAssignment.objects.create(
+                tenant=self.tenant,
+                drone=self.drone,
+                tenant_member=self.observer_member,
+                status=DroneAssignmentStatus.ACTIVE,
+                created_by_tenant_member_id=self.member.id,
+            )
+
+    def test_model_should_reject_inactive_without_end_at(self):
+        with self.assertRaises(ValidationError):
+            DroneAssignment.objects.create(
+                tenant=self.tenant,
+                drone=self.drone,
+                tenant_member=self.pilot_member,
+                status=DroneAssignmentStatus.INACTIVE,
+                created_by_tenant_member_id=self.member.id,
+            )
 
     def test_create_assignment_with_nonexistent_drone_should_return_invalid_params(self):
         """测试 drone 不存在"""
@@ -322,21 +422,21 @@ class DroneAssignmentApiTests(TestCase):
 
         response = self.client.post(
             "/api/v1/drone-assignments",
-            {"drone": 99999, "staff": self.pilot_staff.id},
+            {"drone": 99999, "tenant_member": self.pilot_member.id},
             format="json",
         )
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
 
-    def test_create_assignment_with_nonexistent_staff_should_return_invalid_params(self):
-        """测试 staff 不存在"""
+    def test_create_assignment_with_nonexistent_tenant_member_should_return_invalid_params(self):
+        """测试 tenant_member 不存在"""
         self._grant_manage_permission()
         self._authenticate_dispatcher()
 
         response = self.client.post(
             "/api/v1/drone-assignments",
-            {"drone": self.drone.id, "staff": 99999},
+            {"drone": self.drone.id, "tenant_member": 99999},
             format="json",
         )
 
@@ -350,7 +450,7 @@ class DroneAssignmentApiTests(TestCase):
 
         response = self.client.post(
             "/api/v1/drone-assignments",
-            {"drone": self.drone.id, "staff": self.pilot_staff.id},
+            {"drone": self.drone.id, "tenant_member": self.pilot_member.id},
             format="json",
         )
 
@@ -362,7 +462,7 @@ class DroneAssignmentApiTests(TestCase):
     def test_create_assignment_without_auth_should_return_permission_denied(self):
         response = self.client.post(
             "/api/v1/drone-assignments",
-            {"drone": self.drone.id, "staff": self.pilot_staff.id},
+            {"drone": self.drone.id, "tenant_member": self.pilot_member.id},
             format="json",
         )
 
@@ -375,7 +475,7 @@ class DroneAssignmentApiTests(TestCase):
 
         response = self.client.post(
             "/api/v1/drone-assignments",
-            {"drone": self.drone.id, "staff": self.pilot_staff.id},
+            {"drone": self.drone.id, "tenant_member": self.pilot_member.id},
             format="json",
         )
 

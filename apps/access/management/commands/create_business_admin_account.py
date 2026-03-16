@@ -14,7 +14,6 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--username", required=True, help="登录账号")
         parser.add_argument("--password", help="登录密码；不传则自动生成")
-        parser.add_argument("--staff-no", help="人员编号；默认 BS-<USERNAME>")
         parser.add_argument("--name", default="业务管理员", help="人员姓名")
         parser.add_argument("--phone", default="", help="手机号")
         parser.add_argument("--email", default="", help="邮箱")
@@ -34,7 +33,6 @@ class Command(BaseCommand):
         password = options.get("password") or get_random_string(16)
         password_auto_generated = not bool(options.get("password"))
 
-        staff_no = options.get("staff_no") or f"BS-{username.upper()}"
         name = options.get("name") or "业务管理员"
         phone = options.get("phone") or ""
         email = options.get("email") or ""
@@ -68,16 +66,14 @@ class Command(BaseCommand):
             # 一账号一 staff：仅维护业务档案，不直接授予租户角色权限。
             staff = StaffProfile.objects.create(
                 user=user,
-                staff_no=staff_no,
                 name=name,
                 phone=phone,
                 email=email,
                 employment_status=EmploymentStatus.ACTIVE,
                 org_id=org_id,
             )
-            self.stdout.write(self.style.SUCCESS(f"created staff profile: {staff.staff_no} (id={staff.id})"))
+            self.stdout.write(self.style.SUCCESS(f"created staff profile: {staff.name} (id={staff.id})"))
         else:
-            staff.staff_no = staff_no
             staff.name = name
             staff.phone = phone
             staff.email = email
@@ -85,7 +81,6 @@ class Command(BaseCommand):
             staff.org_id = org_id
             staff.save(
                 update_fields=[
-                    "staff_no",
                     "name",
                     "phone",
                     "email",
@@ -94,7 +89,7 @@ class Command(BaseCommand):
                     "updated_at",
                 ]
             )
-            self.stdout.write(self.style.SUCCESS(f"updated staff profile: {staff.staff_no} (id={staff.id})"))
+            self.stdout.write(self.style.SUCCESS(f"updated staff profile: {staff.name} (id={staff.id})"))
 
         self.stdout.write(self.style.SUCCESS("business admin account is ready"))
         self.stdout.write("note=该命令不会分配租户角色；如需业务权限，请为用户创建 TenantMember 并分配 Role")

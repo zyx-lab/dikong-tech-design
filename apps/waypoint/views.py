@@ -5,12 +5,14 @@ from rest_framework.response import Response
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin
+from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.waypoint.models import Waypoint
 from apps.waypoint.serializers import WaypointCreateSerializer, WaypointPatchSerializer, WaypointReadSerializer
 
 
 class WaypointViewSet(
     BusinessApiResponseMixin,
+    TenantScopedBusinessMixin,
     PermissionMapMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
@@ -24,6 +26,7 @@ class WaypointViewSet(
     queryset = Waypoint.objects.select_related("route").all().order_by("route_id", "sequence", "id")
     permission_classes = [ScopedActionPermission]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+    tenant_lookup = "route__tenant"
 
     permission_map = {
         "list": "waypoint.view_waypoint",
@@ -41,7 +44,7 @@ class WaypointViewSet(
         return WaypointReadSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = self.scope_queryset_to_tenant(super().get_queryset())
         params = self.request.query_params
 
         # 业务作用：

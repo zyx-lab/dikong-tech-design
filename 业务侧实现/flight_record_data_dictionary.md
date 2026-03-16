@@ -49,14 +49,15 @@ PostgreSQL
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
-| flight_no | varchar(50) | NOT NULL, UNIQUE | - | 架次编号 |
+| tenant_id | bigint | FK, NOT NULL | - | 租户 ID |
+| flight_no | varchar(50) | NOT NULL | - | 架次编号（租户内唯一） |
 | mission_id | bigint | FK | - | 关联任务 ID |
 | mission_name | varchar(100) | - | "" | 任务名称（冗余） |
 | route_name | varchar(100) | - | "" | 航线名称（冗余） |
 | airport_name | varchar(100) | - | "" | 执行机场名称 |
 | drone_id | bigint | FK | - | 无人机 ID |
 | drone_name | varchar(100) | - | "" | 无人机名称（冗余） |
-| pilot_id | bigint | FK | - | 飞手 ID |
+| pilot_id | bigint | FK | - | 飞手成员 ID（TenantMember） |
 | pilot_name | varchar(50) | - | "" | 飞手姓名（冗余） |
 | start_time | timestamp | - | - | 开始时间 |
 | end_time | timestamp | - | - | 结束时间 |
@@ -76,8 +77,11 @@ PostgreSQL
 | 2 | 异常终止 |
 
 **业务规则**：
-1. flight_no 全局唯一。
-2. end_time 不能早于 start_time。
+1. `flight_no` 按租户内唯一校验，不做全局唯一。
+2. `mission`、`drone`、`pilot` 若存在，必须属于当前租户。
+3. `pilot` 必须是当前租户下的 `ACTIVE TenantMember`，其账号需存在在职 `staff_profile`，且成员已绑定 `pilot_operator`。
+4. 若同时绑定 `mission` 与 `drone / pilot`，则必须与 `mission` 上的绑定关系一致。
+5. end_time 不能早于 start_time。
 
 ---
 

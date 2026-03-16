@@ -26,7 +26,11 @@ Project low_altitude_business_current {
 // 0. external refs 外部引用表（DBML 占位）
 // 说明：以下表不属于"业务域当前实现"落地范围，仅用于让 DBML 引用可解析。
 // ============================================================
-Table staff_profiles [note: '权限/人员域外部表（占位，仅用于解析 staff_id 引用）'] {
+Table tenants [note: '租户表（占位，仅用于解析 tenant_id 引用）'] {
+  id bigserial [pk, note: 'id 主键']
+}
+
+Table tenant_members [note: '租户成员表（占位，仅用于解析 tenant_member_id 引用）'] {
   id bigserial [pk, note: 'id 主键']
 }
 
@@ -35,38 +39,45 @@ Table staff_profiles [note: '权限/人员域外部表（占位，仅用于解�
 // ============================================================
 Table drones [note: '无人机台账'] {
   id bigserial [pk, note: 'id 主键']
-  code varchar(64) [not null, unique, note: 'code 业务编码']
+  tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 租户ID']
+  code varchar(64) [not null, note: 'code 业务编码（租户内唯一）']
   name varchar(128) [not null, note: 'name 无人机名称']
   model varchar(128) [not null, note: 'model 型号']
-  serial_no varchar(128) [not null, unique, note: 'serial_no 出厂序列号']
+  serial_no varchar(128) [not null, note: 'serial_no 出厂序列号（租户内唯一）']
   status varchar(16) [not null, default: 'DISABLED', note: 'status ENABLED/DISABLED/MAINTENANCE/RETIRED']
   org_id bigint [note: 'org_id 组织ID（预留）']
-  created_by_staff_id bigint [note: 'created_by_staff_id 创建人staff_id（审计/OWN预留）']
+  created_by_tenant_member_id bigint [note: 'created_by_tenant_member_id 创建人 TenantMember ID（审计/OWN）']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+
+  indexes {
+    (tenant_id, code) [name: 'uniq_drone_tenant_code', unique]
+    (tenant_id, serial_no) [name: 'uniq_drone_tenant_serial_no', unique]
+  }
 }
 
 // ============================================================
 // 2. drone_assignments 无人机分配关系表
 // ============================================================
-Table drone_assignments [note: '无人机与飞手分配关系'] {
+Table drone_assignments [note: '无人机与租户成员分配关系'] {
   id bigserial [pk, note: 'id 主键']
+  tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 租户ID']
   drone_id bigint [not null, ref: > drones.id, note: 'drone_id 无人机ID']
-  staff_id bigint [not null, ref: > staff_profiles.id, note: 'staff_id 飞手staff_profile ID']
+  tenant_member_id bigint [not null, ref: > tenant_members.id, note: 'tenant_member_id 租户成员ID']
   status varchar(16) [not null, default: 'ACTIVE', note: 'status ACTIVE/INACTIVE']
   start_at timestamp [not null, default: `now()`, note: 'start_at 生效时间']
   end_at timestamp [note: 'end_at 结束时间']
-  created_by_staff_id bigint [note: 'created_by_staff_id 操作人staff_id']
+  created_by_tenant_member_id bigint [note: 'created_by_tenant_member_id 操作人 TenantMember ID']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 
   indexes {
-    (drone_id, staff_id, status) [name: 'idx_drone_staff_status']
+    (drone_id, tenant_member_id, status) [name: 'idx_drone_tenant_member_status']
   }
 }
 
 // 注意：真实数据库中存在“部分唯一约束”
-// uniq_active_drone_staff_assignment: unique(drone_id, staff_id) where status='ACTIVE'
+// uniq_active_drone_tenant_member_assignment: unique(drone_id, tenant_member_id) where status='ACTIVE'
 // DBML 这里用注释表达，实际以 Django migration 为准。
 //
 // 删除接口规则（逻辑约束）：

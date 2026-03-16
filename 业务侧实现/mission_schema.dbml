@@ -16,7 +16,7 @@
 // }
 // ```
 
-// updated_at: 2026-03-09T12:25:00+08:00
+// updated_at: 2026-03-15T14:20:00+08:00
 // entity: mission
 // 历史保留 + 当前轮增补：当前轮新增 PATCH /api/v1/missions/{id}（局部更新）、POST /api/v1/missions/{id}/start（启动）、POST /api/v1/missions/{id}/pause（暂停）、POST /api/v1/missions/{id}/resume（恢复）与 POST /api/v1/missions/{id}/cancel（取消）
 // 当前轮接口语义：
@@ -29,12 +29,13 @@
 
 Table missions {
   id bigint [pk, increment, note: 'ID']
+  tenant_id bigint [not null, note: '租户ID（FK: access.Tenant）']
   name varchar(100) [not null, note: '任务名称']
   route_id bigint [not null, note: '航线ID（FK: route.Route）']
   route_name varchar(100) [not null, note: '航线名称（冗余）']
   drone_id bigint [not null, note: '无人机ID（FK: drone.Drone）']
   drone_name varchar(100) [not null, note: '无人机名称（冗余）']
-  pilot_id bigint [not null, note: '飞手ID（FK: access.StaffProfile）']
+  pilot_id bigint [not null, note: '飞手成员ID（FK: access.TenantMember）']
   pilot_name varchar(50) [not null, note: '飞手姓名（冗余）']
   scheduled_at timestamp [note: '计划执行时间']
   remark varchar(500) [not null, note: '任务备注']
@@ -42,6 +43,10 @@ Table missions {
   created_at timestamp [not null, note: '创建时间']
   updated_at timestamp [not null, note: '更新时间']
 }
+
+// pilot 字段语义：
+// - 接口传入 / 返回的 pilot 都是 TenantMember.id
+// - 仅允许绑定当前租户下 ACTIVE 且带 pilot_operator 的成员
 
 // 本轮增补（2026-03-09）
 // focus_api: POST /api/v1/missions/{id}/start

@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -93,6 +94,38 @@ class WaypointApiTests(TestCase):
             ).exists()
         )
 
+    def test_create_waypoint_with_cross_tenant_route_should_return_invalid_params(self):
+        self._grant_permission("waypoint.manage_waypoint")
+        self.client.force_authenticate(self.user)
+        other_tenant, _, _ = ensure_tenant_role_binding(
+            self.user,
+            tenant_code="waypoint_other_tenant",
+            role_code="waypoint_other_role",
+            role_name="航点其他租户角色",
+        )
+        other_route = Route.objects.create(
+            tenant=other_tenant,
+            name="其他租户航线",
+            status=RouteStatus.ACTIVE,
+            creator_name=self.staff.name,
+        )
+
+        response = self.client.post(
+            "/api/v1/waypoints",
+            {
+                "route": other_route.id,
+                "sequence": 1,
+                "latitude": "22.28612345",
+                "longitude": "113.56781234",
+                "altitude": "120.50",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertIn("route", response.data)
+
     def test_create_waypoint_invalid_params_should_return_invalid_params(self):
         self._grant_permission("waypoint.manage_waypoint")
         self.client.force_authenticate(self.user)
@@ -131,6 +164,16 @@ class WaypointApiTests(TestCase):
         self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
         self.assertIn("route", response.data)
+
+    def test_model_should_reject_disabled_route(self):
+        with self.assertRaises(ValidationError):
+            Waypoint.objects.create(
+                route=self.route_disabled,
+                sequence=1,
+                latitude="22.28612345",
+                longitude="113.56781234",
+                altitude="120.50",
+            )
 
     def test_create_waypoint_with_nonexistent_route_should_return_invalid_params(self):
         """测试 route 不存在"""
@@ -677,7 +720,12 @@ class WaypointBoundaryAndExtendedTests(TestCase):
         self.client.force_authenticate(self.user)
 
         # 创建另一条航线的航点
-        route2 = Route.objects.create(name="边界测试航线2", status=RouteStatus.ACTIVE, creator_name=self.staff.name)
+        route2 = Route.objects.create(
+            tenant=self.tenant,
+            name="边界测试航线2",
+            status=RouteStatus.ACTIVE,
+            creator_name=self.staff.name,
+        )
         waypoint1 = self._create_waypoint(self.route, sequence=1)
         waypoint2 = self._create_waypoint(route2, sequence=1)
 
@@ -693,7 +741,12 @@ class WaypointBoundaryAndExtendedTests(TestCase):
         self._grant_permission("waypoint.manage_waypoint")
         self.client.force_authenticate(self.user)
 
-        route2 = Route.objects.create(name="新航线", status=RouteStatus.ACTIVE, creator_name=self.staff.name)
+        route2 = Route.objects.create(
+            tenant=self.tenant,
+            name="新航线",
+            status=RouteStatus.ACTIVE,
+            creator_name=self.staff.name,
+        )
         waypoint = self._create_waypoint(self.route, sequence=1)
 
         # 尝试切换航线

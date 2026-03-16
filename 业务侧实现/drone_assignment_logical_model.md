@@ -1,6 +1,6 @@
 # 无人机分配逻辑模型
 
-- generated_at: 2026-03-08
+- generated_at: 2026-03-15
 - entity: drone_assignment
 
 ## 数据库
@@ -59,9 +59,15 @@ PostgreSQL
 
 ## 关系与约束
 
+- tenant_id -> tenants.id
 - drone_id -> drones.id
-- staff_id -> staff_profiles.id
-- 唯一约束：同一 (drone_id, staff_id) 在 ACTIVE 状态下唯一
+- tenant_member_id -> tenant_members.id
+- created_by_tenant_member_id：记录租户内操作人 TenantMember ID，用于审计
+- 唯一约束：同一 `(drone_id, tenant_member_id)` 在 `ACTIVE` 状态下唯一
+- 业务硬约束：`drone`、`tenant_member`、`created_by_tenant_member_id` 必须属于当前 `tenant`
+- 业务硬约束：仅允许给 `ACTIVE` 租户成员创建分配，且该成员对应账号必须存在在职 `staff_profile`
+- 业务硬约束：仅允许给已绑定 `pilot_operator` 角色的成员创建分配
+- 授权口径：`OWN / ASSIGNED` 一律以 `TenantMember.id` 为判定主体，不再使用全局 `staff_id`
 
 ## 生命周期入口
 
@@ -76,8 +82,8 @@ PostgreSQL
 ## 接口语义
 
 ### 创建分配 POST /api/v1/drone-assignments
-- 功能：创建无人机与飞手的分配关系
-- 约束：drone.status!=RETIRED, staff在职且为pilot_operator, 不存在同键ACTIVE记录
+- 功能：创建无人机与租户成员的分配关系
+- 约束：`drone.status != RETIRED`，`tenant_member` 属于当前租户且为 `ACTIVE`，关联账号在职并持有 `pilot_operator` 角色，不存在同键 `ACTIVE` 记录
 - 业务码：SUCCESS, INVALID_PARAMS, STATE_CONFLICT, PERMISSION_DENIED
 
 ### 取消分配 POST /api/v1/drone-assignments/{id}/cancel

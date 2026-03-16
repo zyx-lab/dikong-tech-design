@@ -49,12 +49,13 @@ PostgreSQL
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
+| tenant_id | bigint | FK, NOT NULL | - | 租户 ID |
 | name | varchar(100) | NOT NULL | - | 任务名称 |
 | route_id | bigint | FK, NOT NULL | - | 航线 ID |
 | route_name | varchar(100) | - | "" | 航线名称（冗余） |
 | drone_id | bigint | FK, NOT NULL | - | 无人机 ID |
 | drone_name | varchar(100) | - | "" | 无人机名称（冗余） |
-| pilot_id | bigint | FK, NOT NULL | - | 飞手 ID |
+| pilot_id | bigint | FK, NOT NULL | - | 飞手成员 ID（TenantMember） |
 | pilot_name | varchar(50) | - | "" | 飞手姓名（冗余） |
 | scheduled_at | timestamp | - | - | 计划执行时间 |
 | remark | varchar(500) | - | "" | 任务备注 |
@@ -74,8 +75,10 @@ PostgreSQL
 | 5 | 执行失败 |
 
 **业务规则**：
-1. 创建任务时 route 必须为 ACTIVE，drone 必须为 ENABLED，pilot 必须为 pilot_operator 且在职。
-2. status 不可通过 PATCH 直接修改，需通过状态动作接口。
+1. `route`、`drone`、`pilot` 必须属于当前租户。
+2. 创建任务时 `route` 必须为 `ACTIVE`，`drone` 必须为 `ENABLED`。
+3. `pilot` 必须是当前租户下的 `ACTIVE TenantMember`，其账号需存在在职 `staff_profile`，且成员已绑定 `pilot_operator`。
+4. status 不可通过 PATCH 直接修改，需通过状态动作接口。
 
 ---
 

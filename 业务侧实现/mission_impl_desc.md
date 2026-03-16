@@ -1,7 +1,7 @@
 # 任务实现说明
 
 - generated_at: 2026-03-09T09:30:00+08:00
-- updated_at: 2026-03-09
+- updated_at: 2026-03-15
 - entity: mission
 
 ## 数据库
@@ -40,12 +40,13 @@ PostgreSQL
 | 字段 | 类型 | 说明 |
 |-----|------|------|
 | id | BigAutoField | 主键 |
+| tenant | ForeignKey | 租户 |
 | name | CharField(100) | 任务名称 |
 | route | ForeignKey | 航线 |
 | route_name | CharField(100) | 航线名称（冗余） |
 | drone | ForeignKey | 无人机 |
 | drone_name | CharField(100) | 无人机名称（冗余） |
-| pilot | ForeignKey | 飞手 |
+| pilot | ForeignKey | 飞手成员（TenantMember） |
 | pilot_name | CharField(50) | 飞手姓名（冗余） |
 | scheduled_at | DateTimeField | 计划执行时间（可选） |
 | remark | CharField(500) | 任务备注 |
@@ -68,12 +69,14 @@ PostgreSQL
 ### 1. GET /api/v1/missions
 - 功能：任务列表查询
 - 筛选参数：route_id, drone_id, pilot_id, status
+- 说明：`pilot_id` 按 `TenantMember.id` 过滤
 - 权限：mission.view_mission
 - 业务码：SUCCESS, PERMISSION_DENIED
 
 ### 2. POST /api/v1/missions
 - 功能：创建任务
 - 必填：name, route, drone, pilot
+- 约束：`pilot` 必须是当前租户下的 `ACTIVE TenantMember`，其账号需存在在职 `staff_profile`，且成员已绑定 `pilot_operator`
 - 可选：scheduled_at, remark
 - 自动填充：route_name, drone_name, pilot_name
 - 默认状态：status=PENDING
@@ -88,6 +91,7 @@ PostgreSQL
 ### 4. PATCH /api/v1/missions/{id}
 - 功能：局部更新任务
 - 可写字段：name, route, drone, pilot, scheduled_at, remark
+- 约束：`pilot` 字段语义同创建接口，提交值为 `TenantMember.id`
 - 约束：status 不可写（状态通过专用动作接口变更）
 - 权限：mission.manage_mission
 - 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED

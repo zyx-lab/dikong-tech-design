@@ -6,12 +6,14 @@ from rest_framework.response import Response
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.flight_record.models import FlightRecord, FlightRecordStatus
 from apps.flight_record.serializers import FlightRecordReadSerializer, FlightRecordWriteSerializer
 
 
 class FlightRecordViewSet(
     BusinessApiResponseMixin,
+    TenantScopedBusinessMixin,
     PermissionMapMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
@@ -21,7 +23,7 @@ class FlightRecordViewSet(
 ):
     """飞行记录业务接口（V1）。"""
 
-    queryset = FlightRecord.objects.select_related("mission", "drone", "pilot").all().order_by("-id")
+    queryset = FlightRecord.objects.select_related("mission", "drone", "pilot__user__staff_profile").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
     http_method_names = ["get", "post", "patch", "head", "options"]
 
@@ -43,7 +45,7 @@ class FlightRecordViewSet(
         return dict(FlightRecordReadSerializer(record, context={"request": self.request}).data)
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = self.scope_queryset_to_tenant(super().get_queryset())
         params = self.request.query_params
 
         # 业务作用：
@@ -87,7 +89,7 @@ class FlightRecordViewSet(
         # 3) 响应统一携带 business_code/business_detail_code。
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        record = serializer.save()
+        record = self.perform_create(serializer)
 
         read_serializer = FlightRecordReadSerializer(record, context={"request": request})
         log_action(
@@ -99,6 +101,10 @@ class FlightRecordViewSet(
         )
         headers = self.get_success_headers(read_serializer.data)
         return Response(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        return serializer.save(tenant=self.get_current_tenant())
 
     def retrieve(self, request, *args, **kwargs):
         # 业务作用：

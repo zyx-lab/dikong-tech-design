@@ -1,6 +1,12 @@
 from rest_framework.permissions import BasePermission
 
-from apps.access.services import AuthzService, IdentityService, apply_scope_to_queryset, has_request_permission
+from apps.access.services import (
+    AuthzService,
+    IdentityService,
+    apply_scope_to_queryset,
+    has_request_permission,
+    is_active_platform_admin,
+)
 
 
 class PermissionMapMixin:
@@ -42,6 +48,10 @@ class RequireInternalPermission(BasePermission):
 
         if request.user.is_superuser:
             return True
+
+        if is_active_platform_admin(request.user) and getattr(view, "platform_admin_forbidden", False):
+            self.message = "PERMISSION_DENIED"
+            return False
 
         perm_code = view.get_required_permission() if hasattr(view, "get_required_permission") else None
         if not perm_code:
@@ -109,6 +119,6 @@ class ScopedQuerysetMixin:
         return apply_scope_to_queryset(
             queryset=queryset,
             scope=decision.scope,
-            staff_id=decision.staff_id,
+            tenant_member_id=decision.tenant_member_id,
             assigned_filter_builder=self.assigned_scope_filter_builder,
         )

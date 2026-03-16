@@ -60,10 +60,14 @@ PostgreSQL
 
 ## 关系与约束
 
+- tenant -> access.Tenant
 - mission -> mission.Mission
 - drone -> drone.Drone
-- pilot -> access.StaffProfile
-- 唯一约束：flight_no 全局唯一
+- pilot -> access.TenantMember
+- 唯一约束：同一 `(tenant_id, flight_no)` 唯一
+- 绑定约束：`mission`、`drone`、`pilot` 若存在，必须属于当前 `tenant`
+- 绑定约束：`pilot` 必须是当前租户下的 `ACTIVE TenantMember`，其账号需存在在职 `staff_profile`，且成员已绑定 `pilot_operator`
+- 一致性约束：若同时绑定 `mission` 与 `drone / pilot`，则必须与 `mission` 上的绑定关系一致
 
 ## 生命周期入口
 

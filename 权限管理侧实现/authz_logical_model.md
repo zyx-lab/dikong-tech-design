@@ -69,15 +69,15 @@ PostgreSQL
 | ------ | ---- | ---- | ---- |
 | id | bigserial | PK | 人员档案 ID |
 | user_id | bigint | NOT NULL, UNIQUE, FK -> auth_users.id | 关联账号 ID（1:1） |
-| staff_no | varchar(64) | NOT NULL, UNIQUE | 工号 |
 | name | varchar(64) | NOT NULL | 姓名 |
 | phone | varchar(32) |  | 手机号 |
 | email | varchar(254) |  | 邮箱 |
 | employment_status | smallint | NOT NULL, DEFAULT 1 | 在职状态：1-active, 0-inactive |
-| staff_type_id | bigint | NOT NULL, FK -> staff_types.id | 身份类型 ID |
 | org_id | bigint |  | 组织 ID |
 | created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
 | updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
+
+说明：`staff_profiles` 只保留全局人员档案字段；业务工号统一迁移到 `tenant_members.member_no`。
 
 ---
 

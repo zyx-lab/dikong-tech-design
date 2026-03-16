@@ -49,13 +49,14 @@ PostgreSQL
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
-| code | varchar(64) | NOT NULL, UNIQUE | - | 业务编码 |
+| tenant_id | bigint | FK, NOT NULL | - | 当前租户 ID |
+| code | varchar(64) | NOT NULL | - | 业务编码（租户内唯一） |
 | name | varchar(128) | NOT NULL | - | 无人机名称 |
 | model | varchar(128) | NOT NULL | - | 型号 |
-| serial_no | varchar(128) | NOT NULL, UNIQUE | - | 出厂序列号 |
+| serial_no | varchar(128) | NOT NULL | - | 出厂序列号（租户内唯一） |
 | status | varchar(16) | NOT NULL | DISABLED | 状态 |
 | org_id | bigint | - | - | 组织 ID（预留） |
-| created_by_staff_id | bigint | - | - | 创建人 staff ID |
+| created_by_tenant_member_id | bigint | - | - | 创建人 TenantMember ID |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
@@ -69,25 +70,28 @@ PostgreSQL
 | RETIRED | 已退役 |
 
 **业务规则**：
-1. `serial_no` 全局唯一。
-2. 已退役（`RETIRED`）状态不可逆。
-3. `DELETE /api/v1/drones/{id}` 仅允许空 body；若存在 `ACTIVE` 分配关系，返回 `STATE_CONFLICT` 并拒绝删除。
+1. `(tenant_id, code)` 唯一。
+2. `(tenant_id, serial_no)` 唯一。
+3. `created_by_tenant_member_id` 用于 `OWN` 范围判定与审计。
+4. `DELETE /api/v1/drones/{id}` 仅允许空 body；若存在 `ACTIVE` 分配关系，返回 `STATE_CONFLICT` 并拒绝删除。
+5. 已退役（`RETIRED`）状态不可逆。
 
 ---
 
 ## 2. drone_assignments（无人机分配表）
 
-**说明**：存储无人机与飞手的分配关系，支撑 `ASSIGNED` 范围鉴权。
+**说明**：存储无人机与租户成员的分配关系，支撑 `ASSIGNED` 范围鉴权。
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
+| tenant_id | bigint | FK, NOT NULL | - | 当前租户 ID |
 | drone_id | bigint | FK, NOT NULL | - | 关联无人机 ID |
-| staff_id | bigint | FK, NOT NULL | - | 关联飞手 staff ID |
+| tenant_member_id | bigint | FK, NOT NULL | - | 关联租户成员 ID |
 | status | varchar(16) | NOT NULL | ACTIVE | 分配状态 |
 | start_at | timestamp | NOT NULL | now() | 分配生效时间 |
 | end_at | timestamp | - | - | 分配结束时间 |
-| created_by_staff_id | bigint | - | - | 操作人 staff ID |
+| created_by_tenant_member_id | bigint | - | - | 操作人 TenantMember ID |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
@@ -99,15 +103,21 @@ PostgreSQL
 | INACTIVE | 已失效 |
 
 **约束与规则**：
-1. 唯一约束：同一 `(drone_id, staff_id)` 在 `ACTIVE` 状态下唯一。
-2. 取消分配采用软失效（`ACTIVE -> INACTIVE`），不物理删除。
+1. 唯一约束：同一 `(drone_id, tenant_member_id)` 在 `ACTIVE` 状态下唯一。
+2. `tenant_id`、`drone_id`、`tenant_member_id` 必须属于同一租户。
+3. 仅允许分配给 `ACTIVE` 的租户成员，且其账号必须存在在职 `staff_profile`。
+4. 仅允许分配给已绑定 `pilot_operator` 角色的成员。
+5. `ASSIGNED` 范围统一按 `tenant_member_id` 命中。
+6. 取消分配采用软失效（`ACTIVE -> INACTIVE`），不物理删除。
 
 ---
 
 ## 3. 关系与外键
 
-1. `drone_assignments.drone_id -> drones.id`
-2. `drone_assignments.staff_id -> staff_profiles.id`
+1. `drones.tenant_id -> tenants.id`
+2. `drone_assignments.tenant_id -> tenants.id`
+3. `drone_assignments.drone_id -> drones.id`
+4. `drone_assignments.tenant_member_id -> tenant_members.id`
 
 ---
 

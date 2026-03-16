@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
@@ -8,12 +9,14 @@ from drf_spectacular.utils import extend_schema
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.services import IdentityService, log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
 from apps.drone_assignment.serializers import DroneAssignmentCreateSerializer, DroneAssignmentReadSerializer
 
 
 class DroneAssignmentViewSet(
     BusinessApiResponseMixin,
+    TenantScopedBusinessMixin,
     PermissionMapMixin,
     ScopedQuerysetMixin,
     mixins.ListModelMixin,
@@ -23,7 +26,7 @@ class DroneAssignmentViewSet(
 ):
     """无人机分配接口。"""
 
-    queryset = DroneAssignment.objects.select_related("drone", "staff").all().order_by("-id")
+    queryset = DroneAssignment.objects.select_related("drone", "tenant_member__user__staff_profile").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
     http_method_names = ["get", "post", "head", "options"]
 
@@ -45,17 +48,17 @@ class DroneAssignmentViewSet(
         return dict(DroneAssignmentReadSerializer(assignment, context={"request": self.request}).data)
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = self.scope_queryset_to_tenant(super().get_queryset())
         params = self.request.query_params
 
         drone_id = params.get("drone_id")
-        staff_id = params.get("staff_id")
+        tenant_member_id = params.get("tenant_member_id")
         status_value = params.get("status")
 
         if drone_id:
             queryset = queryset.filter(drone_id=drone_id)
-        if staff_id:
-            queryset = queryset.filter(staff_id=staff_id)
+        if tenant_member_id:
+            queryset = queryset.filter(tenant_member_id=tenant_member_id)
         if status_value:
             queryset = queryset.filter(status=status_value)
 
@@ -63,10 +66,23 @@ class DroneAssignmentViewSet(
             return self.apply_scope(queryset)
         return queryset
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        assignment = DroneAssignment.objects.select_related("drone", "tenant_member__user__staff_profile").get(id=serializer.instance.id)
+        read_serializer = DroneAssignmentReadSerializer(assignment, context={"request": request})
+        headers = self.get_success_headers(read_serializer.data)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     @transaction.atomic
     def perform_create(self, serializer):
-        operator_staff = IdentityService.get_staff(self.request.user)
-        assignment = serializer.save(created_by_staff_id=operator_staff.id if operator_staff else None)
+        tenant = self.get_current_tenant()
+        operator_member = IdentityService.get_active_tenant_member(self.request.user, tenant)
+        assignment = serializer.save(
+            tenant=tenant,
+            created_by_tenant_member_id=operator_member.id if operator_member else None,
+        )
         log_action(
             request=self.request,
             action="DRONE_ASSIGNMENT_CREATE",
@@ -141,7 +157,7 @@ class DroneAssignmentViewSet(
         assignment.end_at = None
         try:
             assignment.save(update_fields=["status", "end_at", "updated_at"])
-        except IntegrityError:
+        except (IntegrityError, ValidationError):
             return Response(
                 {
                     "business_code": BusinessCode.STATE_CONFLICT,

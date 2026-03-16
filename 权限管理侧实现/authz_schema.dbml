@@ -46,12 +46,10 @@ Table staff_types [note: '身份类型（岗位分类）'] {
 Table staff_profiles [note: '人员档案（一账号一Staff；superuser 禁止绑定，应用层约束）'] {
   id bigserial [pk, note: 'id 人员档案ID']
   user_id bigint [not null, unique, ref: > auth_users.id, note: 'user_id 关联账号ID（1:1）']
-  staff_no varchar(64) [not null, unique, note: 'staff_no 工号']
   name varchar(64) [not null, note: 'name 姓名']
   phone varchar(32) [note: 'phone 手机号']
   email varchar(254) [note: 'email 邮箱']
   employment_status smallint [not null, default: 1, note: 'employment_status 在职状态：1-active, 0-inactive']
-  staff_type_id bigint [not null, ref: > staff_types.id, note: 'staff_type_id 身份类型ID']
   org_id bigint [note: 'org_id 组织ID']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']

@@ -18,8 +18,6 @@ class Route(models.Model):
         on_delete=models.CASCADE,
         related_name="routes",
         verbose_name="租户",
-        null=True,
-        blank=True,
     )
     name = models.CharField("航线名称", max_length=100)
     route_type = models.PositiveSmallIntegerField(

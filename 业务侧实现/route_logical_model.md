@@ -1,6 +1,6 @@
 # 航线逻辑模型
 
-- updated_at: 2026-03-10T10:30:00Z
+- updated_at: 2026-03-15T14:35:00Z
 - entity: route
 
 ## 数据库
@@ -61,8 +61,10 @@ PostgreSQL
 
 ## 关系与约束
 
-- 当前模型无显式 ForeignKey（`drone_type_id` 为外部 ID 引用位）
+- tenant -> access.Tenant
+- 当前模型无其他显式业务 ForeignKey（`drone_type_id` 为外部 ID 引用位）
 - 唯一约束: N/A
+- 冗余字段约束：`waypoint_count` 为系统维护字段，只能由航点创建/删除链回写，不允许业务接口直写
 
 ## 生命周期入口
 
@@ -81,7 +83,7 @@ PostgreSQL
 ### 更新航线 PATCH /api/v1/routes/{id}
 - 功能：局部更新航线元数据
 - 可写字段：name, route_type, drone_type_id, total_distance, estimated_duration
-- 约束：status 和 creator_name 不可通过 PATCH 修改
+- 约束：status、creator_name、waypoint_count 不可通过 PATCH 修改
 - 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
 
 ### 删除航线 DELETE /api/v1/routes/{id}

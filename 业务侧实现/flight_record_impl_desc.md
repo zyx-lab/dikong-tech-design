@@ -1,7 +1,7 @@
 # 飞行记录实现说明
 
 - generated_at: 2026-03-08T09:24:39.176004Z
-- updated_at: 2026-03-09
+- updated_at: 2026-03-15
 - entity: flight_record
 
 ## 数据库
@@ -40,14 +40,15 @@ PostgreSQL
 | 字段 | 类型 | 说明 |
 |-----|------|------|
 | id | BigAutoField | 主键 |
-| flight_no | CharField(50) | 架次编号，唯一 |
+| tenant | ForeignKey | 租户 |
+| flight_no | CharField(50) | 架次编号（租户内唯一） |
 | mission | ForeignKey | 所属任务（可选） |
 | mission_name | CharField(100) | 任务名称（冗余） |
 | route_name | CharField(100) | 航线名称（冗余） |
 | airport_name | CharField(100) | 执行机场名称 |
 | drone | ForeignKey | 执行无人机（可选） |
 | drone_name | CharField(100) | 无人机名称（冗余） |
-| pilot | ForeignKey | 执行飞手（可选） |
+| pilot | ForeignKey | 执行飞手成员（TenantMember，可选） |
 | pilot_name | CharField(50) | 飞手姓名（冗余） |
 | start_time | DateTimeField | 开始时间（可选） |
 | end_time | DateTimeField | 结束时间（可选） |
@@ -70,6 +71,7 @@ PostgreSQL
 ### 1. GET /api/v1/flight-records
 - 功能：飞行记录列表查询
 - 筛选参数：mission_id, drone_id, pilot_id, status, flight_no
+- 说明：`pilot_id` 按 `TenantMember.id` 过滤
 - 权限：flight_record.view_flight_record
 - 业务码：SUCCESS, PERMISSION_DENIED
 
@@ -77,6 +79,7 @@ PostgreSQL
 - 功能：创建飞行记录
 - 必填：flight_no
 - 可选：mission, drone, pilot, start_time, end_time, flight_duration, photo_count, video_count, airport_name
+- 约束：`flight_no` 只要求租户内唯一；`pilot` 若提交，必须是当前租户下的 `ACTIVE TenantMember`
 - 权限：flight_record.manage_flight_record
 - 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
 
@@ -88,7 +91,7 @@ PostgreSQL
 ### 4. PATCH /api/v1/flight-records/{id}
 - 功能：局部更新飞行记录
 - 可写字段：mission, drone, pilot, start_time, end_time, flight_duration, photo_count, video_count, airport_name
-- 约束：PATCH 请求体必须至少包含一个可写字段
+- 约束：PATCH 请求体必须至少包含一个可写字段；`pilot` 字段语义同创建接口，提交值为 `TenantMember.id`
 - 权限：flight_record.manage_flight_record
 - 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
 

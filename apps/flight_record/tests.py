@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -53,6 +54,7 @@ class FlightRecordApiTests(TestCase):
             role_code="pilot_operator",
             role_name="飞手",
         )
+        self.pilot_member = pilot_member
         ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手")
 
         self.route = Route.objects.create(tenant=self.tenant, name="飞行记录测试航线", status=RouteStatus.ACTIVE)
@@ -71,7 +73,7 @@ class FlightRecordApiTests(TestCase):
             route_name=self.route.name,
             drone=self.drone,
             drone_name=self.drone.name,
-            pilot=self.pilot_staff,
+            pilot=self.pilot_member,
             pilot_name=self.pilot_staff.name,
             status=MissionStatus.RUNNING,
         )
@@ -90,6 +92,7 @@ class FlightRecordApiTests(TestCase):
         start_time = timezone.now() - timedelta(minutes=20)
         end_time = timezone.now()
         return FlightRecord.objects.create(
+            tenant=self.tenant,
             flight_no=flight_no,
             mission=current_mission,
             mission_name=current_mission.name,
@@ -97,7 +100,7 @@ class FlightRecordApiTests(TestCase):
             airport_name="珠海金湾机场",
             drone=self.drone,
             drone_name=self.drone.name,
-            pilot=self.pilot_staff,
+            pilot=self.pilot_member,
             pilot_name=self.pilot_staff.name,
             start_time=start_time,
             end_time=end_time,
@@ -117,7 +120,7 @@ class FlightRecordApiTests(TestCase):
                 "flight_no": "YJ202603080999",
                 "mission": self.mission.id,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
                 "airport_name": "珠海金湾机场",
                 "start_time": "2026-03-08T08:00:00+08:00",
                 "end_time": "2026-03-08T08:18:20+08:00",
@@ -134,11 +137,117 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(response.data["flight_no"], "YJ202603080999")
         self.assertEqual(response.data["mission"], self.mission.id)
         self.assertEqual(response.data["drone"], self.drone.id)
-        self.assertEqual(response.data["pilot"], self.pilot_staff.id)
+        self.assertEqual(response.data["pilot"], self.pilot_member.id)
         self.assertEqual(response.data["mission_name"], self.mission.name)
         self.assertEqual(response.data["drone_name"], self.drone.name)
         self.assertEqual(response.data["pilot_name"], self.pilot_staff.name)
         self.assertEqual(response.data["status"], FlightRecordStatus.COMPLETED)
+
+    def test_model_should_reject_cross_tenant_mission(self):
+        other_tenant, _, _ = ensure_tenant_role_binding(
+            self.viewer_user,
+            tenant_code="flight_record_model_other_tenant",
+            role_code="flight_record_model_other_role",
+            role_name="飞行记录模型其他租户角色",
+        )
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", status=RouteStatus.ACTIVE)
+        other_drone = Drone.objects.create(
+            tenant=other_tenant,
+            code="FR-OTHER-MODEL-DRONE",
+            name="其他租户无人机",
+            model="M300",
+            serial_no="FR-OTHER-MODEL-SN",
+            status=DroneStatus.ENABLED,
+        )
+        _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=other_tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
+        other_mission = Mission.objects.create(
+            tenant=other_tenant,
+            name="其他租户任务",
+            route=other_route,
+            route_name=other_route.name,
+            drone=other_drone,
+            drone_name=other_drone.name,
+            pilot=other_pilot_member,
+            pilot_name=self.pilot_staff.name,
+            status=MissionStatus.RUNNING,
+        )
+
+        with self.assertRaises(ValidationError):
+            FlightRecord.objects.create(
+                tenant=self.tenant,
+                flight_no="YJ202603089998",
+                mission=other_mission,
+                mission_name=other_mission.name,
+                route_name=other_route.name,
+                airport_name="跨租户机场",
+                drone=self.drone,
+                drone_name=self.drone.name,
+                pilot=self.pilot_member,
+                pilot_name=self.pilot_staff.name,
+                start_time=timezone.now() - timedelta(minutes=5),
+                end_time=timezone.now(),
+                flight_duration=300,
+                status=FlightRecordStatus.COMPLETED,
+            )
+
+    def test_create_flight_record_with_cross_tenant_mission_should_return_invalid_params(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        other_tenant, _, _ = ensure_tenant_role_binding(
+            self.viewer_user,
+            tenant_code="flight_record_other_tenant",
+            role_code="flight_record_other_role",
+            role_name="飞行记录其他租户角色",
+        )
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", status=RouteStatus.ACTIVE)
+        other_drone = Drone.objects.create(
+            tenant=other_tenant,
+            code="FR-OTHER-DRN-001",
+            name="其他租户无人机",
+            model="M300",
+            serial_no="FR-OTHER-SN-001",
+            status=DroneStatus.ENABLED,
+        )
+        _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=other_tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
+        other_mission = Mission.objects.create(
+            tenant=other_tenant,
+            name="其他租户任务",
+            route=other_route,
+            route_name=other_route.name,
+            drone=other_drone,
+            drone_name=other_drone.name,
+            pilot=other_pilot_member,
+            pilot_name=self.pilot_staff.name,
+            status=MissionStatus.RUNNING,
+        )
+
+        response = self.client.post(
+            "/api/v1/flight-records",
+            {
+                "flight_no": "YJ202603081998",
+                "mission": other_mission.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_member.id,
+                "status": FlightRecordStatus.IN_PROGRESS,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertIn("mission", response.data)
 
     def test_create_flight_record_invalid_params_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -149,7 +258,7 @@ class FlightRecordApiTests(TestCase):
             {
                 "mission": self.mission.id,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
             },
             format="json",
         )
@@ -158,6 +267,160 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
         self.assertIn("flight_no", response.data)
+
+    def test_model_should_reject_end_time_before_start_time(self):
+        start_time = timezone.now()
+        end_time = start_time - timedelta(minutes=5)
+
+        with self.assertRaises(ValidationError):
+            FlightRecord.objects.create(
+                tenant=self.tenant,
+                flight_no="YJ202603089997",
+                mission=self.mission,
+                mission_name=self.mission.name,
+                route_name=self.route.name,
+                airport_name="模型时间机场",
+                drone=self.drone,
+                drone_name=self.drone.name,
+                pilot=self.pilot_member,
+                pilot_name=self.pilot_staff.name,
+                start_time=start_time,
+                end_time=end_time,
+                status=FlightRecordStatus.COMPLETED,
+            )
+
+    def test_model_should_reject_inactive_pilot(self):
+        inactive_pilot_user = User.objects.create_user(username="flight_record_inactive_pilot", password="pass1234", status=1)
+        inactive_pilot = ensure_staff_profile(
+            inactive_pilot_user,
+            staff_no="FR-P-MODEL-003",
+            name="模型离职飞手",
+            employment_status=EmploymentStatus.INACTIVE,
+        )
+        _pilot_tenant, inactive_pilot_member, _pilot_role = ensure_tenant_role_binding(
+            inactive_pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(inactive_pilot_member, code="pilot_operator", name="飞手")
+
+        with self.assertRaises(ValidationError):
+            FlightRecord.objects.create(
+                tenant=self.tenant,
+                flight_no="YJ202603089996",
+                mission=self.mission,
+                mission_name=self.mission.name,
+                route_name=self.route.name,
+                airport_name="模型离职飞手机场",
+                drone=self.drone,
+                drone_name=self.drone.name,
+                pilot=inactive_pilot_member,
+                pilot_name=inactive_pilot.name,
+                start_time=timezone.now() - timedelta(minutes=10),
+                end_time=timezone.now(),
+                status=FlightRecordStatus.COMPLETED,
+            )
+
+    def test_model_should_reject_non_pilot_staff(self):
+        observer_user = User.objects.create_user(username="flight_record_observer", password="pass1234", status=1)
+        observer_staff = ensure_staff_profile(
+            observer_user,
+            staff_no="FR-O-MODEL-001",
+            name="模型观察员",
+            employment_status=EmploymentStatus.ACTIVE,
+        )
+        _observer_tenant, observer_member, _observer_role = ensure_tenant_role_binding(
+            observer_user,
+            tenant=self.tenant,
+            role_code="route_planner",
+            role_name="观察员",
+        )
+        ensure_tenant_member_position(observer_member, code="route_planner", name="观察员")
+
+        with self.assertRaises(ValidationError):
+            FlightRecord.objects.create(
+                tenant=self.tenant,
+                flight_no="YJ202603089995",
+                mission=self.mission,
+                mission_name=self.mission.name,
+                route_name=self.route.name,
+                airport_name="模型非飞手机场",
+                drone=self.drone,
+                drone_name=self.drone.name,
+                pilot=observer_member,
+                pilot_name=observer_staff.name,
+                start_time=timezone.now() - timedelta(minutes=10),
+                end_time=timezone.now(),
+                status=FlightRecordStatus.COMPLETED,
+            )
+
+    def test_model_should_reject_mission_drone_mismatch(self):
+        other_drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="FR-MISMATCH-DRONE",
+            name="模型不一致无人机",
+            model="M350",
+            serial_no="FR-MISMATCH-SN",
+            status=DroneStatus.ENABLED,
+        )
+
+        with self.assertRaises(ValidationError):
+            FlightRecord.objects.create(
+                tenant=self.tenant,
+                flight_no="YJ202603089994",
+                mission=self.mission,
+                mission_name=self.mission.name,
+                route_name=self.route.name,
+                airport_name="模型绑定不一致机场",
+                drone=other_drone,
+                drone_name=other_drone.name,
+                pilot=self.pilot_member,
+                pilot_name=self.pilot_staff.name,
+                start_time=timezone.now() - timedelta(minutes=10),
+                end_time=timezone.now(),
+                status=FlightRecordStatus.COMPLETED,
+            )
+
+    def test_model_should_reject_mission_pilot_mismatch(self):
+        other_pilot_user = User.objects.create_user(username="flight_record_other_pilot_mismatch", password="pass1234", status=1)
+        other_pilot = ensure_staff_profile(
+            other_pilot_user,
+            staff_no="FR-P-MISMATCH-001",
+            name="模型其他飞手",
+            employment_status=EmploymentStatus.ACTIVE,
+        )
+        _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
+            other_pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
+
+        with self.assertRaises(ValidationError):
+            FlightRecord.objects.create(
+                tenant=self.tenant,
+                flight_no="YJ202603089993",
+                mission=self.mission,
+                mission_name=self.mission.name,
+                route_name=self.route.name,
+                airport_name="模型飞手不一致机场",
+                drone=self.drone,
+                drone_name=self.drone.name,
+                pilot=other_pilot_member,
+                pilot_name=other_pilot.name,
+                start_time=timezone.now() - timedelta(minutes=10),
+                end_time=timezone.now(),
+                status=FlightRecordStatus.COMPLETED,
+            )
+
+    def test_model_should_reject_invalid_status_transition(self):
+        record = self._create_flight_record(status=FlightRecordStatus.COMPLETED)
+        record.status = FlightRecordStatus.ABORTED
+
+        with self.assertRaises(ValidationError):
+            record.save()
 
     def test_create_flight_record_duplicate_should_return_idempotent_duplicate(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -171,7 +434,7 @@ class FlightRecordApiTests(TestCase):
                 "flight_no": existing_no,
                 "mission": self.mission.id,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
                 "status": FlightRecordStatus.IN_PROGRESS,
             },
             format="json",
@@ -181,6 +444,82 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(response.data["business_code"], "IDEMPOTENT_DUPLICATE")
         self.assertEqual(response.data["business_detail_code"], "DUPLICATE_REQUEST")
 
+    def test_create_flight_record_duplicate_in_other_tenant_should_be_allowed(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        flight_no = "YJ202603089999"
+
+        other_user = User.objects.create_user(username="flight_record_other_viewer", password="pass1234", status=1)
+        other_pilot_user = User.objects.create_user(username="flight_record_other_pilot", password="pass1234", status=1)
+        other_pilot_staff = ensure_staff_profile(
+            other_pilot_user,
+            staff_no="FR-P-002",
+            name="飞手B",
+            employment_status=EmploymentStatus.ACTIVE,
+        )
+        other_tenant, _, _ = ensure_tenant_role_binding(
+            other_user,
+            tenant_code="flight_record_unique_other_tenant",
+            role_code="flight_record_unique_other_role",
+            role_name="飞行记录其他租户角色",
+        )
+        _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
+            other_pilot_user,
+            tenant=other_tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", status=RouteStatus.ACTIVE)
+        other_drone = Drone.objects.create(
+            tenant=other_tenant,
+            code="FR-OTHER-UNIQ-DRN-001",
+            name="其他租户无人机",
+            model="M300",
+            serial_no="FR-OTHER-UNIQ-SN-001",
+            status=DroneStatus.ENABLED,
+        )
+        other_mission = Mission.objects.create(
+            tenant=other_tenant,
+            name="其他租户任务",
+            route=other_route,
+            route_name=other_route.name,
+            drone=other_drone,
+            drone_name=other_drone.name,
+            pilot=other_pilot_member,
+            pilot_name=other_pilot_staff.name,
+            status=MissionStatus.RUNNING,
+        )
+        FlightRecord.objects.create(
+            tenant=other_tenant,
+            flight_no=flight_no,
+            mission=other_mission,
+            mission_name=other_mission.name,
+            route_name=other_route.name,
+            airport_name="深圳宝安机场",
+            drone=other_drone,
+            drone_name=other_drone.name,
+            pilot=other_pilot_member,
+            pilot_name=other_pilot_staff.name,
+            status=FlightRecordStatus.IN_PROGRESS,
+        )
+
+        response = self.client.post(
+            "/api/v1/flight-records",
+            {
+                "flight_no": flight_no,
+                "mission": self.mission.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_member.id,
+                "status": FlightRecordStatus.IN_PROGRESS,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["flight_no"], flight_no)
+
     def test_create_flight_record_without_auth_should_return_permission_denied(self):
         response = self.client.post(
             "/api/v1/flight-records",
@@ -188,7 +527,7 @@ class FlightRecordApiTests(TestCase):
                 "flight_no": "YJ202603081111",
                 "mission": self.mission.id,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
                 "status": FlightRecordStatus.IN_PROGRESS,
             },
             format="json",
@@ -207,7 +546,7 @@ class FlightRecordApiTests(TestCase):
                 "flight_no": "YJ202603081222",
                 "mission": self.mission.id,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
                 "status": FlightRecordStatus.IN_PROGRESS,
             },
             format="json",

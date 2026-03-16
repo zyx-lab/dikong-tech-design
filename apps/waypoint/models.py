@@ -1,4 +1,7 @@
+from django.core.exceptions import ValidationError
 from django.db import models
+
+from apps.route.models import RouteStatus
 
 
 class Waypoint(models.Model):
@@ -30,3 +33,11 @@ class Waypoint(models.Model):
 
     def __str__(self):
         return f"{self.route_id}-{self.sequence}"
+
+    def clean(self):
+        if self.route_id and self.route.status != RouteStatus.ACTIVE:
+            raise ValidationError({"route": "仅允许绑定状态为正常的航线"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)

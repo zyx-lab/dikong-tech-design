@@ -47,9 +47,18 @@ from apps.access.serializers import (
 from apps.access.services import (
     AuthzService,
     expire_stale_tenant_member_invitations,
+    is_active_platform_admin,
     log_action,
     snapshot,
 )
+
+
+def _validation_error_response(exc: serializers.ValidationError) -> Response:
+    detail = exc.detail
+    payload = dict(detail) if isinstance(detail, dict) else {"error": detail}
+    payload.setdefault("business_code", "INVALID_PARAMS")
+    payload.setdefault("business_detail_code", "VALIDATION_ERROR")
+    return Response(payload, status=status.HTTP_400_BAD_REQUEST)
 
 
 def _user_payload(user: User) -> dict:
@@ -59,14 +68,16 @@ def _user_payload(user: User) -> dict:
         "is_active": user.is_active,
         "is_staff": user.is_staff,
         "is_superuser": user.is_superuser,
+        "is_platform_admin": user.is_platform_admin,
         "status": user.status,
     }
     staff = getattr(user, "staff_profile", None)
     if staff:
         payload["staff"] = {
             "id": staff.id,
-            "staff_no": staff.staff_no,
             "name": staff.name,
+            "phone": staff.phone,
+            "email": staff.email,
             "employment_status": staff.employment_status,
             "org_id": staff.org_id,
         }
@@ -113,6 +124,29 @@ def _get_current_tenant_member_context(request):
     return tenant, member, role_codes
 
 
+def _scope_internal_queryset_to_current_tenant(request, queryset, *, lookup: str):
+    if request.user.is_superuser or is_active_platform_admin(request.user):
+        return queryset
+    tenant, _member, _role_codes = _get_current_tenant_member_context(request)
+    return queryset.filter(**{lookup: tenant})
+
+
+def _scope_tenant_queryset_to_current_tenant(request, queryset):
+    if request.user.is_superuser or is_active_platform_admin(request.user):
+        return queryset
+    tenant, _member, _role_codes = _get_current_tenant_member_context(request)
+    return queryset.filter(id=tenant.id)
+
+
+def _scope_audit_log_queryset(request, queryset):
+    if request.user.is_superuser:
+        return queryset
+    if is_active_platform_admin(request.user):
+        return queryset.filter(tenant__isnull=True)
+    tenant, _member, _role_codes = _get_current_tenant_member_context(request)
+    return queryset.filter(tenant=tenant)
+
+
 class MePermissionsView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = MePermissionSerializer
@@ -120,12 +154,15 @@ class MePermissionsView(generics.GenericAPIView):
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         tenant = getattr(request, "tenant_context", None)
-        if tenant is None:
+        if tenant is None and not (request.user.is_superuser or is_active_platform_admin(request.user)):
             raise BusinessPermissionDenied("tenant context required", business_detail_code="TENANT_CONTEXT_REQUIRED")
 
         if request.user.is_superuser:
             permissions = AuthzService.get_permission_scope_map(request)
             role_codes: list[str] = []
+        elif is_active_platform_admin(request.user):
+            permissions = AuthzService.get_permission_scope_map(request)
+            role_codes = ["platform_admin"]
         else:
             tenant, _member, role_codes = _get_current_tenant_member_context(request)
             permissions = AuthzService.get_tenant_role_permission_scope_map(role_codes)
@@ -135,7 +172,7 @@ class MePermissionsView(generics.GenericAPIView):
             {
                 "business_code": "SUCCESS",
                 "business_detail_code": "OK",
-                "tenant_code": tenant.code,
+                "tenant_code": tenant.code if tenant is not None else None,
                 "roles": role_codes,
                 "items": serializer.data,
             }
@@ -238,6 +275,7 @@ class SessionStatusView(APIView):
                     "is_authenticated": True,
                     "username": user.username,
                     "is_superuser": bool(user.is_superuser),
+                    "is_platform_admin": bool(user.is_platform_admin),
                 }
             )
         return Response({"is_authenticated": False})
@@ -271,6 +309,7 @@ class LoginView(APIView):
                 "business_detail_code": "OK",
                 "username": user.username,
                 "is_superuser": user.is_superuser,
+                "is_platform_admin": user.is_platform_admin,
             }
         )
 
@@ -363,6 +402,15 @@ class UserListCreateView(PermissionMapMixin, generics.ListCreateAPIView):
     }
     queryset = User.objects.select_related("staff_profile").all().order_by("id")
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        queryset = _scope_internal_queryset_to_current_tenant(
+            self.request,
+            queryset,
+            lookup="tenant_members__tenant",
+        )
+        return queryset.distinct()
+
     def perform_create(self, serializer):
         user = serializer.save()
         log_action(
@@ -383,6 +431,15 @@ class UserDetailView(PermissionMapMixin, generics.RetrieveUpdateAPIView):
         "PATCH": "access.manage_user_accounts",
     }
     queryset = User.objects.select_related("staff_profile").all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        queryset = _scope_internal_queryset_to_current_tenant(
+            self.request,
+            queryset,
+            lookup="tenant_members__tenant",
+        )
+        return queryset.distinct()
 
     def perform_update(self, serializer):
         before = _user_payload(self.get_object())
@@ -432,7 +489,7 @@ class AuditLogListView(PermissionMapMixin, generics.ListAPIView):
     queryset = AuditLog.objects.select_related("actor_user").all()
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = _scope_audit_log_queryset(self.request, super().get_queryset())
         action = self.request.query_params.get("action")
         target_type = self.request.query_params.get("target_type")
         actor_user_id = self.request.query_params.get("actor_user_id")
@@ -525,6 +582,9 @@ class TenantViewSet(PermissionMapMixin, generics.ListCreateAPIView, generics.Ret
     }
     queryset = Tenant.objects.all()
 
+    def get_queryset(self):
+        return _scope_tenant_queryset_to_current_tenant(self.request, super().get_queryset())
+
     def list(self, request, *args, **kwargs):
         serializer = self.get_serializer(self.get_queryset(), many=True)
         return Response({"business_code": "SUCCESS", "business_detail_code": "OK", "data": serializer.data, "count": len(serializer.data)})
@@ -575,8 +635,13 @@ class TenantDetailView(PermissionMapMixin, generics.RetrieveAPIView):
     }
     queryset = Tenant.objects.all()
 
+    def get_queryset(self):
+        return _scope_tenant_queryset_to_current_tenant(self.request, super().get_queryset())
+
     def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
+        instance = self.get_queryset().filter(id=kwargs["pk"]).first()
+        if instance is None:
+            raise BusinessResourceNotFound("tenant not found", business_detail_code="TENANT_NOT_FOUND")
         serializer = self.get_serializer(instance)
         return Response({"business_code": "SUCCESS", "business_detail_code": "OK", "data": serializer.data})
 
@@ -587,6 +652,9 @@ class TenantDisableView(PermissionMapMixin, generics.GenericAPIView):
         "POST": "access.manage_tenant",
     }
     queryset = Tenant.objects.all()
+
+    def get_queryset(self):
+        return _scope_tenant_queryset_to_current_tenant(self.request, super().get_queryset())
 
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, pk: int):
@@ -618,6 +686,9 @@ class TenantEnableView(PermissionMapMixin, generics.GenericAPIView):
         "POST": "access.manage_tenant",
     }
     queryset = Tenant.objects.all()
+
+    def get_queryset(self):
+        return _scope_tenant_queryset_to_current_tenant(self.request, super().get_queryset())
 
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, pk: int):
@@ -651,6 +722,9 @@ class TenantInitializeAdminView(PermissionMapMixin, generics.GenericAPIView):
     serializer_class = TenantInitializeAdminSerializer
     queryset = Tenant.objects.all()
 
+    def get_queryset(self):
+        return _scope_tenant_queryset_to_current_tenant(self.request, super().get_queryset())
+
     @extend_schema(request=TenantInitializeAdminSerializer, responses=OpenApiTypes.OBJECT)
     def post(self, request, pk: int):
         tenant = self.get_queryset().filter(id=pk).first()
@@ -660,13 +734,13 @@ class TenantInitializeAdminView(PermissionMapMixin, generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data, context={"tenant": tenant, "request": request})
         try:
             serializer.is_valid(raise_exception=True)
-        except serializers.ValidationError:
-            return Response(
-                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        except serializers.ValidationError as exc:
+            return _validation_error_response(exc)
 
-        member = serializer.save()
+        try:
+            member = serializer.save()
+        except serializers.ValidationError as exc:
+            return _validation_error_response(exc)
         role_codes = list(
             member.role_bindings.filter(status=TenantMemberRoleStatus.GRANTED)
             .order_by("id")
@@ -701,6 +775,9 @@ class TenantSetPlanView(PermissionMapMixin, generics.GenericAPIView):
     serializer_class = TenantSetPlanSerializer
     queryset = Tenant.objects.all()
 
+    def get_queryset(self):
+        return _scope_tenant_queryset_to_current_tenant(self.request, super().get_queryset())
+
     @extend_schema(request=TenantSetPlanSerializer, responses=OpenApiTypes.OBJECT)
     def post(self, request, pk: int):
         tenant = self.get_queryset().filter(id=pk).first()
@@ -732,6 +809,7 @@ class TenantSetPlanView(PermissionMapMixin, generics.GenericAPIView):
 
 class TenantMemberListCreateView(PermissionMapMixin, generics.ListCreateAPIView):
     permission_classes = [RequireInternalPermission]
+    platform_admin_forbidden = True
     method_permission_map = {
         "GET": "access.view_tenant_member",
         "POST": "access.manage_tenant_member",
@@ -743,6 +821,7 @@ class TenantMemberListCreateView(PermissionMapMixin, generics.ListCreateAPIView)
             .prefetch_related("role_bindings__system_role", "qualifications__qualification_type")
             .all()
         )
+        qs = _scope_internal_queryset_to_current_tenant(self.request, qs, lookup="tenant")
         tenant_id = self.request.query_params.get("tenant_id")
         status_value = self.request.query_params.get("status")
         if tenant_id:
@@ -761,6 +840,17 @@ class TenantMemberListCreateView(PermissionMapMixin, generics.ListCreateAPIView)
         context["request"] = self.request
         return context
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+        except serializers.ValidationError as exc:
+            return _validation_error_response(exc)
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     def perform_create(self, serializer):
         member = serializer.save()
         log_action(
@@ -775,6 +865,7 @@ class TenantMemberListCreateView(PermissionMapMixin, generics.ListCreateAPIView)
 
 class TenantMemberInviteView(PermissionMapMixin, generics.GenericAPIView):
     permission_classes = [RequireInternalPermission]
+    platform_admin_forbidden = True
     serializer_class = TenantMemberInviteSerializer
     method_permission_map = {
         "POST": "access.manage_tenant_member",
@@ -785,13 +876,13 @@ class TenantMemberInviteView(PermissionMapMixin, generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data, context={"request": request})
         try:
             serializer.is_valid(raise_exception=True)
-        except serializers.ValidationError:
-            return Response(
-                {"business_code": "INVALID_PARAMS", "business_detail_code": "VALIDATION_ERROR"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        except serializers.ValidationError as exc:
+            return _validation_error_response(exc)
 
-        member = serializer.save()
+        try:
+            member = serializer.save()
+        except serializers.ValidationError as exc:
+            return _validation_error_response(exc)
         log_action(
             request=request,
             action="TENANT_MEMBER_INVITE",
@@ -874,10 +965,14 @@ class MeInvitationRejectView(generics.GenericAPIView):
 
 class TenantMemberDisableView(PermissionMapMixin, generics.GenericAPIView):
     permission_classes = [RequireInternalPermission]
+    platform_admin_forbidden = True
     method_permission_map = {
         "POST": "access.manage_tenant_member",
     }
     queryset = TenantMember.objects.select_related("tenant", "user").prefetch_related("role_bindings__system_role", "qualifications__qualification_type")
+
+    def get_queryset(self):
+        return _scope_internal_queryset_to_current_tenant(self.request, super().get_queryset(), lookup="tenant")
 
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, pk: int):
@@ -917,10 +1012,14 @@ class TenantMemberDisableView(PermissionMapMixin, generics.GenericAPIView):
 
 class TenantMemberEnableView(PermissionMapMixin, generics.GenericAPIView):
     permission_classes = [RequireInternalPermission]
+    platform_admin_forbidden = True
     method_permission_map = {
         "POST": "access.manage_tenant_member",
     }
     queryset = TenantMember.objects.select_related("tenant", "user").prefetch_related("role_bindings__system_role", "qualifications__qualification_type")
+
+    def get_queryset(self):
+        return _scope_internal_queryset_to_current_tenant(self.request, super().get_queryset(), lookup="tenant")
 
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, pk: int):
@@ -954,6 +1053,7 @@ class TenantMemberEnableView(PermissionMapMixin, generics.GenericAPIView):
 class TenantMemberDetailView(PermissionMapMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = TenantMemberSerializer
     permission_classes = [RequireInternalPermission]
+    platform_admin_forbidden = True
     method_permission_map = {
         "GET": "access.view_tenant_member",
         "PUT": "access.manage_tenant_member",
@@ -961,6 +1061,9 @@ class TenantMemberDetailView(PermissionMapMixin, generics.RetrieveUpdateDestroyA
         "DELETE": "access.manage_tenant_member",
     }
     queryset = TenantMember.objects.select_related("tenant", "user").prefetch_related("role_bindings__system_role", "qualifications__qualification_type")
+
+    def get_queryset(self):
+        return _scope_internal_queryset_to_current_tenant(self.request, super().get_queryset(), lookup="tenant")
 
     def perform_destroy(self, instance):
         log_action(
@@ -975,9 +1078,13 @@ class TenantMemberDetailView(PermissionMapMixin, generics.RetrieveUpdateDestroyA
 
 class TenantMemberRoleAssignView(PermissionMapMixin, generics.GenericAPIView):
     permission_classes = [RequireInternalPermission]
+    platform_admin_forbidden = True
     required_permission = "access.assign_tenant_member_role"
     serializer_class = TenantMemberRoleAssignSerializer
     queryset = TenantMember.objects.all()
+
+    def get_queryset(self):
+        return _scope_internal_queryset_to_current_tenant(self.request, super().get_queryset(), lookup="tenant")
 
     @extend_schema(request=TenantMemberRoleAssignSerializer, responses=TenantMemberSerializer)
     def post(self, request, pk):

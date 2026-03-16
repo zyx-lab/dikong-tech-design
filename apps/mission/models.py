@@ -1,4 +1,9 @@
+from django.core.exceptions import ValidationError
 from django.db import models
+
+from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
+from apps.drone.models import DroneStatus
+from apps.route.models import RouteStatus
 
 
 class MissionStatus(models.IntegerChoices):
@@ -18,15 +23,13 @@ class Mission(models.Model):
         on_delete=models.CASCADE,
         related_name="missions",
         verbose_name="租户",
-        null=True,
-        blank=True,
     )
     name = models.CharField("任务名称", max_length=100)
     route = models.ForeignKey("route.Route", on_delete=models.PROTECT, related_name="missions", verbose_name="航线")
     route_name = models.CharField("航线名称（冗余）", max_length=100, blank=True, default="")
     drone = models.ForeignKey("drone.Drone", on_delete=models.PROTECT, related_name="missions", verbose_name="无人机")
     drone_name = models.CharField("无人机名称（冗余）", max_length=100, blank=True, default="")
-    pilot = models.ForeignKey("access.StaffProfile", on_delete=models.PROTECT, related_name="missions", verbose_name="飞手")
+    pilot = models.ForeignKey("access.TenantMember", on_delete=models.PROTECT, related_name="missions", verbose_name="飞手成员")
     pilot_name = models.CharField("飞手姓名（冗余）", max_length=50, blank=True, default="")
     scheduled_at = models.DateTimeField("计划执行时间", null=True, blank=True)
     remark = models.CharField("任务备注", max_length=500, blank=True, default="")
@@ -45,3 +48,46 @@ class Mission(models.Model):
 
     def __str__(self):
         return f"{self.id}-{self.name}"
+
+    def clean(self):
+        if self.pk:
+            current_status = Mission.objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            allowed_transitions = {
+                MissionStatus.PENDING: {MissionStatus.RUNNING, MissionStatus.CANCELED},
+                MissionStatus.RUNNING: {MissionStatus.PAUSED, MissionStatus.COMPLETED, MissionStatus.CANCELED, MissionStatus.FAILED},
+                MissionStatus.PAUSED: {MissionStatus.RUNNING, MissionStatus.CANCELED},
+                MissionStatus.COMPLETED: set(),
+                MissionStatus.CANCELED: set(),
+                MissionStatus.FAILED: set(),
+            }
+            if current_status is not None and self.status != current_status and self.status not in allowed_transitions.get(current_status, set()):
+                raise ValidationError({"status": "当前任务状态不允许执行该变更"})
+
+        if self.tenant_id and self.route_id and self.route.tenant_id != self.tenant_id:
+            raise ValidationError({"route": "route 必须属于当前 tenant"})
+        if self.tenant_id and self.drone_id and self.drone.tenant_id != self.tenant_id:
+            raise ValidationError({"drone": "drone 必须属于当前 tenant"})
+        if self.route_id and self.route.status != RouteStatus.ACTIVE:
+            raise ValidationError({"route": "仅允许绑定状态为正常的航线"})
+        if self.drone_id and self.drone.status != DroneStatus.ENABLED:
+            raise ValidationError({"drone": "仅允许绑定启用状态无人机"})
+        if self.tenant_id and self.pilot_id and self.pilot.tenant_id != self.tenant_id:
+            raise ValidationError({"pilot": "pilot 必须属于当前 tenant"})
+        if self.pilot_id and self.pilot.status != TenantMemberStatus.ACTIVE:
+            raise ValidationError({"pilot": "仅允许分配给 ACTIVE 成员"})
+        if self.pilot_id:
+            staff = getattr(self.pilot.user, "staff_profile", None)
+            if staff is None:
+                raise ValidationError({"pilot": "pilot 对应账号必须存在 staff_profile"})
+            if staff.employment_status != EmploymentStatus.ACTIVE:
+                raise ValidationError({"pilot": "仅允许分配给在职飞手"})
+            if not self.pilot.role_bindings.filter(
+                system_role__code="pilot_operator",
+                system_role__status=DirectoryStatus.ACTIVE,
+                status=TenantMemberRoleStatus.GRANTED,
+            ).exists():
+                raise ValidationError({"pilot": "仅允许分配给飞手类型（pilot_operator）"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)

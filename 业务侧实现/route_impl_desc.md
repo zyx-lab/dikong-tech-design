@@ -1,7 +1,7 @@
 # 航线实现说明
 
 - generated_at: 2026-03-08T07:52:00Z
-- updated_at: 2026-03-10
+- updated_at: 2026-03-15
 - entity: route
 
 ## 数据库
@@ -40,12 +40,13 @@ PostgreSQL
 | 字段 | 类型 | 说明 |
 |-----|------|------|
 | id | BigAutoField | 主键 |
+| tenant | ForeignKey | 租户 |
 | name | CharField(100) | 航线名称 |
 | route_type | PositiveSmallIntegerField | 航线类型扩展位，默认0=待扩展 |
 | drone_type_id | BigIntegerField | 适用无人机类型 ID（可选） |
 | total_distance | DecimalField(12,2) | 航线总长度（米，可选） |
 | estimated_duration | PositiveIntegerField | 预计飞行时长（秒，可选） |
-| waypoint_count | PositiveIntegerField | 航点数量（可选） |
+| waypoint_count | PositiveIntegerField | 航点数量（系统维护冗余） |
 | creator_name | CharField(50) | 创建人姓名 |
 | status | PositiveSmallIntegerField | 状态：0=禁用, 1=正常 |
 | created_at | DateTimeField | 创建时间 |
@@ -72,7 +73,7 @@ PostgreSQL
 - 功能：创建航线
 - 必填：name
 - 可选：route_type, drone_type_id, total_distance, estimated_duration
-- 自动设置：status=ACTIVE, creator_name=当前用户姓名
+- 自动设置：status=ACTIVE, creator_name=当前用户姓名, waypoint_count=按航点链路回写
 - 权限：route.manage_route
 - 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
 
@@ -84,7 +85,7 @@ PostgreSQL
 ### 4. PATCH /api/v1/routes/{id}
 - 功能：局部更新航线
 - 可写字段：name, route_type, drone_type_id, total_distance, estimated_duration
-- 约束：PATCH 请求体必须至少包含一个可写字段，status 和 creator_name 不可写
+- 约束：PATCH 请求体必须至少包含一个可写字段，status / creator_name / waypoint_count 不可写
 - 权限：route.manage_route
 - 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
 

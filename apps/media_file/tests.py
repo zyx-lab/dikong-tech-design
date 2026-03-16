@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -54,6 +55,7 @@ class MediaFileApiTests(TestCase):
             role_code="pilot_operator",
             role_name="飞手",
         )
+        self.pilot_member = pilot_member
         ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手")
 
         self.route = Route.objects.create(tenant=self.tenant, name="媒体测试航线", status=RouteStatus.ACTIVE)
@@ -72,7 +74,7 @@ class MediaFileApiTests(TestCase):
             route_name=self.route.name,
             drone=self.drone,
             drone_name=self.drone.name,
-            pilot=self.pilot_staff,
+            pilot=self.pilot_member,
             pilot_name=self.pilot_staff.name,
             status=MissionStatus.RUNNING,
         )
@@ -90,6 +92,7 @@ class MediaFileApiTests(TestCase):
         start_time = timezone.now() - timedelta(minutes=20)
         end_time = timezone.now()
         return FlightRecord.objects.create(
+            tenant=self.tenant,
             flight_no=flight_no,
             mission=self.mission,
             mission_name=self.mission.name,
@@ -97,7 +100,7 @@ class MediaFileApiTests(TestCase):
             airport_name="珠海金湾机场",
             drone=self.drone,
             drone_name=self.drone.name,
-            pilot=self.pilot_staff,
+            pilot=self.pilot_member,
             pilot_name=self.pilot_staff.name,
             start_time=start_time,
             end_time=end_time,
@@ -116,6 +119,7 @@ class MediaFileApiTests(TestCase):
         is_deleted: bool = False,
     ) -> MediaFile:
         return MediaFile.objects.create(
+            tenant=self.tenant,
             flight_record=flight_record,
             media_type=media_type,
             file_name=file_name,
@@ -124,6 +128,7 @@ class MediaFileApiTests(TestCase):
             file_size=1024,
             captured_at=timezone.now() - timedelta(minutes=3),
             is_deleted=is_deleted,
+            deleted_at=timezone.now() if is_deleted else None,
         )
 
     def test_list_media_files_should_return_success(self):
@@ -174,6 +179,110 @@ class MediaFileApiTests(TestCase):
                 target_id=str(media_file.id),
             ).exists()
         )
+
+    def test_create_media_file_with_cross_tenant_flight_record_should_return_invalid_params(self):
+        self._grant_permission("media_file.manage_media_file")
+        self.client.force_authenticate(self.viewer_user)
+        other_tenant, _, _ = ensure_tenant_role_binding(
+            self.viewer_user,
+            tenant_code="media_file_other_tenant",
+            role_code="media_file_other_role",
+            role_name="媒体文件其他租户角色",
+        )
+        other_record = FlightRecord.objects.create(
+            tenant=other_tenant,
+            flight_no="MF202603089999",
+            airport_name="其他租户机场",
+            status=FlightRecordStatus.COMPLETED,
+        )
+
+        response = self.client.post(
+            "/api/v1/media-files",
+            {
+                "flight_record": other_record.id,
+                "media_type": MediaType.PHOTO,
+                "file_name": "IMG_OTHER_TENANT.JPG",
+                "file_url": "https://example.com/IMG_OTHER_TENANT.JPG",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertIn("flight_record", response.data)
+
+    def test_model_should_reject_cross_tenant_flight_record(self):
+        other_tenant, _, _ = ensure_tenant_role_binding(
+            self.viewer_user,
+            tenant_code="media_file_model_other_tenant",
+            role_code="media_file_model_other_role",
+            role_name="媒体文件模型其他租户角色",
+        )
+        _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=other_tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", status=RouteStatus.ACTIVE)
+        other_drone = Drone.objects.create(
+            tenant=other_tenant,
+            code="MF-OTHER-MODEL-DRONE",
+            name="其他租户无人机",
+            model="M300",
+            serial_no="MF-OTHER-MODEL-SN",
+            status=DroneStatus.ENABLED,
+        )
+        other_mission = Mission.objects.create(
+            tenant=other_tenant,
+            name="其他租户任务",
+            route=other_route,
+            route_name=other_route.name,
+            drone=other_drone,
+            drone_name=other_drone.name,
+            pilot=other_pilot_member,
+            pilot_name=self.pilot_staff.name,
+            status=MissionStatus.RUNNING,
+        )
+        other_record = FlightRecord.objects.create(
+            tenant=other_tenant,
+            flight_no="MF202603089998",
+            mission=other_mission,
+            mission_name=other_mission.name,
+            route_name=other_route.name,
+            airport_name="其他租户机场",
+            drone=other_drone,
+            drone_name=other_drone.name,
+            pilot=other_pilot_member,
+            pilot_name=self.pilot_staff.name,
+            start_time=timezone.now() - timedelta(minutes=8),
+            end_time=timezone.now(),
+            flight_duration=480,
+            status=FlightRecordStatus.COMPLETED,
+        )
+
+        with self.assertRaises(ValidationError):
+            MediaFile.objects.create(
+                tenant=self.tenant,
+                flight_record=other_record,
+                media_type=MediaType.PHOTO,
+                file_name="CROSS_TENANT.JPG",
+                file_url="https://example.com/CROSS_TENANT.JPG",
+            )
+
+    def test_model_should_reject_deleted_without_deleted_at(self):
+        flight_record = self._create_flight_record()
+
+        with self.assertRaises(ValidationError):
+            MediaFile.objects.create(
+                tenant=self.tenant,
+                flight_record=flight_record,
+                media_type=MediaType.PHOTO,
+                file_name="MISSING_DELETED_AT.JPG",
+                file_url="https://example.com/MISSING_DELETED_AT.JPG",
+                is_deleted=True,
+            )
 
     def test_create_media_file_invalid_params_should_return_invalid_params(self):
         self._grant_permission("media_file.manage_media_file")

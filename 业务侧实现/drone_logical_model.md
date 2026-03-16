@@ -1,6 +1,6 @@
 # 无人机逻辑模型
 
-- generated_at: 2026-03-08
+- generated_at: 2026-03-15
 - entity: drone
 
 ## 数据库
@@ -78,9 +78,14 @@ PostgreSQL
 
 ## 关系与约束
 
+- drones.tenant_id -> tenants.id
+- drones.created_by_tenant_member_id：记录租户内创建人，用于 `OWN` 范围判定与审计
 - drone_assignments.drone_id -> drones.id
-- drone_assignments.staff_id -> staff_profiles.id
-- 唯一约束：同一 (drone_id, staff_id) 在 ACTIVE 状态下唯一
+- drone_assignments.tenant_id -> tenants.id
+- drone_assignments.tenant_member_id -> tenant_members.id
+- 唯一约束：同一 `(drone_id, tenant_member_id)` 在 `ACTIVE` 状态下唯一
+- 无人机业务标识改为租户内唯一：`(tenant_id, code)`、`(tenant_id, serial_no)`
+- `OWN / ASSIGNED` 授权统一按 `TenantMember.id` 命中，不再使用全局 `staff_id`
 
 ## 生命周期入口
 

@@ -45,6 +45,7 @@ class RouteApiTests(TestCase):
             role_code="pilot_operator",
             role_name="飞手",
         )
+        self.pilot_member = pilot_member
         ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手")
         self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
         self.drone = Drone.objects.create(
@@ -90,7 +91,7 @@ class RouteApiTests(TestCase):
             route_name=route.name,
             drone=self.drone,
             drone_name=self.drone.name,
-            pilot=self.pilot_staff,
+            pilot=self.pilot_member,
             pilot_name=self.pilot_staff.name,
             status=status,
         )
@@ -107,7 +108,6 @@ class RouteApiTests(TestCase):
                 "drone_type_id": 1,
                 "total_distance": "2063.50",
                 "estimated_duration": 1200,
-                "waypoint_count": 12,
             },
             format="json",
         )
@@ -135,7 +135,6 @@ class RouteApiTests(TestCase):
         payload = {
             "name": "重复名称航线",
             "route_type": RouteType.PENDING_EXTENSION,
-            "waypoint_count": 8,
         }
 
         first = self.client.post("/api/v1/routes", payload, format="json")
@@ -145,6 +144,25 @@ class RouteApiTests(TestCase):
         self.assertEqual(second.status_code, 201)
         self.assertEqual(second.data["business_code"], "SUCCESS")
         self.assertEqual(second.data["business_detail_code"], "OK")
+
+    def test_create_route_with_waypoint_count_should_return_invalid_params(self):
+        self._grant_permission("route.manage_route")
+        self.client.force_authenticate(self.user)
+
+        response = self.client.post(
+            "/api/v1/routes",
+            {
+                "name": "非法航点数量航线",
+                "route_type": RouteType.PENDING_EXTENSION,
+                "waypoint_count": 12,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
+        self.assertIn("waypoint_count", response.data)
 
     def test_create_route_invalid_params_should_return_invalid_params(self):
         self._grant_permission("route.manage_route")
@@ -582,8 +600,10 @@ class RouteApiTests(TestCase):
     def test_delete_route_already_disabled_with_missions_should_be_idempotent(self):
         self._grant_permission("route.manage_route")
         self.client.force_authenticate(self.user)
-        route = self._create_route(name="已禁用引用航线", status=RouteStatus.DISABLED)
+        route = self._create_route(name="已禁用引用航线", status=RouteStatus.ACTIVE)
         self._create_mission(route, name="引用禁用航线任务")
+        route.status = RouteStatus.DISABLED
+        route.save(update_fields=["status", "updated_at"])
 
         response = self.client.delete(f"/api/v1/routes/{route.id}")
 

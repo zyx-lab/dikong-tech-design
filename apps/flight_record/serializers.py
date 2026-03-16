@@ -1,6 +1,17 @@
 from rest_framework import serializers
 
+from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
+from apps.api_v1.tenant_scope import require_request_tenant
 from apps.flight_record.models import FlightRecord
+
+
+def _pilot_display_name(pilot_member) -> str:
+    staff = getattr(pilot_member.user, "staff_profile", None)
+    if staff is not None and staff.name:
+        return staff.name
+    if pilot_member.display_name:
+        return pilot_member.display_name
+    return pilot_member.user.username
 
 
 class FlightRecordReadSerializer(serializers.ModelSerializer):
@@ -35,18 +46,47 @@ class FlightRecordWriteSerializer(serializers.ModelSerializer):
         if unknown_fields:
             raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
 
+        current_tenant = require_request_tenant(self.context)
         instance = getattr(self, "instance", None)
         if instance is not None and "status" in self.initial_data:
             raise serializers.ValidationError({"status": "status 不可通过 PATCH 直接修改，请使用状态动作接口"})
 
+        flight_no = attrs.get("flight_no", instance.flight_no if instance is not None else None)
         start_time = attrs.get("start_time", instance.start_time if instance is not None else None)
         end_time = attrs.get("end_time", instance.end_time if instance is not None else None)
         mission = attrs.get("mission", instance.mission if instance is not None else None)
         drone = attrs.get("drone", instance.drone if instance is not None else None)
         pilot = attrs.get("pilot", instance.pilot if instance is not None else None)
 
+        if flight_no and FlightRecord.objects.filter(
+            tenant=current_tenant,
+            flight_no=flight_no,
+        ).exclude(pk=getattr(instance, "pk", None)).exists():
+            raise serializers.ValidationError({"flight_no": "当前租户下已存在相同架次编号"})
+
         if start_time and end_time and end_time < start_time:
             raise serializers.ValidationError({"end_time": "结束时间不能早于开始时间"})
+
+        if mission is not None and mission.tenant_id != current_tenant.id:
+            raise serializers.ValidationError({"mission": "仅允许绑定当前租户下的任务"})
+        if drone is not None and drone.tenant_id != current_tenant.id:
+            raise serializers.ValidationError({"drone": "仅允许绑定当前租户下的无人机"})
+        if pilot is not None and pilot.tenant_id != current_tenant.id:
+            raise serializers.ValidationError({"pilot": "仅允许绑定当前租户下的成员"})
+        if pilot is not None and pilot.status != TenantMemberStatus.ACTIVE:
+            raise serializers.ValidationError({"pilot": "仅允许绑定 ACTIVE 成员"})
+        if pilot is not None:
+            staff = getattr(pilot.user, "staff_profile", None)
+            if staff is None:
+                raise serializers.ValidationError({"pilot": "pilot 对应账号必须存在 staff_profile"})
+            if staff.employment_status != EmploymentStatus.ACTIVE:
+                raise serializers.ValidationError({"pilot": "仅允许绑定在职飞手"})
+            if not pilot.role_bindings.filter(
+                system_role__code="pilot_operator",
+                system_role__status=DirectoryStatus.ACTIVE,
+                status=TenantMemberRoleStatus.GRANTED,
+            ).exists():
+                raise serializers.ValidationError({"pilot": "仅允许绑定当前租户下的飞手类型（pilot_operator）"})
 
         if mission and drone and mission.drone_id and mission.drone_id != drone.id:
             raise serializers.ValidationError({"drone": "drone 与 mission 绑定关系不一致"})
@@ -76,7 +116,7 @@ class FlightRecordWriteSerializer(serializers.ModelSerializer):
         if drone:
             validated_data.setdefault("drone_name", drone.name)
         if pilot:
-            validated_data.setdefault("pilot_name", pilot.name)
+            validated_data.setdefault("pilot_name", _pilot_display_name(pilot))
 
         if start_time and end_time and validated_data.get("flight_duration") is None:
             duration_seconds = int((end_time - start_time).total_seconds())
@@ -103,7 +143,7 @@ class FlightRecordWriteSerializer(serializers.ModelSerializer):
             validated_data["route_name"] = ""
 
         validated_data["drone_name"] = drone.name if drone else ""
-        validated_data["pilot_name"] = pilot.name if pilot else ""
+        validated_data["pilot_name"] = _pilot_display_name(pilot) if pilot else ""
 
         if start_time and end_time and "flight_duration" not in validated_data:
             duration_seconds = int((end_time - start_time).total_seconds())

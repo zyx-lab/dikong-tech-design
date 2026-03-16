@@ -44,17 +44,18 @@ PostgreSQL
 
 ## 1. drone_assignments（无人机分配表）
 
-**说明**：维护无人机与飞手的分配关系，是 `ASSIGNED` 范围授权的事实来源。
+**说明**：维护无人机与租户成员的分配关系，是 `ASSIGNED` 范围授权的事实来源。
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
+| tenant_id | bigint | FK, NOT NULL | - | 当前租户 ID |
 | drone_id | bigint | FK, NOT NULL | - | 关联无人机 ID |
-| staff_id | bigint | FK, NOT NULL | - | 关联飞手 ID |
+| tenant_member_id | bigint | FK, NOT NULL | - | 关联租户成员 ID |
 | status | varchar(16) | NOT NULL | ACTIVE | 分配状态 |
 | start_at | timestamp | NOT NULL | now() | 分配生效时间 |
 | end_at | timestamp | - | - | 分配结束时间 |
-| created_by_staff_id | bigint | - | - | 操作人 staff ID |
+| created_by_tenant_member_id | bigint | - | - | 操作人 TenantMember ID |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
@@ -66,18 +67,24 @@ PostgreSQL
 | INACTIVE | 已失效 |
 
 **约束与规则**：
-1. 唯一约束：同一 `(drone_id, staff_id)` 在 `ACTIVE` 状态下唯一。
-2. 取消分配采用软失效（`ACTIVE -> INACTIVE`），不物理删除。
-3. 已是 `INACTIVE` 的记录再次取消仍返回成功态（幂等）。
-4. 支持恢复分配：`INACTIVE -> ACTIVE`，并清空 `end_at`。
-5. 已是 `ACTIVE` 的记录再次恢复仍返回成功态（幂等）。
+1. 唯一约束：同一 `(drone_id, tenant_member_id)` 在 `ACTIVE` 状态下唯一。
+2. `tenant_id`、`drone_id`、`tenant_member_id` 必须属于同一租户。
+3. 仅允许分配给 `ACTIVE` 的租户成员，且其账号必须存在在职 `staff_profile`。
+4. 仅允许分配给已绑定 `pilot_operator` 角色的成员。
+5. 取消分配采用软失效（`ACTIVE -> INACTIVE`），不物理删除。
+6. `ACTIVE` 记录不得写入 `end_at`；`INACTIVE` 记录必须写入 `end_at`。
+7. `OWN / ASSIGNED` 口径统一以 `TenantMember.id` 命中，不再使用全局 `staff_id`。
+8. 已是 `INACTIVE` 的记录再次取消仍返回成功态（幂等）。
+9. 支持恢复分配：`INACTIVE -> ACTIVE`，并清空 `end_at`。
+10. 已是 `ACTIVE` 的记录再次恢复仍返回成功态（幂等）。
 
 ---
 
 ## 2. 外键关系
 
-1. `drone_assignments.drone_id -> drones.id`
-2. `drone_assignments.staff_id -> staff_profiles.id`
+1. `drone_assignments.tenant_id -> tenants.id`
+2. `drone_assignments.drone_id -> drones.id`
+3. `drone_assignments.tenant_member_id -> tenant_members.id`
 
 ---
 

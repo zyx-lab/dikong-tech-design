@@ -6,12 +6,14 @@ from rest_framework.response import Response
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin
+from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.media_file.models import MediaFile
 from apps.media_file.serializers import MediaFileReadSerializer, MediaFileWriteSerializer
 
 
 class MediaFileViewSet(
     BusinessApiResponseMixin,
+    TenantScopedBusinessMixin,
     PermissionMapMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
@@ -43,7 +45,7 @@ class MediaFileViewSet(
         return dict(MediaFileReadSerializer(media_file, context={"request": self.request}).data)
 
     def get_queryset(self):
-        queryset = super().get_queryset().filter(is_deleted=False)
+        queryset = self.scope_queryset_to_tenant(super().get_queryset()).filter(is_deleted=False)
         params = self.request.query_params
 
         # 业务作用：
@@ -102,7 +104,7 @@ class MediaFileViewSet(
         # 3) 返回统一携带 business_code/business_detail_code。
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        media_file = serializer.save(is_deleted=False, deleted_at=None)
+        media_file = self.perform_create(serializer)
 
         read_serializer = MediaFileReadSerializer(media_file, context={"request": request})
         log_action(
@@ -114,6 +116,14 @@ class MediaFileViewSet(
         )
         headers = self.get_success_headers(read_serializer.data)
         return Response(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        return serializer.save(
+            tenant=self.get_current_tenant(),
+            is_deleted=False,
+            deleted_at=None,
+        )
 
     def partial_update(self, request, *args, **kwargs):
         # 业务作用：

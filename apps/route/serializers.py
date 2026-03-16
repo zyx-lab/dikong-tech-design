@@ -37,5 +37,4 @@ class RouteWriteSerializer(serializers.ModelSerializer):
             "drone_type_id",
             "total_distance",
             "estimated_duration",
-            "waypoint_count",
         ]

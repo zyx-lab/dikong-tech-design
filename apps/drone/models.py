@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -13,7 +14,7 @@ class Drone(models.Model):
 
     说明：
     - 当前只做台账管理，不做资源指派。
-    - created_by_staff_id 仅用于审计和未来 OWN 范围扩展。
+    - created_by_tenant_member_id 用于租户内 OWN 范围判定与审计。
     - tenant_id 用于多租户数据隔离。
     """
 
@@ -22,13 +23,11 @@ class Drone(models.Model):
         on_delete=models.CASCADE,
         related_name="drones",
         verbose_name="租户",
-        null=True,
-        blank=True,
     )
-    code = models.CharField("业务编码", max_length=64, unique=True)
+    code = models.CharField("业务编码", max_length=64)
     name = models.CharField("无人机名称", max_length=128)
     model = models.CharField("型号", max_length=128)
-    serial_no = models.CharField("出厂序列号", max_length=128, unique=True)
+    serial_no = models.CharField("出厂序列号", max_length=128)
     status = models.CharField(
         "状态",
         max_length=16,
@@ -36,7 +35,7 @@ class Drone(models.Model):
         default=DroneStatus.DISABLED,
     )
     org_id = models.BigIntegerField("组织 ID", null=True, blank=True)
-    created_by_staff_id = models.BigIntegerField("创建人 Staff ID", null=True, blank=True)
+    created_by_tenant_member_id = models.BigIntegerField("创建人 TenantMember ID", null=True, blank=True)
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
     updated_at = models.DateTimeField("更新时间", auto_now=True)
 
@@ -45,6 +44,10 @@ class Drone(models.Model):
         ordering = ["-id"]
         # 只保留显式权限码，避免默认 CRUD 权限污染权限矩阵。
         default_permissions = ()
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "code"], name="uniq_drone_tenant_code"),
+            models.UniqueConstraint(fields=["tenant", "serial_no"], name="uniq_drone_tenant_serial_no"),
+        ]
         permissions = [
             ("view_drone", "可查看无人机"),
             ("manage_drone", "可新增与编辑无人机"),
@@ -53,3 +56,19 @@ class Drone(models.Model):
 
     def __str__(self):
         return f"{self.code}-{self.name}"
+
+    def clean(self):
+        if not self.pk:
+            return
+
+        current_status = (
+            Drone.objects.filter(pk=self.pk)
+            .values_list("status", flat=True)
+            .first()
+        )
+        if current_status == DroneStatus.RETIRED and self.status != DroneStatus.RETIRED:
+            raise ValidationError({"status": "RETIRED 状态不可逆，不能变更为其他状态"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)

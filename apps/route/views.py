@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
 from apps.access.services import IdentityService, log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
+from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.mission.models import Mission
 from apps.route.models import Route, RouteStatus
 from apps.route.serializers import RouteReadSerializer, RouteWriteSerializer
@@ -14,6 +15,7 @@ from apps.waypoint.models import Waypoint
 
 class RouteViewSet(
     BusinessApiResponseMixin,
+    TenantScopedBusinessMixin,
     PermissionMapMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
@@ -47,7 +49,7 @@ class RouteViewSet(
         return dict(RouteReadSerializer(route, context={"request": self.request}).data)
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = self.scope_queryset_to_tenant(super().get_queryset())
         params = self.request.query_params
 
         # 业务作用：
@@ -245,7 +247,7 @@ class RouteViewSet(
         route_id = route.id
         before_data = self._route_payload(route)
 
-        if Mission.objects.filter(route_id=route_id).exists():
+        if Mission.objects.filter(route_id=route_id, tenant=self.get_current_tenant()).exists():
             if route.status != RouteStatus.DISABLED:
                 route.status = RouteStatus.DISABLED
                 route.save(update_fields=["status", "updated_at"])
@@ -286,6 +288,7 @@ class RouteViewSet(
     def perform_create(self, serializer):
         staff = IdentityService.get_staff(self.request.user)
         route = serializer.save(
+            tenant=self.get_current_tenant(),
             status=RouteStatus.ACTIVE,
             creator_name=staff.name if staff else "",
         )

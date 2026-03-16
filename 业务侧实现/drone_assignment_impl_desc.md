@@ -62,14 +62,16 @@ PostgreSQL
 
 关键字段：
 1. `drone_id`：无人机。  
-2. `staff_id`：飞手（`staff_profiles`）。  
+2. `tenant_member_id`：被分配成员（`tenant_members`）。  
 3. `status`：`ACTIVE` / `INACTIVE`。  
 4. `start_at` / `end_at`：生效与失效时间。  
-5. `created_by_staff_id`：操作人。  
+5. `created_by_tenant_member_id`：租户内操作人。  
 
 核心约束：
-1. 条件唯一约束 `uniq_active_drone_staff_assignment`：同一 `(drone_id, staff_id)` 在 `ACTIVE` 下唯一。  
+1. 条件唯一约束 `uniq_active_drone_tenant_member_assignment`：同一 `(drone_id, tenant_member_id)` 在 `ACTIVE` 下唯一。  
 2. 取消分配使用软失效（改状态，不删记录）。  
+3. `tenant_member` 必须属于当前租户、处于 `ACTIVE`，且带 `pilot_operator` 角色。  
+4. `OWN / ASSIGNED` 口径统一以 `TenantMember.id` 命中，不再使用全局 `staff_id`。  
 
 ---
 
@@ -79,9 +81,10 @@ PostgreSQL
 
 校验逻辑：
 1. 无人机不能是 `RETIRED`。  
-2. staff 必须在职（`employment_status=ACTIVE`）。  
-3. staff 类型必须是 `pilot_operator`。  
-4. 相同无人机+飞手不能重复存在 `ACTIVE` 分配。  
+2. `tenant_member` 必须属于当前租户。  
+3. `tenant_member` 对应人员档案必须在职（`employment_status=ACTIVE`）。  
+4. `tenant_member` 必须带 `pilot_operator` 角色。  
+5. 相同无人机+成员不能重复存在 `ACTIVE` 分配。  
 
 成功行为：
 1. 写入 `ACTIVE` 分配记录。  
@@ -96,7 +99,7 @@ PostgreSQL
 
 ### 4.3 查询接口
 
-1. 列表支持过滤：`drone_id` / `staff_id` / `status`。  
+1. 列表支持过滤：`drone_id` / `tenant_member_id` / `status`。  
 2. 列表与详情均要求 `drone.manage_drone_assignment` 权限。  
 
 ### 4.4 恢复分配 `POST /api/v1/drone-assignments/{id}/reactivate`
@@ -153,7 +156,7 @@ PostgreSQL
 
 ## 8. 代码落点
 
-1. `apps/drone/models.py`  
-2. `apps/drone/serializers.py`  
-3. `apps/drone/views.py`  
-4. `apps/drone/tests.py`  
+1. `apps/drone_assignment/models.py`  
+2. `apps/drone_assignment/serializers.py`  
+3. `apps/drone_assignment/views.py`  
+4. `apps/drone_assignment/tests.py`  

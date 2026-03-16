@@ -33,6 +33,55 @@ from apps.access.models import (
 from apps.access.services import default_invitation_expiry, expire_stale_tenant_member_invitation
 
 
+PLATFORM_ONLY_ROLE_CODES = {"platform_admin"}
+
+
+def _get_actor_tenant_from_request(request):
+    if (
+        request is None
+        or not getattr(request, "user", None)
+        or request.user.is_superuser
+        or request.user.is_platform_admin
+    ):
+        return None
+    return getattr(request, "tenant_context", None)
+
+
+def _ensure_role_codes_assignable(role_codes: list[str], request) -> list[str]:
+    normalized = list(dict.fromkeys(role_codes))
+    valid_codes = set(Role.objects.filter(status=DirectoryStatus.ACTIVE).values_list("code", flat=True))
+    invalid = set(normalized) - valid_codes
+    if invalid:
+        raise serializers.ValidationError(f"非法角色编码: {sorted(invalid)}")
+
+    disallowed = set(normalized) & PLATFORM_ONLY_ROLE_CODES
+    if disallowed:
+        raise serializers.ValidationError(f"禁止分配平台角色: {sorted(disallowed)}")
+
+    return normalized
+
+
+def _validate_member_no_unique_in_tenant(*, tenant: Tenant, member_no: str | None, exclude_member_id: int | None = None) -> None:
+    normalized_member_no = (member_no or "").strip()
+    if not normalized_member_no:
+        return
+
+    queryset = TenantMember.objects.filter(tenant=tenant, member_no=normalized_member_no)
+    if exclude_member_id is not None:
+        queryset = queryset.exclude(id=exclude_member_id)
+    if queryset.exists():
+        raise serializers.ValidationError({"member_no": "当前租户下已存在相同工号"})
+
+
+def _ensure_user_can_be_tenant_member(user: User) -> None:
+    if user.is_superuser:
+        raise serializers.ValidationError({"user_id": "superuser 账号不允许成为租户成员"})
+    if user.is_platform_admin:
+        raise serializers.ValidationError({"user_id": "platform_admin 账号不允许成为租户成员"})
+    if not StaffProfile.objects.filter(user=user).exists():
+        raise serializers.ValidationError({"user_id": "账号必须先创建全局 staff_profile 后才能成为租户成员"})
+
+
 class PermissionCodeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permission
@@ -44,7 +93,6 @@ class StaffProfileNestedSerializer(serializers.ModelSerializer):
         model = StaffProfile
         fields = [
             "id",
-            "staff_no",
             "name",
             "phone",
             "email",
@@ -69,6 +117,7 @@ class UserManageSerializer(serializers.ModelSerializer):
             "is_active",
             "is_staff",
             "is_superuser",
+            "is_platform_admin",
             "status",
             "staff",
             "created_at",
@@ -77,13 +126,23 @@ class UserManageSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "is_superuser", "created_at", "updated_at"]
 
     def validate(self, attrs):
+        request_user = getattr(self.context.get("request"), "user", None)
         if "is_superuser" in self.initial_data:
             raise serializers.ValidationError({"is_superuser": "禁止通过 API 修改超级管理员标记，请使用命令行创建"})
+        if "is_platform_admin" in self.initial_data and not (request_user and request_user.is_superuser):
+            raise serializers.ValidationError({"is_platform_admin": "禁止通过 API 修改平台管理员标记，仅 superuser 可操作"})
 
         has_staff_field = "staff_profile" in attrs
         staff_data = attrs.get("staff_profile")
         target_is_superuser = attrs.get("is_superuser", self.instance.is_superuser if self.instance else False)
+        target_is_platform_admin = attrs.get(
+            "is_platform_admin",
+            self.instance.is_platform_admin if self.instance else False,
+        )
         existing_staff = getattr(self.instance, "staff_profile", None) if self.instance else None
+
+        if target_is_superuser and target_is_platform_admin:
+            raise serializers.ValidationError({"is_platform_admin": "superuser 与 platform_admin 不能同时为 true"})
 
         if target_is_superuser:
             if has_staff_field:
@@ -151,12 +210,6 @@ class UserManageSerializer(serializers.ModelSerializer):
 
 
 class BaseUserRegisterSerializer(serializers.Serializer):
-    def _generate_staff_no(self) -> str:
-        while True:
-            staff_no = f"REG-{uuid4().hex[:12].upper()}"
-            if not StaffProfile.objects.filter(staff_no=staff_no).exists():
-                return staff_no
-
     def _validate_non_empty(self, attrs, fields: list[str]):
         for field in fields:
             value = attrs.get(field)
@@ -184,7 +237,6 @@ class BaseUserRegisterSerializer(serializers.Serializer):
         user = User.objects.create_user(username=username, password=password, is_staff=False)
         StaffProfile.objects.create(
             user=user,
-            staff_no=self._generate_staff_no(),
             name=name,
             phone=phone,
             employment_status=EmploymentStatus.ACTIVE,
@@ -512,6 +564,11 @@ class TenantMemberSerializer(TenantMemberAttributeMixin, serializers.ModelSerial
         member_no = attrs.get("member_no", self.instance.member_no if self.instance else "")
         if member_no and self.instance and self.instance.status != TenantMemberStatus.ACTIVE:
             raise serializers.ValidationError({"member_no": "只有 ACTIVE 成员允许设置 member_no"})
+        _validate_member_no_unique_in_tenant(
+            tenant=self.instance.tenant,
+            member_no=member_no,
+            exclude_member_id=self.instance.id if self.instance else None,
+        )
         return attrs
 
     @transaction.atomic
@@ -551,6 +608,9 @@ class TenantMemberCreateSerializer(TenantMemberAttributeMixin, serializers.Seria
             raise serializers.ValidationError("租户不存在")
         if tenant.status != TenantStatus.ACTIVE:
             raise serializers.ValidationError("租户未启用")
+        request_tenant = _get_actor_tenant_from_request(self.context.get("request"))
+        if request_tenant is not None and tenant.id != request_tenant.id:
+            raise serializers.ValidationError("tenant_id 必须等于当前租户")
         self._tenant = tenant
         return value
 
@@ -558,21 +618,22 @@ class TenantMemberCreateSerializer(TenantMemberAttributeMixin, serializers.Seria
         user = User.objects.filter(id=value).first()
         if not user:
             raise serializers.ValidationError("用户不存在")
+        _ensure_user_can_be_tenant_member(user)
         self._user = user
         return value
 
     def validate_role_codes(self, value):
-        valid_codes = set(Role.objects.filter(status=DirectoryStatus.ACTIVE).values_list("code", flat=True))
-        invalid = set(value) - valid_codes
-        if invalid:
-            raise serializers.ValidationError(f"非法角色编码: {sorted(invalid)}")
-        return list(dict.fromkeys(value))
+        try:
+            return _ensure_role_codes_assignable(value, self.context.get("request"))
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError(exc.detail[0] if isinstance(exc.detail, list) else exc.detail)
 
     def validate(self, attrs):
         tenant = getattr(self, "_tenant", None)
         user = getattr(self, "_user", None)
         if tenant and user and TenantMember.objects.filter(tenant=tenant, user=user).exists():
             raise serializers.ValidationError({"user_id": "该用户已是当前租户成员"})
+        _validate_member_no_unique_in_tenant(tenant=tenant, member_no=attrs.get("member_no"))
         return attrs
 
     @transaction.atomic
@@ -619,6 +680,7 @@ class TenantInitializeAdminSerializer(TenantMemberAttributeMixin, serializers.Se
         user = User.objects.filter(id=validated_data["user_id"]).first()
         if user is None:
             raise BusinessResourceNotFound("user not found", business_detail_code="USER_NOT_FOUND")
+        _ensure_user_can_be_tenant_member(user)
 
         tenant_admin_role = Role.objects.filter(code="tenant_admin", status=DirectoryStatus.ACTIVE).first()
         if tenant_admin_role is None:
@@ -644,19 +706,25 @@ class TenantInitializeAdminSerializer(TenantMemberAttributeMixin, serializers.Se
             )
 
         member = TenantMember.objects.filter(tenant=tenant, user=user).first()
+        requested_member_no = validated_data.get("member_no") or None
+        _validate_member_no_unique_in_tenant(
+            tenant=tenant,
+            member_no=requested_member_no,
+            exclude_member_id=member.id if member is not None else None,
+        )
         if member is None:
             member = TenantMember.objects.create(
                 tenant=tenant,
                 user=user,
                 display_name=validated_data.get("display_name", ""),
-                member_no=validated_data.get("member_no") or None,
+                member_no=requested_member_no,
                 status=TenantMemberStatus.ACTIVE,
                 responded_at=timezone.now(),
                 joined_at=timezone.now(),
             )
         else:
             member.display_name = validated_data.get("display_name", member.display_name)
-            member.member_no = validated_data.get("member_no") or member.member_no
+            member.member_no = requested_member_no or member.member_no
             member.status = TenantMemberStatus.ACTIVE
             member.invitation_token = None
             member.invited_by_user = None
@@ -699,18 +767,22 @@ class TenantMemberInviteSerializer(TenantMemberAttributeMixin, serializers.Seria
             raise BusinessResourceNotFound("tenant not found", business_detail_code="TENANT_NOT_FOUND")
         if tenant.status != TenantStatus.ACTIVE:
             raise BusinessStateConflict("tenant status invalid", business_detail_code="TENANT_STATUS_INVALID")
+        request_tenant = _get_actor_tenant_from_request(self.context.get("request"))
+        if request_tenant is not None and tenant.id != request_tenant.id:
+            raise serializers.ValidationError({"tenant_id": "tenant_id 必须等于当前租户"})
 
         user = User.objects.filter(id=attrs["user_id"]).first()
         if user is None:
             raise BusinessResourceNotFound("user not found", business_detail_code="USER_NOT_FOUND")
+        _ensure_user_can_be_tenant_member(user)
 
         if TenantMember.objects.filter(tenant=tenant, user=user).exists():
             raise BusinessStateConflict("tenant member already exists", business_detail_code="TENANT_MEMBER_EXISTS")
 
-        valid_codes = set(Role.objects.filter(status=DirectoryStatus.ACTIVE).values_list("code", flat=True))
-        invalid = set(attrs["role_codes"]) - valid_codes
-        if invalid:
-            raise serializers.ValidationError({"role_codes": f"非法角色编码: {sorted(invalid)}"})
+        try:
+            attrs["role_codes"] = _ensure_role_codes_assignable(attrs["role_codes"], self.context.get("request"))
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError({"role_codes": exc.detail[0] if isinstance(exc.detail, list) else exc.detail})
 
         attrs["_tenant"] = tenant
         attrs["_user"] = user
@@ -836,12 +908,10 @@ class TenantMemberRoleAssignSerializer(serializers.Serializer):
     role_codes = serializers.ListField(child=serializers.CharField(), required=True)
 
     def validate_role_codes(self, value):
-        normalized = list(dict.fromkeys(value))
-        valid_codes = set(Role.objects.filter(status=DirectoryStatus.ACTIVE).values_list("code", flat=True))
-        invalid = set(normalized) - valid_codes
-        if invalid:
-            raise serializers.ValidationError(f"非法角色编码: {sorted(invalid)}")
-        return normalized
+        try:
+            return _ensure_role_codes_assignable(value, self.context.get("request"))
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError(exc.detail[0] if isinstance(exc.detail, list) else exc.detail)
 
     @transaction.atomic
     def save(self, **kwargs):

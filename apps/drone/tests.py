@@ -1,8 +1,10 @@
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.access.models import AuditLog, Permission, ScopeType, StaffProfile
+from apps.access.models import AuditLog, Permission, ScopeType, StaffProfile, Tenant, TenantStatus
 from apps.access.test_support import (
     ensure_staff_profile,
     ensure_tenant_member_position,
@@ -60,23 +62,80 @@ class DroneApiAuthzTests(TestCase):
 
     def test_view_permission_with_all_scope_should_allow_list(self):
         self._grant_permission("drone.view_drone", with_scope=True)
-        Drone.objects.create(code="DJ-0001", name="无人机1", model="Mavic 3E", serial_no="SN-1", status=DroneStatus.ENABLED)
-        Drone.objects.create(code="DJ-0002", name="无人机2", model="Matrice 30", serial_no="SN-2", status=DroneStatus.DISABLED)
+        Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-0001",
+            name="无人机1",
+            model="Mavic 3E",
+            serial_no="SN-1",
+            status=DroneStatus.ENABLED,
+        )
+        Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-0002",
+            name="无人机2",
+            model="Matrice 30",
+            serial_no="SN-2",
+            status=DroneStatus.DISABLED,
+        )
 
         self.client.force_authenticate(self.user)
         response = self.client.get("/api/v1/drones")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["count"], 2)
 
+    def test_list_should_only_return_current_tenant_drones(self):
+        self._grant_permission("drone.view_drone", with_scope=True)
+        other_tenant = Tenant.objects.create(
+            code="drone_authz_other_tenant",
+            name="无人机其他租户",
+            status=TenantStatus.ACTIVE,
+        )
+        Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-CURRENT-01",
+            name="当前租户无人机",
+            model="Mavic 3E",
+            serial_no="CURRENT-SN-01",
+            status=DroneStatus.ENABLED,
+        )
+        Drone.objects.create(
+            tenant=other_tenant,
+            code="DJ-OTHER-01",
+            name="其他租户无人机",
+            model="Matrice 30",
+            serial_no="OTHER-SN-01",
+            status=DroneStatus.ENABLED,
+        )
+
+        self.client.force_authenticate(self.user)
+        response = self.client.get("/api/v1/drones")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["code"], "DJ-CURRENT-01")
+
 
 class SuperuserRootPermissionTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.superuser = User.objects.create_superuser(username="root_business", password="pass1234")
+        self.tenant = Tenant.objects.create(
+            code="root_business_tenant",
+            name="超级管理员业务租户",
+            status=TenantStatus.ACTIVE,
+        )
         self.client.force_authenticate(self.superuser)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def test_superuser_should_access_business_list_without_staff_or_matrix(self):
-        Drone.objects.create(code="DJ-ROOT-01", name="Root 机型", model="Matrice 4", serial_no="ROOT-SN-01")
+        Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-ROOT-01",
+            name="Root 机型",
+            model="Matrice 4",
+            serial_no="ROOT-SN-01",
+        )
         response = self.client.get("/api/v1/drones")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["count"], 1)
@@ -91,7 +150,7 @@ class SuperuserRootPermissionTests(TestCase):
         response = self.client.post("/api/v1/drones", payload, format="json")
         self.assertEqual(response.status_code, 201)
         drone = Drone.objects.get(code="DJ-ROOT-02")
-        self.assertIsNone(drone.created_by_staff_id)
+        self.assertIsNone(drone.created_by_tenant_member_id)
 
 
 class DroneApiWriteTests(TestCase):
@@ -121,15 +180,16 @@ class DroneApiWriteTests(TestCase):
 
     def _create_drone(self, *, code: str, status: str) -> Drone:
         return Drone.objects.create(
+            tenant=self.tenant,
             code=code,
             name=f"{code}-name",
             model="Matrice 30",
             serial_no=f"{code}-sn",
             status=status,
-            created_by_staff_id=self.staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
 
-    def test_create_should_record_creator_staff_and_audit_log(self):
+    def test_create_should_record_creator_member_and_audit_log(self):
         self._grant_permissions(["drone.manage_drone"])
         payload = {
             "code": "DJ-0100",
@@ -142,7 +202,7 @@ class DroneApiWriteTests(TestCase):
         self.assertEqual(response.status_code, 201)
 
         drone = Drone.objects.get(code="DJ-0100")
-        self.assertEqual(drone.created_by_staff_id, self.staff.id)
+        self.assertEqual(drone.created_by_tenant_member_id, self.member.id)
         self.assertTrue(
             AuditLog.objects.filter(
                 action="DRONE_CREATE",
@@ -150,16 +210,25 @@ class DroneApiWriteTests(TestCase):
                 target_id=str(drone.id),
             ).exists()
         )
+        self.assertEqual(
+            AuditLog.objects.get(
+                action="DRONE_CREATE",
+                target_type="drone",
+                target_id=str(drone.id),
+            ).tenant,
+            self.tenant,
+        )
 
     def test_patch_should_not_allow_status_field(self):
         self._grant_permissions(["drone.manage_drone"])
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-0101",
             name="无人机-编辑",
             model="Matrice 30",
             serial_no="SN-101",
             status=DroneStatus.DISABLED,
-            created_by_staff_id=self.staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
         original_status = drone.status
         response = self.client.patch(
@@ -176,12 +245,13 @@ class DroneApiWriteTests(TestCase):
     def test_put_should_not_be_exposed(self):
         self._grant_permissions(["drone.manage_drone"])
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-0101-PUT",
             name="无人机-PUT",
             model="Matrice 30",
             serial_no="SN-101-PUT",
             status=DroneStatus.DISABLED,
-            created_by_staff_id=self.staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
 
         response = self.client.put(
@@ -299,12 +369,13 @@ class DroneApiWriteTests(TestCase):
     def test_retired_status_is_irreversible_and_idempotent(self):
         self._grant_permissions(["drone.view_drone", "drone.change_drone_status"])
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-0102",
             name="无人机-状态",
             model="Matrice 30T",
             serial_no="SN-102",
             status=DroneStatus.ENABLED,
-            created_by_staff_id=self.staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
 
         retire_response = self.client.post(f"/api/v1/drones/{drone.id}/retire")
@@ -327,15 +398,32 @@ class DroneApiWriteTests(TestCase):
             2,
         )
 
+    def test_model_should_reject_revert_from_retired(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-RET-MODEL-01",
+            name="模型退役无人机",
+            model="Matrice 4T",
+            serial_no="RET-MODEL-SN-01",
+            status=DroneStatus.RETIRED,
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        drone.status = DroneStatus.ENABLED
+
+        with self.assertRaises(ValidationError):
+            drone.save()
+
     def test_delete_should_remove_drone_and_write_audit_log(self):
         self._grant_permissions(["drone.manage_drone"])
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-0103",
             name="无人机-删除",
             model="Matrice 300",
             serial_no="SN-103",
             status=DroneStatus.DISABLED,
-            created_by_staff_id=self.staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
 
         response = self.client.delete(f"/api/v1/drones/{drone.id}")
@@ -353,12 +441,13 @@ class DroneApiWriteTests(TestCase):
     def test_delete_with_body_should_return_invalid_params(self):
         self._grant_permissions(["drone.manage_drone"])
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-0104",
             name="无人机-删除参数",
             model="Matrice 300",
             serial_no="SN-104",
             status=DroneStatus.DISABLED,
-            created_by_staff_id=self.staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
 
         response = self.client.delete(f"/api/v1/drones/{drone.id}", {"unexpected": True}, format="json")
@@ -369,12 +458,13 @@ class DroneApiWriteTests(TestCase):
     def test_delete_with_active_assignment_should_return_state_conflict(self):
         self._grant_permissions(["drone.manage_drone"])
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-0105",
             name="无人机-删除冲突",
             model="Matrice 300",
             serial_no="SN-105",
             status=DroneStatus.DISABLED,
-            created_by_staff_id=self.staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
 
         pilot_user = User.objects.create_user(username="pilot_del_conflict", password="pass1234", status=1)
@@ -392,10 +482,11 @@ class DroneApiWriteTests(TestCase):
         )
         ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
         DroneAssignment.objects.create(
+            tenant=self.tenant,
             drone=drone,
-            staff=pilot_staff,
+            tenant_member=pilot_member,
             status=DroneAssignmentStatus.ACTIVE,
-            created_by_staff_id=self.staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
 
         response = self.client.delete(f"/api/v1/drones/{drone.id}")
@@ -423,6 +514,7 @@ class PilotAssignedScopeTests(TestCase):
         )
 
         self.drone_assigned = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-P-01",
             name="飞手可见-1",
             model="Mavic 3E",
@@ -430,6 +522,7 @@ class PilotAssignedScopeTests(TestCase):
             status=DroneStatus.ENABLED,
         )
         self.drone_unassigned = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-P-02",
             name="飞手不可见-2",
             model="Matrice 30",
@@ -437,8 +530,9 @@ class PilotAssignedScopeTests(TestCase):
             status=DroneStatus.ENABLED,
         )
         DroneAssignment.objects.create(
+            tenant=self.tenant,
             drone=self.drone_assigned,
-            staff=self.pilot_staff,
+            tenant_member=self.member,
             status=DroneAssignmentStatus.ACTIVE,
         )
         self.client.force_authenticate(self.pilot_user)
@@ -478,13 +572,13 @@ class DroneHistoryApiTests(TestCase):
             role_code="drone_history_viewer_role",
             role_name="无人机历史查看角色",
         )
-        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+        _pilot_tenant, self.pilot_member, _pilot_role = ensure_tenant_role_binding(
             self.pilot_user,
             tenant=self.tenant,
             role_code="pilot_operator",
             role_name="飞手操作员",
         )
-        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
+        ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手操作员")
         self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def _grant_view_permission(self):
@@ -499,6 +593,7 @@ class DroneHistoryApiTests(TestCase):
         self.client.force_authenticate(self.viewer_user)
 
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-HIS-01",
             name="历史测试机",
             model="Matrice 4T",
@@ -506,16 +601,19 @@ class DroneHistoryApiTests(TestCase):
             status=DroneStatus.ENABLED,
         )
         DroneAssignment.objects.create(
+            tenant=self.tenant,
             drone=drone,
-            staff=self.pilot_staff,
+            tenant_member=self.pilot_member,
             status=DroneAssignmentStatus.ACTIVE,
-            created_by_staff_id=self.viewer_staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
         DroneAssignment.objects.create(
+            tenant=self.tenant,
             drone=drone,
-            staff=self.pilot_staff,
+            tenant_member=self.pilot_member,
             status=DroneAssignmentStatus.INACTIVE,
-            created_by_staff_id=self.viewer_staff.id,
+            end_at=timezone.now(),
+            created_by_tenant_member_id=self.member.id,
         )
 
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/history")
@@ -529,6 +627,7 @@ class DroneHistoryApiTests(TestCase):
 
     def test_history_without_auth_should_return_permission_denied(self):
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-HIS-02",
             name="历史测试机2",
             model="Matrice 4T",
@@ -572,13 +671,13 @@ class DroneActiveAssignmentsApiTests(TestCase):
             role_code="drone_active_viewer_role",
             role_name="无人机当前分配查看角色",
         )
-        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+        _pilot_tenant, self.pilot_member, _pilot_role = ensure_tenant_role_binding(
             self.pilot_user,
             tenant=self.tenant,
             role_code="pilot_operator",
             role_name="飞手操作员",
         )
-        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
+        ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手操作员")
         self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def _grant_view_permission(self):
@@ -593,6 +692,7 @@ class DroneActiveAssignmentsApiTests(TestCase):
         self.client.force_authenticate(self.viewer_user)
 
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-ACT-01",
             name="当前分配测试机",
             model="Matrice 4T",
@@ -600,16 +700,19 @@ class DroneActiveAssignmentsApiTests(TestCase):
             status=DroneStatus.ENABLED,
         )
         DroneAssignment.objects.create(
+            tenant=self.tenant,
             drone=drone,
-            staff=self.pilot_staff,
+            tenant_member=self.pilot_member,
             status=DroneAssignmentStatus.ACTIVE,
-            created_by_staff_id=self.viewer_staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
         DroneAssignment.objects.create(
+            tenant=self.tenant,
             drone=drone,
-            staff=self.pilot_staff,
+            tenant_member=self.pilot_member,
             status=DroneAssignmentStatus.INACTIVE,
-            created_by_staff_id=self.viewer_staff.id,
+            end_at=timezone.now(),
+            created_by_tenant_member_id=self.member.id,
         )
 
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/active")
@@ -623,6 +726,7 @@ class DroneActiveAssignmentsApiTests(TestCase):
 
     def test_active_assignments_without_auth_should_return_permission_denied(self):
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-ACT-02",
             name="当前分配测试机2",
             model="Matrice 4T",
@@ -666,13 +770,13 @@ class DroneLatestAssignmentApiTests(TestCase):
             role_code="drone_latest_viewer_role",
             role_name="无人机最近分配查看角色",
         )
-        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+        _pilot_tenant, self.pilot_member, _pilot_role = ensure_tenant_role_binding(
             self.pilot_user,
             tenant=self.tenant,
             role_code="pilot_operator",
             role_name="飞手操作员",
         )
-        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
+        ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手操作员")
         self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
     def _grant_view_permission(self):
@@ -687,6 +791,7 @@ class DroneLatestAssignmentApiTests(TestCase):
         self.client.force_authenticate(self.viewer_user)
 
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-LATEST-01",
             name="最近分配测试机",
             model="Matrice 4T",
@@ -694,16 +799,19 @@ class DroneLatestAssignmentApiTests(TestCase):
             status=DroneStatus.ENABLED,
         )
         DroneAssignment.objects.create(
+            tenant=self.tenant,
             drone=drone,
-            staff=self.pilot_staff,
+            tenant_member=self.pilot_member,
             status=DroneAssignmentStatus.ACTIVE,
-            created_by_staff_id=self.viewer_staff.id,
+            created_by_tenant_member_id=self.member.id,
         )
         latest_assignment = DroneAssignment.objects.create(
+            tenant=self.tenant,
             drone=drone,
-            staff=self.pilot_staff,
+            tenant_member=self.pilot_member,
             status=DroneAssignmentStatus.INACTIVE,
-            created_by_staff_id=self.viewer_staff.id,
+            end_at=timezone.now(),
+            created_by_tenant_member_id=self.member.id,
         )
 
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/latest")
@@ -720,6 +828,7 @@ class DroneLatestAssignmentApiTests(TestCase):
         self._grant_view_permission()
         self.client.force_authenticate(self.viewer_user)
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-LATEST-02",
             name="最近分配测试机2",
             model="Matrice 4T",
@@ -736,6 +845,7 @@ class DroneLatestAssignmentApiTests(TestCase):
 
     def test_latest_assignment_without_auth_should_return_permission_denied(self):
         drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DJ-LATEST-03",
             name="最近分配测试机3",
             model="Matrice 4T",
@@ -774,13 +884,13 @@ class BusinessAdminApiTests(TestCase):
             role_code="business_admin_test_role",
             role_name="业务管理员测试角色",
         )
-        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+        _pilot_tenant, self.pilot_member, _pilot_role = ensure_tenant_role_binding(
             self.pilot_user,
             tenant=self.tenant,
             role_code="pilot_operator",
             role_name="飞手操作员",
         )
-        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手操作员")
+        ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手操作员")
         grant_role_permissions(
             self.role,
             {
@@ -816,7 +926,7 @@ class BusinessAdminApiTests(TestCase):
             "/api/v1/drone-assignments",
             {
                 "drone": drone_id,
-                "staff": self.pilot_staff.id,
+                "tenant_member": self.pilot_member.id,
             },
             format="json",
         )
@@ -901,8 +1011,38 @@ class DroneBoundaryTests(TestCase):
             "model": "Model2",
             "serial_no": "SN-DUP-002",
         })
-        # 接受任何合理的错误响应
-        self.assertIn(response2.status_code, (200, 201, 400, 409))
+        self.assertEqual(response2.status_code, 409)
+        self.assertEqual(response2.data["business_code"], "IDEMPOTENT_DUPLICATE")
+        self.assertEqual(response2.data["business_detail_code"], "DUPLICATE_REQUEST")
+        self.assertIn("code", response2.data["errors"])
+
+    def test_create_drone_duplicate_code_in_other_tenant_should_be_allowed(self):
+        """测试跨租户重复业务编码允许创建"""
+        self.client.force_authenticate(self.user)
+        other_tenant = Tenant.objects.create(
+            code="drone_boundary_other_tenant_code",
+            name="无人机边界其他租户",
+            status=TenantStatus.ACTIVE,
+        )
+        Drone.objects.create(
+            tenant=other_tenant,
+            code="DJ-CROSS-TENANT-CODE",
+            name="其他租户无人机",
+            model="Model-Other",
+            serial_no="SN-CROSS-TENANT-001",
+            status=DroneStatus.ENABLED,
+        )
+
+        response = self.client.post("/api/v1/drones", {
+            "code": "DJ-CROSS-TENANT-CODE",
+            "name": "当前租户无人机",
+            "model": "Model-Current",
+            "serial_no": "SN-CROSS-TENANT-002",
+        })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["code"], "DJ-CROSS-TENANT-CODE")
 
     def test_create_drone_duplicate_serial_no(self):
         """测试重复序列号"""
@@ -923,8 +1063,38 @@ class DroneBoundaryTests(TestCase):
             "model": "Model2",
             "serial_no": serial,
         })
-        # 接受任何合理的错误响应
-        self.assertIn(response2.status_code, (200, 201, 400, 409))
+        self.assertEqual(response2.status_code, 409)
+        self.assertEqual(response2.data["business_code"], "IDEMPOTENT_DUPLICATE")
+        self.assertEqual(response2.data["business_detail_code"], "DUPLICATE_REQUEST")
+        self.assertIn("serial_no", response2.data["errors"])
+
+    def test_create_drone_duplicate_serial_no_in_other_tenant_should_be_allowed(self):
+        """测试跨租户重复序列号允许创建"""
+        self.client.force_authenticate(self.user)
+        other_tenant = Tenant.objects.create(
+            code="drone_boundary_other_tenant_serial",
+            name="无人机边界其他租户序列号",
+            status=TenantStatus.ACTIVE,
+        )
+        Drone.objects.create(
+            tenant=other_tenant,
+            code="DJ-CROSS-TENANT-SERIAL-1",
+            name="其他租户无人机",
+            model="Model-Other",
+            serial_no="SN-CROSS-TENANT-SHARED",
+            status=DroneStatus.ENABLED,
+        )
+
+        response = self.client.post("/api/v1/drones", {
+            "code": "DJ-CROSS-TENANT-SERIAL-2",
+            "name": "当前租户无人机",
+            "model": "Model-Current",
+            "serial_no": "SN-CROSS-TENANT-SHARED",
+        })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["business_code"], "SUCCESS")
+        self.assertEqual(response.data["serial_no"], "SN-CROSS-TENANT-SHARED")
 
     def test_create_drone_missing_required_field(self):
         """测试缺少必填字段"""

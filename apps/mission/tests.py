@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -48,6 +49,7 @@ class MissionApiTests(TestCase):
             role_code="pilot_operator",
             role_name="飞手",
         )
+        self.pilot_member = pilot_member
         ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手")
 
         self.route = Route.objects.create(tenant=self.tenant, name="城区巡检航线", status=RouteStatus.ACTIVE)
@@ -75,7 +77,7 @@ class MissionApiTests(TestCase):
             route_name=self.route.name,
             drone=self.drone,
             drone_name=self.drone.name,
-            pilot=self.pilot_staff,
+            pilot=self.pilot_member,
             pilot_name=self.pilot_staff.name,
             status=status,
         )
@@ -90,7 +92,7 @@ class MissionApiTests(TestCase):
                 "name": "前山河晨检任务",
                 "route": self.route.id,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
                 "scheduled_at": "2026-03-09T09:00:00+08:00",
                 "remark": "晴天执行",
             },
@@ -106,6 +108,54 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.data["drone_name"], self.drone.name)
         self.assertEqual(response.data["pilot_name"], self.pilot_staff.name)
 
+    def test_create_mission_with_cross_tenant_route_should_return_invalid_params(self):
+        self._grant_permission("mission.manage_mission")
+        self.client.force_authenticate(self.dispatcher_user)
+        other_tenant, _, _ = ensure_tenant_role_binding(
+            self.dispatcher_user,
+            tenant_code="mission_other_tenant",
+            role_code="mission_other_role",
+            role_name="任务其他租户角色",
+        )
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", status=RouteStatus.ACTIVE)
+
+        response = self.client.post(
+            "/api/v1/missions",
+            {
+                "name": "跨租户航线任务",
+                "route": other_route.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_member.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertIn("route", response.data)
+
+    def test_model_should_reject_cross_tenant_route(self):
+        other_tenant, _, _ = ensure_tenant_role_binding(
+            self.dispatcher_user,
+            tenant_code="mission_model_other_tenant",
+            role_code="mission_model_other_role",
+            role_name="任务模型其他租户角色",
+        )
+        other_route = Route.objects.create(tenant=other_tenant, name="模型跨租户航线", status=RouteStatus.ACTIVE)
+
+        with self.assertRaises(ValidationError):
+            Mission.objects.create(
+                tenant=self.tenant,
+                name="模型跨租户任务",
+                route=other_route,
+                route_name=other_route.name,
+                drone=self.drone,
+                drone_name=self.drone.name,
+                pilot=self.pilot_member,
+                pilot_name=self.pilot_staff.name,
+                status=MissionStatus.PENDING,
+            )
+
     def test_create_mission_invalid_params_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
         self.client.force_authenticate(self.dispatcher_user)
@@ -115,7 +165,7 @@ class MissionApiTests(TestCase):
             {
                 "route": self.route.id,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
             },
             format="json",
         )
@@ -128,7 +178,7 @@ class MissionApiTests(TestCase):
     def test_create_mission_with_disabled_route_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
         self.client.force_authenticate(self.dispatcher_user)
-        disabled_route = Route.objects.create(name="禁用航线", status=RouteStatus.DISABLED)
+        disabled_route = Route.objects.create(tenant=self.tenant, name="禁用航线", status=RouteStatus.DISABLED)
 
         response = self.client.post(
             "/api/v1/missions",
@@ -136,7 +186,7 @@ class MissionApiTests(TestCase):
                 "name": "禁用航线任务",
                 "route": disabled_route.id,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
             },
             format="json",
         )
@@ -146,10 +196,27 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
         self.assertIn("route", response.data)
 
+    def test_model_should_reject_disabled_route(self):
+        disabled_route = Route.objects.create(tenant=self.tenant, name="模型禁用航线", status=RouteStatus.DISABLED)
+
+        with self.assertRaises(ValidationError):
+            Mission.objects.create(
+                tenant=self.tenant,
+                name="模型禁用航线任务",
+                route=disabled_route,
+                route_name=disabled_route.name,
+                drone=self.drone,
+                drone_name=self.drone.name,
+                pilot=self.pilot_member,
+                pilot_name=self.pilot_staff.name,
+                status=MissionStatus.PENDING,
+            )
+
     def test_create_mission_with_disabled_drone_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
         self.client.force_authenticate(self.dispatcher_user)
         disabled_drone = Drone.objects.create(
+            tenant=self.tenant,
             code="DRN-002",
             name="停用任务机",
             model="M300",
@@ -163,7 +230,7 @@ class MissionApiTests(TestCase):
                 "name": "停用无人机任务",
                 "route": self.route.id,
                 "drone": disabled_drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
             },
             format="json",
         )
@@ -173,11 +240,34 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
         self.assertIn("drone", response.data)
 
+    def test_model_should_reject_disabled_drone(self):
+        disabled_drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DRN-MODEL-DISABLED",
+            name="模型停用任务机",
+            model="M300",
+            serial_no="SN-MISSION-MODEL-DISABLED",
+            status=DroneStatus.DISABLED,
+        )
+
+        with self.assertRaises(ValidationError):
+            Mission.objects.create(
+                tenant=self.tenant,
+                name="模型停用无人机任务",
+                route=self.route,
+                route_name=self.route.name,
+                drone=disabled_drone,
+                drone_name=disabled_drone.name,
+                pilot=self.pilot_member,
+                pilot_name=self.pilot_staff.name,
+                status=MissionStatus.PENDING,
+            )
+
     def test_create_mission_with_inactive_pilot_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
         self.client.force_authenticate(self.dispatcher_user)
         inactive_pilot_user = User.objects.create_user(username="inactive_mission_pilot", password="pass1234", status=1)
-        inactive_pilot = ensure_staff_profile(
+        ensure_staff_profile(
             inactive_pilot_user,
             staff_no="P-002",
             name="离职飞手",
@@ -197,7 +287,7 @@ class MissionApiTests(TestCase):
                 "name": "离职飞手任务",
                 "route": self.route.id,
                 "drone": self.drone.id,
-                "pilot": inactive_pilot.id,
+                "pilot": inactive_pilot_member.id,
             },
             format="json",
         )
@@ -206,6 +296,35 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
         self.assertIn("pilot", response.data)
+
+    def test_model_should_reject_inactive_pilot(self):
+        inactive_pilot_user = User.objects.create_user(username="inactive_mission_model_pilot", password="pass1234", status=1)
+        inactive_pilot = ensure_staff_profile(
+            inactive_pilot_user,
+            staff_no="P-MODEL-002",
+            name="模型离职飞手",
+            employment_status=EmploymentStatus.INACTIVE,
+        )
+        _pilot_tenant, inactive_pilot_member, _pilot_role = ensure_tenant_role_binding(
+            inactive_pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(inactive_pilot_member, code="pilot_operator", name="飞手")
+
+        with self.assertRaises(ValidationError):
+            Mission.objects.create(
+                tenant=self.tenant,
+                name="模型离职飞手任务",
+                route=self.route,
+                route_name=self.route.name,
+                drone=self.drone,
+                drone_name=self.drone.name,
+                pilot=inactive_pilot_member,
+                pilot_name=inactive_pilot.name,
+                status=MissionStatus.PENDING,
+            )
 
     def test_create_mission_with_non_pilot_staff_should_return_invalid_params(self):
         self._grant_permission("mission.manage_mission")
@@ -231,7 +350,7 @@ class MissionApiTests(TestCase):
                 "name": "非飞手任务",
                 "route": self.route.id,
                 "drone": self.drone.id,
-                "pilot": observer_staff.id,
+                "pilot": observer_member.id,
             },
             format="json",
         )
@@ -240,6 +359,42 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
         self.assertEqual(response.data["business_detail_code"], "VALIDATION_ERROR")
         self.assertIn("pilot", response.data)
+
+    def test_model_should_reject_non_pilot_staff(self):
+        observer_user = User.objects.create_user(username="mission_model_observer", password="pass1234", status=1)
+        observer_staff = ensure_staff_profile(
+            observer_user,
+            staff_no="O-MODEL-001",
+            name="模型观察员A",
+            employment_status=EmploymentStatus.ACTIVE,
+        )
+        _observer_tenant, observer_member, _observer_role = ensure_tenant_role_binding(
+            observer_user,
+            tenant=self.tenant,
+            role_code="route_planner",
+            role_name="观察员",
+        )
+        ensure_tenant_member_position(observer_member, code="route_planner", name="观察员")
+
+        with self.assertRaises(ValidationError):
+            Mission.objects.create(
+                tenant=self.tenant,
+                name="模型非飞手任务",
+                route=self.route,
+                route_name=self.route.name,
+                drone=self.drone,
+                drone_name=self.drone.name,
+                pilot=observer_member,
+                pilot_name=observer_staff.name,
+                status=MissionStatus.PENDING,
+            )
+
+    def test_model_should_reject_invalid_status_transition(self):
+        mission = self._create_mission(name="模型状态机任务", status=MissionStatus.PENDING)
+        mission.status = MissionStatus.COMPLETED
+
+        with self.assertRaises(ValidationError):
+            mission.save()
 
     def test_create_mission_with_nonexistent_route_should_return_invalid_params(self):
         """测试 route 不存在"""
@@ -252,7 +407,7 @@ class MissionApiTests(TestCase):
                 "name": "不存在航线任务",
                 "route": 99999,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
             },
             format="json",
         )
@@ -271,7 +426,7 @@ class MissionApiTests(TestCase):
                 "name": "不存在无人机任务",
                 "route": self.route.id,
                 "drone": 99999,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
             },
             format="json",
         )
@@ -305,7 +460,7 @@ class MissionApiTests(TestCase):
                 "name": "未认证创建任务",
                 "route": self.route.id,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
             },
             format="json",
         )
@@ -322,7 +477,7 @@ class MissionApiTests(TestCase):
                 "name": "无权限创建任务",
                 "route": self.route.id,
                 "drone": self.drone.id,
-                "pilot": self.pilot_staff.id,
+                "pilot": self.pilot_member.id,
             },
             format="json",
         )

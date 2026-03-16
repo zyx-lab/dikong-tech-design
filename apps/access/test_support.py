@@ -25,14 +25,14 @@ from apps.access.models import (
 def ensure_staff_profile(
     user,
     *,
-    staff_no: str,
+    staff_no: str | None = None,
     name: str,
     employment_status: int = 1,
 ):
+    del staff_no
     staff, _ = StaffProfile.objects.update_or_create(
         user=user,
         defaults={
-            "staff_no": staff_no,
             "name": name,
             "employment_status": employment_status,
         },
@@ -48,21 +48,27 @@ def ensure_tenant_role_binding(
     role_code: str,
     role_name: str,
     display_name: str | None = None,
+    member_no: str | None = None,
 ):
     tenant = tenant or Tenant.objects.create(
         code=tenant_code or f"tenant_{uuid4().hex[:8]}",
         name=f"租户{uuid4().hex[:4]}",
         status=TenantStatus.ACTIVE,
     )
+    if not StaffProfile.objects.filter(user=user).exists():
+        ensure_staff_profile(user, name=getattr(user, "username", "成员"))
+    member_defaults = {
+        "display_name": display_name or getattr(user, "username", "成员"),
+        "status": TenantMemberStatus.ACTIVE,
+        "responded_at": timezone.now(),
+        "joined_at": timezone.now(),
+    }
+    if member_no is not None:
+        member_defaults["member_no"] = member_no
     member, _ = TenantMember.objects.update_or_create(
         tenant=tenant,
         user=user,
-        defaults={
-            "display_name": display_name or getattr(user, "username", "成员"),
-            "status": TenantMemberStatus.ACTIVE,
-            "responded_at": timezone.now(),
-            "joined_at": timezone.now(),
-        },
+        defaults=member_defaults,
     )
     role, _ = Role.objects.update_or_create(
         code=role_code,

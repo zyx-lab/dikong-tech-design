@@ -82,6 +82,7 @@ class UserManager(BaseUserManager):
     def create_user(self, username, password=None, **extra_fields):
         extra_fields.setdefault("is_staff", False)
         extra_fields.setdefault("is_superuser", False)
+        extra_fields.setdefault("is_platform_admin", False)
         extra_fields.setdefault("is_active", True)
         extra_fields.setdefault("status", UserStatus.ACTIVE)
         return self._create_user(username, password, **extra_fields)
@@ -89,6 +90,7 @@ class UserManager(BaseUserManager):
     def create_superuser(self, username, password=None, **extra_fields):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
+        extra_fields.setdefault("is_platform_admin", False)
         extra_fields.setdefault("is_active", True)
         extra_fields.setdefault("status", UserStatus.ACTIVE)
 
@@ -96,6 +98,8 @@ class UserManager(BaseUserManager):
             raise ValueError("Superuser must have is_staff=True.")
         if extra_fields.get("is_superuser") is not True:
             raise ValueError("Superuser must have is_superuser=True.")
+        if extra_fields.get("is_platform_admin") is not False:
+            raise ValueError("Superuser must have is_platform_admin=False.")
 
         return self._create_user(username, password, **extra_fields)
 
@@ -106,6 +110,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     username = models.CharField(max_length=150, unique=True)
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    is_platform_admin = models.BooleanField(default=False)
     status = models.PositiveSmallIntegerField(choices=UserStatus.choices, default=UserStatus.ACTIVE)
     last_login = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -148,12 +153,19 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return self.username
 
+    def clean(self):
+        if self.is_superuser and self.is_platform_admin:
+            raise ValidationError({"is_platform_admin": "superuser 与 platform_admin 不能同时为 true"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
 
 class StaffProfile(TimeStampedModel):
     """人员全局档案。"""
 
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="staff_profile")
-    staff_no = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=64)
     phone = models.CharField(max_length=32, blank=True)
     email = models.EmailField(blank=True)
@@ -181,7 +193,7 @@ class StaffProfile(TimeStampedModel):
         return super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.staff_no}-{self.name}"
+        return self.name or f"staff_profile:{self.id}"
 
 
 class AuditLog(models.Model):
@@ -316,6 +328,16 @@ class RolePermissionGrant(TimeStampedModel):
     def __str__(self):
         return f"{self.role.code}:{self.permission.code}:{self.scope_type}"
 
+    def clean(self):
+        if not self.permission_id:
+            return
+        if self.scope_type in {ScopeType.OWN, ScopeType.ASSIGNED} and not self.permission.resource_code:
+            raise ValidationError({"permission": "OWN / ASSIGNED 权限映射要求 permission.resource_code 非空"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
 
 class QualificationType(TimeStampedModel):
     """平台资质类型目录。"""
@@ -386,6 +408,65 @@ class TenantMember(TimeStampedModel):
             ),
         ]
 
+    def clean(self):
+        errors = {}
+
+        if self.user_id and self.user.is_superuser:
+            errors["user"] = "superuser 账号不允许绑定 tenant_member"
+        if self.user_id and self.user.is_platform_admin:
+            errors["user"] = "platform_admin 账号不允许绑定 tenant_member"
+        if self.user_id and not StaffProfile.objects.filter(user_id=self.user_id).exists():
+            errors["user"] = "tenant_member 绑定的账号必须先存在 staff_profile"
+
+        if self.status == TenantMemberStatus.INVITED:
+            if not self.invitation_token:
+                errors["invitation_token"] = "INVITED 状态必须提供 invitation_token"
+            if self.invited_at is None:
+                errors["invited_at"] = "INVITED 状态必须提供 invited_at"
+            if self.expires_at is None:
+                errors["expires_at"] = "INVITED 状态必须提供 expires_at"
+            if self.responded_at is not None:
+                errors["responded_at"] = "INVITED 状态不允许写入 responded_at"
+            if self.joined_at is not None:
+                errors["joined_at"] = "INVITED 状态不允许写入 joined_at"
+
+        if self.status in {TenantMemberStatus.ACTIVE, TenantMemberStatus.DISABLED}:
+            if self.responded_at is None:
+                errors["responded_at"] = f"{self.get_status_display().upper()} 状态必须提供 responded_at"
+            if self.joined_at is None:
+                errors["joined_at"] = f"{self.get_status_display().upper()} 状态必须提供 joined_at"
+            if self.invitation_token:
+                errors["invitation_token"] = f"{self.get_status_display().upper()} 状态不允许保留 invitation_token"
+            if self.invited_by_user_id is not None:
+                errors["invited_by_user"] = f"{self.get_status_display().upper()} 状态不允许保留 invited_by_user"
+            if self.invited_at is not None:
+                errors["invited_at"] = f"{self.get_status_display().upper()} 状态不允许保留 invited_at"
+            if self.expires_at is not None:
+                errors["expires_at"] = f"{self.get_status_display().upper()} 状态不允许保留 expires_at"
+
+        if self.status == TenantMemberStatus.REJECTED:
+            if self.responded_at is None:
+                errors["responded_at"] = "REJECTED 状态必须提供 responded_at"
+            if self.invitation_token:
+                errors["invitation_token"] = "REJECTED 状态不允许保留 invitation_token"
+            if self.joined_at is not None:
+                errors["joined_at"] = "REJECTED 状态不允许写入 joined_at"
+
+        if self.status in {TenantMemberStatus.REVOKED, TenantMemberStatus.EXPIRED}:
+            if self.invitation_token:
+                errors["invitation_token"] = f"{self.get_status_display().upper()} 状态不允许保留 invitation_token"
+            if self.responded_at is not None:
+                errors["responded_at"] = f"{self.get_status_display().upper()} 状态不允许写入 responded_at"
+            if self.joined_at is not None:
+                errors["joined_at"] = f"{self.get_status_display().upper()} 状态不允许写入 joined_at"
+
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.tenant.code}:{self.user.username}"
 
@@ -435,6 +516,33 @@ class TenantMemberQualification(TimeStampedModel):
     def __str__(self):
         return f"{self.tenant_member_id}:{self.qualification_type.code}"
 
+    def clean(self):
+        if not self.qualification_type_id:
+            return
+
+        qualification_type = self.qualification_type
+        if qualification_type.status != DirectoryStatus.ACTIVE:
+            raise ValidationError({"qualification_type": "资质类型已停用"})
+
+        if qualification_type.requires_validity:
+            if self.valid_from is None:
+                raise ValidationError({"valid_from": "该资质类型要求提供 valid_from"})
+            if self.valid_until is None:
+                raise ValidationError({"valid_until": "该资质类型要求提供 valid_until"})
+
+        if self.valid_from and self.valid_until and self.valid_from > self.valid_until:
+            raise ValidationError({"valid_until": "valid_until 不能早于 valid_from"})
+
+        payload_json = self.payload_json or {}
+        schema = qualification_type.payload_schema_json or {}
+        for required_key in schema.get("required", []):
+            if required_key not in payload_json or payload_json[required_key] in (None, ""):
+                raise ValidationError({"payload_json": f"缺少必填字段: {required_key}"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
 
 class TenantMemberRole(TimeStampedModel):
     """租户成员与平台角色的绑定关系。"""
@@ -474,6 +582,21 @@ class TenantMemberRole(TimeStampedModel):
 
     def __str__(self):
         return f"{self.tenant_member_id}:{self.system_role.code}"
+
+    def clean(self):
+        if not self.system_role_id:
+            return
+
+        if self.system_role.status != DirectoryStatus.ACTIVE:
+            raise ValidationError({"system_role": "角色已停用，不能分配给租户成员"})
+        if self.system_role.code == "platform_admin":
+            raise ValidationError({"system_role": "platform_admin 角色不允许分配给租户成员"})
+        if self.status == TenantMemberRoleStatus.GRANTED and self.assigned_at is None:
+            raise ValidationError({"assigned_at": "GRANTED 状态必须提供 assigned_at"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
 
 # 兼容旧代码的别名，后续逐步移除。
