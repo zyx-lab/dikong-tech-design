@@ -239,7 +239,7 @@ class WaypointApiTests(TestCase):
         )
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_create_waypoint_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
@@ -257,7 +257,7 @@ class WaypointApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_patch_waypoint_should_return_success(self):
         self._grant_permission("waypoint.manage_waypoint")
@@ -351,7 +351,7 @@ class WaypointApiTests(TestCase):
         )
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_patch_waypoint_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
@@ -364,7 +364,7 @@ class WaypointApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_delete_waypoint_should_return_success_and_delete(self):
         self._grant_permission("waypoint.manage_waypoint")
@@ -409,7 +409,7 @@ class WaypointApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_delete_waypoint_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
@@ -419,7 +419,7 @@ class WaypointApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_list_waypoints_should_return_success(self):
         self._grant_permission("waypoint.view_waypoint")
@@ -481,7 +481,7 @@ class WaypointApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_retrieve_waypoint_without_permission_should_return_permission_denied(self):
         waypoint = self._create_waypoint(route=self.route_active, sequence=5)
@@ -491,13 +491,13 @@ class WaypointApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_list_waypoints_without_auth_should_return_permission_denied(self):
         response = self.client.get("/api/v1/waypoints")
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_list_waypoints_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
@@ -505,7 +505,7 @@ class WaypointApiTests(TestCase):
         response = self.client.get("/api/v1/waypoints")
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
 
 # ============================================================================

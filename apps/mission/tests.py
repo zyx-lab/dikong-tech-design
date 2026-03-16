@@ -466,7 +466,7 @@ class MissionApiTests(TestCase):
         )
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_create_mission_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.dispatcher_user)
@@ -484,7 +484,7 @@ class MissionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_patch_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -551,7 +551,7 @@ class MissionApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_patch_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限更新任务")
@@ -565,7 +565,7 @@ class MissionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_list_missions_should_return_success(self):
         self._grant_permission("mission.view_mission")
@@ -597,7 +597,7 @@ class MissionApiTests(TestCase):
         response = self.client.get("/api/v1/missions")
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_list_missions_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.dispatcher_user)
@@ -605,7 +605,7 @@ class MissionApiTests(TestCase):
         response = self.client.get("/api/v1/missions")
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_retrieve_mission_should_return_success(self):
         self._grant_permission("mission.view_mission")
@@ -635,7 +635,7 @@ class MissionApiTests(TestCase):
         response = self.client.get(f"/api/v1/missions/{mission.id}")
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_retrieve_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限详情任务")
@@ -644,7 +644,7 @@ class MissionApiTests(TestCase):
         response = self.client.get(f"/api/v1/missions/{mission.id}")
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_cancel_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -715,7 +715,7 @@ class MissionApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_cancel_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限取消任务", status=MissionStatus.RUNNING)
@@ -725,7 +725,7 @@ class MissionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_start_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -808,7 +808,7 @@ class MissionApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_start_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限启动任务", status=MissionStatus.PENDING)
@@ -818,7 +818,7 @@ class MissionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_pause_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -901,7 +901,7 @@ class MissionApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_pause_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限暂停任务", status=MissionStatus.RUNNING)
@@ -911,7 +911,7 @@ class MissionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_resume_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -994,7 +994,7 @@ class MissionApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_resume_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限恢复任务", status=MissionStatus.PAUSED)
@@ -1004,7 +1004,7 @@ class MissionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_complete_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -1087,7 +1087,7 @@ class MissionApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_complete_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限完成任务", status=MissionStatus.RUNNING)
@@ -1097,7 +1097,7 @@ class MissionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_fail_mission_should_return_success(self):
         self._grant_permission("mission.manage_mission")
@@ -1179,7 +1179,7 @@ class MissionApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_fail_mission_without_permission_should_return_permission_denied(self):
         mission = self._create_mission(name="无权限失败任务", status=MissionStatus.RUNNING)
@@ -1189,7 +1189,7 @@ class MissionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
 
 class MissionPilotScopeTests(TestCase):

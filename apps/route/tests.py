@@ -190,7 +190,7 @@ class RouteApiTests(TestCase):
         )
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_create_route_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
@@ -204,7 +204,7 @@ class RouteApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_list_routes_should_return_success(self):
         self._grant_permission("route.view_route")
@@ -236,14 +236,14 @@ class RouteApiTests(TestCase):
         response = self.client.get("/api/v1/routes")
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_list_routes_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.user)
         response = self.client.get("/api/v1/routes")
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_retrieve_route_should_return_success(self):
         self._grant_permission("route.view_route")
@@ -272,7 +272,7 @@ class RouteApiTests(TestCase):
         response = self.client.get(f"/api/v1/routes/{route.id}")
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_retrieve_route_without_permission_should_return_permission_denied(self):
         route = self._create_route(name="详情航线无权限")
@@ -281,7 +281,7 @@ class RouteApiTests(TestCase):
         response = self.client.get(f"/api/v1/routes/{route.id}")
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_patch_route_should_return_success(self):
         self._grant_permission("route.manage_route")
@@ -374,7 +374,7 @@ class RouteApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_patch_route_without_permission_should_return_permission_denied(self):
         route = self._create_route(name="无权限更新航线")
@@ -388,7 +388,7 @@ class RouteApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_enable_route_should_return_success(self):
         self._grant_permission("route.manage_route")
@@ -458,7 +458,7 @@ class RouteApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_enable_route_without_permission_should_return_permission_denied(self):
         route = self._create_route(name="无权限启用航线", status=RouteStatus.DISABLED)
@@ -468,7 +468,7 @@ class RouteApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_disable_route_should_return_success(self):
         self._grant_permission("route.manage_route")
@@ -538,7 +538,7 @@ class RouteApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_disable_route_without_permission_should_return_permission_denied(self):
         route = self._create_route(name="无权限禁用航线", status=RouteStatus.ACTIVE)
@@ -548,7 +548,7 @@ class RouteApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_delete_route_should_hard_delete_route_and_waypoints(self):
         self._grant_permission("route.manage_route")
@@ -647,7 +647,7 @@ class RouteApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_delete_route_without_permission_should_return_permission_denied(self):
         route = self._create_route(name="删除无权限航线")
@@ -657,4 +657,4 @@ class RouteApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")

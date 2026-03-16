@@ -1,6 +1,12 @@
 """Custom exception handlers for DRF."""
+import logging
+
 from rest_framework.exceptions import APIException, AuthenticationFailed, NotAuthenticated
+from rest_framework.response import Response
 from rest_framework.views import exception_handler
+
+
+logger = logging.getLogger(__name__)
 
 
 class BusinessAPIException(APIException):
@@ -20,7 +26,7 @@ class BusinessResourceNotFound(BusinessAPIException):
     default_detail = "resource not found"
     default_code = "resource_not_found"
     business_code = "RESOURCE_NOT_FOUND"
-    business_detail_code = "RESOURCE_NOT_FOUND"
+    business_detail_code = "NOT_FOUND"
 
 
 class BusinessStateConflict(BusinessAPIException):
@@ -84,4 +90,24 @@ def custom_exception_handler(exc, context):
                 "detail": detail,
             }
 
-    return response
+        return response
+
+    request = context.get("request")
+    if request is not None:
+        logger.exception(
+            "Unhandled API exception on %s %s",
+            request.method,
+            request.get_full_path(),
+            exc_info=exc,
+        )
+    else:
+        logger.exception("Unhandled API exception", exc_info=exc)
+
+    return Response(
+        {
+            "business_code": "INTERNAL_ERROR",
+            "business_detail_code": "INTERNAL_ERROR",
+            "detail": "internal server error",
+        },
+        status=500,
+    )

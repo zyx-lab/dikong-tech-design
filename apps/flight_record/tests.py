@@ -535,7 +535,7 @@ class FlightRecordApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_create_flight_record_without_permission_should_return_permission_denied(self):
         self.client.force_authenticate(self.viewer_user)
@@ -554,7 +554,7 @@ class FlightRecordApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_list_flight_records_should_return_success(self):
         self._grant_permission("flight_record.view_flight_record")
@@ -588,7 +588,7 @@ class FlightRecordApiTests(TestCase):
         response = self.client.get("/api/v1/flight-records")
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_list_flight_records_without_permission_should_return_permission_denied(self):
         self._create_flight_record()
@@ -597,7 +597,7 @@ class FlightRecordApiTests(TestCase):
         response = self.client.get("/api/v1/flight-records")
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_retrieve_flight_record_should_return_success(self):
         self._grant_permission("flight_record.view_flight_record")
@@ -626,7 +626,7 @@ class FlightRecordApiTests(TestCase):
         response = self.client.get(f"/api/v1/flight-records/{record.id}")
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_retrieve_flight_record_without_permission_should_return_permission_denied(self):
         record = self._create_flight_record()
@@ -635,7 +635,7 @@ class FlightRecordApiTests(TestCase):
         response = self.client.get(f"/api/v1/flight-records/{record.id}")
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_patch_flight_record_should_return_success(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -745,7 +745,7 @@ class FlightRecordApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_patch_flight_record_without_permission_should_return_permission_denied(self):
         record = self._create_flight_record()
@@ -759,7 +759,7 @@ class FlightRecordApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_complete_flight_record_should_return_success(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -842,7 +842,7 @@ class FlightRecordApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_complete_flight_record_without_permission_should_return_permission_denied(self):
         record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
@@ -852,7 +852,7 @@ class FlightRecordApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
     def test_abort_flight_record_should_return_success(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -935,7 +935,7 @@ class FlightRecordApiTests(TestCase):
 
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_abort_flight_record_without_permission_should_return_permission_denied(self):
         record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
@@ -945,7 +945,7 @@ class FlightRecordApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+        self.assertEqual(response.data["business_detail_code"], "FORBIDDEN")
 
 
 class FlightRecordPilotScopeTests(TestCase):

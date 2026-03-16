@@ -40,8 +40,8 @@ TENANT_CODE_HEADER_PARAMETER = OpenApiParameter(
 
 
 class BusinessErrorResponseSerializer(serializers.Serializer):
-    business_code = serializers.CharField(help_text="稳定业务状态码，例如 INVALID_PARAMS、PERMISSION_DENIED、STATE_CONFLICT。")
-    business_detail_code = serializers.CharField(help_text="更细的业务细分码，例如 OK、NOT_AUTHENTICATED、FORBIDDEN。")
+    business_code = serializers.CharField(help_text="稳定业务状态码，例如 INVALID_PARAMS、PERMISSION_DENIED、STATE_CONFLICT、INTERNAL_ERROR。")
+    business_detail_code = serializers.CharField(help_text="更细的业务细分码，例如 OK、NOT_AUTHENTICATED、FORBIDDEN、INTERNAL_ERROR。")
     detail = serializers.CharField(required=False, help_text="对当前错误场景的简要解释。")
     errors = serializers.JSONField(required=False, help_text="字段级校验错误明细；仅在校验失败场景返回。")
 
@@ -84,6 +84,20 @@ def business_error_response(*, description, examples):
         description=description,
         examples=examples,
     )
+
+
+BUSINESS_INTERNAL_ERROR_RESPONSE = business_error_response(
+    description="服务内部错误或未处理异常，business_code 固定为 INTERNAL_ERROR。",
+    examples=[
+        business_error_example(
+            "内部错误",
+            business_code="INTERNAL_ERROR",
+            business_detail_code="INTERNAL_ERROR",
+            detail="internal server error",
+            status_codes=["500"],
+        )
+    ],
+)
 
 
 def object_envelope_serializer(name, serializer):

@@ -8,6 +8,7 @@ from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermissi
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
 from apps.api_v1.schema import (
+    BUSINESS_INTERNAL_ERROR_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
     business_error_example,
     business_error_response,
@@ -188,6 +189,7 @@ def _mission_transition_schema(*, summary, description):
             403: MISSION_PERMISSION_DENIED_RESPONSE,
             404: MISSION_NOT_FOUND_RESPONSE,
             409: MISSION_STATE_CONFLICT_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Mission"],
     )
@@ -205,6 +207,7 @@ def _mission_transition_schema(*, summary, description):
             200: OpenApiResponse(response=MISSION_LIST_RESPONSE, description="查询成功。"),
             401: MISSION_PERMISSION_DENIED_RESPONSE,
             403: MISSION_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Mission"],
     ),
@@ -217,6 +220,7 @@ def _mission_transition_schema(*, summary, description):
             401: MISSION_PERMISSION_DENIED_RESPONSE,
             403: MISSION_PERMISSION_DENIED_RESPONSE,
             404: MISSION_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Mission"],
     ),
@@ -244,6 +248,7 @@ def _mission_transition_schema(*, summary, description):
             400: MISSION_INVALID_PARAMS_RESPONSE,
             401: MISSION_PERMISSION_DENIED_RESPONSE,
             403: MISSION_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Mission"],
     ),
@@ -265,6 +270,7 @@ def _mission_transition_schema(*, summary, description):
             401: MISSION_PERMISSION_DENIED_RESPONSE,
             403: MISSION_PERMISSION_DENIED_RESPONSE,
             404: MISSION_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Mission"],
     ),

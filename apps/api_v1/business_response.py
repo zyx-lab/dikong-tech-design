@@ -12,6 +12,7 @@ class BusinessCode:
     RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
     STATE_CONFLICT = "STATE_CONFLICT"
     IDEMPOTENT_DUPLICATE = "IDEMPOTENT_DUPLICATE"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
 _KNOWN_CODES = {
@@ -21,6 +22,7 @@ _KNOWN_CODES = {
     BusinessCode.RESOURCE_NOT_FOUND,
     BusinessCode.STATE_CONFLICT,
     BusinessCode.IDEMPOTENT_DUPLICATE,
+    BusinessCode.INTERNAL_ERROR,
 }
 
 _DUPLICATE_HINTS = (
@@ -64,10 +66,6 @@ def _extract_payload_detail_code(payload: Any) -> str | None:
     normalized_detail_code = _normalize_detail_code(detail_code)
     if normalized_detail_code:
         return normalized_detail_code
-
-    normalized_detail = _normalize_detail_code(detail)
-    if normalized_detail and normalized_detail.replace("_", "").isalnum():
-        return normalized_detail
     return None
 
 
@@ -94,6 +92,8 @@ def infer_business_code(status_code: int, payload: Any) -> str:
         return BusinessCode.IDEMPOTENT_DUPLICATE
     if detail_code in {"STATE_CONFLICT"}:
         return BusinessCode.STATE_CONFLICT
+    if detail_code in {"INTERNAL_ERROR", "INTERNAL_SERVER_ERROR"}:
+        return BusinessCode.INTERNAL_ERROR
 
     text = _normalized_text(payload)
     if any(hint in text for hint in _DUPLICATE_HINTS) and status_code in (400, 409):
@@ -113,12 +113,18 @@ def infer_business_code(status_code: int, payload: Any) -> str:
         return BusinessCode.INVALID_PARAMS
     if 400 <= status_code < 500:
         return BusinessCode.INVALID_PARAMS
-    return BusinessCode.INVALID_PARAMS
+    return BusinessCode.INTERNAL_ERROR
 
 
 def infer_business_detail_code(status_code: int, payload: Any, business_code: str) -> str:
     declared = _extract_payload_detail_code(payload)
     if declared:
+        if business_code == BusinessCode.PERMISSION_DENIED and declared == "PERMISSION_DENIED":
+            return "FORBIDDEN"
+        if business_code == BusinessCode.RESOURCE_NOT_FOUND and declared == "RESOURCE_NOT_FOUND":
+            return "NOT_FOUND"
+        if business_code == BusinessCode.INTERNAL_ERROR and declared in {"ERROR", "INTERNAL_SERVER_ERROR"}:
+            return "INTERNAL_ERROR"
         return declared
 
     text = _normalized_text(payload)
@@ -138,6 +144,8 @@ def infer_business_detail_code(status_code: int, payload: Any, business_code: st
         return "DUPLICATE_REQUEST"
     if business_code == BusinessCode.STATE_CONFLICT:
         return "STATE_CONFLICT"
+    if business_code == BusinessCode.INTERNAL_ERROR:
+        return "INTERNAL_ERROR"
     if status_code == 405:
         return "METHOD_NOT_ALLOWED"
     return "VALIDATION_ERROR"

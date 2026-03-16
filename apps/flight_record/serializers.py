@@ -181,3 +181,16 @@ class FlightRecordWriteSerializer(serializers.ModelSerializer):
             "status",
             "airport_name",
         ]
+        extra_kwargs = {
+            "flight_no": {"help_text": "架次编号，租户内唯一。重复提交时会返回 IDEMPOTENT_DUPLICATE。"},
+            "mission": {"help_text": "关联任务 ID，可为空；必须属于当前租户。"},
+            "drone": {"help_text": "执行无人机 ID，可为空；若 mission 已绑定 drone，则必须保持一致。"},
+            "pilot": {"help_text": "执行飞手成员 ID，可为空；必须为当前租户 ACTIVE 飞手。"},
+            "start_time": {"help_text": "飞行开始时间，可为空。"},
+            "end_time": {"help_text": "飞行结束时间，可为空；若填写不得早于 start_time。"},
+            "flight_duration": {"help_text": "飞行时长，单位秒；若同时提供开始和结束时间，可由系统自动回填。"},
+            "photo_count": {"help_text": "本次飞行拍摄照片数量，默认 0。"},
+            "video_count": {"help_text": "本次飞行录制视频数量，默认 0。"},
+            "status": {"help_text": "飞行记录状态；创建时可显式指定，PATCH 不允许直接修改，请使用状态动作接口。"},
+            "airport_name": {"help_text": "执行机场名称，可为空。"},
+        }

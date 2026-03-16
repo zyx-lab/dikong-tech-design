@@ -127,6 +127,7 @@ SPECTACULAR_SETTINGS = {
         "DroneAssignmentStatusEnum": "apps.drone_assignment.models.DroneAssignmentStatus",
         "DroneStatusEnum": "apps.drone.models.DroneStatus",
         "FlightRecordStatusEnum": "apps.flight_record.models.FlightRecordStatus",
+        "MediaTypeEnum": "apps.media_file.models.MediaType",
         "MissionStatusEnum": "apps.mission.models.MissionStatus",
         "RouteStatusEnum": "apps.route.models.RouteStatus",
         "RouteTypeEnum": "apps.route.models.RouteType",

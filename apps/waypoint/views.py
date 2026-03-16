@@ -7,6 +7,7 @@ from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermissi
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin
 from apps.api_v1.schema import (
+    BUSINESS_INTERNAL_ERROR_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
     BusinessDeleteResultSerializer,
     business_error_example,
@@ -111,6 +112,7 @@ WAYPOINT_NOT_FOUND_RESPONSE = business_error_response(
             200: OpenApiResponse(response=WAYPOINT_LIST_RESPONSE, description="查询成功。"),
             401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
             403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Waypoint"],
     ),
@@ -123,6 +125,7 @@ WAYPOINT_NOT_FOUND_RESPONSE = business_error_response(
             401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
             403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
             404: WAYPOINT_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Waypoint"],
     ),
@@ -149,6 +152,7 @@ WAYPOINT_NOT_FOUND_RESPONSE = business_error_response(
             400: WAYPOINT_INVALID_PARAMS_RESPONSE,
             401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
             403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Waypoint"],
     ),
@@ -170,6 +174,7 @@ WAYPOINT_NOT_FOUND_RESPONSE = business_error_response(
             401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
             403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
             404: WAYPOINT_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Waypoint"],
     ),
@@ -183,6 +188,7 @@ WAYPOINT_NOT_FOUND_RESPONSE = business_error_response(
             401: WAYPOINT_PERMISSION_DENIED_RESPONSE,
             403: WAYPOINT_PERMISSION_DENIED_RESPONSE,
             404: WAYPOINT_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Waypoint"],
     ),

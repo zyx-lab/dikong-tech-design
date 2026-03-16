@@ -1,16 +1,245 @@
 from django.db import transaction
 from django.utils import timezone
-from rest_framework import mixins, status, viewsets
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view, inline_serializer
+from rest_framework import mixins, serializers, status, viewsets
 from rest_framework.response import Response
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin
+from apps.api_v1.schema import (
+    BUSINESS_INTERNAL_ERROR_RESPONSE,
+    TENANT_CODE_HEADER_PARAMETER,
+    business_error_example,
+    business_error_response,
+    object_envelope_serializer,
+    paginated_envelope_serializer,
+)
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
-from apps.media_file.models import MediaFile
+from apps.media_file.models import MediaFile, MediaType
 from apps.media_file.serializers import MediaFileReadSerializer, MediaFileWriteSerializer
 
 
+MEDIA_FILE_LIST_RESPONSE = paginated_envelope_serializer("MediaFileListResponse", MediaFileReadSerializer)
+MEDIA_FILE_DETAIL_RESPONSE = object_envelope_serializer("MediaFileDetailResponse", MediaFileReadSerializer)
+MEDIA_FILE_DELETE_RESPONSE = inline_serializer(
+    name="MediaFileDeleteResponse",
+    fields={
+        "business_code": serializers.CharField(),
+        "business_detail_code": serializers.CharField(),
+        "id": serializers.IntegerField(),
+        "is_deleted": serializers.BooleanField(help_text="固定为 true，表示已完成逻辑删除。"),
+    },
+)
+
+MEDIA_FILE_FILTER_PARAMETERS = [
+    TENANT_CODE_HEADER_PARAMETER,
+    OpenApiParameter(
+        name="flight_record_id",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按关联飞行记录 ID 精确过滤。",
+    ),
+    OpenApiParameter(
+        name="media_type",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按媒体类型精确过滤。",
+        enum=[choice[0] for choice in MediaType.choices],
+    ),
+    OpenApiParameter(
+        name="mission_id",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按飞行记录关联任务 ID 精确过滤。",
+    ),
+    OpenApiParameter(
+        name="drone_id",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按飞行记录关联无人机 ID 精确过滤。",
+    ),
+    OpenApiParameter(
+        name="file_name",
+        type=str,
+        location=OpenApiParameter.QUERY,
+        description="按文件名做模糊匹配。",
+    ),
+]
+
+MEDIA_FILE_PERMISSION_DENIED_RESPONSE = business_error_response(
+    description="未认证、无权限、缺少租户上下文，或 platform_admin 访问业务 API 被拒绝。",
+    examples=[
+        business_error_example(
+            "未登录",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="NOT_AUTHENTICATED",
+            detail="Authentication credentials were not provided.",
+            status_codes=["401"],
+        ),
+        business_error_example(
+            "无权限",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="FORBIDDEN",
+            detail="PERMISSION_DENIED",
+            status_codes=["403"],
+        ),
+        business_error_example(
+            "缺少租户上下文",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="TENANT_CONTEXT_REQUIRED",
+            detail="tenant context required",
+            status_codes=["403"],
+        ),
+        business_error_example(
+            "平台管理员访问业务 API",
+            business_code="PERMISSION_DENIED",
+            business_detail_code="FORBIDDEN",
+            detail="platform admin cannot access tenant business api",
+            status_codes=["403"],
+        ),
+    ],
+)
+
+MEDIA_FILE_INVALID_PARAMS_RESPONSE = business_error_response(
+    description="请求体不合法或绑定关系不满足约束，business_code 固定为 INVALID_PARAMS。",
+    examples=[
+        business_error_example(
+            "跨租户飞行记录",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="参数校验失败",
+            status_codes=["400"],
+            extras={"errors": {"flight_record": ["仅允许绑定当前租户下的飞行记录"]}},
+        ),
+        business_error_example(
+            "缺少文件名",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="参数校验失败",
+            status_codes=["400"],
+            extras={"errors": {"file_name": ["该字段是必填项。"]}},
+        ),
+        business_error_example(
+            "PATCH 空请求体",
+            business_code="INVALID_PARAMS",
+            business_detail_code="VALIDATION_ERROR",
+            detail="PATCH 请求至少包含一个可写字段",
+            status_codes=["400"],
+            extras={"errors": {"body": "请至少提交一个可写字段"}},
+        ),
+    ],
+)
+
+MEDIA_FILE_NOT_FOUND_RESPONSE = business_error_response(
+    description="目标媒体文件不存在，或在当前租户/授权作用域下不可见；已逻辑删除记录也按不存在处理。",
+    examples=[
+        business_error_example(
+            "媒体文件不存在",
+            business_code="RESOURCE_NOT_FOUND",
+            business_detail_code="NOT_FOUND",
+            detail="No MediaFile matches the given query.",
+            status_codes=["404"],
+        )
+    ],
+)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="查询媒体文件列表",
+        description="按当前租户查询媒体文件，支持按飞行记录、任务、无人机、媒体类型、文件名过滤。",
+        parameters=MEDIA_FILE_FILTER_PARAMETERS,
+        responses={
+            200: OpenApiResponse(response=MEDIA_FILE_LIST_RESPONSE, description="查询成功。"),
+            401: MEDIA_FILE_PERMISSION_DENIED_RESPONSE,
+            403: MEDIA_FILE_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Media File"],
+    ),
+    retrieve=extend_schema(
+        summary="读取媒体文件详情",
+        description="按媒体文件 ID 读取单条详情；已逻辑删除记录按不可见处理。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        responses={
+            200: OpenApiResponse(response=MEDIA_FILE_DETAIL_RESPONSE, description="读取成功。"),
+            401: MEDIA_FILE_PERMISSION_DENIED_RESPONSE,
+            403: MEDIA_FILE_PERMISSION_DENIED_RESPONSE,
+            404: MEDIA_FILE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Media File"],
+    ),
+    create=extend_schema(
+        summary="创建媒体文件",
+        description="创建一条媒体文件元数据记录，用于沉淀照片或视频文件与飞行记录的关联信息。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=MediaFileWriteSerializer,
+        examples=[
+            OpenApiExample(
+                "创建媒体文件请求",
+                request_only=True,
+                value={
+                    "flight_record": 1,
+                    "media_type": MediaType.PHOTO,
+                    "file_name": "IMG_CREATE_OK.JPG",
+                    "file_url": "https://example.com/IMG_CREATE_OK.JPG",
+                    "thumbnail_url": "https://example.com/thumb/IMG_CREATE_OK.JPG",
+                    "file_size": 4096,
+                },
+            )
+        ],
+        responses={
+            201: OpenApiResponse(response=MEDIA_FILE_DETAIL_RESPONSE, description="创建成功。"),
+            400: MEDIA_FILE_INVALID_PARAMS_RESPONSE,
+            401: MEDIA_FILE_PERMISSION_DENIED_RESPONSE,
+            403: MEDIA_FILE_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Media File"],
+    ),
+    partial_update=extend_schema(
+        summary="局部更新媒体文件",
+        description="按媒体文件 ID 局部更新元数据字段，不承担逻辑删除恢复或批量操作。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=MediaFileWriteSerializer,
+        examples=[
+            OpenApiExample(
+                "PATCH 媒体文件请求",
+                request_only=True,
+                value={
+                    "media_type": MediaType.VIDEO,
+                    "file_name": "IMG_PATCH_NEW.MP4",
+                    "file_url": "https://example.com/IMG_PATCH_NEW.MP4",
+                },
+            )
+        ],
+        responses={
+            200: OpenApiResponse(response=MEDIA_FILE_DETAIL_RESPONSE, description="更新成功。"),
+            400: MEDIA_FILE_INVALID_PARAMS_RESPONSE,
+            401: MEDIA_FILE_PERMISSION_DENIED_RESPONSE,
+            403: MEDIA_FILE_PERMISSION_DENIED_RESPONSE,
+            404: MEDIA_FILE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Media File"],
+    ),
+    destroy=extend_schema(
+        summary="逻辑删除媒体文件",
+        description="按媒体文件 ID 执行逻辑删除，写入 `is_deleted=true` 和 `deleted_at`。",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=MEDIA_FILE_DELETE_RESPONSE, description="删除成功。"),
+            401: MEDIA_FILE_PERMISSION_DENIED_RESPONSE,
+            403: MEDIA_FILE_PERMISSION_DENIED_RESPONSE,
+            404: MEDIA_FILE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Media File"],
+    ),
+)
 class MediaFileViewSet(
     BusinessApiResponseMixin,
     TenantScopedBusinessMixin,

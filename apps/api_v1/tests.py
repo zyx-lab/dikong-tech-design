@@ -1,12 +1,29 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from django.urls import path
+from rest_framework.permissions import AllowAny
 from rest_framework.test import APIClient
+from rest_framework.views import APIView
 
 from apps.access.models import DirectoryStatus, Role, ScopeType, Tenant, TenantStatus
 from apps.access.test_support import grant_role_permissions
+from apps.api_v1.business_response import attach_business_code
 from apps.drone.models import Drone
+from config.urls import urlpatterns as project_urlpatterns
 
 User = get_user_model()
+
+
+class BrokenBusinessView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        raise RuntimeError("boom")
+
+
+urlpatterns = [
+    path("__tests__/broken-business", BrokenBusinessView.as_view(), name="broken-business"),
+] + project_urlpatterns
 
 
 class BusinessApiResponseContractTests(TestCase):
@@ -32,6 +49,32 @@ class BusinessApiResponseContractTests(TestCase):
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data.get("business_code"), "PERMISSION_DENIED")
         self.assertEqual(response.data.get("business_detail_code"), "NOT_AUTHENTICATED")
+
+    def test_attach_business_code_should_normalize_permission_and_not_found_detail_codes(self):
+        self.assertEqual(
+            attach_business_code({"detail": "PERMISSION_DENIED"}, 403),
+            {
+                "detail": "PERMISSION_DENIED",
+                "business_code": "PERMISSION_DENIED",
+                "business_detail_code": "FORBIDDEN",
+            },
+        )
+        self.assertEqual(
+            attach_business_code({"business_code": "RESOURCE_NOT_FOUND"}, 404),
+            {
+                "business_code": "RESOURCE_NOT_FOUND",
+                "business_detail_code": "NOT_FOUND",
+            },
+        )
+
+    @override_settings(ROOT_URLCONF="apps.api_v1.tests")
+    def test_unhandled_api_exception_should_return_internal_error_business_code(self):
+        response = self.client.get("/__tests__/broken-business")
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["business_code"], "INTERNAL_ERROR")
+        self.assertEqual(response.json()["business_detail_code"], "INTERNAL_ERROR")
+        self.assertEqual(response.json()["detail"], "internal server error")
 
 
 class OpenApiDocsTests(TestCase):
@@ -70,6 +113,7 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("DroneAssignmentStatusEnum", schemas)
         self.assertIn("DroneStatusEnum", schemas)
         self.assertIn("FlightRecordStatusEnum", schemas)
+        self.assertIn("MediaTypeEnum", schemas)
         self.assertIn("MissionStatusEnum", schemas)
         self.assertIn("RouteStatusEnum", schemas)
         self.assertIn("RouteTypeEnum", schemas)
@@ -167,6 +211,75 @@ class OpenApiDocsTests(TestCase):
         self.assertTrue(any(item["detail"] == "当前任务状态不允许启动" for item in conflict_values))
         self.assertTrue(any(item["detail"] == "start 请求不支持提交 body 参数" for item in invalid_values))
         self.assertIn("X-TENANT-CODE", {item["name"] for item in operation["parameters"]})
+
+    def test_flight_record_list_and_complete_should_document_filters_and_state_conflict(self):
+        response = self.client.get("/docs/schema/")
+
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+        list_operation = schema["paths"]["/api/v1/flight-records"]["get"]
+        parameters = {item["name"]: item for item in list_operation["parameters"]}
+
+        self.assertIn("X-TENANT-CODE", parameters)
+        self.assertIn("flight_no", parameters)
+        self.assertIn("status", parameters)
+        self.assertIn("模糊匹配", parameters["flight_no"]["description"])
+        self.assertEqual(set(parameters["status"]["schema"]["enum"]), {0, 1, 2})
+
+        complete_operation = schema["paths"]["/api/v1/flight-records/{id}/complete"]["post"]
+        conflict_examples = complete_operation["responses"]["409"]["content"]["application/json"]["examples"]
+        conflict_values = [item["value"] for item in conflict_examples.values()]
+        self.assertTrue(any(item["business_code"] == "STATE_CONFLICT" for item in conflict_values))
+        self.assertTrue(any(item["detail"] == "当前飞行记录状态不允许完成" for item in conflict_values))
+
+    def test_media_file_list_and_create_should_document_filters_and_body_fields(self):
+        response = self.client.get("/docs/schema/")
+
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+        list_operation = schema["paths"]["/api/v1/media-files"]["get"]
+        parameters = {item["name"]: item for item in list_operation["parameters"]}
+
+        self.assertIn("X-TENANT-CODE", parameters)
+        self.assertIn("media_type", parameters)
+        self.assertIn("file_name", parameters)
+        self.assertIn("模糊匹配", parameters["file_name"]["description"])
+        self.assertEqual(set(parameters["media_type"]["schema"]["enum"]), {1, 2})
+
+        create_operation = schema["paths"]["/api/v1/media-files"]["post"]
+        invalid_examples = create_operation["responses"]["400"]["content"]["application/json"]["examples"]
+        invalid_values = [item["value"] for item in invalid_examples.values()]
+        self.assertTrue(any(item.get("errors", {}).get("flight_record") == ["仅允许绑定当前租户下的飞行记录"] for item in invalid_values))
+        media_file_write_schema = schema["components"]["schemas"]["MediaFileWrite"]
+        self.assertIn("媒体类型", media_file_write_schema["properties"]["media_type"]["description"])
+        self.assertIn("原始文件访问地址", media_file_write_schema["properties"]["file_url"]["description"])
+
+    def test_documented_business_operations_should_include_internal_error_response(self):
+        response = self.client.get("/docs/schema/")
+
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+        operations = [
+            ("/api/v1/drones", "get"),
+            ("/api/v1/drones/{id}/assignments/latest", "get"),
+            ("/api/v1/drone-assignments/{id}/reactivate", "post"),
+            ("/api/v1/routes/{id}/enable", "post"),
+            ("/api/v1/waypoints", "post"),
+            ("/api/v1/missions/{id}/start", "post"),
+            ("/api/v1/flight-records/{id}/complete", "post"),
+            ("/api/v1/media-files", "post"),
+        ]
+
+        for path, method in operations:
+            operation = schema["paths"][path][method]
+            self.assertIn("500", operation["responses"], msg=f"{method.upper()} {path} missing 500 response")
+
+        internal_error_examples = schema["paths"]["/api/v1/missions/{id}/start"]["post"]["responses"]["500"]["content"][
+            "application/json"
+        ]["examples"]
+        internal_error_values = [item["value"] for item in internal_error_examples.values()]
+        self.assertTrue(any(item["business_code"] == "INTERNAL_ERROR" for item in internal_error_values))
+        self.assertTrue(any(item["business_detail_code"] == "INTERNAL_ERROR" for item in internal_error_values))
 
 
 class BusinessApiTenantBoundaryTests(TestCase):

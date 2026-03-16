@@ -8,6 +8,7 @@ from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiRespo
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.api_v1.schema import (
+    BUSINESS_INTERNAL_ERROR_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
     business_error_example,
     business_error_response,
@@ -144,6 +145,7 @@ DRONE_ASSIGNMENT_STATE_CONFLICT_RESPONSE = business_error_response(
             ),
             401: DRONE_ASSIGNMENT_PERMISSION_DENIED_RESPONSE,
             403: DRONE_ASSIGNMENT_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone Assignment"],
     ),
@@ -156,6 +158,7 @@ DRONE_ASSIGNMENT_STATE_CONFLICT_RESPONSE = business_error_response(
             401: DRONE_ASSIGNMENT_PERMISSION_DENIED_RESPONSE,
             403: DRONE_ASSIGNMENT_PERMISSION_DENIED_RESPONSE,
             404: DRONE_ASSIGNMENT_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone Assignment"],
     ),
@@ -182,6 +185,7 @@ DRONE_ASSIGNMENT_STATE_CONFLICT_RESPONSE = business_error_response(
             400: DRONE_ASSIGNMENT_INVALID_PARAMS_RESPONSE,
             401: DRONE_ASSIGNMENT_PERMISSION_DENIED_RESPONSE,
             403: DRONE_ASSIGNMENT_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone Assignment"],
     ),
@@ -273,6 +277,7 @@ class DroneAssignmentViewSet(
             401: DRONE_ASSIGNMENT_PERMISSION_DENIED_RESPONSE,
             403: DRONE_ASSIGNMENT_PERMISSION_DENIED_RESPONSE,
             404: DRONE_ASSIGNMENT_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone Assignment"],
     )
@@ -349,6 +354,7 @@ class DroneAssignmentViewSet(
             403: DRONE_ASSIGNMENT_PERMISSION_DENIED_RESPONSE,
             404: DRONE_ASSIGNMENT_NOT_FOUND_RESPONSE,
             409: DRONE_ASSIGNMENT_STATE_CONFLICT_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone Assignment"],
     )

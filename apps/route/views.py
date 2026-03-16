@@ -8,6 +8,7 @@ from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermissi
 from apps.access.services import IdentityService, log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
 from apps.api_v1.schema import (
+    BUSINESS_INTERNAL_ERROR_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
     business_error_example,
     business_error_response,
@@ -142,6 +143,7 @@ ROUTE_NOT_FOUND_RESPONSE = business_error_response(
             200: OpenApiResponse(response=ROUTE_LIST_RESPONSE, description="查询成功。"),
             401: ROUTE_PERMISSION_DENIED_RESPONSE,
             403: ROUTE_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Route"],
     ),
@@ -154,6 +156,7 @@ ROUTE_NOT_FOUND_RESPONSE = business_error_response(
             401: ROUTE_PERMISSION_DENIED_RESPONSE,
             403: ROUTE_PERMISSION_DENIED_RESPONSE,
             404: ROUTE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Route"],
     ),
@@ -180,6 +183,7 @@ ROUTE_NOT_FOUND_RESPONSE = business_error_response(
             400: ROUTE_INVALID_PARAMS_RESPONSE,
             401: ROUTE_PERMISSION_DENIED_RESPONSE,
             403: ROUTE_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Route"],
     ),
@@ -201,6 +205,7 @@ ROUTE_NOT_FOUND_RESPONSE = business_error_response(
             401: ROUTE_PERMISSION_DENIED_RESPONSE,
             403: ROUTE_PERMISSION_DENIED_RESPONSE,
             404: ROUTE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Route"],
     ),
@@ -218,6 +223,7 @@ ROUTE_NOT_FOUND_RESPONSE = business_error_response(
             401: ROUTE_PERMISSION_DENIED_RESPONSE,
             403: ROUTE_PERMISSION_DENIED_RESPONSE,
             404: ROUTE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Route"],
     ),
@@ -348,6 +354,7 @@ class RouteViewSet(
             401: ROUTE_PERMISSION_DENIED_RESPONSE,
             403: ROUTE_PERMISSION_DENIED_RESPONSE,
             404: ROUTE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Route"],
     )
@@ -410,6 +417,7 @@ class RouteViewSet(
             401: ROUTE_PERMISSION_DENIED_RESPONSE,
             403: ROUTE_PERMISSION_DENIED_RESPONSE,
             404: ROUTE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Route"],
     )

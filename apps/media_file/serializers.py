@@ -61,3 +61,14 @@ class MediaFileWriteSerializer(serializers.ModelSerializer):
             "longitude",
             "captured_at",
         ]
+        extra_kwargs = {
+            "flight_record": {"help_text": "关联飞行记录 ID，可为空；若填写必须属于当前租户。"},
+            "media_type": {"help_text": "媒体类型。`1=照片`，`2=视频`。"},
+            "file_name": {"help_text": "文件名，用于列表展示和业务检索。"},
+            "file_url": {"help_text": "原始文件访问地址。"},
+            "thumbnail_url": {"help_text": "缩略图地址，可为空。"},
+            "file_size": {"help_text": "文件大小，单位字节，可为空。"},
+            "latitude": {"help_text": "拍摄位置纬度，可为空。"},
+            "longitude": {"help_text": "拍摄位置经度，可为空。"},
+            "captured_at": {"help_text": "拍摄时间，可为空。"},
+        }

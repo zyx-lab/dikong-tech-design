@@ -637,7 +637,7 @@ class DroneHistoryApiTests(TestCase):
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/history")
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_history_not_found_should_return_resource_not_found(self):
         self._grant_view_permission()
@@ -736,7 +736,7 @@ class DroneActiveAssignmentsApiTests(TestCase):
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/active")
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_active_assignments_not_found_should_return_resource_not_found(self):
         self._grant_view_permission()
@@ -855,7 +855,7 @@ class DroneLatestAssignmentApiTests(TestCase):
         response = self.client.get(f"/api/v1/drones/{drone.id}/assignments/latest")
         self.assertIn(response.status_code, (401, 403))
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
-        self.assertIn(response.data["business_detail_code"], {"NOT_AUTHENTICATED", "FORBIDDEN"})
+        self.assertEqual(response.data["business_detail_code"], "NOT_AUTHENTICATED")
 
     def test_latest_assignment_not_found_should_return_resource_not_found(self):
         self._grant_view_permission()

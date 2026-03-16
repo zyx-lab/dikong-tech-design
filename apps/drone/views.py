@@ -7,6 +7,7 @@ from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiRespo
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.api_v1.schema import (
+    BUSINESS_INTERNAL_ERROR_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
     BusinessDeleteResultSerializer,
     business_error_example,
@@ -225,6 +226,7 @@ DRONE_DUPLICATE_RESPONSE = business_error_response(
             ),
             401: DRONE_PERMISSION_DENIED_RESPONSE,
             403: DRONE_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     ),
@@ -237,6 +239,7 @@ DRONE_DUPLICATE_RESPONSE = business_error_response(
             401: DRONE_PERMISSION_DENIED_RESPONSE,
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             404: DRONE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     ),
@@ -270,6 +273,7 @@ DRONE_DUPLICATE_RESPONSE = business_error_response(
             401: DRONE_PERMISSION_DENIED_RESPONSE,
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             409: DRONE_DUPLICATE_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     ),
@@ -294,6 +298,7 @@ DRONE_DUPLICATE_RESPONSE = business_error_response(
             401: DRONE_PERMISSION_DENIED_RESPONSE,
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             404: DRONE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     ),
@@ -314,6 +319,7 @@ DRONE_DUPLICATE_RESPONSE = business_error_response(
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             404: DRONE_NOT_FOUND_RESPONSE,
             409: DRONE_STATE_CONFLICT_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     ),
@@ -566,6 +572,7 @@ class DroneViewSet(
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             404: DRONE_NOT_FOUND_RESPONSE,
             409: DRONE_STATE_CONFLICT_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     )
@@ -584,6 +591,7 @@ class DroneViewSet(
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             404: DRONE_NOT_FOUND_RESPONSE,
             409: DRONE_STATE_CONFLICT_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     )
@@ -602,6 +610,7 @@ class DroneViewSet(
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             404: DRONE_NOT_FOUND_RESPONSE,
             409: DRONE_STATE_CONFLICT_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     )
@@ -620,6 +629,7 @@ class DroneViewSet(
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             404: DRONE_NOT_FOUND_RESPONSE,
             409: DRONE_STATE_CONFLICT_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     )
@@ -637,6 +647,7 @@ class DroneViewSet(
             401: DRONE_PERMISSION_DENIED_RESPONSE,
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             404: DRONE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     )
@@ -668,6 +679,7 @@ class DroneViewSet(
             401: DRONE_PERMISSION_DENIED_RESPONSE,
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             404: DRONE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     )
@@ -756,6 +768,7 @@ class DroneViewSet(
             401: DRONE_PERMISSION_DENIED_RESPONSE,
             403: DRONE_PERMISSION_DENIED_RESPONSE,
             404: DRONE_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
     )
