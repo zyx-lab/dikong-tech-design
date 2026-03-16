@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
+from apps.access.models import DirectoryStatus, EmploymentStatus, ScopeType, TenantMemberRoleStatus, TenantMemberStatus
 from apps.api_v1.tenant_scope import require_request_tenant
 from apps.flight_record.models import FlightRecord
 
@@ -41,6 +41,20 @@ class FlightRecordReadSerializer(serializers.ModelSerializer):
 
 
 class FlightRecordWriteSerializer(serializers.ModelSerializer):
+    def _validate_assigned_scope_target(self, *, mission, pilot):
+        request = self.context.get("request")
+        decision = getattr(request, "_authz_decision", None) if request is not None else None
+        if decision is None or decision.scope != ScopeType.ASSIGNED:
+            return
+
+        tenant_member_id = decision.tenant_member_id
+        effective_pilot_id = pilot.id if pilot is not None else None
+        if effective_pilot_id is None and mission is not None:
+            effective_pilot_id = mission.pilot_id
+
+        if effective_pilot_id != tenant_member_id:
+            raise serializers.ValidationError({"pilot": "ASSIGNED 范围下只能操作当前飞手自己的飞行记录"})
+
     def validate(self, attrs):
         unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
         if unknown_fields:
@@ -92,6 +106,7 @@ class FlightRecordWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"drone": "drone 与 mission 绑定关系不一致"})
         if mission and pilot and mission.pilot_id and mission.pilot_id != pilot.id:
             raise serializers.ValidationError({"pilot": "pilot 与 mission 绑定关系不一致"})
+        self._validate_assigned_scope_target(mission=mission, pilot=pilot)
 
         return attrs
 

@@ -1098,6 +1098,33 @@ class SeedRolePermissionsCommandTests(TestCase):
         self.assertTrue(
             pilot_operator.permission_grants.filter(permission__code="drone.view_drone", scope_type=ScopeType.ASSIGNED).exists()
         )
+        self.assertTrue(
+            pilot_operator.permission_grants.filter(permission__code="mission.view_mission", scope_type=ScopeType.ASSIGNED).exists()
+        )
+        self.assertTrue(
+            pilot_operator.permission_grants.filter(
+                permission__code="flight_record.view_flight_record",
+                scope_type=ScopeType.ASSIGNED,
+            ).exists()
+        )
+        self.assertTrue(
+            pilot_operator.permission_grants.filter(
+                permission__code="flight_record.manage_flight_record",
+                scope_type=ScopeType.ASSIGNED,
+            ).exists()
+        )
+        self.assertTrue(
+            pilot_operator.permission_grants.filter(
+                permission__code="media_file.view_media_file",
+                scope_type=ScopeType.ASSIGNED,
+            ).exists()
+        )
+        self.assertTrue(
+            pilot_operator.permission_grants.filter(
+                permission__code="media_file.manage_media_file",
+                scope_type=ScopeType.ASSIGNED,
+            ).exists()
+        )
 
         platform_admin = Role.objects.get(code="platform_admin")
         self.assertFalse(platform_admin.permission_grants.filter(permission__code="access.view_tenant_member").exists())

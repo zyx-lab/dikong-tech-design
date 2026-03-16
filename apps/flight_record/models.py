@@ -73,6 +73,10 @@ class FlightRecord(models.Model):
     def __str__(self):
         return f"{self.id}-{self.flight_no}"
 
+    @property
+    def assigned_tenant_member_id(self):
+        return self.pilot_id
+
     def clean(self):
         if self.pk:
             current_status = FlightRecord.objects.filter(pk=self.pk).values_list("status", flat=True).first()

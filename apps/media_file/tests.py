@@ -406,7 +406,6 @@ class MediaFileApiTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.data["business_code"], "RESOURCE_NOT_FOUND")
         self.assertEqual(response.data["business_detail_code"], "NOT_FOUND")
-
     def test_retrieve_media_file_deleted_should_return_resource_not_found(self):
         self._grant_permission("media_file.view_media_file")
         self.client.force_authenticate(self.viewer_user)
@@ -603,3 +602,148 @@ class MediaFileApiTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
+
+class MediaFilePilotScopeTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self._flight_no_seq = 1
+
+        self.pilot_user = User.objects.create_user(username="media_scope_pilot", password="pass1234", status=1)
+        self.pilot_staff = ensure_staff_profile(
+            self.pilot_user,
+            staff_no="MFS-P-001",
+            name="媒体范围飞手A",
+            employment_status=EmploymentStatus.ACTIVE,
+        )
+        self.tenant, self.pilot_member, self.pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant_code="media_scope_tenant",
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手")
+        grant_role_permissions(
+            self.pilot_role,
+            {
+                "media_file.view_media_file": ScopeType.ASSIGNED,
+                "media_file.manage_media_file": ScopeType.ASSIGNED,
+            },
+            group_name="media-scope-pilot-group",
+        )
+
+        self.other_pilot_user = User.objects.create_user(username="media_scope_other", password="pass1234", status=1)
+        self.other_pilot_staff = ensure_staff_profile(
+            self.other_pilot_user,
+            staff_no="MFS-P-002",
+            name="媒体范围飞手B",
+            employment_status=EmploymentStatus.ACTIVE,
+        )
+        _tenant, self.other_pilot_member, _other_role = ensure_tenant_role_binding(
+            self.other_pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(self.other_pilot_member, code="pilot_operator", name="飞手")
+
+        self.route = Route.objects.create(tenant=self.tenant, name="媒体范围航线", status=RouteStatus.ACTIVE)
+        self.drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="MFS-DRN-001",
+            name="媒体范围无人机",
+            model="M300",
+            serial_no="MFS-SN-001",
+            status=DroneStatus.ENABLED,
+        )
+        self.my_mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="我的媒体任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name=self.pilot_staff.name,
+            status=MissionStatus.RUNNING,
+        )
+        self.other_mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="别人的媒体任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=self.other_pilot_member,
+            pilot_name=self.other_pilot_staff.name,
+            status=MissionStatus.RUNNING,
+        )
+        self.my_record = self._create_record("MFS202603080001", self.my_mission, self.pilot_member, self.pilot_staff.name)
+        self.other_record = self._create_record(
+            "MFS202603080002",
+            self.other_mission,
+            self.other_pilot_member,
+            self.other_pilot_staff.name,
+        )
+        self.my_media = self._create_media_file(self.my_record, "MY_SCOPE.JPG")
+        self.other_media = self._create_media_file(self.other_record, "OTHER_SCOPE.JPG")
+
+        self.client.force_authenticate(self.pilot_user)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
+
+    def _create_record(self, flight_no: str, mission: Mission, pilot_member, pilot_name: str) -> FlightRecord:
+        start_time = timezone.now() - timedelta(minutes=10)
+        end_time = timezone.now()
+        return FlightRecord.objects.create(
+            tenant=self.tenant,
+            flight_no=flight_no,
+            mission=mission,
+            mission_name=mission.name,
+            route_name=self.route.name,
+            airport_name="珠海金湾机场",
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=pilot_member,
+            pilot_name=pilot_name,
+            start_time=start_time,
+            end_time=end_time,
+            flight_duration=600,
+            status=FlightRecordStatus.COMPLETED,
+        )
+
+    def _create_media_file(self, flight_record: FlightRecord, file_name: str) -> MediaFile:
+        return MediaFile.objects.create(
+            tenant=self.tenant,
+            flight_record=flight_record,
+            media_type=MediaType.PHOTO,
+            file_name=file_name,
+            file_url=f"https://example.com/{file_name}",
+            thumbnail_url=f"https://example.com/thumb/{file_name}",
+            file_size=1024,
+            captured_at=timezone.now() - timedelta(minutes=3),
+            is_deleted=False,
+            deleted_at=None,
+        )
+
+    def test_pilot_should_only_list_assigned_media_files(self):
+        response = self.client.get("/api/v1/media-files")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], self.my_media.id)
+
+    def test_pilot_create_media_for_other_flight_record_should_return_invalid_params(self):
+        response = self.client.post(
+            "/api/v1/media-files",
+            {
+                "flight_record": self.other_record.id,
+                "media_type": MediaType.PHOTO,
+                "file_name": "CROSS_SCOPE.JPG",
+                "file_url": "https://example.com/CROSS_SCOPE.JPG",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["business_code"], "INVALID_PARAMS")
+        self.assertIn("flight_record", response.data)

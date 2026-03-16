@@ -65,6 +65,7 @@ PostgreSQL
 - 功能：媒体文件列表查询
 - 筛选参数：flight_record_id, media_type, mission_id, drone_id, file_name
 - 过滤：仅返回 is_deleted=False 的记录
+- 说明：若调用方角色命中 `media_file.* = ASSIGNED`，则仅返回关联飞行记录属于当前飞手的媒体文件
 - 权限：media_file.view_media_file
 - 业务码：SUCCESS, PERMISSION_DENIED
 
@@ -73,12 +74,14 @@ PostgreSQL
 - 必填：media_type, file_name, file_url
 - 可选：flight_record, thumbnail_url, file_size, latitude, longitude, captured_at
 - 默认：is_deleted=False, deleted_at=None
+- 约束：若调用方角色命中 `media_file.manage_media_file = ASSIGNED`，则只能写入当前飞手自己飞行记录下的媒体文件
 - 权限：media_file.manage_media_file
 - 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
 
 ### 3. GET /api/v1/media-files/{id}
 - 功能：媒体文件详情
 - 过滤：仅返回未删除记录，已删除返回 404
+- 说明：若调用方角色命中 `media_file.view_media_file = ASSIGNED`，则只能读取当前飞手自己的媒体文件
 - 权限：media_file.view_media_file
 - 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
 
@@ -88,6 +91,7 @@ PostgreSQL
 - 约束：
   - PATCH 请求体必须至少包含一个可写字段
   - 已逻辑删除记录不参与更新，按资源不存在处理
+  - 若调用方角色命中 `media_file.manage_media_file = ASSIGNED`，则不能把媒体改绑到其他飞手的飞行记录下
 - 权限：media_file.manage_media_file
 - 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
 - 审计：MEDIA_FILE_UPDATE

@@ -1120,7 +1120,6 @@ class MissionApiTests(TestCase):
                 target_id=str(mission.id),
             ).exists()
         )
-
     def test_fail_failed_mission_should_be_idempotent_success(self):
         self._grant_permission("mission.manage_mission")
         self.client.force_authenticate(self.dispatcher_user)
@@ -1191,3 +1190,88 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["business_code"], "PERMISSION_DENIED")
         self.assertIn(response.data["business_detail_code"], {"FORBIDDEN", "PERMISSION_DENIED"})
+
+
+class MissionPilotScopeTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.pilot_user = User.objects.create_user(username="mission_scope_pilot", password="pass1234", status=1)
+        self.pilot_staff = ensure_staff_profile(
+            self.pilot_user,
+            staff_no="MS-P-001",
+            name="任务范围飞手A",
+            employment_status=EmploymentStatus.ACTIVE,
+        )
+        self.tenant, self.pilot_member, self.pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant_code="mission_scope_tenant",
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手")
+        grant_role_permissions(
+            self.pilot_role,
+            {"mission.view_mission": ScopeType.ASSIGNED},
+            group_name="mission-scope-pilot-group",
+        )
+
+        self.other_pilot_user = User.objects.create_user(username="mission_scope_other", password="pass1234", status=1)
+        self.other_pilot_staff = ensure_staff_profile(
+            self.other_pilot_user,
+            staff_no="MS-P-002",
+            name="任务范围飞手B",
+            employment_status=EmploymentStatus.ACTIVE,
+        )
+        _tenant, self.other_pilot_member, _role = ensure_tenant_role_binding(
+            self.other_pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(self.other_pilot_member, code="pilot_operator", name="飞手")
+
+        self.route = Route.objects.create(tenant=self.tenant, name="任务范围航线", status=RouteStatus.ACTIVE)
+        self.drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="MS-DRN-001",
+            name="任务范围无人机",
+            model="M300",
+            serial_no="MS-SN-001",
+            status=DroneStatus.ENABLED,
+        )
+        self.my_mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="我的任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name=self.pilot_staff.name,
+            status=MissionStatus.PENDING,
+        )
+        self.other_mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="别人的任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=self.other_pilot_member,
+            pilot_name=self.other_pilot_staff.name,
+            status=MissionStatus.PENDING,
+        )
+        self.client.force_authenticate(self.pilot_user)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
+
+    def test_pilot_should_only_list_assigned_missions(self):
+        response = self.client.get("/api/v1/missions")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], self.my_mission.id)
+
+    def test_pilot_retrieve_other_mission_should_be_404(self):
+        response = self.client.get(f"/api/v1/missions/{self.other_mission.id}")
+
+        self.assertEqual(response.status_code, 404)

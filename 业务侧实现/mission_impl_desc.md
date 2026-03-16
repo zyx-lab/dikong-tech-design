@@ -70,6 +70,7 @@ PostgreSQL
 - 功能：任务列表查询
 - 筛选参数：route_id, drone_id, pilot_id, status
 - 说明：`pilot_id` 按 `TenantMember.id` 过滤
+- 说明：若调用方角色命中 `mission.view_mission = ASSIGNED`，则仅返回 `pilot_id = 当前 TenantMember.id` 的任务
 - 权限：mission.view_mission
 - 业务码：SUCCESS, PERMISSION_DENIED
 
@@ -85,6 +86,7 @@ PostgreSQL
 
 ### 3. GET /api/v1/missions/{id}
 - 功能：任务详情
+- 说明：若调用方角色命中 `mission.view_mission = ASSIGNED`，则只能读取分配给当前飞手的任务
 - 权限：mission.view_mission
 - 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
 

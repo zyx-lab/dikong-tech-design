@@ -55,6 +55,18 @@ platform_admin(User.is_platform_admin=true) -> Role(code=platform_admin) -> Role
 普通账号 -> TenantMember(ACTIVE) -> TenantMemberRole(GRANTED) -> RolePermissionGrant -> Permission
 ```
 
+### 当前 `pilot_operator` 权限收口
+
+- `pilot_operator` 当前对 `drone.view_drone / mission.view_mission / flight_record.view_flight_record / flight_record.manage_flight_record / media_file.view_media_file / media_file.manage_media_file` 都按 `ASSIGNED` 生效。
+- 这里的 `ASSIGNED` 一律以当前租户内的 `TenantMember.id` 为判定主体。
+- 具体口径：
+  - 无人机：命中当前成员的 `DroneAssignment`
+  - 任务：`Mission.pilot_id == 当前 TenantMember.id`
+  - 飞行记录：`FlightRecord.pilot_id == 当前 TenantMember.id`
+  - 媒体文件：`MediaFile.flight_record.pilot_id == 当前 TenantMember.id`
+- 因此，飞手不能查看或操作其他飞手的任务、飞行记录和媒体文件。
+- 对 `flight_record.manage_flight_record / media_file.manage_media_file` 来说，创建接口也会按同一口径校验，不允许借创建动作写入其他飞手的数据。
+
 ### 业务标识唯一性
 
 - 业务表里的 `code / serial_no / flight_no` 都按租户内唯一处理，不再按全局唯一处理。

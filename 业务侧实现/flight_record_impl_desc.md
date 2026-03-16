@@ -72,6 +72,7 @@ PostgreSQL
 - 功能：飞行记录列表查询
 - 筛选参数：mission_id, drone_id, pilot_id, status, flight_no
 - 说明：`pilot_id` 按 `TenantMember.id` 过滤
+- 说明：若调用方角色命中 `flight_record.* = ASSIGNED`，则仅返回 `pilot_id = 当前 TenantMember.id` 的记录
 - 权限：flight_record.view_flight_record
 - 业务码：SUCCESS, PERMISSION_DENIED
 
@@ -80,11 +81,13 @@ PostgreSQL
 - 必填：flight_no
 - 可选：mission, drone, pilot, start_time, end_time, flight_duration, photo_count, video_count, airport_name
 - 约束：`flight_no` 只要求租户内唯一；`pilot` 若提交，必须是当前租户下的 `ACTIVE TenantMember`
+- 约束：若调用方角色命中 `flight_record.manage_flight_record = ASSIGNED`，则创建目标必须落到当前飞手本人，不能创建其他飞手的飞行记录
 - 权限：flight_record.manage_flight_record
 - 业务码：SUCCESS, INVALID_PARAMS, PERMISSION_DENIED
 
 ### 3. GET /api/v1/flight-records/{id}
 - 功能：飞行记录详情
+- 说明：若调用方角色命中 `flight_record.view_flight_record = ASSIGNED`，则只能读取当前飞手自己的记录
 - 权限：flight_record.view_flight_record
 - 业务码：SUCCESS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
 
@@ -92,6 +95,7 @@ PostgreSQL
 - 功能：局部更新飞行记录
 - 可写字段：mission, drone, pilot, start_time, end_time, flight_duration, photo_count, video_count, airport_name
 - 约束：PATCH 请求体必须至少包含一个可写字段；`pilot` 字段语义同创建接口，提交值为 `TenantMember.id`
+- 约束：若调用方角色命中 `flight_record.manage_flight_record = ASSIGNED`，则不能把记录改写到其他飞手名下
 - 权限：flight_record.manage_flight_record
 - 业务码：SUCCESS, INVALID_PARAMS, RESOURCE_NOT_FOUND, PERMISSION_DENIED
 

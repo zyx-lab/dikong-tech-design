@@ -3,7 +3,7 @@ from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
+from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, BusinessCode
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
@@ -15,6 +15,7 @@ class FlightRecordViewSet(
     BusinessApiResponseMixin,
     TenantScopedBusinessMixin,
     PermissionMapMixin,
+    ScopedQuerysetMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
@@ -35,6 +36,10 @@ class FlightRecordViewSet(
         "complete": "flight_record.manage_flight_record",
         "abort": "flight_record.manage_flight_record",
     }
+
+    @staticmethod
+    def assigned_scope_filter_builder(tenant_member_id: int) -> dict:
+        return {"pilot_id": tenant_member_id}
 
     def get_serializer_class(self):
         if self.action in {"create", "partial_update"}:
@@ -68,6 +73,9 @@ class FlightRecordViewSet(
             queryset = queryset.filter(status=status_value)
         if flight_no:
             queryset = queryset.filter(flight_no__icontains=flight_no)
+
+        if self.action in {"list", "retrieve", "partial_update", "complete", "abort"}:
+            return self.apply_scope(queryset)
 
         return queryset
 

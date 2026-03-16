@@ -3,7 +3,7 @@ from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.response import Response
 
-from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
+from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
@@ -15,6 +15,7 @@ class MediaFileViewSet(
     BusinessApiResponseMixin,
     TenantScopedBusinessMixin,
     PermissionMapMixin,
+    ScopedQuerysetMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
@@ -35,6 +36,10 @@ class MediaFileViewSet(
         "partial_update": "media_file.manage_media_file",
         "destroy": "media_file.manage_media_file",
     }
+
+    @staticmethod
+    def assigned_scope_filter_builder(tenant_member_id: int) -> dict:
+        return {"flight_record__pilot_id": tenant_member_id}
 
     def get_serializer_class(self):
         if self.action in {"create", "partial_update"}:
@@ -72,6 +77,9 @@ class MediaFileViewSet(
             queryset = queryset.filter(flight_record__drone_id=drone_id)
         if file_name:
             queryset = queryset.filter(file_name__icontains=file_name)
+
+        if self.action in {"list", "retrieve", "partial_update", "destroy"}:
+            return self.apply_scope(queryset)
 
         return queryset
 

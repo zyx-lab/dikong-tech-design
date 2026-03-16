@@ -48,6 +48,12 @@ class MediaFile(models.Model):
     def __str__(self):
         return f"{self.id}-{self.file_name}"
 
+    @property
+    def assigned_tenant_member_id(self):
+        if self.flight_record_id is None or self.flight_record is None:
+            return None
+        return self.flight_record.pilot_id
+
     def clean(self):
         if self.tenant_id and self.flight_record_id and self.flight_record.tenant_id != self.tenant_id:
             raise ValidationError({"flight_record": "flight_record 必须属于当前 tenant"})

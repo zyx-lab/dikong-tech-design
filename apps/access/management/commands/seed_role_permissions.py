@@ -68,11 +68,11 @@ ROLE_PERMISSION_MATRIX = {
     },
     "pilot_operator": {
         "drone.view_drone": ScopeType.ASSIGNED,
-        "mission.view_mission": ScopeType.ALL,
-        "flight_record.view_flight_record": ScopeType.ALL,
-        "flight_record.manage_flight_record": ScopeType.ALL,
-        "media_file.view_media_file": ScopeType.ALL,
-        "media_file.manage_media_file": ScopeType.ALL,
+        "mission.view_mission": ScopeType.ASSIGNED,
+        "flight_record.view_flight_record": ScopeType.ASSIGNED,
+        "flight_record.manage_flight_record": ScopeType.ASSIGNED,
+        "media_file.view_media_file": ScopeType.ASSIGNED,
+        "media_file.manage_media_file": ScopeType.ASSIGNED,
     },
     "auditor": {
         "access.view_auth_audit_logs": ScopeType.ALL,
