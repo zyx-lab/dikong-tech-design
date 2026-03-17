@@ -8,6 +8,7 @@ from django.core.management import call_command
 from django.test import RequestFactory, TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
+import yaml
 
 from apps.access import admin as access_admin_module
 from apps.access.models import (
@@ -300,6 +301,63 @@ class UserRegisterApiTests(TestCase):
         user = User.objects.get(username="13800138002")
         self.assertEqual(user.staff_profile.phone, "13800138002")
         self.assertTrue(AuditLog.objects.filter(action="USER_REGISTER_BY_PHONE", target_id=str(user.id)).exists())
+
+
+class InternalOpenApiDocsTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def _load_schema(self):
+        response = self.client.get("/internal/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response["Content-Type"].startswith("application/vnd.oai.openapi"))
+        return yaml.safe_load(response.content)
+
+    def test_swagger_ui_should_be_available_at_internal_docs(self):
+        response = self.client.get("/internal/docs/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "/internal/docs/schema/")
+
+    def test_internal_schema_should_only_include_internal_paths(self):
+        schema = self._load_schema()
+        self.assertEqual(schema["openapi"], "3.0.3")
+        self.assertIn("/internal/auth/login", schema["paths"])
+        self.assertIn("/internal/auth/tenant-members", schema["paths"])
+        self.assertNotIn("/api/v1/drones", schema["paths"])
+
+    def test_login_and_me_permissions_should_document_internal_contract(self):
+        schema = self._load_schema()
+
+        login_operation = schema["paths"]["/internal/auth/login"]["post"]
+        self.assertEqual(login_operation["summary"], "用户名密码登录")
+        login_request_ref = login_operation["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        login_request_schema = schema["components"]["schemas"][login_request_ref.split("/")[-1]]
+        self.assertIn("username", login_request_schema["properties"])
+        self.assertIn("password", login_request_schema["properties"])
+
+        login_success_ref = login_operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        login_success_schema = schema["components"]["schemas"][login_success_ref.split("/")[-1]]
+        self.assertIn("business_code", login_success_schema["properties"])
+        self.assertIn("business_detail_code", login_success_schema["properties"])
+        self.assertNotIn("code", login_success_schema["properties"])
+
+        permission_operation = schema["paths"]["/internal/auth/me/permissions"]["get"]
+        parameters = {item["name"]: item for item in permission_operation["parameters"]}
+        self.assertIn("X-TENANT-CODE", parameters)
+        self.assertIn("租户成员访问租户侧 internal IAM 接口时通常必填", parameters["X-TENANT-CODE"]["description"])
+        self.assertEqual(permission_operation["summary"], "获取当前会话权限矩阵")
+
+    def test_confirm_invitation_should_document_stateful_responses(self):
+        schema = self._load_schema()
+
+        operation = schema["paths"]["/internal/auth/tenant-members/confirm-invitation"]["post"]
+        self.assertEqual(operation["summary"], "确认加入租户")
+        self.assertIn("404", operation["responses"])
+        self.assertIn("409", operation["responses"])
+        examples = operation["responses"]["409"]["content"]["application/json"]["examples"]
+        example_values = [item["value"] for item in examples.values()]
+        self.assertTrue(any(item["business_detail_code"] == "INVITATION_STATUS_INVALID" for item in example_values))
 
 
 class MeTenantAndInvitationApiTests(TestCase):
