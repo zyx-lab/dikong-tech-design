@@ -5,12 +5,12 @@
 | 项目 | 内容 |
 | --- | --- |
 | 文档名称 | API 设计规范 |
-| 文档版本 | v1 |
+| 文档版本 | v2 |
 | 适用范围 | Django REST Framework + youlai-element-admin |
 
 ## 2. 文档目的
 
-本文档用于统一 {{项目名称}} 的接口设计方式，规范前后端在接口命名、请求方式、响应结构、分页规则、错误处理、权限控制等方面的实现标准，降低联调成本，提升系统可维护性与可扩展性。
+本文档用于统一低空平台的接口设计方式，规范前后端在接口命名、请求方式、响应结构、分页规则、错误处理、权限控制等方面的实现标准，降低联调成本，提升系统可维护性与可扩展性。
 
 ## 3. 适用范围
 
@@ -153,6 +153,73 @@ POST /api/v1/system/tasks/{id}/submit-approval
 /updateStatus
 /queryByCondition
 ```
+
+### 6.6 多租户接口分层规范
+
+本项目采用“租户工作侧用 header、平台管理侧用 path”的分层设计。判断依据不是操作者身份，而是本次请求是在当前租户上下文中工作，还是在平台层直接管理租户实体。
+
+#### 6.6.1 术语定义
+
+- 租户工作侧：在当前租户上下文中管理成员、角色、权限、租户内审计日志及租户内业务资源。
+- 平台管理侧：在平台层面直接管理租户实体，如查看租户列表、查询租户详情、启停租户、设置套餐、初始化租户管理员等。
+
+#### 6.6.2 租户工作侧接口规范
+
+租户工作侧接口统一通过请求头传递当前租户上下文，推荐请求头为 `X-TENANT-CODE`。在同一项目中，租户上下文字段必须全局唯一，不得同时混用 `X-TENANT-CODE`、`X-TENANT-ID` 等多种表达方式。
+
+示例：
+
+```http
+GET /api/v1/internal/auth/tenant-members?pageNum=1&pageSize=20
+X-TENANT-CODE: tenant-a
+
+GET /api/v1/internal/auth/tenant-audit-logs?pageNum=1&pageSize=20&action=INVITE_MEMBER
+X-TENANT-CODE: tenant-a
+```
+
+约束：
+
+- 该类接口的 URL 不再重复拼接租户标识。
+- 普通租户用户不得通过伪造 header 访问其他租户。
+- 平台管理员可在具备授权的前提下切换租户上下文，但仍须由后端校验可访问范围。
+- 该类接口的列表、详情、编辑、删除、批量操作均必须按当前租户上下文做强制过滤。
+
+#### 6.6.3 平台管理侧接口规范
+
+平台管理侧接口通过 URL path 显式指定目标租户，目标租户 ID 以路径参数为准，不得依赖 header 隐式指定。
+
+示例：
+
+```http
+GET  /api/v1/internal/auth/tenants
+GET  /api/v1/internal/auth/tenants/{id}
+POST /api/v1/internal/auth/tenants/{id}/enable
+POST /api/v1/internal/auth/tenants/{id}/set-plan
+```
+
+约束：
+
+- 路径中的 `{id}` 用于唯一确定被管理的租户实体。
+- 平台列表页、详情页、启停、套餐配置、初始化管理员等动作统一走 path 模式。
+- 即使请求中附带 `X-TENANT-CODE`，也不得用其替代 path 中的目标租户标识。
+- 平台管理侧接口仍须校验当前操作者是否具备该租户的管理权限。
+
+#### 6.6.4 禁止混用的写法
+
+以下写法不推荐或禁止：
+
+```http
+GET  /api/v1/internal/auth/tenants/{tenantId}/tenant-members
+
+POST /api/v1/internal/auth/tenants/enable
+X-TENANT-CODE: tenant-a
+```
+
+说明：
+
+- 租户工作侧接口不应同时依赖 path 与 header 共同表达同一租户上下文。
+- 平台管理侧接口不应把目标租户隐藏在 header 中。
+- 同一类接口一旦确定表达方式，应在全项目保持一致。
 
 ## 7. 请求方式规范
 
@@ -686,6 +753,14 @@ Authorization: Bearer {{token}}
 - 页面按钮权限与接口权限应保持一致，但页面控制不能替代后端校验
 - 数据权限控制应由后端强制实现，不依赖前端筛选参数
 
+### 15.4 多租户上下文与越权控制
+
+- 租户工作侧接口必须校验 `X-TENANT-CODE` 对应租户是否合法，且属于当前用户可访问范围。
+- 平台管理侧接口必须校验 path 中租户 `id` 是否在当前用户的可管理范围内。
+- 批量操作中的全部资源 ID 必须属于当前生效租户或当前 path 指定租户，不得跨租户混用。
+- 对跨租户越权请求，默认返回 `403`；如需隐藏资源存在性，可在专项规范中统一约定为 `404`，但全系统必须保持一致。
+- 审计日志建议同时记录 `actorUserId`、`actorTenantId`、`effectiveTenantCode` 或 `effectiveTenantId`。
+
 ## 16. 前端对接约定
 
 本节适用于 youlai-element-admin 的后台前端对接规范。
@@ -711,6 +786,8 @@ Authorization: Bearer {{token}}
 - 当 `code != "00000"` 时，统一按业务异常处理
 - 对 `401` 统一清理登录态并跳转登录页
 - 对 `403` 统一提示无权限
+- 租户工作侧页面应在统一请求拦截器中自动注入 `X-TENANT-CODE`
+- 平台管理侧页面应通过 path 参数调用 `/tenants/{id}`，不在 header 中重复声明目标租户
 
 ### 16.2 列表页对接约定
 
@@ -742,6 +819,13 @@ Authorization: Bearer {{token}}
 - 成功后提示操作成功
 - 自动刷新列表
 - 必要时回退空页码
+
+### 16.5 多租户前端对接约定
+
+- 当前租户切换应维护在全局状态中，并仅影响租户工作侧接口的 header 注入。
+- 平台租户列表页、租户详情页、套餐配置页等平台管理页面，应始终以当前选中记录的租户 `id` 作为 path 参数来源。
+- 前端不得将租户切换能力暴露给无权限角色，也不得允许用户手工篡改租户 header 后绕过页面限制。
+- 当页面同时存在平台管理动作与租户工作动作时，应在 API 方法层明确拆分，不得复用同一个接口封装混合两种调用方式。
 
 ## 17. DRF 实现建议
 
@@ -816,6 +900,17 @@ Authorization: Bearer {{token}}
 
 原则上不应将复杂业务逻辑直接堆积在 ViewSet 中。
 
+### 17.6 多租户上下文解析建议
+
+建议在 DRF 中统一实现当前租户解析与授权校验，避免在各个 ViewSet 中重复手写。
+
+推荐做法：
+
+- 租户工作侧接口：从 `X-TENANT-CODE` 与当前登录用户解析 `effectiveTenant`。
+- 平台管理侧接口：从 path 参数 `{id}` 解析 `targetTenant`，并校验当前用户是否具备平台管理权限。
+- `get_queryset`、Serializer 校验、Service 层、批量任务统一使用 `effectiveTenant` 或 `targetTenant` 做过滤与校验。
+- 审计日志、操作日志、异步任务日志应显式记录当前操作者与生效租户，便于排查跨租户问题。
+
 ## 18. 接口文档要求
 
 每个接口至少应包含以下内容：
@@ -870,6 +965,8 @@ Authorization: Bearer {{token}}
 
 ## 20. 标准接口示例
 
+### 20.1 通用资源接口示例
+
 以“用户管理”为例，标准接口建议如下：
 
 ```http
@@ -921,6 +1018,30 @@ GET /api/v1/system/users?pageNum=1&pageSize=20&keywords=admin&status=1
 }
 ```
 
+### 20.2 多租户接口示例
 
+租户工作侧接口示例：
+
+```http
+GET /api/v1/internal/auth/tenant-members?pageNum=1&pageSize=20&status=ACTIVE
+X-TENANT-CODE: tenant-a
+
+GET /api/v1/internal/auth/tenant-audit-logs?pageNum=1&pageSize=20&action=INVITE_MEMBER
+X-TENANT-CODE: tenant-a
+```
+
+平台管理侧接口示例：
+
+```http
+GET  /api/v1/internal/auth/tenants?pageNum=1&pageSize=20&keywords=demo
+GET  /api/v1/internal/auth/tenants/1001
+POST /api/v1/internal/auth/tenants/1001/enable
+POST /api/v1/internal/auth/tenants/1001/set-plan
+```
+
+设计说明：
+
+- 租户工作侧接口表达的是“当前租户上下文中的工作”，因此使用 header 更适合统一前端请求封装。
+- 平台管理侧接口表达的是“直接管理某个租户实体”，因此使用 path 更利于文档表达、权限校验和审计追踪。
 
 
