@@ -74,7 +74,7 @@
   - apps/access/management/commands/seed_role_permissions.py 中 tenant_admin 具备的是租户成员管理相关权限，而不是平台租户管理权限。
 
   所以这次改造不能只改前缀，必须连同接口分层、资源边界、响应规范、文档挂载一起收口。
-  同时需要明确：本文遵循 `api设计规范v2.md` 的总原则，但对“平台工作态切入租户工作态”这类通用能力采用更严格的项目级收窄；如本文与 v2 的通用示例存在差异，以本文定义的项目边界为准。
+  同时需要明确：本文遵循 `api设计规范v2.md` 的总原则，并尽量贴近其中的通用最佳实践；但对“平台工作态切入租户工作态”这类能力采用更严格的项目级收窄。凡涉及本项目已明确的业务边界、作用域边界与资源边界时，以本文定义为准。
 
   2. 已确认的业务边界
   以下边界已按你的口径固定，作为本方案的前提：
@@ -122,14 +122,14 @@
   | 分层 | 路由前缀 | 租户表达方式 | 说明 |
   | --- | --- | --- | --- |
   | 会话层 | /api/v1/iam/session/* | 无 | 登录、刷新令牌、登出、注册 |
-  | 当前用户层 | /api/v1/iam/me/* | 无 | 当前登录用户自己的全局账号资料 |
+  | 当前用户层 | /api/v1/iam/me/* | 无 | 正式 IAM 业务账号读取自己当前登录会话的全局账号资料 |
   | 租户工作侧 | /api/v1/iam/tenant/* | X-TENANT-CODE | 当前租户上下文内工作 |
   | 平台管理侧 | /api/v1/iam/platform/* | path 具名参数 | 平台层面管理租户实体、平台目录、平台审计 |
 
   核心原则：
 
   - 路径决定接口作用域，不能再靠“调用者是什么身份”动态切换同一路径的语义。
-  - `me/*` 只处理当前登录用户自己的全局账号资料。
+  - `me/*` 只处理正式 IAM 业务账号当前登录用户自己的全局账号资料，不承担平台工作态账号自省入口。
   - tenant/* 只处理当前租户工作侧问题。
   - platform/* 只处理平台层问题。
   - 顶层 `session`、`me`、`tenant`、`platform` 属于作用域命名空间，不按复数资源名词要求约束；从下一层开始，正式资源命名统一使用复数资源名词。
@@ -828,7 +828,7 @@
   - `session/login`、`session/refresh`、`session/logout` 必须分别给出请求示例与响应示例；其中登录与刷新响应必须明确 `accessToken`、`refreshToken`、`tokenType`、`expiresIn`、`refreshExpiresIn`。
   - `session/login` 的响应 schema 必须声明 `user` 至少包含 `userId`、`username`、`status`、`isPlatformAdmin`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；`isPlatformAdmin` 只作为当前会话自省字段出现；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义；并给出“账号不属于正式 IAM 账号集合或账号状态为 `DISABLED`”时 `401 + A0401` 的错误示例。
   - `session/register` 与 `session/register-by-phone` 必须分别给出请求示例与响应示例，并明确成功后不自动登录、不返回 token；成功响应至少包含 `userId`、`username`、`status`、`staffProfile`，其中 `status` 固定为 `ACTIVE`；并在文档说明中明确注册后初始运行态为 `unassigned`。
-  - `GET /api/v1/iam/me/profile` 的响应 schema 至少包含 `userId`、`username`、`status`、`createdAt`、`updatedAt`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义。
+  - `GET /api/v1/iam/me/profile` 的响应 schema 至少包含 `userId`、`username`、`status`、`createdAt`、`updatedAt`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义；并明确该接口只允许 `unassigned`、`tenant_member` 调用，`platform_operator` 调用时必须返回 `403 + A0403`。
 
   平台接口文档：
 
@@ -979,7 +979,7 @@
   最终边界应固定为：
 
   - session/* 处理登录、刷新令牌、登出、注册。
-  - me/* 只处理正式 IAM 业务账号当前登录用户自己的全局账号资料，并提供 `userId` 获取入口。
+  - me/* 只处理正式 IAM 业务账号当前登录用户自己的全局账号资料，并提供 `userId` 获取入口；平台工作态账号不进入这一层。
   - tenant/* 处理当前租户上下文内工作；`tenant/me` 返回当前租户资料与当前登录用户在该租户下的业务角色信息；当前租户用户目录与成员管理统一通过 `tenant/members/*` 提供。
   - tenant/roles 提供当前租户可分配角色目录，供租户管理员分配成员角色。
   - platform/* 处理平台层面的租户实体、平台目录和平台审计。
