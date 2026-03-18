@@ -13,3 +13,7 @@ db.sqlite3.bak.*
 逻辑设计/*.dbdiagram
 codex_devflow_scaffold
 frontend
+.claude
+tools/
+translation-prompt.md
+api-tester.html
