@@ -133,6 +133,11 @@
   - `tenant/*` 统一通过 `X-TENANT-CODE` 解析当前租户；只允许当前租户成员账号调用；平台工作态账号不可调用；不允许通过 path 指定租户。
   - `platform/*` 只允许平台工作态账号调用；租户用户不可调用；不依赖 `X-TENANT-CODE`；涉及单个租户实体时统一以 path `tenantId` 为准。
 
+  全局账号资料共性：
+
+  - `session/login`、`session/register`、`session/register/by-phone`、`me/profile` 如返回账号绑定的全局人员档案，正式字段名统一为 `staffProfile`。
+  - `staffProfile` 表示账号绑定的全局人员档案，不是租户内成员资料，也不替代 `tenant/members/*` 中的 `displayName`、角色、资质等租户内信息。
+
   成员资源共性：
 
   - `tenant/members/*` 只处理当前租户内的成员关系，不创建也不修改全局用户账号。
@@ -169,7 +174,7 @@
 
   | 路由 | 功能描述 | 权限标识 | 调用限制 |
   | --- | --- | --- | --- |
-| GET /api/v1/iam/me/profile | 返回当前登录用户自己的全局账号资料，响应至少包含 `userId`、`username`、`status`、`isPlatformAdmin`、`createdAt`、`updatedAt`；其中 `isPlatformAdmin` 仅表示当前登录账号是否具备调用 `platform/*` 的能力；如返回人员档案字段，正式字段名统一为 `staffProfile`，表示账号绑定的全局人员档案，不是租户内成员资料。该接口同时承担“用户读取自己的 `userId` 并提供给租户管理员完成入租”的正式用途。 | `iam.me.profile.read` | 遵循 4.1 中 `me/*` 的通用约束。 |
+| GET /api/v1/iam/me/profile | 返回当前登录用户自己的全局账号资料，响应至少包含 `userId`、`username`、`status`、`isPlatformAdmin`、`createdAt`、`updatedAt`；其中 `isPlatformAdmin` 仅表示当前登录账号是否具备调用 `platform/*` 的能力；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义。该接口同时承担“用户读取自己的 `userId` 并提供给租户管理员完成入租”的正式用途。 | `iam.me.profile.read` | 遵循 4.1 中 `me/*` 的通用约束。 |
 
   4.4 Tenant
   以下 `tenant/*` 路由默认继承 4.1 中 `tenant/*` 与成员资源的通用约束。本节只写各接口自己的差异项。
@@ -449,7 +454,7 @@
     - `refreshExpiresIn`，单位秒，默认 `604800`
     - `user`，至少包含 `userId`、`username`、`status`、`isPlatformAdmin`
     - 其中 `isPlatformAdmin` 仅表示当前登录账号是否具备调用 `platform/*` 的能力，不作为正式资源字段
-    - 如返回账号绑定的全局人员档案，字段名统一为 `staffProfile`，至少包含 `name`、`phone`；正式 API 只返回正式 IAM 契约字段
+    - 如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义，至少包含 `name`、`phone`
   - 失败语义：
     - 用户名或密码错误，或账号不属于正式 IAM 业务账号集合：`401 + A0401`
     - 参数缺失或格式非法：`400 + B0001`
@@ -828,9 +833,9 @@
   Session 与 me 文档：
 
   - `session/login`、`session/refresh`、`session/logout` 必须分别给出请求示例与响应示例；其中登录与刷新响应必须明确 `accessToken`、`refreshToken`、`tokenType`、`expiresIn`、`refreshExpiresIn`。
-  - `session/login` 的响应 schema 必须声明 `user` 至少包含 `userId`、`username`、`status`、`isPlatformAdmin`；如返回全局人员档案，字段名统一为 `staffProfile`；并给出“账号不属于正式 IAM 业务账号集合”时 `401 + A0401` 的错误示例。
+  - `session/login` 的响应 schema 必须声明 `user` 至少包含 `userId`、`username`、`status`、`isPlatformAdmin`；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义；并给出“账号不属于正式 IAM 业务账号集合”时 `401 + A0401` 的错误示例。
   - `session/register` 与 `session/register/by-phone` 必须分别给出请求示例与响应示例，并明确成功后不自动登录、不返回 token；成功响应至少包含 `userId`、`username`、`status`、`staffProfile`。
-  - `GET /api/v1/iam/me/profile` 的响应 schema 至少包含 `userId`、`username`、`status`、`isPlatformAdmin`、`createdAt`、`updatedAt`；如返回全局人员档案，字段名统一为 `staffProfile`。
+  - `GET /api/v1/iam/me/profile` 的响应 schema 至少包含 `userId`、`username`、`status`、`isPlatformAdmin`、`createdAt`、`updatedAt`；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义。
 
   平台接口文档：
 
