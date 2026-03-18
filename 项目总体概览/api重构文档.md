@@ -25,7 +25,7 @@
   - 文中统一使用 `memberId` 这个写法，不使用 `MemberId`。
   - `正式 IAM 账号`：可通过 `/api/v1/iam/*` 建立或使用正式认证会话的账号总集合。
   - `正式 IAM 业务账号`：面向客户业务使用的正式 IAM 账号子集；可自助注册；不包含平台工作态账号。
-  - `平台工作态账号`：正式 IAM 账号的另一子集；仅用于调用 `platform/*`；不通过正式 API 管理。
+  - `平台工作态账号`：正式 IAM 账号的另一子集；仅用于通过 `session/*` 建立认证会话并调用 `platform/*`；不通过正式 API 管理。
 
   可以把它们理解成：
 
@@ -43,9 +43,10 @@
   鉴权运行态固定为：
 
   - `unassigned`：正式 IAM 业务账号，已注册、可登录、可访问 `me/*`，但还没有任何租户成员关系。
-  - `tenant_member`：正式 IAM 业务账号，已拥有至少一个租户成员关系；可访问 `me/*`，并在有权限的租户上下文下访问 `tenant/*`。
-  - `platform_operator`：平台工作态账号；可访问 `me/*` 与 `platform/*`。
+  - `tenant_member`：正式 IAM 业务账号，已拥有至少一个租户成员关系；可访问 `me/*`；仅当 `X-TENANT-CODE` 命中的当前租户也属于该账号，且该租户下权限校验通过时，才可访问 `tenant/*`。
+  - `platform_operator`：平台工作态账号；可通过 `session/*` 建立认证会话，并访问 `platform/*`，不进入 `me/*`。
   - `tenant_member` 与 `platform_operator` 互斥；`unassigned` 是业务账号未入租时的初始运行态。
+  - `tenant_member` 只表示“该账号已至少拥有一条租户成员关系”，不直接代表对任意 `tenant/*` 都有权限。
   - 上述运行态只用于鉴权与资源边界，不作为本期正式 API 的固定对外返回字段。
 
   1. 背景
@@ -85,7 +86,7 @@
   - 租户管理员需要通过正式 API 读取“当前租户可分配角色列表”。
   - 重构后的正式 IAM 认证域限定为“正式 IAM 账号”；这套账号集合按运行态分为 `unassigned`、`tenant_member`、`platform_operator` 三类；由 `admin/后台` 维护的技术兜底账号不属于这套认证域，不签发 Bearer Token，也不进入正式 API 资源集合与返回契约。
   - 正式 IAM 业务账号覆盖 `unassigned` 与 `tenant_member` 两种运行态；平台工作态账号单独覆盖 `platform_operator` 运行态。
-  - 平台工作态账号可以调用 `platform/*`，但这类账号的创建、修改、查询与排障不纳入正式 API，统一留在 `admin/后台` 或内部工具。
+  - 平台工作态账号只进入 `session/*` 与 `platform/*`，不进入 `me/*` 或 `tenant/*`；这类账号的创建、修改、查询与排障不纳入正式 API，统一留在 `admin/后台` 或内部工具。
   - 正式 API 不提供全局用户目录、全局用户检索或“未加入租户用户”批量查询接口。
   - 已创建但未加入租户的正式 IAM 业务账号，运行态固定为 `unassigned`；这类账号只保留两种处理方式：用户本人通过 `GET /api/v1/iam/me/profile` 获取自己的 `userId` 并交给租户管理员；平台或内部人员如需批量检索，统一通过 `admin/后台` 或内部工具处理。
   - 平台侧不提供正式通用成员管理 HTTP 接口。
@@ -98,7 +99,7 @@
 
   为避免歧义，正式表述应固定为：
 
-  “平台侧不提供以租户 ID 显式指定目标租户的通用成员管理 HTTP 接口；`POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 仅作为租户 bootstrap 阶段的唯一正式例外；当前租户用户目录与成员管理统一通过租户工作侧 `tenant/members/*` 提供，租户管理员仅可管理自己当前租户内的成员；`tenant_member` 与 `platform_operator` 两种运行态互斥；平台工作态账号管理与后台技术兜底账号管理均不纳入重构后的正式 API。”
+  “平台侧不提供以租户 ID 显式指定目标租户的通用成员管理 HTTP 接口；`POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 仅作为租户 bootstrap 阶段的唯一正式例外；当前租户用户目录与成员管理统一通过租户工作侧 `tenant/members/*` 提供，租户管理员仅可管理自己当前租户内的成员；`tenant_member` 与 `platform_operator` 两种运行态互斥；平台工作态账号只进入 `session/*` 与 `platform/*`，不进入 `me/*` 与 `tenant/*`；平台工作态账号管理与后台技术兜底账号管理均不纳入重构后的正式 API。”
 
   3. 命名与目标挂载
   正式 API 目标前缀定义为：
@@ -131,8 +132,8 @@
   - `me/*` 只处理当前登录用户自己的全局账号资料。
   - tenant/* 只处理当前租户工作侧问题。
   - platform/* 只处理平台层问题。
-  - 顶层 `session`、`me`、`tenant`、`platform` 在本项目中作为作用域命名空间使用；这是基于 v2 总原则的项目级命名例外。真正资源命名从下一层开始，仍严格使用复数资源名词。
-  - `isPlatformAdmin` 只作为 `session/login` 与 `me/profile` 的当前会话自省返回字段存在，用于提示“当前账号是否具备调用 `platform/*` 的能力”；除这两个接口外，它不参与任何正式业务资源的定义、筛选、排序或写入。
+  - 顶层 `session`、`me`、`tenant`、`platform` 属于作用域命名空间，不按复数资源名词要求约束；从下一层开始，正式资源命名统一使用复数资源名词。
+  - `isPlatformAdmin` 只作为 `session/login` 的当前会话自省返回字段存在，用于提示“当前登录账号是否具备调用 `platform/*` 的能力”；除该接口外，它不参与任何正式业务资源的定义、筛选、排序或写入。
   - 平台管理员查看可管理租户实体列表统一走 `GET /api/v1/iam/platform/tenants`，不再单独保留 `GET /api/v1/iam/me/tenants`。
   - 调用主体、租户上下文、成员资源共性和平台租户资源共性，统一收口到 4.1 通用约束。
 
@@ -145,11 +146,11 @@
 
   - 受保护的 `/api/v1/iam/*` 接口只面向正式 IAM 账号；`admin/后台` 维护的技术兜底账号不进入正式 API 认证域。
   - `session/*` 不依赖租户上下文；除 `session/logout` 外，其余 session 正式接口匿名可调用。
-  - `me/*` 只返回当前会话自己的全局账号资料，不依赖 `X-TENANT-CODE`；任何已登录正式 IAM 账号都可调用，包括 `unassigned`、`tenant_member`、`platform_operator`。
-  - `tenant/*` 统一通过 `X-TENANT-CODE` 解析当前租户；只允许运行态为 `tenant_member` 的账号调用，且当前账号必须属于该租户；`unassigned` 与 `platform_operator` 均不可调用；不允许通过 path 指定租户。
+  - `me/*` 只返回当前会话自己的全局账号资料，不依赖 `X-TENANT-CODE`；只允许已登录的正式 IAM 业务账号调用，包括 `unassigned`、`tenant_member`；`platform_operator` 不可调用。
+  - `tenant/*` 统一通过 `X-TENANT-CODE` 解析当前租户；只允许运行态为 `tenant_member` 的账号调用，但 `tenant_member` 只表示“至少已拥有一个租户成员关系”；某次请求是否可访问，最终仍以 `X-TENANT-CODE` 解析出的当前租户、该账号在该租户下的成员关系和角色权限校验结果为准；`unassigned` 与 `platform_operator` 均不可调用；不允许通过 path 指定租户。
   - `platform/*` 只允许运行态为 `platform_operator` 的账号调用；`unassigned` 与 `tenant_member` 不可调用；不依赖 `X-TENANT-CODE`；涉及单个租户实体时统一以 path `tenantId` 为准。
   - `tenant/*` 缺少 `X-TENANT-CODE` 或 header 格式非法时，统一返回 `400 + B0001`。
-  - 已认证但无当前作用域权限的请求，统一返回 `403 + A0403`；典型场景包括 `unassigned` 账号访问 `tenant/*` 或 `platform/*`、`platform_operator` 访问 `tenant/*`、`tenant_member` 访问 `platform/*`，以及租户工作侧 header 命中当前用户无权访问的租户。
+  - 已认证但无当前作用域权限的请求，统一返回 `403 + A0403`；典型场景包括 `unassigned` 账号访问 `tenant/*` 或 `platform/*`、`platform_operator` 访问 `me/*` 或 `tenant/*`、`tenant_member` 访问 `platform/*`，以及租户工作侧 header 命中当前用户无权访问的租户。
   - 在已生效作用域内查询目标资源但资源不存在时，统一返回 `404 + C0404`；例如当前租户下不存在目标 `memberId`。
 
   全局账号资料共性：
@@ -159,7 +160,7 @@
   - 正式 IAM 账号对外只暴露 `ACTIVE`、`DISABLED` 两种账号状态。
   - 自助注册成功后，账号状态固定写入 `ACTIVE`。
   - `DISABLED` 账号不得通过 `session/login` 建立新认证会话；账号状态转为 `DISABLED` 后，服务端应撤销该账号现有认证会话，后续 `session/refresh` 与受保护接口统一按 `401 + A0401` 处理。
-  - `isPlatformAdmin` 只允许出现在 `session/login` 与 `me/profile` 的响应中；在除此之外的正式 API 中禁止出现。
+  - `isPlatformAdmin` 只允许出现在 `session/login` 的响应中；在除此之外的正式 API 中禁止出现。
 
   租户实体与当前租户上下文共性：
 
@@ -211,7 +212,7 @@
 
   | 路由 | 功能描述 | 权限标识 | 调用限制 |
   | --- | --- | --- | --- |
-| GET /api/v1/iam/me/profile | 返回当前登录用户自己的全局账号资料，响应至少包含 `userId`、`username`、`status`、`isPlatformAdmin`、`createdAt`、`updatedAt`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`，`isPlatformAdmin` 仅表示当前登录账号是否具备调用 `platform/*` 的能力；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义。该接口同时承担“用户读取自己的 `userId` 并提供给租户管理员完成入租”的正式用途。 | `iam.me.profile.read` | 遵循 4.1 中 `me/*` 的通用约束；`unassigned`、`tenant_member`、`platform_operator` 三种运行态都可调用。 |
+| GET /api/v1/iam/me/profile | 返回当前登录用户自己的全局账号资料，响应至少包含 `userId`、`username`、`status`、`createdAt`、`updatedAt`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义。该接口同时承担“用户读取自己的 `userId` 并提供给租户管理员完成入租”的正式用途。 | `iam.me.profile.read` | 遵循 4.1 中 `me/*` 的通用约束；仅 `unassigned`、`tenant_member` 两种正式 IAM 业务账号运行态可调用；`platform_operator` 不可调用。 |
 
   4.4 Tenant
   以下 `tenant/*` 路由默认继承 4.1 中 `tenant/*` 与成员资源的通用约束。本节只写各接口自己的差异项。
@@ -266,7 +267,7 @@
 
   - session/* 只负责登录、刷新令牌、登出和注册账号。
   - `session/login` 只为正式 IAM 账号建立认证会话并签发 Bearer Token；`admin/后台` 维护的技术兜底账号不进入这套认证域。
-  - me/* 只保留当前登录用户自己的 profile 接口。
+  - me/* 只保留正式 IAM 业务账号读取自己全局资料的 profile 接口。
   - 具体路由迁移以下降范围以第 4 节和第 7 节为准，本节不再重复逐条罗列。
 
   典型入租流程应明确为：
@@ -429,7 +430,7 @@
     - `refreshExpiresIn`，单位秒，默认 `604800`
     - `user`，至少包含 `userId`、`username`、`status`、`isPlatformAdmin`
     - 其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`
-    - 其中 `isPlatformAdmin` 仅表示当前登录账号是否具备调用 `platform/*` 的能力；它是当前会话自省字段，只允许出现在 `session/login` 与 `me/profile` 中
+    - 其中 `isPlatformAdmin` 仅表示当前登录账号是否具备调用 `platform/*` 的能力；它是当前会话自省字段，只允许出现在 `session/login` 中
     - 如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义，至少包含 `name`、`phone`
   - 失败语义：
     - 用户名或密码错误，账号不属于正式 IAM 账号集合，或账号状态为 `DISABLED`：`401 + A0401`
@@ -524,6 +525,7 @@
 
   - 正式 IAM 账号的鉴权运行态固定为 `unassigned`、`tenant_member`、`platform_operator`。
   - `tenant_member` 与 `platform_operator` 互斥；`unassigned` 是正式 IAM 业务账号未入租时的初始运行态。
+  - `tenant_member` 仅表示该账号已至少拥有一条租户成员关系，不直接代表对任意 `tenant/*` 都有权限；`tenant/*` 的最终访问权始终以 `X-TENANT-CODE` 解析出的 `effectiveTenant`、该账号在该租户下的成员关系和角色权限校验结果为准。
   - “可入租账号”定义为状态为 `ACTIVE` 且运行态不为 `platform_operator` 的正式 IAM 业务账号；因此 `unassigned` 与 `tenant_member` 都允许继续建立新的租户成员关系。
   - `POST /tenant/members` 与 `POST /platform/tenants/{tenantId}/initialize-admin` 的目标 `userId` 都必须命中“可入租账号”；若未命中，统一返回 `404 + C0404`。
   - 正式 API 不提供 `unassigned -> platform_operator`、`tenant_member -> platform_operator`、`platform_operator -> tenant_member` 这类身份切换写接口。
@@ -551,15 +553,15 @@
   权限控制以后端校验为准，不依赖前端展示层。重构后的正式 API 要求路径和权限边界一一对应：
 
   - session/*：`session/login`、`session/refresh`、`session/register`、`session/register-by-phone` 使用 AllowAny；`session/logout` 使用已登录校验。
-  - me/*：当前仅保留 `GET /me/profile`；要求当前用户已登录；不依赖 `X-TENANT-CODE`；三种正式运行态都可调用。
-  - tenant/*：要求当前用户运行态为 `tenant_member`，且是 effectiveTenant 下的租户成员并具备租户侧权限。
+  - me/*：当前仅保留 `GET /me/profile`；要求当前用户已登录；不依赖 `X-TENANT-CODE`；仅 `unassigned`、`tenant_member` 两种正式 IAM 业务账号运行态可调用；`platform_operator` 不可调用。
+  - tenant/*：要求当前用户运行态为 `tenant_member`，且是 effectiveTenant 下的租户成员并具备租户侧权限；`tenant_member` 本身不直接等于任意租户下都有访问权。
   - platform/*：要求当前用户运行态为 `platform_operator`，且具备平台侧权限。
 
   关键约束：
 
   - 不允许同一路径根据调用者身份不同切换成不同语义。
   - `me/permissions` 下线、`platform_operator` 不作为租户侧接口调用主体、`tenant_member` 与 `platform_operator` 互斥等边界，统一继承 4.1 与 6.3，不在本节重复展开。
-  - `isPlatformAdmin` 只用于 `session/login` 与 `me/profile` 的当前会话能力提示，不作为任何其他正式资源的筛选字段、排序字段或写入字段。
+  - `isPlatformAdmin` 只用于 `session/login` 的当前会话能力提示，不作为任何其他正式资源的筛选字段、排序字段或写入字段。
   - `POST /tenant/members` 作为重构后的正式 API 中的“添加成员”接口，仅 `tenant_admin` 可调用。
   - `tenant/*` 缺少 `X-TENANT-CODE` 或 header 格式非法时，统一返回 `400 + B0001`；已认证但无当前作用域权限时，统一返回 `403 + A0403`；在当前作用域内查不到目标资源时，统一返回 `404 + C0404`。
   - 如果未来真的需要平台人员“以某个租户身份工作”，应设计显式会话切换机制，而不是让 platform/* 和 tenant/* 混成一套。
@@ -817,7 +819,7 @@
   - 正式 IAM 文档统一进入 `/api/v1/docs/*`。
   - 每个正式接口都必须标注权限标识、请求示例、成功响应示例、错误码示例。
   - `session/login`、`session/refresh`、`session/register`、`session/register-by-phone` 的 OpenAPI `security` 必须显式声明为空；`session/logout`、`me/*`、`tenant/*`、`platform/*` 必须显式声明 Bearer Token。
-  - `me/*` 不声明 `X-TENANT-CODE`；`tenant/*` 必须显式标注 `X-TENANT-CODE`；`platform/*` 中带 path 参数的接口必须显式标注对应 path 参数，不带 path 参数的平台接口不得伪造目标资源 ID。
+  - `me/*` 不声明 `X-TENANT-CODE`；`tenant/*` 必须显式标注 `X-TENANT-CODE`；`platform/*` 中带 path 参数的接口必须显式标注对应 path 参数；不带 path 参数的平台接口不得额外声明不存在的目标资源 path 参数，也不得要求调用方通过 header、query 或 body 传租户 ID 代替 path。
   - 4.1 已定义的固定目录接口必须显式标注为非分页接口，响应 `data` 直接为数组；除这些固定目录接口外，其余列表接口都必须按 6.6 标注分页请求参数与 `data.list`、`data.total` 响应结构；`pageNum`、`pageSize` 不回显到响应体。
   - OpenAPI 中不得出现不属于重构后正式 API 的路径，包括全局用户目录、未入租用户批量检索、平台工作态账号管理、邀请流程、`GET /api/v1/iam/me/permissions`、`POST /api/v1/iam/platform/tenants/{tenantId}/set-plan`、`/platform/tenants/{tenantId}/members/*`、`POST /api/v1/iam/tenant/members/{memberId}/roles`、`PUT /api/v1/iam/tenant/members/{memberId}`。
 
@@ -826,7 +828,7 @@
   - `session/login`、`session/refresh`、`session/logout` 必须分别给出请求示例与响应示例；其中登录与刷新响应必须明确 `accessToken`、`refreshToken`、`tokenType`、`expiresIn`、`refreshExpiresIn`。
   - `session/login` 的响应 schema 必须声明 `user` 至少包含 `userId`、`username`、`status`、`isPlatformAdmin`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；`isPlatformAdmin` 只作为当前会话自省字段出现；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义；并给出“账号不属于正式 IAM 账号集合或账号状态为 `DISABLED`”时 `401 + A0401` 的错误示例。
   - `session/register` 与 `session/register-by-phone` 必须分别给出请求示例与响应示例，并明确成功后不自动登录、不返回 token；成功响应至少包含 `userId`、`username`、`status`、`staffProfile`，其中 `status` 固定为 `ACTIVE`；并在文档说明中明确注册后初始运行态为 `unassigned`。
-  - `GET /api/v1/iam/me/profile` 的响应 schema 至少包含 `userId`、`username`、`status`、`isPlatformAdmin`、`createdAt`、`updatedAt`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；`isPlatformAdmin` 只作为当前会话自省字段出现；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义。
+  - `GET /api/v1/iam/me/profile` 的响应 schema 至少包含 `userId`、`username`、`status`、`createdAt`、`updatedAt`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义。
 
   平台接口文档：
 
@@ -883,7 +885,7 @@
   - `POST /api/v1/iam/session/logout` 调用后，当前认证会话下尚未过期的 accessToken 与 refreshToken 立即失效。
   - `POST /api/v1/iam/session/register` 与 `POST /api/v1/iam/session/register-by-phone` 成功后都必须返回 `status=ACTIVE`，且账号初始运行态固定为 `unassigned`；不自动登录、不返回 token。
   - 账号状态转为 `DISABLED` 后，服务端必须撤销该账号现有认证会话。
-  - `GET /api/v1/iam/me/profile` 可在登录后稳定返回当前用户自己的 `userId` 与基础资料；其中 `isPlatformAdmin` 只作为当前会话自省字段出现；`unassigned`、`tenant_member`、`platform_operator` 三种运行态都必须可调用。
+  - `GET /api/v1/iam/me/profile` 可在登录后稳定返回当前用户自己的 `userId` 与基础资料；仅 `unassigned`、`tenant_member` 两种正式 IAM 业务账号运行态可调用；`platform_operator` 调用时必须返回 `403 + A0403`。
   - `GET /api/v1/iam/tenant/me` 可在携带正确 `X-TENANT-CODE` 时稳定返回当前租户资料，以及当前登录用户在该租户下的 `member.roleCodes`。
 
   路由边界与作用域：
@@ -891,7 +893,7 @@
   - 正式 API 不暴露全局用户目录、未入租用户批量检索、平台工作态账号管理、邀请流程、`GET /api/v1/iam/me/permissions`、`POST /api/v1/iam/platform/tenants/{tenantId}/set-plan`、`/platform/tenants/{tenantId}/members/*`、`POST /api/v1/iam/tenant/members/{memberId}/roles`、`PUT /api/v1/iam/tenant/members/{memberId}`。
   - `tenant/*` 缺少 `X-TENANT-CODE` 或 header 格式非法时，统一返回 `400 + B0001`。
   - `unassigned` 账号访问任何 `tenant/*` 或 `platform/*` 正式接口时，必须返回 `403 + A0403`。
-  - `platform_operator` 访问任何 `tenant/*` 正式接口必须返回 `403 + A0403`；`tenant_member` 访问 `platform/*` 也必须返回 `403 + A0403`。
+  - `platform_operator` 访问任何 `me/*` 或 `tenant/*` 正式接口必须返回 `403 + A0403`；`tenant_member` 访问 `platform/*` 也必须返回 `403 + A0403`。
   - 租户 A 管理员把 `X-TENANT-CODE` 切到自己无权访问的租户时，必须返回 `403 + A0403`。
   - 在当前已生效租户上下文内查不到目标成员、角色或其他资源时，必须返回 `404 + C0404`。
   - `platform/*` 只接受平台工作态账号调用，不通过 header 切换租户上下文，也不提供通用成员管理接口；`POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 仅作为租户 bootstrap 的唯一正式例外保留。
@@ -977,7 +979,7 @@
   最终边界应固定为：
 
   - session/* 处理登录、刷新令牌、登出、注册。
-  - me/* 处理当前登录用户自己的全局账号资料，并提供 `userId` 获取入口。
+  - me/* 只处理正式 IAM 业务账号当前登录用户自己的全局账号资料，并提供 `userId` 获取入口。
   - tenant/* 处理当前租户上下文内工作；`tenant/me` 返回当前租户资料与当前登录用户在该租户下的业务角色信息；当前租户用户目录与成员管理统一通过 `tenant/members/*` 提供。
   - tenant/roles 提供当前租户可分配角色目录，供租户管理员分配成员角色。
   - platform/* 处理平台层面的租户实体、平台目录和平台审计。
