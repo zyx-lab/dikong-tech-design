@@ -1,15 +1,19 @@
 # 低空平台权限系统（V3）
 
-## 当前状态（对齐日期：2026-03-16）
+## 当前状态（对齐日期：2026-03-19）
 
-本仓库当前是一个 Django + DRF 的双平面 API 项目，代码已实现：
+本仓库当前是一个 Django + DRF 的正式 `/api/v1/*` API 项目，现状已经收敛为两类接口：
 
-1. Internal IAM Plane（内部管理）
-- 前缀：`/internal/auth/*`
-- 文档：`/internal/docs/`
-- 能力：账号管理、平台角色与权限目录查看、租户与成员管理、邀请流转、审计日志查询
+1. Formal IAM Plane（正式权限与身份接口）
+- 前缀：`/api/v1/iam/*`
+- 文档：`/api/v1/docs/`
+- 能力分层：
+  - `session/*`：登录、刷新令牌、登出、自助注册
+  - `me/*`：当前登录业务账号读取自己的全局资料与可进入租户列表
+  - `tenant/*`：当前租户上下文内的成员、角色目录、租户审计
+  - `platform/*`：平台租户治理、平台角色目录、平台权限目录、平台审计
 
-2. Business API Plane（业务开放）
+2. Business API Plane（业务接口）
 - 前缀：`/api/v1/*`
 - 文档：`/api/v1/docs/`
 - 已实现业务域：
@@ -24,7 +28,12 @@
 3. Unified OpenAPI Docs（统一文档）
 - Swagger UI：`/docs/`
 - OpenAPI Schema(JSON)：`/docs/schema/`
-- 用途：统一查看 internal + business 两套接口；`/docs/schema/` 可直接导入 Apifox
+- 用途：统一查看当前仓库正式 `/api/v1/*` 接口；`/docs/schema/` 可直接导入 Apifox
+
+说明：
+- 旧 `/internal/auth/*` 已下线，不保留兼容入口。
+- 正式 IAM 认证已切换为 Bearer Token，不再使用 Django Session / Basic 作为正式 API 认证方式。
+- 邀请流、`me/permissions`、`set-plan`、全局用户目录等旧能力不再属于正式 API。
 
 ## 快速启动
 
@@ -42,7 +51,13 @@ python manage.py runserver 0.0.0.0:8001
 ## 代码与能力映射
 
 - 路由入口：`config/urls.py`
-- Internal IAM：`apps/access/*`
+- 正式 IAM：
+  - 路由：`apps/access/api_v1/urls.py`
+  - 视图：`apps/access/api_v1/views/*`
+  - 认证：`apps/access/api_v1/authentication.py`
+  - 上下文与运行态：`apps/access/api_v1/context.py`
+  - 服务：`apps/access/api_v1/services/*`
+  - 核心数据模型：`apps/access/models.py`
 - Business API 根入口：`apps/api_v1/*`
 - 业务域：
   - `apps/drone/*` - 无人机台账
@@ -55,39 +70,39 @@ python manage.py runserver 0.0.0.0:8001
 
 ### 已实现接口清单（与当前代码一致）
 
-1. Internal IAM
-- `GET /internal/auth/`
-- `GET /internal/auth/session-status`
-- `POST /internal/auth/login`
-- `POST /internal/auth/logout`
-- `POST /internal/auth/users/register`
-- `POST /internal/auth/users/register/by-phone`
-- `GET /internal/auth/me/permissions`
-- `GET /internal/auth/me/tenants`
-- `GET /internal/auth/me/invitations`
-- `POST /internal/auth/me/invitations/reject`
-- `GET/POST /internal/auth/users`
-- `GET/PUT/PATCH /internal/auth/users/{id}`
-- `GET /internal/auth/permissions?module=xxx`
-- `GET /internal/auth/roles`
-- `GET /internal/auth/roles/{id}`
-- `GET /internal/auth/audit-logs`
-- `GET /internal/auth/tenant-audit-logs`
-- `GET/POST /internal/auth/tenants`
-- `GET /internal/auth/tenants/{id}`
-- `POST /internal/auth/tenants/{id}/disable`
-- `POST /internal/auth/tenants/{id}/enable`
-- `POST /internal/auth/tenants/{id}/initialize-admin`
-- `POST /internal/auth/tenants/{id}/set-plan`
-- `GET/POST /internal/auth/tenant-members`
-- `GET/PUT/PATCH/DELETE /internal/auth/tenant-members/{id}`
-- `POST /internal/auth/tenant-members/invite`
-- `POST /internal/auth/tenant-members/confirm-invitation`
-- `POST /internal/auth/tenant-members/{id}/disable`
-- `POST /internal/auth/tenant-members/{id}/enable`
-- `POST /internal/auth/tenant-members/{id}/roles`
+1. Formal IAM - Session
+- `POST /api/v1/iam/session/login`
+- `POST /api/v1/iam/session/refresh`
+- `POST /api/v1/iam/session/logout`
+- `POST /api/v1/iam/session/register`
+- `POST /api/v1/iam/session/register-by-phone`
 
-2. Business API - 无人机（drone）
+2. Formal IAM - Me
+- `GET /api/v1/iam/me/profile`
+- `GET /api/v1/iam/me/tenants`
+
+3. Formal IAM - Tenant
+- `GET /api/v1/iam/tenant/me`
+- `GET/POST /api/v1/iam/tenant/members`
+- `GET/PATCH /api/v1/iam/tenant/members/{memberId}`
+- `PUT /api/v1/iam/tenant/members/{memberId}/roles`
+- `POST /api/v1/iam/tenant/members/{memberId}/enable`
+- `POST /api/v1/iam/tenant/members/{memberId}/disable`
+- `GET /api/v1/iam/tenant/roles`
+- `GET /api/v1/iam/tenant/audit-logs`
+
+4. Formal IAM - Platform
+- `GET /api/v1/iam/platform/permissions`
+- `GET /api/v1/iam/platform/roles`
+- `GET /api/v1/iam/platform/roles/{roleId}`
+- `GET /api/v1/iam/platform/audit-logs`
+- `GET/POST /api/v1/iam/platform/tenants`
+- `GET /api/v1/iam/platform/tenants/{tenantId}`
+- `POST /api/v1/iam/platform/tenants/{tenantId}/enable`
+- `POST /api/v1/iam/platform/tenants/{tenantId}/disable`
+- `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin`
+
+5. Business API - 无人机（drone）
 - `GET/POST /api/v1/drones`
 - `GET/PUT/PATCH /api/v1/drones/{id}`
 - `DELETE /api/v1/drones/{id}`
@@ -99,25 +114,25 @@ python manage.py runserver 0.0.0.0:8001
 - `GET /api/v1/drones/{id}/assignments/active`
 - `GET /api/v1/drones/{id}/assignments/latest`
 
-3. Business API - 无人机分配（drone_assignment）
+6. Business API - 无人机分配（drone_assignment）
 - `GET/POST /api/v1/drone-assignments`
 - `GET /api/v1/drone-assignments/{id}`
 - `POST /api/v1/drone-assignments/{id}/cancel`
 - `POST /api/v1/drone-assignments/{id}/reactivate`
 
-4. Business API - 航线（route）
+7. Business API - 航线（route）
 - `GET/POST /api/v1/routes`
 - `GET/PUT/PATCH /api/v1/routes/{id}`
 - `DELETE /api/v1/routes/{id}`
 - `POST /api/v1/routes/{id}/enable`
 - `POST /api/v1/routes/{id}/disable`
 
-5. Business API - 航点（waypoint）
+8. Business API - 航点（waypoint）
 - `GET/POST /api/v1/waypoints`
 - `GET/PUT/PATCH /api/v1/waypoints/{id}`
 - `DELETE /api/v1/waypoints/{id}`
 
-6. Business API - 任务（mission）
+9. Business API - 任务（mission）
 - `GET/POST /api/v1/missions`
 - `GET/PUT/PATCH /api/v1/missions/{id}`
 - `POST /api/v1/missions/{id}/start`
@@ -127,20 +142,20 @@ python manage.py runserver 0.0.0.0:8001
 - `POST /api/v1/missions/{id}/fail`
 - `POST /api/v1/missions/{id}/cancel`
 
-7. Business API - 飞行记录（flight_record）
+10. Business API - 飞行记录（flight_record）
 - `GET/POST /api/v1/flight-records`
 - `GET/PUT/PATCH /api/v1/flight-records/{id}`
 - `POST /api/v1/flight-records/{id}/complete`
 - `POST /api/v1/flight-records/{id}/abort`
 
-8. Business API - 媒体文件（media_file）
+11. Business API - 媒体文件（media_file）
 - `GET/POST /api/v1/media-files`
 - `GET/PUT/PATCH /api/v1/media-files/{id}`
 - `DELETE /api/v1/media-files/{id}`
 
-## Business API 响应契约
+## `/api/v1/*` 响应契约
 
-业务平面 `/api/v1/*` 统一返回：
+正式 `/api/v1/*` 接口统一返回：
 
 ```json
 {
@@ -157,8 +172,11 @@ python manage.py runserver 0.0.0.0:8001
   - `A0403`：无操作权限
   - `B0001`：参数校验失败
   - `C0101`：资源已存在或重复提交
+  - `C0102`：账号字段冲突
+  - `C0103`：成员关系重复
   - `C0201`：当前状态不允许操作
   - `C0202`：当前数据已被引用，无法删除
+  - `C0203`：会导致租户失去最后一个有效租户管理员
   - `C0404`：目标资源不存在
   - `E0001`：系统异常
 
@@ -168,64 +186,53 @@ python manage.py runserver 0.0.0.0:8001
 
 | 方式 | 说明 |
 |------|------|
-| SessionAuthentication | 浏览器登录后 Django Session 保持登录状态 |
-| BasicAuthentication | 用户名:密码 Base64 编码，用于跨系统调用 |
+| Bearer Token | 正式 `/api/v1/*` 接口统一使用。通过 `POST /api/v1/iam/session/login` 获取 |
+| Django Admin 登录态 | 仅用于 `/admin/`，不属于正式 API 认证域 |
 
-### 默认权限
+### 正式 IAM 运行态
 
-除 7 个明确开放的 API 外，其他接口都需要登录；内部管理接口再按权限码做二次判权。
-
-### 明确开放（无需登录）
-
-| 接口 | 用途 |
+| 运行态 | 说明 |
 |------|------|
-| `GET /internal/auth/` | 检查 IAM 服务状态 |
-| `GET /internal/auth/session-status` | 查看当前登录状态 |
-| `POST /internal/auth/login` | 账号登录 |
-| `POST /internal/auth/users/register` | 用户名密码注册 |
-| `POST /internal/auth/users/register/by-phone` | 手机号注册（mock 验证码） |
-| `GET /api/v1/` | 检查 API 服务状态 |
-| `GET /api/v1/health` | 健康检查 |
+| `unassigned` | 已注册、可登录、可访问 `me/*`，但尚无任何租户成员关系 |
+| `tenant_member` | 至少拥有一条租户成员关系；可访问 `me/*`，并在合法 `X-TENANT-CODE` 下访问 `tenant/*` |
+| `platform_operator` | 平台工作态账号；只访问 `session/*` 与 `platform/*` |
 
-### 两套权限体系
+补充规则：
+- `tenant_member` 与 `platform_operator` 互斥。
+- `superuser` 是技术 root，不属于正式 IAM 业务账号集合，不能通过 `session/login` 建立正式认证会话。
+- `platform_admin` 通过 `User.is_platform_admin` 承载，不进入 `TenantMember -> TenantMemberRole` 链。
 
-#### Internal IAM（内部管理）
+### 授权链
 
-大多数管理接口使用 `RequireInternalPermission`，路径前缀 `/internal/auth/*`；`/internal/auth/me/*` 与 `/internal/auth/tenant-audit-logs` 这类当前用户接口使用 `IsAuthenticated`，再在视图内补租户上下文与权限判断。
+普通租户工作态授权链：
 
-**规则**：
-1. 先检查是否是 superuser → 直接放行
-2. 普通账号必须先通过账号状态校验
-3. 需要租户上下文的接口，再通过 `TenantMember -> TenantMemberRole -> RolePermissionGrant -> Permission` 判权
-4. 平台目录相关接口直接按 `Permission.code` 判权，不再走 `staff_type / group` 旧链路
+```text
+TenantMember(ACTIVE)
+  -> TenantMemberRole(GRANTED)
+  -> RolePermissionGrant
+  -> Permission
+```
 
-#### Business API（业务接口）
+平台工作态授权链：
 
-使用 `ScopedActionPermission`，路径前缀 `/api/v1/*`
+```text
+User(is_platform_admin=true)
+  -> Role(code=platform_admin)
+  -> RolePermissionGrant
+  -> Permission
+```
 
-**规则**：
-1. 先检查权限码 → 每个 API action 对应一个权限码（如 `drone.view_drone`、`drone.manage_drone`）
-2. 再通过 `TenantMember -> TenantMemberRole -> RolePermissionGrant -> Permission` 命中授权
-3. 若 scope 不是 `ALL`，调用人还必须具备有效 `StaffProfile`
-4. 最后检查数据范围（Scope） → 决定能看哪些数据
+### 数据范围（Scope）
 
-### Scope（数据可见范围）
+| Scope | 含义 |
+|-------|------|
+| `ALL` | 当前作用域内全部数据 |
+| `OWN` | 当前成员自己的资源 |
+| `ASSIGNED` | 当前成员被分配到的资源 |
 
-| Scope | 含义 | 适用角色 |
-|-------|------|----------|
-| ALL | 全部数据 | 管理员 |
-| OWN | 自己创建的 | 普通操作员 |
-| ASSIGNED | 分配给自己的 | 组长/主管 |
-
-**例子**：
-- 无人机列表 API 配置 Scope=ASSIGNED → 用户只能看到分配给自己的无人机
-- 任务列表 API 配置 Scope=OWN → 用户只能看到自己创建的任务
-
-### superuser（超级管理员）
-
-- **不通过租户角色授权**：不需要关联 `TenantMember`、`Role`、`Permission`
-- **拥有全部权限**：可以操作所有数据，不受 Scope 限制
-- **用途**：系统初始管理员、运维人员
+说明：
+- 目前 `pilot_operator` 在无人机、任务、飞行记录、媒体文件等能力上使用 `ASSIGNED`。
+- `OWN / ASSIGNED` 的主体统一按当前租户内的 `TenantMember.id` 判定，不再使用全局 staff id。
 
 ## 文档导航
 
@@ -235,6 +242,7 @@ python manage.py runserver 0.0.0.0:8001
 - 总体数据字典：[overall_data_dictionary.md](项目总体概览/逻辑设计/overall_data_dictionary.md)
 - 总体 DBML：[overall_schema.dbml](项目总体概览/逻辑设计/overall_schema.dbml)
 - 业务接口扩展指南：[业务接口扩展指南.md](项目总体概览/业务接口扩展指南.md)
+- IAM 正式重构方案：[api重构文档.md](项目总体概览/api重构文档.md)
 
 ### 业务侧实现（业务侧实现/）
 
@@ -255,24 +263,3 @@ python manage.py runserver 0.0.0.0:8001
 - Admin 与表关系：[Admin菜单与数据库表关系说明.md](权限管理侧实现/Admin菜单与数据库表关系说明.md)
 - 权限逻辑模型：[authz_logical_model.md](权限管理侧实现/authz_logical_model.md)
 - 权限 DBML：[authz_schema.dbml](权限管理侧实现/authz_schema.dbml)
-
-## 近期路线（与代码现状对齐）
-
-1. 业务前端（未开始）
-- [ ] 登录与会话管理
-- [ ] 无人机台账页面
-- [ ] 无人机分配页面
-- [ ] 航线/航点管理页面
-- [ ] 任务管理页面
-- [ ] 飞行记录与媒体文件页面
-- [ ] 菜单/按钮级权限展示
-
-2. 业务域扩展（已完成）
-- [x] 无人机台账（drone）
-- [x] 无人机分配（drone_assignment）
-- [x] 航线域（routes/waypoints）
-- [x] 任务域（missions）
-- [x] 飞行记录与媒体域（flight_records/media_files）
-
-3. IAM 增强（已完成）
-- [x] 授权链完整性校验命令：`python manage.py check_auth_chain`

@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from datetime import timedelta
 from typing import Any, Callable, Optional
 
 from django.db.models import Q, QuerySet
@@ -195,36 +194,6 @@ def log_action(
         ip=_resolve_client_ip(request),
         request_id=getattr(request, "request_id", "") if request is not None else "",
     )
-
-
-def default_invitation_expiry(at=None):
-    base_time = at or timezone.now()
-    return base_time + timedelta(days=7)
-
-
-def expire_stale_tenant_member_invitations(now=None) -> int:
-    current_time = now or timezone.now()
-    return TenantMember.objects.filter(
-        status=TenantMemberStatus.INVITED,
-        expires_at__lt=current_time,
-    ).update(
-        status=TenantMemberStatus.EXPIRED,
-        invitation_token=None,
-        updated_at=current_time,
-    )
-
-
-def expire_stale_tenant_member_invitation(member: Optional[TenantMember], now=None) -> Optional[TenantMember]:
-    if member is None:
-        return None
-    current_time = now or timezone.now()
-    if member.status == TenantMemberStatus.INVITED and member.expires_at and member.expires_at < current_time:
-        member.status = TenantMemberStatus.EXPIRED
-        member.invitation_token = None
-        member.save(update_fields=["status", "invitation_token", "updated_at"])
-    return member
-
-
 def _is_active_superuser(user) -> bool:
     return bool(
         user

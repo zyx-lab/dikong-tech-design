@@ -6,6 +6,7 @@ from django.contrib.auth.models import PermissionsMixin
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 
@@ -63,6 +64,11 @@ class QualificationRecordStatus(models.IntegerChoices):
     ACTIVE = 1, "active"
     INVALID = 2, "invalid"
     REVOKED = 3, "revoked"
+
+
+class AuthSessionType(models.TextChoices):
+    BUSINESS = "BUSINESS", "BUSINESS"
+    PLATFORM = "PLATFORM", "PLATFORM"
 
 
 class UserManager(BaseUserManager):
@@ -159,7 +165,41 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def save(self, *args, **kwargs):
         self.full_clean()
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+        if not self.is_active or self.status != UserStatus.ACTIVE:
+            AuthSession.objects.filter(user=self, revoked_at__isnull=True).update(revoked_at=timezone.now())
+        return result
+
+
+class AuthSession(TimeStampedModel):
+    """正式 IAM Bearer 会话。"""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="auth_sessions")
+    session_type = models.CharField(max_length=16, choices=AuthSessionType.choices)
+    access_token_hash = models.CharField(max_length=64, unique=True)
+    refresh_token_hash = models.CharField(max_length=64, unique=True)
+    access_token_expires_at = models.DateTimeField()
+    refresh_token_expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    last_refreshed_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_ip = models.GenericIPAddressField(null=True, blank=True)
+    last_used_ip = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        db_table = "auth_sessions"
+        verbose_name = "认证会话"
+        verbose_name_plural = "认证会话"
+        default_permissions = ()
+        indexes = [
+            models.Index(fields=["user", "revoked_at"], name="idx_auth_session_user_revoked"),
+            models.Index(fields=["access_token_expires_at"], name="idx_auth_session_access_exp"),
+            models.Index(fields=["refresh_token_expires_at"], name="idx_auth_session_refresh_exp"),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id}:{self.session_type}:{self.id}"
 
 
 class StaffProfile(TimeStampedModel):
@@ -597,8 +637,3 @@ class TenantMemberRole(TimeStampedModel):
     def save(self, *args, **kwargs):
         self.full_clean()
         return super().save(*args, **kwargs)
-
-
-# 兼容旧代码的别名，后续逐步移除。
-SystemRole = Role
-SystemRoleStatus = DirectoryStatus

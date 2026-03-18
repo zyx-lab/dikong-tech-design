@@ -23,6 +23,7 @@ class ApiV1RootView(BusinessApiResponseMixin, APIView):
                     "all_docs_schema": reverse("docs-schema", request=request),
                     "docs": reverse("business-docs", request=request),
                     "health": reverse("api-v1-health", request=request),
+                    "iam": reverse("iam-session-login", request=request).replace("/session/login", "/"),
                     "drones": reverse("drone-list", request=request),
                     "drone_assignments": reverse("drone-assignment-list", request=request),
                     "routes": reverse("route-list", request=request),

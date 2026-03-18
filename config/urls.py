@@ -26,6 +26,5 @@ urlpatterns = [
         name="business-docs-schema",
     ),
     path("api/v1/docs/", SpectacularSwaggerView.as_view(url_name="business-docs-schema"), name="business-docs"),
-    path("internal/auth/", include("apps.access.urls")),
     path("api/v1/", include("apps.api_v1.urls")),
 ]

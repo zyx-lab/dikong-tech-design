@@ -105,21 +105,20 @@ AUTH_USER_MODEL = "access.User"
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.SessionAuthentication",
-        "rest_framework.authentication.BasicAuthentication",
+        "apps.access.api_v1.authentication.BearerAuthSessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "DEFAULT_PAGINATION_CLASS": "apps.api_v1.pagination.StandardPageNumberPagination",
     "PAGE_SIZE": 20,
     "EXCEPTION_HANDLER": "apps.access.exceptions.custom_exception_handler",
 }
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "低空平台 API",
-    "DESCRIPTION": "双平面接口文档（Internal IAM + Business API）",
+    "DESCRIPTION": "正式 `/api/v1/*` 接口文档，其中 IAM 正式能力统一挂载在 `/api/v1/iam/*`。",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "POSTPROCESSING_HOOKS": [

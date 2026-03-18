@@ -128,6 +128,20 @@ def collection_envelope_serializer(name, item_serializer, *, extra_fields=None):
     )
 
 
+def array_envelope_serializer(name, item_serializer):
+    return _standard_envelope(
+        name,
+        _serializer_instance(item_serializer, many=True),
+    )
+
+
+def empty_envelope_serializer(name):
+    return _standard_envelope(
+        name,
+        serializers.JSONField(allow_null=True, required=False),
+    )
+
+
 def nullable_result_envelope_serializer(name, item_serializer, *, extra_fields=None):
     fields = {
         "result": _serializer_instance(item_serializer, allow_null=True),

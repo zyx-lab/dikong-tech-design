@@ -59,33 +59,16 @@
         }
 
         if (pathname.startsWith('/docs/')) {
-          setBanner('当前为统一 OpenAPI 文档页，包含 internal + business 两套接口。导入 Apifox 请使用 /docs/schema/。', 'warn');
+          setBanner('当前为统一 OpenAPI 文档页。当前仓库正式接口统一收口到 /api/v1/*；导入 Apifox 请使用 /docs/schema/。', 'warn');
           return;
         }
 
-        if (!pathname.startsWith('/internal/docs/')) {
-          setBanner('当前为业务 API 文档页。业务接口是否可用由业务认证与权限策略决定。', 'warn');
+        if (pathname.startsWith('/internal/docs/')) {
+          setBanner('当前为内部文档页。若页面无接口，表示当前仓库没有额外暴露内部 HTTP API。', 'warn');
           return;
         }
 
-        fetch('/internal/auth/session-status', { credentials: 'same-origin' })
-          .then(function (response) {
-            if (!response.ok) {
-              throw new Error('HTTP ' + response.status);
-            }
-            return response.json();
-          })
-          .then(function (data) {
-            if (data.is_authenticated) {
-              var tag = data.is_superuser ? '（superuser）' : '';
-              setBanner('当前登录用户：' + data.username + tag + '。Swagger 调试请求会复用该登录态。', 'ok');
-            } else {
-              setBanner('当前未登录。受保护接口调试会返回 401/403。', 'warn');
-            }
-          })
-          .catch(function () {
-            setBanner('无法读取登录状态，请检查 /internal/auth/session-status。', 'warn');
-          });
+        setBanner('当前为 /api/v1 业务文档页。需要认证的接口请在 Swagger Authorize 中填写 Bearer Token；租户工作侧接口还需要传 X-TENANT-CODE。', 'warn');
       })();
     </script>
     {% endblock %}

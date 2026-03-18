@@ -23,10 +23,7 @@ class RequestContextMiddleware:
 
 
 class TenantContextMiddleware:
-    """租户上下文中间件。
-
-    从 HTTP Header 中读取 X-Tenant-Code，解析当前租户并附加到 request 对象。
-    """
+    """解析租户 header，并为请求附加租户上下文。"""
 
     header_name = "HTTP_X_TENANT_CODE"
 
@@ -34,14 +31,22 @@ class TenantContextMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        tenant_code = request.META.get(self.header_name)
+        raw_tenant_code = request.META.get(self.header_name)
+        tenant_code = raw_tenant_code.strip() if isinstance(raw_tenant_code, str) else raw_tenant_code
 
-        if tenant_code:
-            tenant = Tenant.objects.filter(code=tenant_code, status=TenantStatus.ACTIVE).first()
-            if not tenant:
-                raise PermissionDenied("Invalid or disabled tenant")
-            request.tenant_context = tenant
-        else:
-            request.tenant_context = None  # 平台接口
+        request.tenant_context_code = tenant_code or None
+        request.tenant_context = None
+
+        if not tenant_code:
+            return self.get_response(request)
+
+        tenant = Tenant.objects.filter(code=tenant_code).first()
+        request.tenant_context = tenant
+
+        if request.path.startswith("/api/v1/iam/"):
+            return self.get_response(request)
+
+        if tenant is None or tenant.status != TenantStatus.ACTIVE:
+            raise PermissionDenied("Invalid or disabled tenant")
 
         return self.get_response(request)
