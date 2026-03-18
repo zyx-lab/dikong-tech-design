@@ -43,7 +43,7 @@
   鉴权运行态固定为：
 
   - `unassigned`：正式 IAM 业务账号，已注册、可登录、可访问 `me/*`，但还没有任何租户成员关系。
-  - `tenant_member`：正式 IAM 业务账号，已拥有至少一个租户成员关系；可访问 `me/*`；仅当 `X-TENANT-CODE` 命中的当前租户也属于该账号，且该租户下权限校验通过时，才可访问 `tenant/*`。
+  - `tenant_member`：正式 IAM 业务账号，已拥有至少一个租户成员关系；可访问 `me/*`；仅当 `X-TENANT-CODE` 命中的当前租户状态为 `ACTIVE`、该账号在该租户下的成员关系也为 `ACTIVE`，且该租户下权限校验通过时，才可访问 `tenant/*`。
   - `platform_operator`：平台工作态账号；可通过 `session/*` 建立认证会话，并访问 `platform/*`，不进入 `me/*`。
   - `tenant_member` 与 `platform_operator` 互斥；`unassigned` 是业务账号未入租时的初始运行态。
   - `tenant_member` 只表示“该账号已至少拥有一条租户成员关系”，不直接代表对任意 `tenant/*` 都有权限。
@@ -83,6 +83,7 @@
   - 客户侧需要“当前租户用户目录”能力，该能力统一由 `GET /api/v1/iam/tenant/members` 承担，不再单独保留 `tenant/users/*`。
   - 客户侧需要“当前租户上下文”接口；该接口应同时返回当前租户资料与当前登录用户在该租户下的业务角色信息。
   - 客户侧需要“当前登录用户自己的 profile”接口，且该接口应返回 `userId`。
+  - 已拥有租户成员关系的正式 IAM 业务账号，需要通过正式 API 读取自己可进入的租户上下文列表，以获取 `tenantCode` 并完成租户工作态切换；该能力由 `GET /api/v1/iam/me/tenants` 提供。
   - 租户管理员需要通过正式 API 读取“当前租户可分配角色列表”。
   - 重构后的正式 IAM 认证域限定为“正式 IAM 账号”；这套账号集合按运行态分为 `unassigned`、`tenant_member`、`platform_operator` 三类；由 `admin/后台` 维护的技术兜底账号不属于这套认证域，不签发 Bearer Token，也不进入正式 API 资源集合与返回契约。
   - 正式 IAM 业务账号覆盖 `unassigned` 与 `tenant_member` 两种运行态；平台工作态账号单独覆盖 `platform_operator` 运行态。
@@ -90,7 +91,7 @@
   - 正式 API 不提供全局用户目录、全局用户检索或“未加入租户用户”批量查询接口。
   - 已创建但未加入租户的正式 IAM 业务账号，运行态固定为 `unassigned`；这类账号只保留两种处理方式：用户本人通过 `GET /api/v1/iam/me/profile` 获取自己的 `userId` 并交给租户管理员；平台或内部人员如需批量检索，统一通过 `admin/后台` 或内部工具处理。
   - 平台侧不提供正式通用成员管理 HTTP 接口。
-  - 这里的“不提供通用成员管理”是指：除租户 bootstrap 阶段的 `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 外，不提供通过路径显式指定某个租户后，再去做成员列表、详情、创建、角色分配、启停等操作的接口。
+  - 这里的“不提供通用成员管理”是指：除 `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 这一条正式例外外，不提供通过路径显式指定某个租户后，再去做成员列表、详情、创建、角色分配、启停等操作的接口；该例外只允许在目标租户当前不存在任何 `ACTIVE` 状态且拥有 `tenant_admin` 角色的成员时，用于租户管理员 `bootstrap / break-glass` 修复。
   - 邀请流程相关 API 不纳入重构后的正式 API，成员加入只保留“租户管理员将已存在的全局用户加入当前租户”这一条路径。
   - 一个账号不能同时处于 `tenant_member` 与 `platform_operator` 两种已赋权运行态。
   - 租户 A 的管理员可以管理租户 A 当前租户上下文内的成员。
@@ -99,7 +100,7 @@
 
   为避免歧义，正式表述应固定为：
 
-  “平台侧不提供以租户 ID 显式指定目标租户的通用成员管理 HTTP 接口；`POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 仅作为租户 bootstrap 阶段的唯一正式例外；当前租户用户目录与成员管理统一通过租户工作侧 `tenant/members/*` 提供，租户管理员仅可管理自己当前租户内的成员；`tenant_member` 与 `platform_operator` 两种运行态互斥；平台工作态账号只进入 `session/*` 与 `platform/*`，不进入 `me/*` 与 `tenant/*`；平台工作态账号管理与后台技术兜底账号管理均不纳入重构后的正式 API。”
+  “平台侧不提供以租户 ID 显式指定目标租户的通用成员管理 HTTP 接口；`POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 是平台侧唯一允许写入租户成员关系的正式例外，只能在目标租户当前不存在任何 `ACTIVE` 状态且拥有 `tenant_admin` 角色的成员时，用于租户管理员 `bootstrap / break-glass` 修复，不承接日常成员管理；当前租户用户目录与成员管理统一通过租户工作侧 `tenant/members/*` 提供，租户管理员仅可管理自己当前租户内的成员；`tenant_member` 与 `platform_operator` 两种运行态互斥；平台工作态账号只进入 `session/*` 与 `platform/*`，不进入 `me/*` 与 `tenant/*`；平台工作态账号管理与后台技术兜底账号管理均不纳入重构后的正式 API。”
 
   3. 命名与目标挂载
   正式 API 目标前缀定义为：
@@ -122,19 +123,21 @@
   | 分层 | 路由前缀 | 租户表达方式 | 说明 |
   | --- | --- | --- | --- |
   | 会话层 | /api/v1/iam/session/* | 无 | 登录、刷新令牌、登出、注册 |
-  | 当前用户层 | /api/v1/iam/me/* | 无 | 正式 IAM 业务账号读取自己当前登录会话的全局账号资料 |
+  | 当前用户层 | /api/v1/iam/me/* | 无 | 正式 IAM 业务账号读取自己当前登录会话的全局账号资料与可进入租户上下文列表 |
   | 租户工作侧 | /api/v1/iam/tenant/* | X-TENANT-CODE | 当前租户上下文内工作 |
   | 平台管理侧 | /api/v1/iam/platform/* | path 具名参数 | 平台层面管理租户实体、平台目录、平台审计 |
 
   核心原则：
 
   - 路径决定接口作用域，不能再靠“调用者是什么身份”动态切换同一路径的语义。
-  - `me/*` 只处理正式 IAM 业务账号当前登录用户自己的全局账号资料，不承担平台工作态账号自省入口。
+  - `me/*` 只处理正式 IAM 业务账号当前登录用户自己的全局账号资料与自有租户上下文，不承担平台工作态账号自省入口。
   - tenant/* 只处理当前租户工作侧问题。
   - platform/* 只处理平台层问题。
-  - 顶层 `session`、`me`、`tenant`、`platform` 属于作用域命名空间，不按复数资源名词要求约束；从下一层开始，正式资源命名统一使用复数资源名词。
+  - 顶层 `session`、`me`、`tenant`、`platform` 属于作用域命名空间，不按复数资源名词要求约束。
+  - `me/profile`、`tenant/me` 属于当前上下文单例投影接口，是本项目在资源命名规则中的显式例外。
+  - 除作用域命名空间、当前上下文单例投影接口和规范允许的动作接口外，其余正式资源命名统一使用复数资源名词。
   - `isPlatformAdmin` 只作为 `session/login` 的当前会话自省返回字段存在，用于提示“当前登录账号是否具备调用 `platform/*` 的能力”；除该接口外，它不参与任何正式业务资源的定义、筛选、排序或写入。
-  - 平台管理员查看可管理租户实体列表统一走 `GET /api/v1/iam/platform/tenants`，不再单独保留 `GET /api/v1/iam/me/tenants`。
+  - 平台管理员查看可管理租户实体列表统一走 `GET /api/v1/iam/platform/tenants`；`GET /api/v1/iam/me/tenants` 只用于正式 IAM 业务账号读取自己可进入的租户上下文列表。
   - 调用主体、租户上下文、成员资源共性和平台租户资源共性，统一收口到 4.1 通用约束。
 
   4. 目标路由结构
@@ -146,11 +149,11 @@
 
   - 受保护的 `/api/v1/iam/*` 接口只面向正式 IAM 账号；`admin/后台` 维护的技术兜底账号不进入正式 API 认证域。
   - `session/*` 不依赖租户上下文；除 `session/logout` 外，其余 session 正式接口匿名可调用。
-  - `me/*` 只返回当前会话自己的全局账号资料，不依赖 `X-TENANT-CODE`；只允许已登录的正式 IAM 业务账号调用，包括 `unassigned`、`tenant_member`；`platform_operator` 不可调用。
-  - `tenant/*` 统一通过 `X-TENANT-CODE` 解析当前租户；只允许运行态为 `tenant_member` 的账号调用，但 `tenant_member` 只表示“至少已拥有一个租户成员关系”；某次请求是否可访问，最终仍以 `X-TENANT-CODE` 解析出的当前租户、该账号在该租户下的成员关系和角色权限校验结果为准；`unassigned` 与 `platform_operator` 均不可调用；不允许通过 path 指定租户。
+  - `me/*` 只返回当前会话自己的全局账号资料和可进入的租户上下文列表，不依赖 `X-TENANT-CODE`；只允许已登录的正式 IAM 业务账号调用，包括 `unassigned`、`tenant_member`；`platform_operator` 不可调用。
+  - `tenant/*` 统一通过 `X-TENANT-CODE` 解析当前租户；只允许运行态为 `tenant_member` 的账号调用，但 `tenant_member` 只表示“至少已拥有一个租户成员关系”；某次请求是否可访问，最终仍以 `X-TENANT-CODE` 解析出的当前租户必须为 `ACTIVE`、该账号在该租户下的成员关系必须为 `ACTIVE`，以及该租户下角色权限校验结果为准；`unassigned` 与 `platform_operator` 均不可调用；不允许通过 path 指定租户。
   - `platform/*` 只允许运行态为 `platform_operator` 的账号调用；`unassigned` 与 `tenant_member` 不可调用；不依赖 `X-TENANT-CODE`；涉及单个租户实体时统一以 path `tenantId` 为准。
   - `tenant/*` 缺少 `X-TENANT-CODE` 或 header 格式非法时，统一返回 `400 + B0001`。
-  - 已认证但无当前作用域权限的请求，统一返回 `403 + A0403`；典型场景包括 `unassigned` 账号访问 `tenant/*` 或 `platform/*`、`platform_operator` 访问 `me/*` 或 `tenant/*`、`tenant_member` 访问 `platform/*`，以及租户工作侧 header 命中当前用户无权访问的租户。
+  - 已认证但无当前作用域权限的请求，统一返回 `403 + A0403`；典型场景包括 `unassigned` 账号访问 `tenant/*` 或 `platform/*`、`platform_operator` 访问 `me/*` 或 `tenant/*`、`tenant_member` 访问 `platform/*`，以及租户工作侧 header 命中不存在、已停用或当前用户无 `ACTIVE` 成员关系的租户。
   - 在已生效作用域内查询目标资源但资源不存在时，统一返回 `404 + C0404`；例如当前租户下不存在目标 `memberId`。
 
   全局账号资料共性：
@@ -165,6 +168,7 @@
   租户实体与当前租户上下文共性：
 
   - 租户实体对外统一使用 `tenantId` 与 `tenantCode`；其中 `tenantCode` 对应租户业务编码，也是 `X-TENANT-CODE` 的取值。
+  - `me/tenants` 返回当前登录用户可进入的租户上下文列表；只包含“租户状态为 `ACTIVE` 且当前用户在该租户下成员状态也为 `ACTIVE`”的成员关系，用于让业务账号获取可切换的 `tenantCode`。
   - `tenant/me` 返回的是“当前租户上下文中的我”，而不是脱离当前用户的纯租户实体详情；业务角色通过 `member.roleCodes` 表达。
 
   成员资源共性：
@@ -173,14 +177,17 @@
   - `tenant/members` 只暴露 `ACTIVE`、`DISABLED` 两种正式成员状态；列表默认返回 `ACTIVE + DISABLED`。
   - `POST /tenant/members` 只负责把已存在的全局用户加入当前租户；新成员关系的 `tenantId` 由服务端根据 `X-TENANT-CODE` 确定。
   - 允许建立 `TenantMember` 关系的“可入租账号”，固定定义为 `status=ACTIVE` 且运行态不为 `platform_operator` 的正式 IAM 业务账号；其中既包括 `unassigned` 账号，也包括已在其他租户下拥有成员关系的 `tenant_member` 账号。
+  - 除 `GET /api/v1/iam/tenant/me` 外，本期成员目录、成员管理与可分配角色目录相关接口，即 `GET /api/v1/iam/tenant/members`、`GET /api/v1/iam/tenant/members/{memberId}`、`GET /api/v1/iam/tenant/roles`、`POST /api/v1/iam/tenant/members`、`PATCH /api/v1/iam/tenant/members/{memberId}`、`PUT /api/v1/iam/tenant/members/{memberId}/roles`、`POST /api/v1/iam/tenant/members/{memberId}/enable`、`POST /api/v1/iam/tenant/members/{memberId}/disable`，统一只允许 `tenant_admin` 调用。
   - 成员角色只允许使用 `GET /api/v1/iam/tenant/roles` 返回的可分配租户角色，不得使用平台角色。
+  - `PUT /api/v1/iam/tenant/members/{memberId}/roles` 与 `POST /api/v1/iam/tenant/members/{memberId}/disable` 不得把当前租户变成“0 个 `ACTIVE` 状态且拥有 `tenant_admin` 角色的成员”；如本次操作会移除最后一个有效租户管理员，统一返回 `409 + C0203`。
+  - `POST /api/v1/iam/tenant/members`、`PATCH /api/v1/iam/tenant/members/{memberId}`、`PUT /api/v1/iam/tenant/members/{memberId}/roles`、`POST /api/v1/iam/tenant/members/{memberId}/enable`、`POST /api/v1/iam/tenant/members/{memberId}/disable` 成功后统一返回成员对象，至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。
   - 成员资质能力本期不纳入重构后的正式 API；正式请求、响应与验收中不再出现 `qualifications`。
 
   平台租户资源共性：
 
   - `platform/tenants/*` 只处理租户实体，不表示进入 `tenant/*` 工作态，也不授予 `tenant/*` 调用资格。
   - `plan` 只是只读预留字段，当前统一返回 `null`；本期不支持筛选、设置或变更。
-  - `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 是平台侧唯一允许写入成员关系的 bootstrap 例外，不等同于平台侧通用成员管理接口。
+  - `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 是平台侧唯一允许写入成员关系的正式例外，不等同于平台侧通用成员管理接口；它只在目标租户当前不存在任何 `ACTIVE` 状态且拥有 `tenant_admin` 角色的成员时允许执行，用于租户管理员 `bootstrap / break-glass` 修复。
 
   固定目录接口：
 
@@ -210,9 +217,10 @@
   4.3 Me
   以下 `me/*` 路由默认继承 4.1 中 `me/*` 的通用约束。
 
-  | 路由 | 功能描述 | 权限标识 | 调用限制 |
-  | --- | --- | --- | --- |
+| 路由 | 功能描述 | 权限标识 | 调用限制 |
+| --- | --- | --- | --- |
 | GET /api/v1/iam/me/profile | 返回当前登录用户自己的全局账号资料，响应至少包含 `userId`、`username`、`status`、`createdAt`、`updatedAt`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义。该接口同时承担“用户读取自己的 `userId` 并提供给租户管理员完成入租”的正式用途。 | `iam.me.profile.read` | 遵循 4.1 中 `me/*` 的通用约束；仅 `unassigned`、`tenant_member` 两种正式 IAM 业务账号运行态可调用；`platform_operator` 不可调用。 |
+| GET /api/v1/iam/me/tenants | 返回当前登录用户可进入的租户上下文分页列表，用于获取可切换的 `tenantCode`；只返回“租户状态为 `ACTIVE` 且当前用户在该租户下成员状态也为 `ACTIVE`”的租户成员关系；列表只支持 `pageNum`、`pageSize`，默认按 `tenantId asc` 排序，并以 `memberId asc` 作为稳定次排序；列表项至少包含 `tenantId`、`tenantCode`、`name`、`memberId`、`roleCodes`。 | `iam.me.tenant.read` | 遵循 4.1 中 `me/*` 的通用约束；仅 `unassigned`、`tenant_member` 两种正式 IAM 业务账号运行态可调用；`platform_operator` 不可调用；`unassigned` 调用时返回空列表。 |
 
   4.4 Tenant
   以下 `tenant/*` 路由默认继承 4.1 中 `tenant/*` 与成员资源的通用约束。本节只写各接口自己的差异项。
@@ -220,14 +228,14 @@
   | 路由 | 功能描述 | 权限标识 | 调用限制 |
   | --- | --- | --- | --- |
   | GET /api/v1/iam/tenant/me | 返回当前租户上下文中的“我”；响应至少包含 `tenant` 与 `member` 两个对象；其中 `tenant` 至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`，`member` 至少包含 `memberId`、`userId`、`displayName`、`status`、`roleCodes`；其中 `roleCodes` 表示当前登录用户在当前租户下的业务角色编码。 | `iam.tenant.me.read` | 遵循 4.1 中 `tenant/*` 的通用约束；只返回当前登录用户在当前租户下的成员上下文。 |
-  | GET /api/v1/iam/tenant/members | 返回当前租户成员目录，统一承担“当前租户用户目录”和“成员管理列表”两种正式用途；列表支持 `status`、`keywords`、`userId`、`sortBy`、`sortOrder`、`pageNum`、`pageSize` 查询；其中 `userId` 为当前租户内全局用户 ID 的单值精确匹配，用于把全局用户定位到当前租户成员关系；`sortBy` 仅允许 `displayName`、`username`、`status`、`createdAt`、`updatedAt`，默认按 `displayName asc` 排序，并以 `memberId asc` 作为稳定次排序；传 `userId` 时返回结果仍保持分页列表，但当前租户下最多命中 1 条记录；列表项至少应包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。 | `iam.tenant.member.read` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；本接口额外支持 `status`、`keywords`、`userId`、`sortBy`、`sortOrder` 查询。 |
+| GET /api/v1/iam/tenant/members | 返回当前租户成员目录，统一承担“当前租户用户目录”和“成员管理列表”两种正式用途；列表支持 `status`、`keywords`、`userId`、`sortBy`、`sortOrder`、`pageNum`、`pageSize` 查询；其中 `userId` 为当前租户内全局用户 ID 的单值精确匹配，用于把全局用户定位到当前租户成员关系；`sortBy` 仅允许 `displayName`、`username`、`status`、`createdAt`、`updatedAt`，默认按 `displayName asc` 排序，并以 `memberId asc` 作为稳定次排序；传 `userId` 时返回结果仍保持分页列表，但当前租户下最多命中 1 条记录；列表项至少应包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。 | `iam.tenant.member.read` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；本接口额外支持 `status`、`keywords`、`userId`、`sortBy`、`sortOrder` 查询；仅 `tenant_admin` 可调用。 |
 | POST /api/v1/iam/tenant/members | 将一个已存在的全局用户加入当前租户，并可一并写入成员显示名与初始角色；创建租户成员关系后立即生效；正式请求体固定为 `userId` 必填，`displayName`、`roleCodes` 选填；其中 `roleCodes` 可省略或传空数组，表示允许先创建、后分配角色。 | `iam.tenant.member.create` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；仅 `tenant_admin` 可调用。 |
-  | GET /api/v1/iam/tenant/members/{memberId} | 返回当前租户单个成员详情。这里的 `{memberId}` 是租户成员 ID；详情至少应包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`；其中与全局账号相关的信息在正式响应中只收口为 `userId` 与 `username` 两个只读字段，不单独开放全局用户详情资源。 | `iam.tenant.member.read` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；目标 `memberId` 必须属于当前租户。 |
-  | PATCH /api/v1/iam/tenant/members/{memberId} | 更新当前租户成员的租户内属性；正式可写字段只允许 `displayName`；`displayName` 显式传空字符串时表示清空该字段；成功后返回更新后的成员对象。 | `iam.tenant.member.update` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；目标 `memberId` 必须属于当前租户。 |
-  | GET /api/v1/iam/tenant/roles | 返回当前租户可分配角色目录，用于租户管理员给成员选择可分配角色；只返回允许分配给租户成员的角色；列表项至少包含 `roleId`、`code`、`name`、`description`、`status`。 | `iam.tenant.role.readAssignable` | 遵循 4.1 中 `tenant/*` 的通用约束；固定目录接口，非分页。 |
-| PUT /api/v1/iam/tenant/members/{memberId}/roles | 全量更新当前租户成员的角色集合；正式请求体固定为 `roleCodes` 必填数组；传空数组表示清空该成员当前全部已授予租户角色；未包含在 `roleCodes` 中的旧角色一律撤销；成功后返回更新后的成员对象，至少包含 `memberId`、`userId`、`displayName`、`status`、`roleCodes`。 | `iam.tenant.member.assignRoles` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；目标 `memberId` 必须属于当前租户。 |
-  | POST /api/v1/iam/tenant/members/{memberId}/enable | 重新启用当前租户内已停用成员；请求体固定为空；成功后返回更新后的成员对象，至少包含 `memberId`、`userId`、`displayName`、`status`、`roleCodes`。 | `iam.tenant.member.enable` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；目标 `memberId` 必须属于当前租户，且状态必须允许启用。 |
-  | POST /api/v1/iam/tenant/members/{memberId}/disable | 停用当前租户内已生效成员；请求体固定为空；成功后返回更新后的成员对象，至少包含 `memberId`、`userId`、`displayName`、`status`、`roleCodes`。 | `iam.tenant.member.disable` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；目标 `memberId` 必须属于当前租户，且状态必须允许停用。 |
+| GET /api/v1/iam/tenant/members/{memberId} | 返回当前租户单个成员详情。这里的 `{memberId}` 是租户成员 ID；详情至少应包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`；其中与全局账号相关的信息在正式响应中只收口为 `userId` 与 `username` 两个只读字段，不单独开放全局用户详情资源。 | `iam.tenant.member.read` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；目标 `memberId` 必须属于当前租户；仅 `tenant_admin` 可调用。 |
+| PATCH /api/v1/iam/tenant/members/{memberId} | 更新当前租户成员的租户内属性；正式可写字段只允许 `displayName`；`displayName` 显式传空字符串时表示清空该字段；成功后返回更新后的成员对象，至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。 | `iam.tenant.member.update` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；目标 `memberId` 必须属于当前租户；仅 `tenant_admin` 可调用。 |
+| GET /api/v1/iam/tenant/roles | 返回当前租户可分配角色目录，用于租户管理员给成员选择可分配角色；只返回允许分配给租户成员的角色；列表项至少包含 `roleId`、`code`、`name`、`description`、`status`。 | `iam.tenant.role.readAssignable` | 遵循 4.1 中 `tenant/*` 的通用约束；固定目录接口，非分页；仅 `tenant_admin` 可调用。 |
+| PUT /api/v1/iam/tenant/members/{memberId}/roles | 全量更新当前租户成员的角色集合；正式请求体固定为 `roleCodes` 必填数组；传空数组表示清空该成员当前全部已授予租户角色；未包含在 `roleCodes` 中的旧角色一律撤销；成功后返回更新后的成员对象，至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。 | `iam.tenant.member.assignRoles` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；目标 `memberId` 必须属于当前租户；仅 `tenant_admin` 可调用；若本次更新会移除当前租户最后一个 `ACTIVE tenant_admin`，统一返回 `409 + C0203`。 |
+| POST /api/v1/iam/tenant/members/{memberId}/enable | 重新启用当前租户内已停用成员；请求体固定为空；成功后返回更新后的成员对象，至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。 | `iam.tenant.member.enable` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；目标 `memberId` 必须属于当前租户，且状态必须允许启用；仅 `tenant_admin` 可调用。 |
+| POST /api/v1/iam/tenant/members/{memberId}/disable | 停用当前租户内已生效成员；请求体固定为空；成功后返回更新后的成员对象，至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。 | `iam.tenant.member.disable` | 遵循 4.1 中 `tenant/*` 与成员资源通用约束；目标 `memberId` 必须属于当前租户，且状态必须允许停用；仅 `tenant_admin` 可调用；若本次停用会移除当前租户最后一个 `ACTIVE tenant_admin`，统一返回 `409 + C0203`。 |
   | GET /api/v1/iam/tenant/audit-logs | 返回当前租户范围内的审计日志分页列表；支持 `pageNum`、`pageSize`、`action`、`operatorUserId`、`startAt`、`endAt`、`sortBy`、`sortOrder` 查询；默认按 `createdAt desc` 排序；列表项至少包含 `auditLogId`、`action`、`targetType`、`targetId`、`operatorUserId`、`operatorDisplayName`、`createdAt`、`summary`。 | `iam.tenant.auditLog.read` | 遵循 4.1 中 `tenant/*` 的通用约束；只返回当前租户日志。 |
 
   4.5 Platform
@@ -240,25 +248,24 @@
   | GET /api/v1/iam/platform/roles/{roleId} | 返回平台固定角色的详情；响应至少包含 `roleId`、`code`、`name`、`description`、`status`、`createdAt`、`updatedAt`、`permissionGrants`；其中 `permissionGrants` 每项至少包含 `permission`、`scopeType`。 | `iam.platform.role.read` | 遵循 4.1 中 `platform/*` 的通用约束；`{roleId}` 为角色 ID。 |
   | GET /api/v1/iam/platform/audit-logs | 返回平台维度审计日志分页列表；支持 `pageNum`、`pageSize`、`tenantId`、`action`、`operatorUserId`、`startAt`、`endAt`、`sortBy`、`sortOrder` 查询；默认按 `createdAt desc` 排序；列表项至少包含 `auditLogId`、`tenantId`、`tenantCode`、`action`、`targetType`、`targetId`、`operatorUserId`、`operatorDisplayName`、`createdAt`、`summary`。 | `iam.platform.auditLog.read` | 遵循 4.1 中 `platform/*` 的通用约束。 |
   | GET /api/v1/iam/platform/tenants | 返回平台租户实体分页列表，用于平台管理页展示与筛选可管理租户；列表固定支持 `pageNum`、`pageSize`、`keywords`、`status`、`sortBy`、`sortOrder` 查询；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；`keywords` 至少匹配 `tenantCode`、`name`；`sortBy` 仅允许 `tenantId`、`tenantCode`、`name`、`createdAt`、`updatedAt`；默认按 `tenantId desc` 排序；列表项至少应包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`createdAt`、`updatedAt`。 | `iam.platform.tenant.read` | 遵循 4.1 中 `platform/*` 与平台租户资源通用约束；分页默认 `pageNum=1`、`pageSize=20`，最大 `pageSize=100`。 |
-  | POST /api/v1/iam/platform/tenants | 创建新的租户实体；正式请求体固定为 `tenantCode`、`name` 必填，`remark` 选填；重构后的正式 API 不在该接口上接收 `status` 或 `plan`；成功后返回新建租户对象，至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`，其中新建后 `status` 固定为 `ACTIVE`，`plan` 固定为 `null`。 | `iam.platform.tenant.create` | 遵循 4.1 中 `platform/*` 与平台租户资源通用约束；`tenantCode`、`name` 不得为空，且 `tenantCode` 必须全局唯一。 |
+| POST /api/v1/iam/platform/tenants | 创建新的租户实体；正式请求体固定为 `tenantCode`、`name` 必填，`remark` 选填；重构后的正式 API 不在该接口上接收 `status` 或 `plan`；成功后返回新建租户对象，至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`，其中新建后 `status` 固定为 `ACTIVE`，`plan` 固定为 `null`。 | `iam.platform.tenant.create` | 遵循 4.1 中 `platform/*` 与平台租户资源通用约束；`tenantCode`、`name` 不得为空，且 `tenantCode` 必须全局唯一；如 `tenantCode` 已存在，统一返回 `409 + C0101`。 |
   | GET /api/v1/iam/platform/tenants/{tenantId} | 返回单个租户实体详情；响应至少应包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`；其中 `plan` 为只读预留字段，当前统一返回 `null`。 | `iam.platform.tenant.read` | 遵循 4.1 中 `platform/*` 与平台租户资源通用约束。 |
   | POST /api/v1/iam/platform/tenants/{tenantId}/enable | 启用指定租户；请求体固定为空；成功后返回更新后的租户对象，至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`。 | `iam.platform.tenant.enable` | 遵循 4.1 中 `platform/*` 与平台租户资源通用约束；目标租户状态必须允许启用。 |
   | POST /api/v1/iam/platform/tenants/{tenantId}/disable | 停用指定租户；请求体固定为空；成功后返回更新后的租户对象，至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`。 | `iam.platform.tenant.disable` | 遵循 4.1 中 `platform/*` 与平台租户资源通用约束；目标租户状态必须允许停用。 |
-| POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin | 为指定租户初始化首个租户管理员；这是平台侧唯一允许写入租户成员关系的正式 bootstrap 动作，不归类为平台侧通用成员管理接口；正式请求体固定为 `userId` 必填，`displayName` 选填；不接受 `roleCodes`，服务端固定授予 `tenant_admin`；若该 `userId` 已是目标租户成员，则复用该成员关系、补齐 `tenant_admin` 角色，并确保成功后的成员状态为 `ACTIVE`；否则创建新的成员关系；成功后返回初始化结果，至少包含 `tenantId`、`memberId`、`userId`、`displayName`、`status`、`roleCodes`，且 `status` 必须为 `ACTIVE`，`roleCodes` 中必须包含 `tenant_admin`。 | `iam.platform.tenant.initializeAdmin` | 遵循 4.1 中 `platform/*` 与平台租户资源通用约束；仅用于租户初始化阶段，不承接日常成员管理。 |
+| POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin | 为指定租户执行租户管理员 bootstrap / break-glass 修复；这是平台侧唯一允许写入租户成员关系的正式例外动作，不归类为平台侧通用成员管理接口；正式请求体固定为 `userId` 必填，`displayName` 选填；不接受 `roleCodes`，服务端固定授予 `tenant_admin`；仅当目标租户当前不存在任何 `ACTIVE` 状态且拥有 `tenant_admin` 角色的成员时才允许调用；若该 `userId` 已是目标租户成员，则复用该成员关系、补齐 `tenant_admin` 角色，并确保成功后的成员状态为 `ACTIVE`；否则创建新的成员关系；成功后返回初始化结果，至少包含 `tenantId`、`memberId`、`userId`、`displayName`、`status`、`roleCodes`，且 `status` 必须为 `ACTIVE`，`roleCodes` 中必须包含 `tenant_admin`。 | `iam.platform.tenant.initializeAdmin` | 遵循 4.1 中 `platform/*` 与平台租户资源通用约束；仅在目标租户当前不存在任何 `ACTIVE tenant_admin` 时可调用；不承接日常成员管理。 |
 
   4.6 明确不提供
 
   | 路由 | 功能描述 | 权限标识 | 调用限制 |
   | --- | --- | --- | --- |
   | GET /api/v1/iam/me/permissions | 当前会话权限矩阵自省。 | `-` | 不纳入重构后的正式 API；前端不再依赖统一权限矩阵接口，是否有权执行动作以后端业务接口鉴权结果为准。 |
-  | GET /api/v1/iam/me/tenants | 平台管理员查看可管理租户实体列表。 | `-` | 不纳入重构后的正式 API；平台可管理租户实体列表统一通过 `GET /api/v1/iam/platform/tenants` 提供，该接口不表示进入 `tenant/*` 工作上下文。 |
   | 任意面向全局用户目录、未加入租户用户批量检索或平台工作态账号管理的 HTTP 接口，例如 `/api/v1/iam/platform/users/*` | 全局用户或平台工作态账号管理。 | `-` | 不纳入重构后的正式 API；客户侧用户如需告知租户管理员自己的 `userId`，统一通过 `GET /api/v1/iam/me/profile`；平台或内部人员如需批量检索已注册未入租账号、查询平台工作态账号或做排障，统一通过 `admin/后台` 或内部工具处理。 |
   | GET /api/v1/iam/tenant/profile | 旧命名的当前租户资料接口。 | `-` | 不纳入重构后的正式 API；当前租户上下文统一通过 `GET /api/v1/iam/tenant/me` 返回，并同时带出当前登录用户在该租户下的业务角色信息。 |
   | GET /api/v1/iam/tenant/users，GET /api/v1/iam/tenant/users/{userId} | 当前租户用户目录历史接口。 | `-` | 不纳入重构后的正式 API；当前租户用户目录统一通过 `GET /api/v1/iam/tenant/members` 提供；如需按全局 `userId` 定位当前租户成员，统一通过 `GET /api/v1/iam/tenant/members?userId={userId}`，如需完整成员详情，再用返回的 `memberId` 调用 `GET /api/v1/iam/tenant/members/{memberId}`。 |
   | POST /api/v1/iam/tenant/members/{memberId}/roles | 通过 POST 修改成员角色集合。 | `-` | 不纳入重构后的正式 API；按规范 v2 的方法语义，角色集合更新统一通过 `PUT /api/v1/iam/tenant/members/{memberId}/roles` 表达全量覆盖，不再保留 POST 版本。 |
   | POST /api/v1/iam/tenant/members/invitations，GET /api/v1/iam/me/invitations，POST /api/v1/iam/me/invitations/accept，POST /api/v1/iam/me/invitations/reject | 邀请流程相关接口。 | `-` | 不纳入重构后的正式 API；邀请流程整体下线；成员加入统一通过 `POST /api/v1/iam/tenant/members` 由租户管理员将已存在的全局用户加入当前租户。 |
   | POST /api/v1/iam/platform/tenants/{tenantId}/set-plan | 平台侧调整租户套餐。 | `-` | 不纳入重构后的正式 API；套餐能力属于后续特性，`plan` 当前仅作为租户实体响应中的只读预留字段存在，列表与详情中统一返回 `null`；本期不支持筛选、设置或变更。 |
-  | GET /api/v1/iam/platform/tenants/{tenantId}/members，POST /api/v1/iam/platform/tenants/{tenantId}/members，GET /api/v1/iam/platform/tenants/{tenantId}/members/{memberId}，PUT /api/v1/iam/platform/tenants/{tenantId}/members/{memberId}/roles，以及除 `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 外任何通过 path 显式指定租户后执行成员列表、详情、创建、角色分配、启停等动作的接口 | 平台侧按租户 path 直接做通用成员管理。 | `-` | 不纳入重构后的正式 API；平台侧不提供通用成员管理 HTTP 接口；成员管理只保留在租户工作侧 `tenant/members/*`；平台工作态账号不能通过 `tenant/*` 替代执行；`initialize-admin` 仅是租户初始化阶段的 bootstrap 例外。 |
+  | GET /api/v1/iam/platform/tenants/{tenantId}/members，POST /api/v1/iam/platform/tenants/{tenantId}/members，GET /api/v1/iam/platform/tenants/{tenantId}/members/{memberId}，PUT /api/v1/iam/platform/tenants/{tenantId}/members/{memberId}/roles，以及除 `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 外任何通过 path 显式指定租户后执行成员列表、详情、创建、角色分配、启停等动作的接口 | 平台侧按租户 path 直接做通用成员管理。 | `-` | 不纳入重构后的正式 API；平台侧不提供通用成员管理 HTTP 接口；成员管理只保留在租户工作侧 `tenant/members/*`；平台工作态账号不能通过 `tenant/*` 替代执行；`initialize-admin` 仅保留为“当前租户不存在任何 `ACTIVE tenant_admin` 时”的 `bootstrap / break-glass` 修复接口，不承接日常成员管理。 |
 
   5. API 拆分方案
 
@@ -267,7 +274,7 @@
 
   - session/* 只负责登录、刷新令牌、登出和注册账号。
   - `session/login` 只为正式 IAM 账号建立认证会话并签发 Bearer Token；`admin/后台` 维护的技术兜底账号不进入这套认证域。
-  - me/* 只保留正式 IAM 业务账号读取自己全局资料的 profile 接口。
+  - me/* 只保留正式 IAM 业务账号读取自己全局资料的 `profile` 接口，以及读取自己可进入租户上下文列表的 `me/tenants` 接口。
   - 具体路由迁移以下降范围以第 4 节和第 7 节为准，本节不再重复逐条罗列。
 
   典型入租流程应明确为：
@@ -277,6 +284,12 @@
   - 用户登录后通过 `GET /me/profile` 获取自己的 `userId`。
   - 用户把 `userId` 提供给目标租户管理员。
   - 租户管理员调用 `POST /tenant/members`，将该 `userId` 加入当前租户。
+
+  多租户切换口径应明确为：
+
+  - 已拥有一个或多个有效租户成员关系的正式 IAM 业务账号，通过 `GET /me/tenants` 获取自己当前可进入的租户上下文列表。
+  - 客户端从该列表中读取目标 `tenantCode`，并在后续 `tenant/*` 请求中通过 `X-TENANT-CODE` 指定当前租户上下文。
+  - `GET /tenant/me` 只负责返回“当前已经选中的租户上下文中的我”，不替代 `GET /me/tenants`。
 
   已创建但未加入租户的账号，处理口径固定为：
 
@@ -300,15 +313,17 @@
   - 平台工作态账号管理、全局用户检索、未入租用户批量查询不纳入正式 API，统一留在 `admin/后台` 或内部工具。
 
   5.3 Tenants 拆分为当前租户上下文和平台租户实体
-  当前 tenants 路由混合了两种需求：
+  当前 tenants 相关能力混合了三种需求：
 
   - 平台层面管理租户实体。
+  - 当前用户读取自己可进入的租户上下文列表。
   - 租户侧读取“自己当前租户上下文中的资料与角色”。
 
   重构后的正式 API 必须拆开。
 
   拆分后的正式 API 以第 4 节为准，这里只强调边界：
 
+  - `me/tenants` 表示“当前登录用户可进入的租户上下文列表”，只用于帮助业务账号获取 `tenantCode` 并做租户切换。
   - `tenant/me` 表示“当前租户上下文中的我”，同时返回当前租户资料与当前登录用户在该租户下的业务角色信息。
   - `platform/tenants/*` 表示“平台租户实体管理”，负责列表、详情、启停、初始化管理员等平台动作，也承担平台管理员查看可管理租户实体列表的能力。
   - `plan` 当前仅作为租户实体响应中的只读预留字段存在，不构成本期正式筛选条件或管理动作。
@@ -337,7 +352,7 @@
 
   - 成员管理只保留在 `tenant/members/*`。
   - 不提供 `/platform/tenants/{tenantId}/members/*` 这组平台侧通用成员管理接口。
-  - `POST /platform/tenants/{tenantId}/initialize-admin` 是唯一例外，但它只用于租户初始化 bootstrap 首个租户管理员，不等同于平台侧通用成员管理能力。
+  - `POST /platform/tenants/{tenantId}/initialize-admin` 是唯一例外，但它只允许在目标租户当前不存在任何 `ACTIVE tenant_admin` 时，用于租户管理员 `bootstrap / break-glass` 修复，不等同于平台侧通用成员管理能力。
 
   如果未来真的要支持“删除”概念，也应基于统一软删除能力重新设计，而不是把当前硬删除直接公开为重构后的正式 API。
 
@@ -512,7 +527,8 @@
   租户工作侧：
 
   - 统一从 X-TENANT-CODE 解析 effectiveTenant
-  - 统一校验当前登录用户是否属于该租户且具有对应权限
+  - 统一校验 effectiveTenant 必须为 `ACTIVE`
+  - 统一校验当前登录用户在该租户下必须存在 `ACTIVE` 状态的成员关系，且具有对应权限
   - 统一禁止在 path、query、body 中再次传入租户标识表达同一上下文
 
   平台管理侧：
@@ -525,7 +541,7 @@
 
   - 正式 IAM 账号的鉴权运行态固定为 `unassigned`、`tenant_member`、`platform_operator`。
   - `tenant_member` 与 `platform_operator` 互斥；`unassigned` 是正式 IAM 业务账号未入租时的初始运行态。
-  - `tenant_member` 仅表示该账号已至少拥有一条租户成员关系，不直接代表对任意 `tenant/*` 都有权限；`tenant/*` 的最终访问权始终以 `X-TENANT-CODE` 解析出的 `effectiveTenant`、该账号在该租户下的成员关系和角色权限校验结果为准。
+  - `tenant_member` 仅表示该账号已至少拥有一条租户成员关系，不直接代表对任意 `tenant/*` 都有权限；`tenant/*` 的最终访问权始终以 `X-TENANT-CODE` 解析出的 `effectiveTenant` 必须为 `ACTIVE`、该账号在该租户下的成员关系必须为 `ACTIVE`，以及角色权限校验结果为准。
   - “可入租账号”定义为状态为 `ACTIVE` 且运行态不为 `platform_operator` 的正式 IAM 业务账号；因此 `unassigned` 与 `tenant_member` 都允许继续建立新的租户成员关系。
   - `POST /tenant/members` 与 `POST /platform/tenants/{tenantId}/initialize-admin` 的目标 `userId` 都必须命中“可入租账号”；若未命中，统一返回 `404 + C0404`。
   - 正式 API 不提供 `unassigned -> platform_operator`、`tenant_member -> platform_operator`、`platform_operator -> tenant_member` 这类身份切换写接口。
@@ -533,6 +549,7 @@
   错误口径：
 
   - `tenant/*` 缺少 `X-TENANT-CODE` 或 header 格式非法，统一返回 `400 + B0001`。
+  - `tenant/*` 中 `X-TENANT-CODE` 命中的租户不存在、已停用，或当前用户在该租户下不存在 `ACTIVE` 状态的成员关系时，统一返回 `403 + A0403`。
   - 已认证但无当前作用域权限的请求，统一返回 `403 + A0403`。
   - 在已生效作用域内查询资源但资源不存在，统一返回 `404 + C0404`。
 
@@ -553,8 +570,8 @@
   权限控制以后端校验为准，不依赖前端展示层。重构后的正式 API 要求路径和权限边界一一对应：
 
   - session/*：`session/login`、`session/refresh`、`session/register`、`session/register-by-phone` 使用 AllowAny；`session/logout` 使用已登录校验。
-  - me/*：当前仅保留 `GET /me/profile`；要求当前用户已登录；不依赖 `X-TENANT-CODE`；仅 `unassigned`、`tenant_member` 两种正式 IAM 业务账号运行态可调用；`platform_operator` 不可调用。
-  - tenant/*：要求当前用户运行态为 `tenant_member`，且是 effectiveTenant 下的租户成员并具备租户侧权限；`tenant_member` 本身不直接等于任意租户下都有访问权。
+  - me/*：当前保留 `GET /me/profile`、`GET /me/tenants`；要求当前用户已登录；不依赖 `X-TENANT-CODE`；仅 `unassigned`、`tenant_member` 两种正式 IAM 业务账号运行态可调用；`platform_operator` 不可调用。
+  - tenant/*：要求当前用户运行态为 `tenant_member`，且 `X-TENANT-CODE` 命中的 effectiveTenant 为 `ACTIVE`、当前用户在该租户下存在 `ACTIVE` 状态的成员关系，并具备租户侧权限；`tenant_member` 本身不直接等于任意租户下都有访问权。
   - platform/*：要求当前用户运行态为 `platform_operator`，且具备平台侧权限。
 
   关键约束：
@@ -562,8 +579,9 @@
   - 不允许同一路径根据调用者身份不同切换成不同语义。
   - `me/permissions` 下线、`platform_operator` 不作为租户侧接口调用主体、`tenant_member` 与 `platform_operator` 互斥等边界，统一继承 4.1 与 6.3，不在本节重复展开。
   - `isPlatformAdmin` 只用于 `session/login` 的当前会话能力提示，不作为任何其他正式资源的筛选字段、排序字段或写入字段。
-  - `POST /tenant/members` 作为重构后的正式 API 中的“添加成员”接口，仅 `tenant_admin` 可调用。
-  - `tenant/*` 缺少 `X-TENANT-CODE` 或 header 格式非法时，统一返回 `400 + B0001`；已认证但无当前作用域权限时，统一返回 `403 + A0403`；在当前作用域内查不到目标资源时，统一返回 `404 + C0404`。
+  - `GET /tenant/me` 允许任意满足 `tenant/*` 通用约束的 `tenant_member` 调用，用于读取自己在当前租户下的上下文与业务角色。
+  - `GET /tenant/members`、`GET /tenant/members/{memberId}`、`GET /tenant/roles`、`POST /tenant/members`、`PATCH /tenant/members/{memberId}`、`PUT /tenant/members/{memberId}/roles`、`POST /tenant/members/{memberId}/enable`、`POST /tenant/members/{memberId}/disable` 本期统一仅 `tenant_admin` 可调用。
+  - `tenant/*` 缺少 `X-TENANT-CODE` 或 header 格式非法时，统一返回 `400 + B0001`；`X-TENANT-CODE` 命中的租户不存在、已停用，或当前用户在该租户下不存在 `ACTIVE` 状态的成员关系时，统一返回 `403 + A0403`；在当前作用域内查不到目标资源时，统一返回 `404 + C0404`。
   - 如果未来真的需要平台人员“以某个租户身份工作”，应设计显式会话切换机制，而不是让 platform/* 和 tenant/* 混成一套。
 
   6.5 统一响应封装规范
@@ -593,18 +611,23 @@
   | 401 | A0401 | 未登录或登录失效 |
   | 403 | A0403 | 无操作权限 |
   | 404 | C0404 | 资源不存在 |
-  | 409 | C0101 / C0102 / C0103 / C0203 | 唯一性冲突、重复入租或状态冲突；例如 C0101 用户名已存在、C0102 手机号已存在、C0103 用户已在当前租户中、C0203 当前状态不允许执行该状态变更 |
+  | 409 | C0101 / C0102 / C0103 / C0203 | 唯一性冲突、重复入租或状态冲突；例如 C0101 唯一业务标识已存在、C0102 手机号已存在、C0103 用户已在当前租户中、C0203 当前状态不允许执行该状态变更 |
   | 500 | E0001 | 系统异常 |
 
   其中本轮 IAM 文档对状态冲突码的落点固定为：
 
+  - `C0101` 的正式语义固定为“唯一业务标识已存在”；本期至少覆盖 `POST /session/register` 的用户名冲突，以及 `POST /platform/tenants` 的 `tenantCode` 冲突。
+  - `C0102` 作为本轮沿用业务码，用于手机号已存在。
   - `C0103` 作为本轮新增业务码，用于 `POST /tenant/members` 命中“用户已在当前租户中”这一重复入租冲突。
   - `C0201` 作为规范 v2 的保留码，仅保留语义说明，不纳入本轮正式 API 的错误码映射、OpenAPI 示例与验收断言。
   - `C0203` 作为本轮新增业务码，用于“当前状态不允许执行该状态变更”。
   - `POST /tenant/members/{memberId}/enable` 与 `POST /tenant/members/{memberId}/disable` 的重复或非法状态流转冲突，统一返回 `409 + C0203`。
+  - `PUT /tenant/members/{memberId}/roles` 如会移除当前租户最后一个 `ACTIVE tenant_admin`，统一返回 `409 + C0203`。
+  - `POST /tenant/members/{memberId}/disable` 如会停用当前租户最后一个 `ACTIVE tenant_admin`，统一返回 `409 + C0203`。
   - `POST /platform/tenants/{tenantId}/enable` 与 `POST /platform/tenants/{tenantId}/disable` 的重复或非法状态流转冲突，也统一返回 `409 + C0203`。
-  - `POST /platform/tenants/{tenantId}/initialize-admin` 在目标租户已经完成管理员初始化、当前状态不允许再次执行该 bootstrap 动作时，统一返回 `409 + C0203`。
+  - `POST /platform/tenants/{tenantId}/initialize-admin` 在目标租户当前已存在 `ACTIVE tenant_admin`、因此不允许再次执行 bootstrap / break-glass 修复时，统一返回 `409 + C0203`。
   - `tenant/*` 缺少 `X-TENANT-CODE` 或 header 格式非法，统一返回 `400 + B0001`。
+  - `tenant/*` 中 `X-TENANT-CODE` 命中的租户不存在、已停用，或当前用户在该租户下不存在 `ACTIVE` 状态的成员关系时，统一返回 `403 + A0403`。
   - 已认证但无当前作用域权限的请求，统一返回 `403 + A0403`。
   - 在已生效作用域内查询目标资源但资源不存在，统一返回 `404 + C0404`。
 
@@ -662,15 +685,23 @@
   除上述固定目录接口外，其余列表接口统一分页；不能再随意出现一部分分页、一部分不分页的情况。
   分页接口的响应 `data` 只返回 `list` 与 `total`，不回显 `pageNum`、`pageSize`。
 
+  其中 `GET /api/v1/iam/me/tenants` 作为当前用户租户上下文列表接口，必须进一步定死：
+
+  - `GET /api/v1/iam/me/tenants` 为分页列表接口，默认 `pageNum=1`、`pageSize=20`，最大 `pageSize=100`。
+  - `GET /api/v1/iam/me/tenants` 只返回“租户状态为 `ACTIVE` 且当前用户在该租户下成员状态也为 `ACTIVE`”的租户成员关系。
+  - `GET /api/v1/iam/me/tenants` 除 `pageNum`、`pageSize` 外不支持其他正式筛选或排序参数。
+  - `GET /api/v1/iam/me/tenants` 默认按 `tenantId asc` 排序，并以 `memberId asc` 作为稳定次排序。
+  - `GET /api/v1/iam/me/tenants` 列表项至少返回 `tenantId`、`tenantCode`、`name`、`memberId`、`roleCodes`。
+
   其中平台侧两个正式分页列表接口必须进一步定死：
 
-- `GET /api/v1/iam/platform/tenants` 为分页列表接口，默认 `pageNum=1`、`pageSize=20`，最大 `pageSize=100`。
-- `GET /api/v1/iam/platform/tenants` 支持 `keywords`、`status`、`sortBy`、`sortOrder`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；`keywords` 至少匹配 `tenantCode`、`name`。
-- `GET /api/v1/iam/platform/tenants` 的 `sortBy` 白名单固定为 `tenantId`、`tenantCode`、`name`、`createdAt`、`updatedAt`；默认排序固定为 `tenantId desc`。
-- `GET /api/v1/iam/platform/tenants` 列表项至少返回 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`createdAt`、`updatedAt`；其中 `plan` 为只读预留字段，当前统一返回 `null`，不支持作为正式筛选条件。
-- `GET /api/v1/iam/platform/audit-logs` 为分页列表接口，默认 `pageNum=1`、`pageSize=20`，最大 `pageSize=100`。
-- `GET /api/v1/iam/platform/audit-logs` 支持 `tenantId`、`action`、`operatorUserId`、`startAt`、`endAt`、`sortBy`、`sortOrder`；`sortBy` 仅允许 `createdAt`，默认排序固定为 `createdAt desc`。
-- `GET /api/v1/iam/platform/audit-logs` 列表项至少返回 `auditLogId`、`tenantId`、`tenantCode`、`action`、`targetType`、`targetId`、`operatorUserId`、`operatorDisplayName`、`createdAt`、`summary`。
+  - `GET /api/v1/iam/platform/tenants` 为分页列表接口，默认 `pageNum=1`、`pageSize=20`，最大 `pageSize=100`。
+  - `GET /api/v1/iam/platform/tenants` 支持 `keywords`、`status`、`sortBy`、`sortOrder`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；`keywords` 至少匹配 `tenantCode`、`name`。
+  - `GET /api/v1/iam/platform/tenants` 的 `sortBy` 白名单固定为 `tenantId`、`tenantCode`、`name`、`createdAt`、`updatedAt`；默认排序固定为 `tenantId desc`。
+  - `GET /api/v1/iam/platform/tenants` 列表项至少返回 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`createdAt`、`updatedAt`；其中 `plan` 为只读预留字段，当前统一返回 `null`，不支持作为正式筛选条件。
+  - `GET /api/v1/iam/platform/audit-logs` 为分页列表接口，默认 `pageNum=1`、`pageSize=20`，最大 `pageSize=100`。
+  - `GET /api/v1/iam/platform/audit-logs` 支持 `tenantId`、`action`、`operatorUserId`、`startAt`、`endAt`、`sortBy`、`sortOrder`；`sortBy` 仅允许 `createdAt`，默认排序固定为 `createdAt desc`。
+  - `GET /api/v1/iam/platform/audit-logs` 列表项至少返回 `auditLogId`、`tenantId`、`tenantCode`、`action`、`targetType`、`targetId`、`operatorUserId`、`operatorDisplayName`、`createdAt`、`summary`。
 
   `GET /api/v1/iam/tenant/members` 作为分页列表接口，还应满足：
 
@@ -690,7 +721,7 @@
 
   具体约束如下：
 
-- JSON 字段统一使用 camelCase，例如 tenantId、tenantCode、userId、roleCodes、createdAt、updatedAt。
+  - JSON 字段统一使用 camelCase，例如 tenantId、tenantCode、userId、roleCodes、createdAt、updatedAt。
   - query 参数统一使用 camelCase，例如 pageNum、pageSize、keywords、status、sortBy、sortOrder。
   - 需要显式命名的 path 参数统一使用 camelCase，例如 tenantId、memberId、userId。
   - Header 不适用本条规则，继续沿用 HTTP 头命名方式，例如 X-TENANT-CODE。
@@ -705,59 +736,67 @@
 
   明确要求：
 
-- GET /tenant/me 不接受 path 中显式传租户标识，也不接受 query/body 中重复传 `tenantId`、`tenantCode`、`code`；当前租户只能由 `X-TENANT-CODE` 解析
-- tenant/* 缺少 `X-TENANT-CODE` 或 header 格式非法时，统一返回 `400 + B0001`
-- tenant/* 命中当前用户无权访问的租户上下文，统一返回 `403 + A0403`
-- GET /tenant/members/{memberId} 不再接收额外 query/body 字段表达成员身份；成员绑定账号的全局信息在正式响应中只收口为 `userId`、`username`
-- POST /tenant/members 不再接收 tenantId；成员关系中的 `tenantId` 由服务端根据 X-TENANT-CODE 解析当前租户后确定并写入
-- POST /tenant/members 不接受 tenant_id 旧别名
-- POST /tenant/members 请求体固定字段为 `userId`、`displayName`、`roleCodes`，其中仅 `userId` 必填
-- POST /tenant/members 必须先在“可入租账号”集合内按 `userId` 查询目标账号；若未命中，统一返回 `404 + C0404`
-- POST /tenant/members 如命中“该 `userId` 已在当前租户中”场景，统一返回 `409 + C0103`
-- POST /tenant/members 的 `userId` 必须指向已存在且可入租的正式 IAM 业务账号
-- POST /tenant/members 的 `roleCodes` 可省略或传空数组；如传入，只能使用 `GET /tenant/roles` 返回的可分配租户角色
-- POST /tenant/members 不接受 `qualifications`
-- PUT /tenant/members/{memberId}/roles 请求体固定字段为 `roleCodes`，且必须为数组
-- PUT /tenant/members/{memberId}/roles 不接受 `role_codes`、`roles` 等旧字段名
-- PUT /tenant/members/{memberId}/roles 的 `roleCodes` 允许为空数组；空数组表示清空该成员当前全部租户角色
-- PUT /tenant/members/{memberId}/roles 的语义固定为全量覆盖，不是增量追加；未包含在 `roleCodes` 中的旧角色一律撤销
-- PUT /tenant/members/{memberId}/roles 的 `roleCodes` 按集合语义去重后生效
-- PUT /tenant/members/{memberId}/roles 的 `roleCodes` 如传入，只能使用 `GET /tenant/roles` 返回的可分配租户角色，且不得包含平台角色
-- POST /tenant/members/{memberId}/enable 与 POST /tenant/members/{memberId}/disable 的请求体固定为空对象或无请求体
-- POST /tenant/members/{memberId}/enable 与 POST /tenant/members/{memberId}/disable 不接受任何业务字段
-- GET /platform/tenants 支持 `pageNum`、`pageSize`、`keywords`、`status`、`sortBy`、`sortOrder`
-- GET /platform/tenants 的 `pageNum` 默认 `1`，`pageSize` 默认 `20`，最大 `100`
-- GET /platform/tenants 的 `status` 正式取值仅为 `ACTIVE`、`DISABLED`
-- GET /platform/tenants 的 `keywords` 至少匹配 `tenantCode`、`name`
-- GET /platform/tenants 的 `sortBy` 白名单固定为 `tenantId`、`tenantCode`、`name`、`createdAt`、`updatedAt`；`sortOrder` 仅允许 `asc`、`desc`；默认排序固定为 `tenantId desc`
-- GET /platform/tenants 不接受 `plan` 作为正式查询参数；`plan` 当前仅为响应中的只读预留字段，统一返回 `null`
-- GET /platform/tenants/{tenantId} 的 path 参数固定为 `tenantId`，表示租户实体 ID
-- POST /platform/tenants 的请求体固定字段为 `tenantCode`、`name` 必填，`remark` 选填
-- POST /platform/tenants 的 `tenantCode`、`name` 不得为空字符串，且 `tenantCode` 必须全局唯一
-- POST /platform/tenants 不接受 `tenantId`、`code`、`status`、`plan`、`createdAt`、`updatedAt`
-- POST /platform/tenants 创建成功后，服务端固定写入 `status=ACTIVE`，并返回 `plan=null`
-- POST /platform/tenants/{tenantId}/enable 与 POST /platform/tenants/{tenantId}/disable 的请求体固定为空对象或无请求体
-- POST /platform/tenants/{tenantId}/enable 与 POST /platform/tenants/{tenantId}/disable 不接受任何业务字段
-- POST /platform/tenants/{tenantId}/initialize-admin 的请求体固定字段为 `userId` 必填，`displayName` 选填
-- POST /platform/tenants/{tenantId}/initialize-admin 不接受 `tenantId`、`status`、`roleCodes`、`roles`、`qualifications`
-- POST /platform/tenants/{tenantId}/initialize-admin 的目标租户必须为 `ACTIVE`，且目标租户下尚未存在 `ACTIVE` 状态的 `tenant_admin` 成员
-- POST /platform/tenants/{tenantId}/initialize-admin 的 `userId` 必须指向已存在且可入租的正式 IAM 业务账号；若未命中“可入租账号”集合，统一返回 `404 + C0404`
-- POST /platform/tenants/{tenantId}/initialize-admin 固定授予 `tenant_admin`；如目标用户已是该租户成员，则复用该成员关系、补齐角色并将成员状态恢复或保持为 `ACTIVE`，否则创建新的成员关系
-- POST /platform/tenants/{tenantId}/initialize-admin 在目标租户已完成管理员初始化、当前状态不允许再次执行时，统一返回 `409 + C0203`
-- 重构后的正式 API 不提供 `PUT /tenant/members/{memberId}`；成员属性更新统一使用 `PATCH /tenant/members/{memberId}`
-- PATCH /tenant/members/{memberId} 的请求体只允许 `displayName`
-- PATCH /tenant/members/{memberId} 不接受 `tenantId`、`tenant_id`、`userId`、`user_id`、`status`、`roleCodes`、`role_codes`、`roles`、`username`、`tenantCode`、`createdAt`、`updatedAt`、`joinedAt`、`qualifications`
-- PATCH /tenant/members/{memberId} 中，`displayName` 允许空字符串，显式传 `""` 表示清空显示名
-- GET /tenant/members 不再接收 tenantId 作为当前租户筛选参数，也不接受 tenant_id 旧参数
-- GET /tenant/members 支持 `status` 查询参数，正式取值仅为 `ACTIVE`、`DISABLED`
-- GET /tenant/members 如需多值状态筛选，使用重复 query 参数表达，例如 `?status=ACTIVE&status=DISABLED`
-- GET /tenant/members 支持 `keywords` 查询参数，至少匹配 `username`、`displayName`
-- GET /tenant/members 支持 `userId` 查询参数，表示按当前租户内全局用户 ID 做单值精确筛选，不支持多值
-- GET /tenant/members 支持 `sortBy`、`sortOrder` 查询参数；`sortBy` 白名单固定为 `displayName`、`username`、`status`、`createdAt`、`updatedAt`；`sortOrder` 仅允许 `asc`、`desc`
-- GET /tenant/members 在未传 `status` 时，默认返回 `ACTIVE + DISABLED` 两类正式成员
-- GET /tenant/members 默认排序固定为 `displayName asc`；主排序字段相同的情况下，服务端必须再按 `memberId asc` 做稳定次排序
-- PATCH /tenant/members/{memberId} 对未出现在请求体中的可写字段不做隐式清空，保持原值不变
-- 成员资质能力本期不纳入重构后的正式 API；OpenAPI、Serializer 与验收用例中都不再出现 `qualifications`
+  - GET /tenant/me 不接受 path 中显式传租户标识，也不接受 query/body 中重复传 `tenantId`、`tenantCode`、`code`；当前租户只能由 `X-TENANT-CODE` 解析。
+  - tenant/* 缺少 `X-TENANT-CODE` 或 header 格式非法时，统一返回 `400 + B0001`。
+  - tenant/* 中，`X-TENANT-CODE` 命中的租户必须为 `ACTIVE`，否则统一返回 `403 + A0403`。
+  - tenant/* 中，当前用户在 `X-TENANT-CODE` 命中的租户下必须存在 `ACTIVE` 状态的成员关系，否则统一返回 `403 + A0403`。
+  - tenant/* 命中当前用户无权访问的租户上下文，统一返回 `403 + A0403`。
+  - GET /me/tenants 只接受 `pageNum`、`pageSize`。
+  - GET /me/tenants 不接受 `tenantId`、`tenantCode`、`status`、`keywords`、`sortBy`、`sortOrder`。
+  - GET /me/tenants 默认按 `tenantId asc` 排序；主排序字段相同的情况下，服务端必须再按 `memberId asc` 做稳定次排序。
+  - GET /tenant/members/{memberId} 不再接收额外 query/body 字段表达成员身份；成员绑定账号的全局信息在正式响应中只收口为 `userId`、`username`。
+  - POST /tenant/members 不再接收 tenantId；成员关系中的 `tenantId` 由服务端根据 `X-TENANT-CODE` 解析当前租户后确定并写入。
+  - POST /tenant/members 不接受 tenant_id 旧别名。
+  - POST /tenant/members 请求体固定字段为 `userId`、`displayName`、`roleCodes`，其中仅 `userId` 必填。
+  - POST /tenant/members 必须先在“可入租账号”集合内按 `userId` 查询目标账号；若未命中，统一返回 `404 + C0404`。
+  - POST /tenant/members 如命中“该 `userId` 已在当前租户中”场景，统一返回 `409 + C0103`。
+  - POST /tenant/members 的 `userId` 必须指向已存在且可入租的正式 IAM 业务账号。
+  - POST /tenant/members 的 `roleCodes` 可省略或传空数组；如传入，只能使用 `GET /tenant/roles` 返回的可分配租户角色。
+  - POST /tenant/members 不接受 `qualifications`。
+  - PUT /tenant/members/{memberId}/roles 请求体固定字段为 `roleCodes`，且必须为数组。
+  - PUT /tenant/members/{memberId}/roles 不接受 `role_codes`、`roles` 等旧字段名。
+  - PUT /tenant/members/{memberId}/roles 的 `roleCodes` 允许为空数组；空数组表示清空该成员当前全部租户角色。
+  - PUT /tenant/members/{memberId}/roles 的语义固定为全量覆盖，不是增量追加；未包含在 `roleCodes` 中的旧角色一律撤销。
+  - PUT /tenant/members/{memberId}/roles 的 `roleCodes` 按集合语义去重后生效。
+  - PUT /tenant/members/{memberId}/roles 的 `roleCodes` 如传入，只能使用 `GET /tenant/roles` 返回的可分配租户角色，且不得包含平台角色。
+  - PUT /tenant/members/{memberId}/roles 如本次全量覆盖会使当前租户不存在任何 `ACTIVE tenant_admin`，统一返回 `409 + C0203`。
+  - POST /tenant/members/{memberId}/enable 与 POST /tenant/members/{memberId}/disable 的请求体固定为空对象或无请求体。
+  - POST /tenant/members/{memberId}/enable 与 POST /tenant/members/{memberId}/disable 不接受任何业务字段。
+  - POST /tenant/members/{memberId}/disable 如目标成员是当前租户最后一个 `ACTIVE tenant_admin`，统一返回 `409 + C0203`。
+  - GET /platform/tenants 支持 `pageNum`、`pageSize`、`keywords`、`status`、`sortBy`、`sortOrder`。
+  - GET /platform/tenants 的 `pageNum` 默认 `1`，`pageSize` 默认 `20`，最大 `100`。
+  - GET /platform/tenants 的 `status` 正式取值仅为 `ACTIVE`、`DISABLED`。
+  - GET /platform/tenants 的 `keywords` 至少匹配 `tenantCode`、`name`。
+  - GET /platform/tenants 的 `sortBy` 白名单固定为 `tenantId`、`tenantCode`、`name`、`createdAt`、`updatedAt`；`sortOrder` 仅允许 `asc`、`desc`；默认排序固定为 `tenantId desc`。
+  - GET /platform/tenants 不接受 `plan` 作为正式查询参数；`plan` 当前仅为响应中的只读预留字段，统一返回 `null`。
+  - GET /platform/tenants/{tenantId} 的 path 参数固定为 `tenantId`，表示租户实体 ID。
+  - POST /platform/tenants 的请求体固定字段为 `tenantCode`、`name` 必填，`remark` 选填。
+  - POST /platform/tenants 的 `tenantCode`、`name` 不得为空字符串，且 `tenantCode` 必须全局唯一。
+  - POST /platform/tenants 的 `tenantCode` 如已存在，统一返回 `409 + C0101`。
+  - POST /platform/tenants 不接受 `tenantId`、`code`、`status`、`plan`、`createdAt`、`updatedAt`。
+  - POST /platform/tenants 创建成功后，服务端固定写入 `status=ACTIVE`，并返回 `plan=null`。
+  - POST /platform/tenants/{tenantId}/enable 与 POST /platform/tenants/{tenantId}/disable 的请求体固定为空对象或无请求体。
+  - POST /platform/tenants/{tenantId}/enable 与 POST /platform/tenants/{tenantId}/disable 不接受任何业务字段。
+  - POST /platform/tenants/{tenantId}/initialize-admin 的请求体固定字段为 `userId` 必填，`displayName` 选填。
+  - POST /platform/tenants/{tenantId}/initialize-admin 不接受 `tenantId`、`status`、`roleCodes`、`roles`、`qualifications`。
+  - POST /platform/tenants/{tenantId}/initialize-admin 的目标租户必须为 `ACTIVE`，且目标租户当前不存在任何 `ACTIVE` 状态且拥有 `tenant_admin` 角色的成员。
+  - POST /platform/tenants/{tenantId}/initialize-admin 的 `userId` 必须指向已存在且可入租的正式 IAM 业务账号；若未命中“可入租账号”集合，统一返回 `404 + C0404`。
+  - POST /platform/tenants/{tenantId}/initialize-admin 固定授予 `tenant_admin`；如目标用户已是该租户成员，则复用该成员关系、补齐角色并将成员状态恢复或保持为 `ACTIVE`，否则创建新的成员关系。
+  - POST /platform/tenants/{tenantId}/initialize-admin 只作为“当前租户没有任何 `ACTIVE tenant_admin` 时”的 bootstrap / break-glass 修复接口；若当前已存在 `ACTIVE tenant_admin`，统一返回 `409 + C0203`。
+  - 重构后的正式 API 不提供 `PUT /tenant/members/{memberId}`；成员属性更新统一使用 `PATCH /tenant/members/{memberId}`。
+  - PATCH /tenant/members/{memberId} 的请求体只允许 `displayName`。
+  - PATCH /tenant/members/{memberId} 不接受 `tenantId`、`tenant_id`、`userId`、`user_id`、`status`、`roleCodes`、`role_codes`、`roles`、`username`、`tenantCode`、`createdAt`、`updatedAt`、`joinedAt`、`qualifications`。
+  - PATCH /tenant/members/{memberId} 中，`displayName` 允许空字符串，显式传 `""` 表示清空显示名。
+  - GET /tenant/members 不再接收 tenantId 作为当前租户筛选参数，也不接受 tenant_id 旧参数。
+  - GET /tenant/members 支持 `status` 查询参数，正式取值仅为 `ACTIVE`、`DISABLED`。
+  - GET /tenant/members 如需多值状态筛选，使用重复 query 参数表达，例如 `?status=ACTIVE&status=DISABLED`。
+  - GET /tenant/members 支持 `keywords` 查询参数，至少匹配 `username`、`displayName`。
+  - GET /tenant/members 支持 `userId` 查询参数，表示按当前租户内全局用户 ID 做单值精确筛选，不支持多值。
+  - GET /tenant/members 支持 `sortBy`、`sortOrder` 查询参数；`sortBy` 白名单固定为 `displayName`、`username`、`status`、`createdAt`、`updatedAt`；`sortOrder` 仅允许 `asc`、`desc`。
+  - GET /tenant/members 在未传 `status` 时，默认返回 `ACTIVE + DISABLED` 两类正式成员。
+  - GET /tenant/members 默认排序固定为 `displayName asc`；主排序字段相同的情况下，服务端必须再按 `memberId asc` 做稳定次排序。
+  - PATCH /tenant/members/{memberId} 对未出现在请求体中的可写字段不做隐式清空，保持原值不变。
+  - 成员资质能力本期不纳入重构后的正式 API；OpenAPI、Serializer 与验收用例中都不再出现 `qualifications`。
 
   如果出现 path 中的租户 ID 与 `X-TENANT-CODE` 同时表达同一租户上下文的错误请求，统一返回 `400 + B0001`，而不是“悄悄取其中一个”。
 
@@ -829,6 +868,7 @@
   - `session/login` 的响应 schema 必须声明 `user` 至少包含 `userId`、`username`、`status`、`isPlatformAdmin`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；`isPlatformAdmin` 只作为当前会话自省字段出现；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义；并给出“账号不属于正式 IAM 账号集合或账号状态为 `DISABLED`”时 `401 + A0401` 的错误示例。
   - `session/register` 与 `session/register-by-phone` 必须分别给出请求示例与响应示例，并明确成功后不自动登录、不返回 token；成功响应至少包含 `userId`、`username`、`status`、`staffProfile`，其中 `status` 固定为 `ACTIVE`；并在文档说明中明确注册后初始运行态为 `unassigned`。
   - `GET /api/v1/iam/me/profile` 的响应 schema 至少包含 `userId`、`username`、`status`、`createdAt`、`updatedAt`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；如返回全局人员档案，遵循 4.1 中 `staffProfile` 的统一定义；并明确该接口只允许 `unassigned`、`tenant_member` 调用，`platform_operator` 调用时必须返回 `403 + A0403`。
+  - `GET /api/v1/iam/me/tenants` 必须按 6.6、6.8 显式标注分页请求参数、默认排序和过滤边界；响应列表项最少字段至少包含 `tenantId`、`tenantCode`、`name`、`memberId`、`roleCodes`；并明确该接口只返回“租户状态为 `ACTIVE` 且当前用户在该租户下成员状态也为 `ACTIVE`”的租户成员关系；`unassigned` 调用时返回空列表，`platform_operator` 调用时必须返回 `403 + A0403`。
 
   平台接口文档：
 
@@ -836,22 +876,22 @@
   - `GET /api/v1/iam/platform/roles` 必须明确标注为固定目录型非分页接口；列表项最少字段至少包含 `roleId`、`code`、`name`、`description`、`status`、`createdAt`、`updatedAt`、`permissionGrants`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；`permissionGrants` 每项至少包含 `permission`、`scopeType`，且 `permission` 固定表示权限 `code`，`scopeType` 正式取值固定为 `ALL`、`OWN`、`ASSIGNED`。
   - `GET /api/v1/iam/platform/roles/{roleId}` 的响应 schema 至少包含 `roleId`、`code`、`name`、`description`、`status`、`createdAt`、`updatedAt`、`permissionGrants`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；`permissionGrants` 每项至少包含 `permission`、`scopeType`，且 `permission` 固定表示权限 `code`，`scopeType` 正式取值固定为 `ALL`、`OWN`、`ASSIGNED`。
   - `GET /api/v1/iam/platform/tenants` 的查询参数、排序白名单、默认分页值、最大 `pageSize` 与 `plan` 只读预留语义，必须按 6.6、6.8 显式写出；列表项最少字段至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`createdAt`、`updatedAt`，其中 `plan` 示例值固定为 `null`。
-  - `POST /api/v1/iam/platform/tenants` 的请求 schema 与禁止字段必须按 6.8 显式写出；成功响应至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`，并明确 `status=ACTIVE`、`plan=null`。
+  - `POST /api/v1/iam/platform/tenants` 的请求 schema、禁止字段与 `tenantCode` 冲突时返回 `409 + C0101` 的错误示例，必须按 6.8 显式写出；成功响应至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`，并明确 `status=ACTIVE`、`plan=null`。
   - `GET /api/v1/iam/platform/tenants/{tenantId}` 的响应 schema 至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`，并明确 `plan` 为只读预留字段。
   - `POST /api/v1/iam/platform/tenants/{tenantId}/enable` 与 `POST /api/v1/iam/platform/tenants/{tenantId}/disable` 必须明确声明请求体为空、成功响应至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`，并分别给出 `409 + C0203` 的状态冲突错误示例。
-  - `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 的请求 schema、前置校验、复用成员关系语义、`409 + C0203` 冲突场景与成功响应，必须按 6.8 完整声明；成功响应至少包含 `tenantId`、`memberId`、`userId`、`displayName`、`status`、`roleCodes`，其中 `status` 必须为 `ACTIVE`，`roleCodes` 必须包含 `tenant_admin`。
+  - `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 的请求 schema、前置校验、复用成员关系语义、只允许在“当前不存在任何 `ACTIVE tenant_admin`”时执行的约束、`409 + C0203` 冲突场景与成功响应，必须按 6.8 完整声明；成功响应至少包含 `tenantId`、`memberId`、`userId`、`displayName`、`status`、`roleCodes`，其中 `status` 必须为 `ACTIVE`，`roleCodes` 必须包含 `tenant_admin`。
   - `GET /api/v1/iam/platform/audit-logs` 的查询参数、默认排序与分页响应必须按 6.6、6.8 显式写出；列表项最少字段至少包含 `auditLogId`、`tenantId`、`tenantCode`、`action`、`targetType`、`targetId`、`operatorUserId`、`operatorDisplayName`、`createdAt`、`summary`。
 
   租户接口文档：
 
   - `GET /api/v1/iam/tenant/me` 的响应 schema 必须拆成 `tenant` 与 `member` 两个对象；其中 `tenant` 至少包含 `tenantId`、`tenantCode`、`name`、`status`、`plan`、`remark`、`createdAt`、`updatedAt`，`member` 至少包含 `memberId`、`userId`、`displayName`、`status`、`roleCodes`。
-  - `GET /api/v1/iam/tenant/members` 的筛选参数、排序白名单、默认状态集合、分页规则与 `userId` 单值精确筛选语义，必须按 6.6、6.8 显式写出；列表项最少字段至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。
-  - `GET /api/v1/iam/tenant/members/{memberId}` 的响应 schema 至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`；其中与全局账号相关的只读投影仅收口为 `userId` 与 `username`，不得扩展成独立的全局用户详情资源。
-  - `POST /api/v1/iam/tenant/members` 的请求 schema、禁止字段、冲突码与入租前置校验，必须按 6.8 完整声明；成功响应至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。
-  - `GET /api/v1/iam/tenant/roles` 必须明确标注为固定目录型非分页接口；列表项最少字段至少包含 `roleId`、`code`、`name`、`description`、`status`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`。
-  - `PUT /api/v1/iam/tenant/members/{memberId}/roles` 的请求 schema、全量覆盖语义、空数组清空语义与成功响应，必须按 6.8 完整声明；成功响应至少包含 `memberId`、`userId`、`displayName`、`status`、`roleCodes`。
-  - `PATCH /api/v1/iam/tenant/members/{memberId}` 的可写字段、空字符串清空语义以及输入/输出 schema，必须按 6.8 完整声明；正式可写字段只允许 `displayName`。
-  - `POST /api/v1/iam/tenant/members/{memberId}/enable` 与 `POST /api/v1/iam/tenant/members/{memberId}/disable` 必须明确声明请求体为空、成功响应至少包含 `memberId`、`userId`、`displayName`、`status`、`roleCodes`，并分别给出 `409 + C0203` 的状态冲突错误示例。
+  - `GET /api/v1/iam/tenant/members` 的筛选参数、排序白名单、默认状态集合、分页规则、`userId` 单值精确筛选语义与“仅 `tenant_admin` 可调用”的权限约束，必须按 6.6、6.8 显式写出；列表项最少字段至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。
+  - `GET /api/v1/iam/tenant/members/{memberId}` 的响应 schema 至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`；其中与全局账号相关的只读投影仅收口为 `userId` 与 `username`，不得扩展成独立的全局用户详情资源；并明确该接口仅 `tenant_admin` 可调用。
+  - `POST /api/v1/iam/tenant/members` 的请求 schema、禁止字段、冲突码、入租前置校验与“仅 `tenant_admin` 可调用”的权限约束，必须按 6.8 完整声明；成功响应至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。
+  - `GET /api/v1/iam/tenant/roles` 必须明确标注为固定目录型非分页接口；列表项最少字段至少包含 `roleId`、`code`、`name`、`description`、`status`；其中 `status` 正式取值固定为 `ACTIVE`、`DISABLED`；并明确该接口仅 `tenant_admin` 可调用。
+  - `PUT /api/v1/iam/tenant/members/{memberId}/roles` 的请求 schema、全量覆盖语义、空数组清空语义、成功响应、仅 `tenant_admin` 可调用的权限约束，以及“不得移除当前租户最后一个 `ACTIVE tenant_admin`”的 `409 + C0203` 错误示例，必须按 6.8 完整声明；成功响应至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。
+  - `PATCH /api/v1/iam/tenant/members/{memberId}` 的可写字段、空字符串清空语义、输入/输出 schema 与“仅 `tenant_admin` 可调用”的权限约束，必须按 6.8 完整声明；正式可写字段只允许 `displayName`；成功响应至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。
+  - `POST /api/v1/iam/tenant/members/{memberId}/enable` 与 `POST /api/v1/iam/tenant/members/{memberId}/disable` 必须明确声明请求体为空、成功响应至少包含 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`，并分别给出 `409 + C0203` 的状态冲突错误示例；其中 `disable` 还必须给出“不得停用当前租户最后一个 `ACTIVE tenant_admin`”的冲突示例，并明确两条接口本期都仅 `tenant_admin` 可调用。
   - `GET /api/v1/iam/tenant/audit-logs` 的查询参数、默认排序与分页响应必须按 6.6、6.8 显式写出；列表项最少字段至少包含 `auditLogId`、`action`、`targetType`、`targetId`、`operatorUserId`、`operatorDisplayName`、`createdAt`、`summary`。
 
   现有 apps/api_v1/openapi_hooks.py 已会自动把 /api/v1/* 响应 schema 包成 code/msg/data。所以 IAM 正式进入 /api/v1/iam 后，文档 schema 也能
@@ -886,6 +926,7 @@
   - `POST /api/v1/iam/session/register` 与 `POST /api/v1/iam/session/register-by-phone` 成功后都必须返回 `status=ACTIVE`，且账号初始运行态固定为 `unassigned`；不自动登录、不返回 token。
   - 账号状态转为 `DISABLED` 后，服务端必须撤销该账号现有认证会话。
   - `GET /api/v1/iam/me/profile` 可在登录后稳定返回当前用户自己的 `userId` 与基础资料；仅 `unassigned`、`tenant_member` 两种正式 IAM 业务账号运行态可调用；`platform_operator` 调用时必须返回 `403 + A0403`。
+  - `GET /api/v1/iam/me/tenants` 必须稳定返回当前登录用户可进入的租户上下文分页列表；只包含“租户状态为 `ACTIVE` 且当前用户在该租户下成员状态也为 `ACTIVE`”的租户成员关系；`unassigned` 调用时返回空列表；`platform_operator` 调用时必须返回 `403 + A0403`。
   - `GET /api/v1/iam/tenant/me` 可在携带正确 `X-TENANT-CODE` 时稳定返回当前租户资料，以及当前登录用户在该租户下的 `member.roleCodes`。
 
   路由边界与作用域：
@@ -894,22 +935,26 @@
   - `tenant/*` 缺少 `X-TENANT-CODE` 或 header 格式非法时，统一返回 `400 + B0001`。
   - `unassigned` 账号访问任何 `tenant/*` 或 `platform/*` 正式接口时，必须返回 `403 + A0403`。
   - `platform_operator` 访问任何 `me/*` 或 `tenant/*` 正式接口必须返回 `403 + A0403`；`tenant_member` 访问 `platform/*` 也必须返回 `403 + A0403`。
+  - `tenant/*` 中，`X-TENANT-CODE` 命中的租户不存在、已停用，或当前用户在该租户下不存在 `ACTIVE` 状态的成员关系时，必须返回 `403 + A0403`。
   - 租户 A 管理员把 `X-TENANT-CODE` 切到自己无权访问的租户时，必须返回 `403 + A0403`。
   - 在当前已生效租户上下文内查不到目标成员、角色或其他资源时，必须返回 `404 + C0404`。
-  - `platform/*` 只接受平台工作态账号调用，不通过 header 切换租户上下文，也不提供通用成员管理接口；`POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 仅作为租户 bootstrap 的唯一正式例外保留。
+  - `platform/*` 只接受平台工作态账号调用，不通过 header 切换租户上下文，也不提供通用成员管理接口；`POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 仅作为“当前租户不存在任何 `ACTIVE tenant_admin` 时”的 bootstrap / break-glass 唯一正式例外保留。
   - `tenant_member` 与 `platform_operator` 互斥；同一账号不能同时处于这两种已赋权运行态。
 
   租户成员：
 
   - `POST /api/v1/iam/tenant/members` 只能绑定已存在且可入租的 `userId`，不能隐式创建全局用户；未命中返回 `404 + C0404`，重复入租返回 `409 + C0103`。
+  - `GET /api/v1/iam/tenant/members`、`GET /api/v1/iam/tenant/members/{memberId}`、`GET /api/v1/iam/tenant/roles`、`POST /api/v1/iam/tenant/members`、`PATCH /api/v1/iam/tenant/members/{memberId}`、`PUT /api/v1/iam/tenant/members/{memberId}/roles`、`POST /api/v1/iam/tenant/members/{memberId}/enable`、`POST /api/v1/iam/tenant/members/{memberId}/disable` 本期都必须对非 `tenant_admin` 返回 `403 + A0403`。
   - `POST /api/v1/iam/tenant/members` 允许 `roleCodes` 省略或传空数组；为空时可先创建为无角色成员，后续再通过 `PUT /api/v1/iam/tenant/members/{memberId}/roles` 分配角色。
   - `GET /api/v1/iam/tenant/members` 默认返回 `ACTIVE + DISABLED`；按 `status`、`keywords`、`userId`、`sortBy`、`sortOrder` 过滤或排序时，语义必须与 6.8 一致；客户侧若只看可用成员，必须显式传 `status=ACTIVE`。
   - `GET /api/v1/iam/tenant/members` 默认排序必须为 `displayName asc`，并以 `memberId asc` 作为稳定次排序。
   - `GET /api/v1/iam/tenant/members/{memberId}` 必须稳定返回 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`；不得把它扩展成独立的全局用户详情接口。
   - `PUT /api/v1/iam/tenant/members/{memberId}/roles` 的语义必须是全量覆盖；空数组表示清空角色；重复提交幂等。
-  - `PATCH /api/v1/iam/tenant/members/{memberId}` 只做局部更新；正式可写字段只允许 `displayName`；显式传空字符串时清空 `displayName`；未传则保持原值。
+  - `PUT /api/v1/iam/tenant/members/{memberId}/roles` 如会移除当前租户最后一个 `ACTIVE tenant_admin`，必须返回 `409 + C0203`。
+  - `PATCH /api/v1/iam/tenant/members/{memberId}` 只做局部更新；正式可写字段只允许 `displayName`；显式传空字符串时清空 `displayName`；未传则保持原值；成功响应至少返回 `memberId`、`userId`、`username`、`displayName`、`status`、`roleCodes`。
   - 成员资质能力本期不纳入重构后的正式 API；`tenant/members` 相关正式请求与响应都不得出现 `qualifications`。
   - `POST /api/v1/iam/tenant/members/{memberId}/enable` 对已是 `ACTIVE` 的成员返回 `409 + C0203`；`POST /api/v1/iam/tenant/members/{memberId}/disable` 对已是 `DISABLED` 的成员返回 `409 + C0203`。
+  - `POST /api/v1/iam/tenant/members/{memberId}/disable` 如会停用当前租户最后一个 `ACTIVE tenant_admin`，必须返回 `409 + C0203`。
   - `POST /api/v1/iam/tenant/members/{memberId}/enable` 与 `POST /api/v1/iam/tenant/members/{memberId}/disable` 必须使用空请求体，并返回更新后的成员对象。
   - `GET /api/v1/iam/tenant/roles` 只返回允许分配给租户成员的角色，且固定为非分页目录接口；目录 `status` 只能取 `ACTIVE`、`DISABLED`；响应 `data` 必须直接为数组。
 
@@ -919,9 +964,9 @@
   - `GET /api/v1/iam/platform/tenants`、`GET /api/v1/iam/platform/audit-logs`、`GET /api/v1/iam/tenant/audit-logs` 必须按 6.6、6.8 支持分页、筛选和排序。
   - `GET /api/v1/iam/platform/tenants` 的列表项与 `GET /api/v1/iam/platform/tenants/{tenantId}` 的详情响应，都必须稳定返回 `tenantCode`，不得继续暴露租户实体字段名 `code`。
   - `GET /api/v1/iam/platform/tenants` 不接受 `plan` 作为正式筛选参数；响应中的 `plan` 仅作为只读预留字段，当前统一返回 `null`。
-  - `POST /api/v1/iam/platform/tenants` 只接受 `tenantCode`、`name`、`remark` 这组正式字段；如传旧字段 `code` 必须按参数非法处理；创建成功后必须返回 `status=ACTIVE`、`plan=null`。
+  - `POST /api/v1/iam/platform/tenants` 只接受 `tenantCode`、`name`、`remark` 这组正式字段；如传旧字段 `code` 必须按参数非法处理；`tenantCode` 已存在时必须返回 `409 + C0101`；创建成功后必须返回 `status=ACTIVE`、`plan=null`。
   - `POST /api/v1/iam/platform/tenants/{tenantId}/enable` 对已是 `ACTIVE` 的租户返回 `409 + C0203`；`POST /api/v1/iam/platform/tenants/{tenantId}/disable` 对已是 `DISABLED` 的租户返回 `409 + C0203`；两条接口都必须使用空请求体并返回更新后的租户对象。
-  - `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 只能用于租户 bootstrap；如目标用户已是该租户成员，必须复用现有成员关系、补齐 `tenant_admin` 角色，并确保最终 `status=ACTIVE`，不得重复创建成员；如目标租户已完成管理员初始化、当前状态不允许再次执行该动作，必须返回 `409 + C0203`。
+  - `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 只能用于“当前租户不存在任何 `ACTIVE tenant_admin` 时”的 bootstrap / break-glass 修复；如目标用户已是该租户成员，必须复用现有成员关系、补齐 `tenant_admin` 角色，并确保最终 `status=ACTIVE`，不得重复创建成员；如当前已存在 `ACTIVE tenant_admin`，必须返回 `409 + C0203`。
 
   7. 迁移表
 
@@ -938,7 +983,7 @@
   | POST /internal/auth/users/register | POST /api/v1/iam/session/register | 改挂载并清洗响应语义 | 从 users 归位到 session；注册成功不自动登录，不返回 token |
 | POST /internal/auth/users/register/by-phone | POST /api/v1/iam/session/register-by-phone | 改挂载并清洗请求体 | 从 users 归位到 session；正式请求体改为 `phone`、`smsCode`、`password`；注册成功不自动登录 |
   | 新增 | GET /api/v1/iam/me/profile | 新增接口 | 当前登录用户读取自己的全局账号资料与 `userId`，用于入租流程 |
-  | GET /internal/auth/me/tenants | 拆分为：GET /api/v1/iam/platform/tenants；GET /api/v1/iam/tenant/me | 拆接口 | 平台管理员查看可管理租户实体列表统一走 `platform/tenants`；当前租户工作态下读取“当前租户资料 + 当前用户业务角色上下文”统一走 `tenant/me`；不再保留返回多租户 membership 列表的正式接口 |
+  | GET /internal/auth/me/tenants | GET /api/v1/iam/me/tenants | 改挂载并清洗响应语义 | 旧接口中的“当前用户有效租户 membership 列表”语义保留为正式 API；新接口只返回“租户状态为 `ACTIVE` 且当前用户在该租户下成员状态也为 `ACTIVE`”的租户上下文列表，用于让业务账号读取可切换的 `tenantCode` |
   | GET /internal/auth/me/permissions | 下线 | 删除重构后的正式 API | 不再对外提供统一当前会话权限矩阵接口 |
   | GET /internal/auth/me/invitations | 下线 | 删除重构后的正式 API | 邀请流程整体下线 |
   | POST /internal/auth/me/invitations/reject | 下线 | 删除重构后的正式 API | 邀请流程整体下线 |
@@ -979,13 +1024,13 @@
   最终边界应固定为：
 
   - session/* 处理登录、刷新令牌、登出、注册。
-  - me/* 只处理正式 IAM 业务账号当前登录用户自己的全局账号资料，并提供 `userId` 获取入口；平台工作态账号不进入这一层。
-  - tenant/* 处理当前租户上下文内工作；`tenant/me` 返回当前租户资料与当前登录用户在该租户下的业务角色信息；当前租户用户目录与成员管理统一通过 `tenant/members/*` 提供。
+  - me/* 只处理正式 IAM 业务账号当前登录用户自己的全局账号资料与自有租户上下文，并提供 `userId` 获取入口与可切换的 `tenantCode` 读取入口；平台工作态账号不进入这一层。
+  - tenant/* 处理当前租户上下文内工作；`tenant/me` 返回当前租户资料与当前登录用户在该租户下的业务角色信息；当前租户用户目录与成员管理统一通过 `tenant/members/*` 提供；`tenant/*` 访问前提固定为目标租户状态为 `ACTIVE`，且当前用户在该租户下存在 `ACTIVE` 状态的成员关系。
   - tenant/roles 提供当前租户可分配角色目录，供租户管理员分配成员角色。
   - platform/* 处理平台层面的租户实体、平台目录和平台审计。
   - 平台工作态账号管理、全局用户检索和未入租用户批量处理统一留在 `admin/后台` 或内部工具。
   - 邀请流程相关 API 不进入重构后的正式 API，成员加入只保留“租户管理员将已存在的全局用户加入当前租户”。
   - `tenant_member` 与 `platform_operator` 互斥，一个账号不能同时处于这两种已赋权运行态。
   - 租户管理员可以管理自己当前租户内的成员。
-  - 平台侧不提供按租户 ID 显式指定目标租户的通用成员管理 HTTP 接口；`POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 仅作为租户 bootstrap 的唯一正式例外。
+  - 平台侧不提供按租户 ID 显式指定目标租户的通用成员管理 HTTP 接口；`POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin` 是平台侧唯一允许写入租户成员关系的正式例外，只能在目标租户当前不存在任何 `ACTIVE` 状态且拥有 `tenant_admin` 角色的成员时，用于租户管理员 `bootstrap / break-glass` 修复，不承接日常成员管理。
   - 旧 /internal/auth/* 直接退出，不做兼容。
