@@ -58,17 +58,12 @@
           banner.className = cls;
         }
 
-        if (pathname.startsWith('/docs/')) {
-          setBanner('当前为统一 OpenAPI 文档页。当前仓库正式接口统一收口到 /api/v1/*；导入 Apifox 请使用 /docs/schema/。', 'warn');
+        if (pathname.startsWith('/api/v1/docs/')) {
+          setBanner('当前为 /api/v1 正式文档页。需要认证的接口请在 Swagger Authorize 中填写 Bearer Token；租户工作侧接口还需要传 X-TENANT-CODE。', 'warn');
           return;
         }
 
-        if (pathname.startsWith('/internal/docs/')) {
-          setBanner('当前为内部文档页。若页面无接口，表示当前仓库没有额外暴露内部 HTTP API。', 'warn');
-          return;
-        }
-
-        setBanner('当前为 /api/v1 业务文档页。需要认证的接口请在 Swagger Authorize 中填写 Bearer Token；租户工作侧接口还需要传 X-TENANT-CODE。', 'warn');
+        setBanner('当前为 Swagger 文档页。正式 OpenAPI 文档统一收口到 /api/v1/docs/，Schema 地址为 /api/v1/docs/schema/。', 'warn');
       })();
     </script>
     {% endblock %}

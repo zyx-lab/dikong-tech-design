@@ -26,9 +26,9 @@
   - 媒体文件（media_file）：CRUD + 逻辑删除
 
 3. Unified OpenAPI Docs（统一文档）
-- Swagger UI：`/docs/`
-- OpenAPI Schema(JSON)：`/docs/schema/`
-- 用途：统一查看当前仓库正式 `/api/v1/*` 接口；`/docs/schema/` 可直接导入 Apifox
+- Swagger UI：`/api/v1/docs/`
+- OpenAPI Schema(JSON)：`/api/v1/docs/schema/`
+- 用途：统一查看当前仓库正式 `/api/v1/*` 接口；`/api/v1/docs/schema/` 可直接导入 Apifox
 
 说明：
 - 旧 `/internal/auth/*` 已下线，不保留兼容入口。

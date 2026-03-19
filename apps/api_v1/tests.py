@@ -42,8 +42,8 @@ class BusinessApiResponseContractTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["code"], "00000")
         self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["endpoints"]["all_docs"], "http://testserver/docs/")
-        self.assertEqual(response.data["data"]["endpoints"]["all_docs_schema"], "http://testserver/docs/schema/")
+        self.assertEqual(response.data["data"]["endpoints"]["docs"], "http://testserver/api/v1/docs/")
+        self.assertEqual(response.data["data"]["endpoints"]["docs_schema"], "http://testserver/api/v1/docs/schema/")
 
     def test_business_endpoint_permission_error_should_use_standard_envelope(self):
         response = self.client.get("/api/v1/drones")

@@ -4,10 +4,21 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.response import Response
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiResponse, extend_schema
 
 from apps.access.api_v1.base import IamGenericAPIView, IamAPIView, ensure_empty_body, ensure_no_extra_query_params
 from apps.access.api_v1.context import eligible_user_queryset, require_platform_operator
+from apps.access.api_v1.openapi import (
+    IAM_BEARER_AUTH,
+    IAM_CONSTRAINT_CONFLICT_RESPONSE,
+    IAM_FORBIDDEN_RESPONSE,
+    IAM_INVALID_PARAMS_RESPONSE,
+    IAM_NOT_FOUND_RESPONSE,
+    IAM_PAGE_NUM_PARAMETER,
+    IAM_PAGE_SIZE_PARAMETER,
+    IAM_UNAUTHORIZED_RESPONSE,
+    iam_path_int_parameter,
+)
 from apps.access.api_v1.serializers.common import AuditLogSerializer, PermissionSerializer, RoleDetailSerializer, TenantDirectorySerializer, TenantSummarySerializer
 from apps.access.api_v1.serializers.platform import (
     PlatformInitializeAdminResponseSerializer,
@@ -17,7 +28,14 @@ from apps.access.api_v1.serializers.platform import (
 from apps.access.api_v1.services.members import initialize_tenant_admin, serialize_member_payload
 from apps.access.api_v1.services.tenants import create_tenant, disable_tenant, enable_tenant
 from apps.access.models import AuditLog, DirectoryStatus, Permission, Role, Tenant
-from apps.api_v1.schema import BUSINESS_INTERNAL_ERROR_RESPONSE, array_envelope_serializer, object_envelope_serializer, paginated_envelope_serializer
+from apps.api_v1.schema import (
+    BUSINESS_INTERNAL_ERROR_RESPONSE,
+    array_envelope_serializer,
+    business_error_example,
+    business_error_response,
+    object_envelope_serializer,
+    paginated_envelope_serializer,
+)
 
 
 def _parse_datetime(value: str | None, *, field_name: str):
@@ -32,10 +50,183 @@ def _parse_datetime(value: str | None, *, field_name: str):
     return parsed
 
 
+PLATFORM_PERMISSIONS_SUCCESS_EXAMPLE = {
+    "code": "00000",
+    "msg": "success",
+    "data": [
+        {
+            "permissionId": 1,
+            "code": "iam.platform.permission.read",
+            "name": "查看平台权限目录",
+            "module": "iam",
+            "resourceCode": "platform_permission",
+            "status": "ACTIVE",
+        }
+    ],
+}
+
+PLATFORM_ROLES_SUCCESS_EXAMPLE = {
+    "code": "00000",
+    "msg": "success",
+    "data": [
+        {
+            "roleId": 1,
+            "code": "platform_admin",
+            "name": "平台管理员",
+            "description": "平台工作态角色模板",
+            "createdAt": "2026-03-19T10:00:00+08:00",
+            "updatedAt": "2026-03-19T10:00:00+08:00",
+            "permissionGrants": [
+                {"permission": "iam.platform.tenant.read", "scopeType": "ALL"}
+            ],
+        }
+    ],
+}
+
+PLATFORM_ROLE_DETAIL_SUCCESS_EXAMPLE = {
+    "code": "00000",
+    "msg": "success",
+    "data": {
+        "roleId": 1,
+        "code": "platform_admin",
+        "name": "平台管理员",
+        "description": "平台工作态角色模板",
+        "createdAt": "2026-03-19T10:00:00+08:00",
+        "updatedAt": "2026-03-19T10:00:00+08:00",
+        "permissionGrants": [
+            {"permission": "iam.platform.tenant.read", "scopeType": "ALL"}
+        ],
+    },
+}
+
+PLATFORM_AUDIT_LOGS_SUCCESS_EXAMPLE = {
+    "code": "00000",
+    "msg": "success",
+    "data": {
+        "list": [
+            {
+                "auditLogId": 6001,
+                "tenantId": 2001,
+                "tenantCode": "demo_tenant",
+                "action": "IAM_PLATFORM_TENANT_CREATED",
+                "targetType": "tenant",
+                "targetId": "2001",
+                "operatorUserId": 1001,
+                "operatorDisplayName": "平台管理员",
+                "createdAt": "2026-03-19T10:30:00+08:00",
+                "summary": "IAM_PLATFORM_TENANT_CREATED",
+            }
+        ],
+        "total": 1,
+    },
+}
+
+PLATFORM_TENANTS_SUCCESS_EXAMPLE = {
+    "code": "00000",
+    "msg": "success",
+    "data": {
+        "list": [
+            {
+                "tenantId": 2001,
+                "tenantCode": "demo_tenant",
+                "name": "演示租户",
+                "status": "ACTIVE",
+                "plan": None,
+                "createdAt": "2026-03-19T10:00:00+08:00",
+                "updatedAt": "2026-03-19T10:00:00+08:00",
+            }
+        ],
+        "total": 1,
+    },
+}
+
+PLATFORM_TENANT_SUCCESS_EXAMPLE = {
+    "code": "00000",
+    "msg": "success",
+    "data": {
+        "tenantId": 2001,
+        "tenantCode": "demo_tenant",
+        "name": "演示租户",
+        "status": "ACTIVE",
+        "plan": None,
+        "remark": "正式租户",
+        "createdAt": "2026-03-19T10:00:00+08:00",
+        "updatedAt": "2026-03-19T10:00:00+08:00",
+    },
+}
+
+PLATFORM_TENANT_DISABLED_SUCCESS_EXAMPLE = {
+    "code": "00000",
+    "msg": "success",
+    "data": {
+        "tenantId": 2001,
+        "tenantCode": "demo_tenant",
+        "name": "演示租户",
+        "status": "DISABLED",
+        "plan": None,
+        "remark": "正式租户",
+        "createdAt": "2026-03-19T10:00:00+08:00",
+        "updatedAt": "2026-03-19T10:20:00+08:00",
+    },
+}
+
+PLATFORM_INITIALIZE_ADMIN_SUCCESS_EXAMPLE = {
+    "code": "00000",
+    "msg": "success",
+    "data": {
+        "tenantId": 2001,
+        "memberId": 3001,
+        "userId": 1002,
+        "username": "member_user",
+        "displayName": None,
+        "status": "ACTIVE",
+        "roleCodes": ["tenant_admin"],
+    },
+}
+
+PLATFORM_TENANT_DUPLICATE_RESPONSE = business_error_response(
+    description="tenantCode 已存在时返回 409 + C0101。",
+    examples=[
+        business_error_example(
+            "tenantCode 已存在",
+            code="C0101",
+            msg="租户编码已存在",
+            status_codes=["409"],
+        )
+    ],
+)
+
+PLATFORM_INITIALIZE_ADMIN_CONFLICT_RESPONSE = business_error_response(
+    description="目标租户状态不允许初始化或当前已存在 ACTIVE tenant_admin 时返回 409 + C0203。",
+    examples=[
+        business_error_example(
+            "已存在租户管理员",
+            code="C0203",
+            msg="当前租户已存在启用的 tenant_admin",
+            status_codes=["409"],
+        )
+    ],
+)
+
+
 class PlatformPermissionsView(IamAPIView):
     @extend_schema(
+        auth=IAM_BEARER_AUTH,
         responses={
-            200: array_envelope_serializer("IamPlatformPermissionsEnvelope", PermissionSerializer),
+            200: OpenApiResponse(
+                response=array_envelope_serializer("IamPlatformPermissionsEnvelope", PermissionSerializer),
+                description="权限标识：`iam.platform.permission.read`。固定目录型非分页接口；status 正式取值固定为 ACTIVE、DISABLED。",
+                examples=[
+                    OpenApiExample(
+                        "平台权限目录示例",
+                        response_only=True,
+                        status_codes=["200"],
+                        value=PLATFORM_PERMISSIONS_SUCCESS_EXAMPLE,
+                    )
+                ],
+            ),
+            401: IAM_UNAUTHORIZED_RESPONSE,
+            403: IAM_FORBIDDEN_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         summary="读取平台权限目录",
@@ -59,9 +250,23 @@ class PlatformPermissionsView(IamAPIView):
 
 class PlatformRolesView(IamAPIView):
     @extend_schema(
+        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_role_list",
         responses={
-            200: array_envelope_serializer("IamPlatformRolesEnvelope", RoleDetailSerializer),
+            200: OpenApiResponse(
+                response=array_envelope_serializer("IamPlatformRolesEnvelope", RoleDetailSerializer),
+                description="权限标识：`iam.platform.role.read`。固定目录型非分页接口；返回角色模板目录，不定义 status 字段。",
+                examples=[
+                    OpenApiExample(
+                        "平台角色目录示例",
+                        response_only=True,
+                        status_codes=["200"],
+                        value=PLATFORM_ROLES_SUCCESS_EXAMPLE,
+                    )
+                ],
+            ),
+            401: IAM_UNAUTHORIZED_RESPONSE,
+            403: IAM_FORBIDDEN_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         summary="读取平台角色模板目录",
@@ -93,9 +298,25 @@ class PlatformRolesView(IamAPIView):
 
 class PlatformRoleDetailView(IamAPIView):
     @extend_schema(
+        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_role_detail",
+        parameters=[iam_path_int_parameter("roleId", "角色模板 ID。")],
         responses={
-            200: object_envelope_serializer("IamPlatformRoleDetailEnvelope", RoleDetailSerializer),
+            200: OpenApiResponse(
+                response=object_envelope_serializer("IamPlatformRoleDetailEnvelope", RoleDetailSerializer),
+                description="权限标识：`iam.platform.role.read`。返回角色模板详情，不定义 status 字段；permissionGrants[].permission 固定表示权限 code。",
+                examples=[
+                    OpenApiExample(
+                        "平台角色详情示例",
+                        response_only=True,
+                        status_codes=["200"],
+                        value=PLATFORM_ROLE_DETAIL_SUCCESS_EXAMPLE,
+                    )
+                ],
+            ),
+            401: IAM_UNAUTHORIZED_RESPONSE,
+            403: IAM_FORBIDDEN_RESPONSE,
+            404: IAM_NOT_FOUND_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         summary="读取平台角色模板详情",
@@ -127,20 +348,35 @@ class PlatformRoleDetailView(IamAPIView):
 
 class PlatformAuditLogsView(IamGenericAPIView):
     @extend_schema(
+        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_audit_log_list",
         parameters=[
-            OpenApiParameter(name="tenantId", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="action", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="operatorUserId", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="startAt", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="endAt", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="sortBy", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="sortOrder", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="pageNum", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="pageSize", type=int, location=OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(name="tenantId", type=int, location=OpenApiParameter.QUERY, required=False, description="按租户实体 ID 精确筛选。"),
+            OpenApiParameter(name="action", type=str, location=OpenApiParameter.QUERY, required=False, description="按 action 精确筛选。"),
+            OpenApiParameter(name="operatorUserId", type=int, location=OpenApiParameter.QUERY, required=False, description="按操作人 userId 精确筛选。"),
+            OpenApiParameter(name="startAt", type=str, location=OpenApiParameter.QUERY, required=False, description="起始时间，ISO 8601。"),
+            OpenApiParameter(name="endAt", type=str, location=OpenApiParameter.QUERY, required=False, description="结束时间，ISO 8601。"),
+            OpenApiParameter(name="sortBy", type=str, location=OpenApiParameter.QUERY, required=False, description="仅允许 createdAt，默认 createdAt。"),
+            OpenApiParameter(name="sortOrder", type=str, location=OpenApiParameter.QUERY, required=False, description="仅允许 asc、desc；默认 desc。"),
+            IAM_PAGE_NUM_PARAMETER,
+            IAM_PAGE_SIZE_PARAMETER,
         ],
         responses={
-            200: paginated_envelope_serializer("IamPlatformAuditLogsEnvelope", AuditLogSerializer),
+            200: OpenApiResponse(
+                response=paginated_envelope_serializer("IamPlatformAuditLogsEnvelope", AuditLogSerializer),
+                description="权限标识：`iam.platform.auditLog.read`。平台维度审计日志分页列表；默认按 createdAt desc 排序。",
+                examples=[
+                    OpenApiExample(
+                        "平台审计日志成功示例",
+                        response_only=True,
+                        status_codes=["200"],
+                        value=PLATFORM_AUDIT_LOGS_SUCCESS_EXAMPLE,
+                    )
+                ],
+            ),
+            400: IAM_INVALID_PARAMS_RESPONSE,
+            401: IAM_UNAUTHORIZED_RESPONSE,
+            403: IAM_FORBIDDEN_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         summary="查询平台审计日志",
@@ -185,20 +421,36 @@ class PlatformAuditLogsView(IamGenericAPIView):
 
 class PlatformTenantsView(IamGenericAPIView):
     @extend_schema(
+        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_tenant_list",
         parameters=[
-            OpenApiParameter(name="pageNum", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="pageSize", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="keywords", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="status", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="sortBy", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="sortOrder", type=str, location=OpenApiParameter.QUERY, required=False),
+            IAM_PAGE_NUM_PARAMETER,
+            IAM_PAGE_SIZE_PARAMETER,
+            OpenApiParameter(name="keywords", type=str, location=OpenApiParameter.QUERY, required=False, description="按 tenantCode、name 模糊检索。"),
+            OpenApiParameter(name="status", type=str, location=OpenApiParameter.QUERY, required=False, description="仅允许 ACTIVE、DISABLED。"),
+            OpenApiParameter(name="sortBy", type=str, location=OpenApiParameter.QUERY, required=False, description="仅允许 tenantId、tenantCode、name、createdAt、updatedAt；默认 tenantId。"),
+            OpenApiParameter(name="sortOrder", type=str, location=OpenApiParameter.QUERY, required=False, description="仅允许 asc、desc；默认 desc。"),
         ],
         responses={
-            200: paginated_envelope_serializer("IamPlatformTenantsEnvelope", TenantDirectorySerializer),
+            200: OpenApiResponse(
+                response=paginated_envelope_serializer("IamPlatformTenantsEnvelope", TenantDirectorySerializer),
+                description="权限标识：`iam.platform.tenant.read`。平台租户实体分页列表；plan 当前固定返回 null，不支持作为正式筛选条件。",
+                examples=[
+                    OpenApiExample(
+                        "平台租户列表示例",
+                        response_only=True,
+                        status_codes=["200"],
+                        value=PLATFORM_TENANTS_SUCCESS_EXAMPLE,
+                    )
+                ],
+            ),
+            400: IAM_INVALID_PARAMS_RESPONSE,
+            401: IAM_UNAUTHORIZED_RESPONSE,
+            403: IAM_FORBIDDEN_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         summary="查询或创建租户实体",
+        description="平台侧租户实体列表入口，默认按 tenantId desc 排序。",
     )
     def get(self, request):
         require_platform_operator(request.user)
@@ -246,13 +498,37 @@ class PlatformTenantsView(IamGenericAPIView):
         return self.get_paginated_response(payload)
 
     @extend_schema(
+        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_tenant_create",
         request=PlatformTenantCreateSerializer,
+        examples=[
+            OpenApiExample(
+                "创建租户请求示例",
+                request_only=True,
+                value={"tenantCode": "demo_tenant", "name": "演示租户", "remark": "正式租户"},
+            )
+        ],
         responses={
-            201: object_envelope_serializer("IamPlatformTenantCreatedEnvelope", TenantSummarySerializer),
+            201: OpenApiResponse(
+                response=object_envelope_serializer("IamPlatformTenantCreatedEnvelope", TenantSummarySerializer),
+                description="权限标识：`iam.platform.tenant.create`。创建成功后 status 固定为 ACTIVE，plan 固定返回 null。",
+                examples=[
+                    OpenApiExample(
+                        "创建租户成功示例",
+                        response_only=True,
+                        status_codes=["201"],
+                        value=PLATFORM_TENANT_SUCCESS_EXAMPLE,
+                    )
+                ],
+            ),
+            400: IAM_INVALID_PARAMS_RESPONSE,
+            401: IAM_UNAUTHORIZED_RESPONSE,
+            403: IAM_FORBIDDEN_RESPONSE,
+            409: PLATFORM_TENANT_DUPLICATE_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         summary="创建租户实体",
+        description="请求体只允许 tenantCode、name、remark；不接受 status、plan、tenantId、code 等字段。",
     )
     def post(self, request):
         identity = require_platform_operator(request.user)
@@ -281,9 +557,25 @@ class PlatformTenantsView(IamGenericAPIView):
 
 class PlatformTenantDetailView(IamAPIView):
     @extend_schema(
+        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_tenant_detail",
+        parameters=[iam_path_int_parameter("tenantId", "租户实体 ID。")],
         responses={
-            200: object_envelope_serializer("IamPlatformTenantDetailEnvelope", TenantSummarySerializer),
+            200: OpenApiResponse(
+                response=object_envelope_serializer("IamPlatformTenantDetailEnvelope", TenantSummarySerializer),
+                description="权限标识：`iam.platform.tenant.read`。返回单个租户实体详情；plan 为只读预留字段，当前固定返回 null。",
+                examples=[
+                    OpenApiExample(
+                        "读取租户详情示例",
+                        response_only=True,
+                        status_codes=["200"],
+                        value=PLATFORM_TENANT_SUCCESS_EXAMPLE,
+                    )
+                ],
+            ),
+            401: IAM_UNAUTHORIZED_RESPONSE,
+            403: IAM_FORBIDDEN_RESPONSE,
+            404: IAM_NOT_FOUND_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         summary="读取单个租户实体",
@@ -312,9 +604,27 @@ class PlatformTenantDetailView(IamAPIView):
 
 class PlatformTenantEnableView(IamAPIView):
     @extend_schema(
+        auth=IAM_BEARER_AUTH,
+        parameters=[iam_path_int_parameter("tenantId", "租户实体 ID。")],
         request=None,
         responses={
-            200: object_envelope_serializer("IamPlatformTenantEnableEnvelope", TenantSummarySerializer),
+            200: OpenApiResponse(
+                response=object_envelope_serializer("IamPlatformTenantEnableEnvelope", TenantSummarySerializer),
+                description="权限标识：`iam.platform.tenant.enable`。请求体固定为空；成功后返回更新后的租户对象，status 固定为 ACTIVE。",
+                examples=[
+                    OpenApiExample(
+                        "启用租户成功示例",
+                        response_only=True,
+                        status_codes=["200"],
+                        value=PLATFORM_TENANT_SUCCESS_EXAMPLE,
+                    )
+                ],
+            ),
+            400: IAM_INVALID_PARAMS_RESPONSE,
+            401: IAM_UNAUTHORIZED_RESPONSE,
+            403: IAM_FORBIDDEN_RESPONSE,
+            404: IAM_NOT_FOUND_RESPONSE,
+            409: IAM_CONSTRAINT_CONFLICT_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         summary="启用租户实体",
@@ -345,9 +655,27 @@ class PlatformTenantEnableView(IamAPIView):
 
 class PlatformTenantDisableView(IamAPIView):
     @extend_schema(
+        auth=IAM_BEARER_AUTH,
+        parameters=[iam_path_int_parameter("tenantId", "租户实体 ID。")],
         request=None,
         responses={
-            200: object_envelope_serializer("IamPlatformTenantDisableEnvelope", TenantSummarySerializer),
+            200: OpenApiResponse(
+                response=object_envelope_serializer("IamPlatformTenantDisableEnvelope", TenantSummarySerializer),
+                description="权限标识：`iam.platform.tenant.disable`。请求体固定为空；成功后返回更新后的租户对象，status 固定为 DISABLED。",
+                examples=[
+                    OpenApiExample(
+                        "停用租户成功示例",
+                        response_only=True,
+                        status_codes=["200"],
+                        value=PLATFORM_TENANT_DISABLED_SUCCESS_EXAMPLE,
+                    )
+                ],
+            ),
+            400: IAM_INVALID_PARAMS_RESPONSE,
+            401: IAM_UNAUTHORIZED_RESPONSE,
+            403: IAM_FORBIDDEN_RESPONSE,
+            404: IAM_NOT_FOUND_RESPONSE,
+            409: IAM_CONSTRAINT_CONFLICT_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         summary="停用租户实体",
@@ -378,12 +706,41 @@ class PlatformTenantDisableView(IamAPIView):
 
 class PlatformTenantInitializeAdminView(IamAPIView):
     @extend_schema(
+        auth=IAM_BEARER_AUTH,
+        parameters=[iam_path_int_parameter("tenantId", "租户实体 ID。")],
         request=PlatformInitializeAdminSerializer,
+        examples=[
+            OpenApiExample(
+                "初始化租户管理员请求示例",
+                request_only=True,
+                value={"userId": 1002, "displayName": "李四"},
+            )
+        ],
         responses={
-            200: object_envelope_serializer("IamPlatformInitializeAdminEnvelope", PlatformInitializeAdminResponseSerializer),
+            200: OpenApiResponse(
+                response=object_envelope_serializer("IamPlatformInitializeAdminEnvelope", PlatformInitializeAdminResponseSerializer),
+                description=(
+                    "权限标识：`iam.platform.tenant.initializeAdmin`。平台侧唯一允许写入租户成员关系的正式例外；"
+                    "成功后 status 固定为 ACTIVE，roleCodes 中必须包含 tenant_admin。"
+                ),
+                examples=[
+                    OpenApiExample(
+                        "初始化租户管理员成功示例",
+                        response_only=True,
+                        status_codes=["200"],
+                        value=PLATFORM_INITIALIZE_ADMIN_SUCCESS_EXAMPLE,
+                    )
+                ],
+            ),
+            400: IAM_INVALID_PARAMS_RESPONSE,
+            401: IAM_UNAUTHORIZED_RESPONSE,
+            403: IAM_FORBIDDEN_RESPONSE,
+            404: IAM_NOT_FOUND_RESPONSE,
+            409: PLATFORM_INITIALIZE_ADMIN_CONFLICT_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         summary="为目标租户初始化租户管理员",
+        description="请求体只允许 userId、displayName；不接受 roleCodes、roles、tenantId、status、qualifications 等字段。",
     )
     def post(self, request, tenantId: int):
         identity = require_platform_operator(request.user)
