@@ -9,7 +9,6 @@ from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiRespo
 from apps.access.api_v1.base import IamGenericAPIView, IamAPIView, ensure_empty_body, ensure_no_extra_query_params
 from apps.access.api_v1.context import eligible_user_queryset, require_platform_operator
 from apps.access.api_v1.openapi import (
-    IAM_BEARER_AUTH,
     IAM_CONSTRAINT_CONFLICT_RESPONSE,
     IAM_FORBIDDEN_RESPONSE,
     IAM_INVALID_PARAMS_RESPONSE,
@@ -211,7 +210,6 @@ PLATFORM_INITIALIZE_ADMIN_CONFLICT_RESPONSE = business_error_response(
 
 class PlatformPermissionsView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         responses={
             200: OpenApiResponse(
                 response=array_envelope_serializer("IamPlatformPermissionsEnvelope", PermissionSerializer),
@@ -250,7 +248,6 @@ class PlatformPermissionsView(IamAPIView):
 
 class PlatformRolesView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_role_list",
         responses={
             200: OpenApiResponse(
@@ -298,7 +295,6 @@ class PlatformRolesView(IamAPIView):
 
 class PlatformRoleDetailView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_role_detail",
         parameters=[iam_path_int_parameter("roleId", "角色模板 ID。")],
         responses={
@@ -348,7 +344,6 @@ class PlatformRoleDetailView(IamAPIView):
 
 class PlatformAuditLogsView(IamGenericAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_audit_log_list",
         parameters=[
             OpenApiParameter(name="tenantId", type=int, location=OpenApiParameter.QUERY, required=False, description="按租户实体 ID 精确筛选。"),
@@ -421,7 +416,6 @@ class PlatformAuditLogsView(IamGenericAPIView):
 
 class PlatformTenantsView(IamGenericAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_tenant_list",
         parameters=[
             IAM_PAGE_NUM_PARAMETER,
@@ -498,7 +492,6 @@ class PlatformTenantsView(IamGenericAPIView):
         return self.get_paginated_response(payload)
 
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_tenant_create",
         request=PlatformTenantCreateSerializer,
         examples=[
@@ -557,7 +550,6 @@ class PlatformTenantsView(IamGenericAPIView):
 
 class PlatformTenantDetailView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         operation_id="iam_platform_tenant_detail",
         parameters=[iam_path_int_parameter("tenantId", "租户实体 ID。")],
         responses={
@@ -604,7 +596,6 @@ class PlatformTenantDetailView(IamAPIView):
 
 class PlatformTenantEnableView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         parameters=[iam_path_int_parameter("tenantId", "租户实体 ID。")],
         request=None,
         responses={
@@ -655,7 +646,6 @@ class PlatformTenantEnableView(IamAPIView):
 
 class PlatformTenantDisableView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         parameters=[iam_path_int_parameter("tenantId", "租户实体 ID。")],
         request=None,
         responses={
@@ -706,7 +696,6 @@ class PlatformTenantDisableView(IamAPIView):
 
 class PlatformTenantInitializeAdminView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         parameters=[iam_path_int_parameter("tenantId", "租户实体 ID。")],
         request=PlatformInitializeAdminSerializer,
         examples=[

@@ -4,7 +4,6 @@ from rest_framework.response import Response
 from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 
 from apps.access.api_v1.base import IamAPIView, ensure_empty_body
-from apps.access.api_v1.openapi import IAM_BEARER_AUTH
 from apps.access.api_v1.serializers.common import StaffProfileSerializer
 from apps.access.api_v1.serializers.session import (
     LoginRequestSerializer,
@@ -350,7 +349,6 @@ class SessionLogoutView(IamAPIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         request=None,
         responses={
             200: OpenApiResponse(

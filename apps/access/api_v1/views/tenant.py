@@ -8,7 +8,6 @@ from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiRespo
 from apps.access.api_v1.base import IamGenericAPIView, IamAPIView, ensure_empty_body, ensure_no_extra_query_params
 from apps.access.api_v1.context import resolve_tenant_request_context, tenant_context_has_permission
 from apps.access.api_v1.openapi import (
-    IAM_BEARER_AUTH,
     IAM_CONSTRAINT_CONFLICT_RESPONSE,
     IAM_FORBIDDEN_RESPONSE,
     IAM_INVALID_PARAMS_RESPONSE,
@@ -240,7 +239,6 @@ TENANT_MEMBER_CONFLICT_RESPONSE = business_error_response(
 
 class TenantMeView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         parameters=[IAM_TENANT_CODE_HEADER_PARAMETER],
         responses={
             200: OpenApiResponse(
@@ -294,7 +292,6 @@ class TenantMeView(IamAPIView):
 
 class TenantMembersView(IamGenericAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         operation_id="iam_tenant_member_list",
         parameters=[
             IAM_TENANT_CODE_HEADER_PARAMETER,
@@ -364,7 +361,6 @@ class TenantMembersView(IamGenericAPIView):
         return self.get_paginated_response([serialize_member_payload(item) for item in items])
 
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         operation_id="iam_tenant_member_create",
         parameters=[IAM_TENANT_CODE_HEADER_PARAMETER],
         request=TenantMemberCreateSerializer,
@@ -422,7 +418,6 @@ class TenantMembersView(IamGenericAPIView):
 
 class TenantMemberDetailView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         operation_id="iam_tenant_member_detail",
         parameters=[IAM_TENANT_CODE_HEADER_PARAMETER, iam_path_int_parameter("memberId", "租户成员 ID。")],
         responses={
@@ -453,7 +448,6 @@ class TenantMemberDetailView(IamAPIView):
         return Response(serialize_member_payload(member), status=status.HTTP_200_OK)
 
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         operation_id="iam_tenant_member_update",
         parameters=[IAM_TENANT_CODE_HEADER_PARAMETER, iam_path_int_parameter("memberId", "租户成员 ID。")],
         request=TenantMemberUpdateSerializer,
@@ -507,7 +501,6 @@ class TenantMemberDetailView(IamAPIView):
 
 class TenantRolesView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         parameters=[IAM_TENANT_CODE_HEADER_PARAMETER],
         responses={
             200: OpenApiResponse(
@@ -547,7 +540,6 @@ class TenantRolesView(IamAPIView):
 
 class TenantMemberRolesReplaceView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         parameters=[IAM_TENANT_CODE_HEADER_PARAMETER, iam_path_int_parameter("memberId", "租户成员 ID。")],
         request=TenantMemberRolesReplaceSerializer,
         examples=[
@@ -602,7 +594,6 @@ class TenantMemberRolesReplaceView(IamAPIView):
 
 class TenantMemberEnableView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         parameters=[IAM_TENANT_CODE_HEADER_PARAMETER, iam_path_int_parameter("memberId", "租户成员 ID。")],
         request=None,
         responses={
@@ -639,7 +630,6 @@ class TenantMemberEnableView(IamAPIView):
 
 class TenantMemberDisableView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         parameters=[IAM_TENANT_CODE_HEADER_PARAMETER, iam_path_int_parameter("memberId", "租户成员 ID。")],
         request=None,
         responses={
@@ -687,7 +677,6 @@ class TenantMemberDisableView(IamAPIView):
 
 class TenantAuditLogsView(IamGenericAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         parameters=[
             IAM_TENANT_CODE_HEADER_PARAMETER,
             OpenApiParameter(name="action", type=str, location=OpenApiParameter.QUERY, required=False, description="按 action 精确筛选。"),

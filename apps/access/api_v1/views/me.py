@@ -5,7 +5,6 @@ from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 from apps.access.api_v1.base import IamGenericAPIView, IamAPIView, ensure_no_extra_query_params
 from apps.access.api_v1.context import require_business_identity
 from apps.access.api_v1.openapi import (
-    IAM_BEARER_AUTH,
     IAM_FORBIDDEN_RESPONSE,
     IAM_PAGE_NUM_PARAMETER,
     IAM_PAGE_SIZE_PARAMETER,
@@ -83,7 +82,6 @@ def _me_profile_payload(user):
 
 class MeProfileView(IamAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         responses={
             200: OpenApiResponse(
                 response=object_envelope_serializer("IamMeProfileEnvelope", MeProfileResponseSerializer),
@@ -114,7 +112,6 @@ class MeProfileView(IamAPIView):
 
 class MeTenantsView(IamGenericAPIView):
     @extend_schema(
-        auth=IAM_BEARER_AUTH,
         parameters=[IAM_PAGE_NUM_PARAMETER, IAM_PAGE_SIZE_PARAMETER],
         responses={
             200: OpenApiResponse(
