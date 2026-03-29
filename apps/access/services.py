@@ -257,20 +257,6 @@ def resolve_staff_tenant_member(staff: Optional[StaffProfile], tenant) -> Option
     return IdentityService.get_active_tenant_member(staff.user, tenant)
 
 
-def staff_has_role_in_tenant(staff: Optional[StaffProfile], tenant, role_code: str) -> bool:
-    tenant_member = resolve_staff_tenant_member(staff, tenant)
-    if tenant_member is None or not role_code:
-        return False
-    return tenant_member.role_bindings.filter(
-        system_role__code=role_code,
-        system_role__status=DirectoryStatus.ACTIVE,
-        status=TenantMemberRoleStatus.GRANTED,
-    ).exists()
-
-
-def staff_has_position_in_tenant(staff: Optional[StaffProfile], tenant, position_code: str) -> bool:
-    return staff_has_role_in_tenant(staff, tenant, position_code)
-
 
 def staff_has_qualification_in_tenant(
     staff: Optional[StaffProfile],

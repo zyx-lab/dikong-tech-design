@@ -1,10 +1,10 @@
-from apps.access.exceptions import BusinessPermissionDenied
+from apps.access.exceptions import StandardForbidden
 from apps.access.services import is_active_platform_admin
 
 
 def _ensure_business_api_actor(user):
     if is_active_platform_admin(user):
-        raise BusinessPermissionDenied("platform admin cannot access tenant business api")
+        raise StandardForbidden(msg="平台管理员不可访问租户业务接口")
 
 
 def get_request_tenant(context):
@@ -18,7 +18,7 @@ def get_request_tenant(context):
 def require_request_tenant(context):
     tenant = get_request_tenant(context)
     if tenant is None:
-        raise BusinessPermissionDenied("tenant context required")
+        raise StandardForbidden(msg="tenant context required")
     return tenant
 
 
@@ -31,7 +31,7 @@ class TenantScopedBusinessMixin:
         _ensure_business_api_actor(getattr(self.request, "user", None))
         tenant = getattr(self.request, "tenant_context", None)
         if tenant is None:
-            raise BusinessPermissionDenied("tenant context required")
+            raise StandardForbidden(msg="tenant context required")
         return tenant
 
     def scope_queryset_to_tenant(self, queryset):

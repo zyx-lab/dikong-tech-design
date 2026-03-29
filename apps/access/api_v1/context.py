@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 import re
 
-from django.db.models import Q
 
 from apps.access.exceptions import StandardForbidden, StandardUnauthorized
 from apps.access.models import (
@@ -162,9 +161,6 @@ def is_formal_business_account(user: User) -> bool:
         return False
     return StaffProfile.objects.filter(user=user).exists()
 
-
-def is_eligible_tenant_member_user(user: User) -> bool:
-    return is_formal_business_account(user)
 
 
 def eligible_user_queryset():

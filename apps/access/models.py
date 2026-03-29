@@ -616,10 +616,6 @@ class TenantMemberRole(TimeStampedModel):
             models.UniqueConstraint(fields=["tenant_member", "system_role"], name="uniq_member_role"),
         ]
 
-    @property
-    def role(self):
-        return self.system_role
-
     def __str__(self):
         return f"{self.tenant_member_id}:{self.system_role.code}"
 

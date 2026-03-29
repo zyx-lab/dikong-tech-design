@@ -8,7 +8,7 @@ from rest_framework import serializers
 
 from apps.access.api_v1.authentication import sha256_text
 from apps.access.api_v1.context import is_formal_business_account
-from apps.access.exceptions import StandardConstraintConflict, StandardPhoneDuplicate, StandardUnauthorized
+from apps.access.exceptions import StandardPhoneDuplicate, StandardUnauthorized
 from apps.access.models import AuthSession, AuthSessionType, StaffProfile, User, UserStatus
 
 ACCESS_TOKEN_TTL_SECONDS = 2 * 60 * 60
@@ -124,9 +124,6 @@ def revoke_current_session(session: AuthSession) -> None:
     session.revoked_at = timezone.now()
     session.save(update_fields=["revoked_at", "updated_at"])
 
-
-def revoke_all_user_sessions(user: User) -> int:
-    return AuthSession.objects.filter(user=user, revoked_at__isnull=True).update(revoked_at=timezone.now())
 
 
 @transaction.atomic

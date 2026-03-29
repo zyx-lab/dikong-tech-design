@@ -109,7 +109,6 @@ class MemberSerializer(serializers.Serializer):
     username = serializers.CharField(source="user.username")
     displayName = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
-    roleCodes = serializers.ListField(child=serializers.CharField())
 
     def get_displayName(self, obj) -> str | None:
         return normalize_display_name(obj.display_name)

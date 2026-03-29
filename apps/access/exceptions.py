@@ -10,50 +10,6 @@ from apps.api_v1.business_response import build_standard_response, standard_erro
 logger = logging.getLogger(__name__)
 
 
-class BusinessAPIException(APIException):
-    """Base API exception with stable business error payload."""
-
-    business_code = "INVALID_PARAMS"
-    business_detail_code = "ERROR"
-
-    def __init__(self, detail=None, *, business_detail_code=None):
-        super().__init__(detail=detail)
-        if business_detail_code:
-            self.business_detail_code = business_detail_code
-
-
-class BusinessResourceNotFound(BusinessAPIException):
-    status_code = 404
-    default_detail = "resource not found"
-    default_code = "resource_not_found"
-    business_code = "RESOURCE_NOT_FOUND"
-    business_detail_code = "NOT_FOUND"
-
-
-class BusinessStateConflict(BusinessAPIException):
-    status_code = 409
-    default_detail = "state conflict"
-    default_code = "state_conflict"
-    business_code = "STATE_CONFLICT"
-    business_detail_code = "STATE_CONFLICT"
-
-
-class BusinessIdempotentDuplicate(BusinessAPIException):
-    status_code = 409
-    default_detail = "duplicate request"
-    default_code = "duplicate_request"
-    business_code = "IDEMPOTENT_DUPLICATE"
-    business_detail_code = "DUPLICATE_REQUEST"
-
-
-class BusinessPermissionDenied(BusinessAPIException):
-    status_code = 403
-    default_detail = "permission denied"
-    default_code = "permission_denied"
-    business_code = "PERMISSION_DENIED"
-    business_detail_code = "FORBIDDEN"
-
-
 class StandardizedApiException(APIException):
     """Business API exception with explicit code/msg/data contract."""
 
@@ -129,9 +85,6 @@ def custom_exception_handler(exc, context):
                     exc.standard_data,
                     trace_id=getattr(request, "trace_id", None),
                 )
-            elif isinstance(exc, BusinessAPIException):
-                payload = {"detail": str(exc.detail)}
-                response.data = build_standard_response(payload, response.status_code, trace_id=getattr(request, "trace_id", None))
             elif isinstance(exc, (NotAuthenticated, AuthenticationFailed)) or response.status_code == 401:
                 payload = {"detail": str(response.data.get("detail", "Authentication required"))}
                 response.data = build_standard_response(payload, response.status_code, trace_id=getattr(request, "trace_id", None))
@@ -148,16 +101,9 @@ def custom_exception_handler(exc, context):
                 payload = response.data
                 response.data = build_standard_response(payload, response.status_code, trace_id=getattr(request, "trace_id", None))
         else:
-            if isinstance(exc, BusinessAPIException):
-                response.data = {
-                    "business_code": exc.business_code,
-                    "business_detail_code": exc.business_detail_code,
-                    "detail": str(exc.detail),
-                }
-
             # Some authentication failures are rendered as 403 by DRF,
             # so check the exception type before falling back to generic forbidden.
-            elif isinstance(exc, (NotAuthenticated, AuthenticationFailed)) or response.status_code == 401:
+            if isinstance(exc, (NotAuthenticated, AuthenticationFailed)) or response.status_code == 401:
                 response.data = {
                     "business_code": "PERMISSION_DENIED",
                     "business_detail_code": "NOT_AUTHENTICATED",
