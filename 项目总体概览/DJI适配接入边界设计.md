@@ -72,9 +72,9 @@
 #### 模型变更
 | 变更项 | 说明 |
 |--------|------|
-| 字段重命名 | `Drone.serial_no` → `Drone.device_sn`（migration 重命名），两者等价 |
+| 字段重命名 | `Drone.serial_no` → `Drone.device_sn`（migration 重命名）；重命名完成后统一只使用 `device_sn` |
 | 状态字段保留 | `Drone.status` 保留，但只由后台同步更新（DJI 设备在线状态），不开放写接口 |
-| 删除写 action | 删除 `enable`、`disable`、`maintenance`、`retire` 四个 action 接口 |
+| 删除写 action | live API 引入时同步删除 `enable`、`disable`、`maintenance`、`retire` 四个 action 接口 |
 | 新增共享池表 | `DjiDeviceIndex(device_sn, last_payload, last_seen_at)`：全局共享设备池 |
 
 #### 对外 API
@@ -128,14 +128,21 @@ def get_available_drones(request):
 - 已下线设备也能认领
 
 #### 直播接口详情
-- `video_id` 由 `live/capacity` 返回的 `payload_index` 组装，格式：`{drone_sn}/{payload_index}/{video_type}-0`
-- 请求参数直接复用上游 DJI 直播接口语义
-- 直播写操作继续沿用 `manage_drone` 权限
+- `GET /api/v1/drones/{id}/live/capacity` 先调用 DJI `GET /api/v1/manage/live/capacity`，再按当前 Drone 的 `device_sn` 过滤，只返回当前 `{id}` 对应设备的能力对象，不透传全量数组。
+- `video_id` 只保留实测格式：`{drone_sn}/{camera.index}/{video.index}`。
+- `POST /api/v1/drones/{id}/live/video-source` 直接接收 `video_id` 和 `videoType`。
+- `POST /api/v1/drones/{id}/live/start`、`stop`、`video-quality`、`video-source` 的 `data` 原样透传 DJI `LiveDTO` 或上游原始成功响应，不做字段裁剪和重命名。
+- `GET /api/v1/drones/{id}/live/capacity` 使用 `drone.view_drone` 权限。
+- `POST /api/v1/drones/{id}/live/start|stop|video-quality|video-source` 使用 `drone.manage_drone` 权限。
 
 #### 内部调用 DJI
 - 后台设备同步：`GET /api/v1/manage/workspaces/{workspace_id}/devices`
 - `POST /api/v1/drones`：不调用 DJI 创建设备；只做本地校验和落库
-- `GET /api/v1/drones/{id}/live/*`：透传 DJI 直播接口
+- `GET /api/v1/drones/{id}/live/capacity`：调用 DJI `GET /api/v1/manage/live/capacity` 后按 `device_sn` 过滤
+- `POST /api/v1/drones/{id}/live/start`：调用 DJI `POST /api/v1/manage/live/streams/start`
+- `POST /api/v1/drones/{id}/live/stop`：调用 DJI `POST /api/v1/manage/live/streams/stop`
+- `POST /api/v1/drones/{id}/live/video-quality`：调用 DJI `POST /api/v1/manage/live/streams/update`
+- `POST /api/v1/drones/{id}/live/video-source`：调用 DJI `POST /api/v1/manage/live/streams/switch`
 
 ### 4.3 `/api/v1/routes*`
 
@@ -439,13 +446,13 @@ def cancel(self, request, *args, **kwargs):
 5. 单 user / 单 workspace 的当前策略
    - 当前实现按单 user / 单 workspace 落地，直接托管一套上游登录态即可。
    - 在没有真实业务需求前，不增加多 user 切换、多 workspace 映射、多资源池路由等设计。
-6. 失败处理
+6. 与直播的关系
+   - `GET /api/v1/drones/{id}/live/capacity`、`POST /api/v1/drones/{id}/live/start|stop|video-quality|video-source` 调用前，都默认依赖 `DjiGateway` 已持有有效 `x-auth-token`。
+   - 直播子域采用“业务路径 + 上游直播语义透传”模式，但 `live/capacity` 只返回当前设备能力对象，不返回 DJI capacity 全量数组。
+   - 直播 `data` 保持透传 DJI `LiveDTO` 或上游原始成功响应，不做字段裁剪和重命名。
+7. 失败处理
    - 若重新登录后仍失败，则业务请求失败，按我方统一错误格式返回，不要求前端单独登录 DJI。
    - 不允许把 DJI 原始登录页、账号口令、`x-auth-token`、`mqtt_*` 暴露给前端。
-7. 与直播的关系
-   - `GET /api/v1/drones/{id}/live/capacity`、`POST /api/v1/drones/{id}/live/start|stop|video-quality|video-source` 调用前，都默认依赖 `DjiGateway` 已持有有效 `x-auth-token`。
-   - 直播子域采用“业务路径 + 上游直播语义透传”模式：前端通过我方路径访问直播能力，但请求参数与返回数据允许贴近上游直播后端。
-   - 对前端来说，DJI 登录、续期、重登全部是服务端内部细节。
 
 ---
 
@@ -520,19 +527,10 @@ def cancel(self, request, *args, **kwargs):
 | 决策项 | 说明 |
 |--------|------|
 | **实测格式** | `1581F7FVC252A00CJ5TT/88-0-0/normal-0` |
-| **组装规则** | `{sn}/{cameras_list[].index}-{videos_list[].index}/{videos_list[].type}-{videos_list[].index}` |
-| **前端传入** | camera_index 和 video_index，后端组装 |
-| **简化** | 不做推测，按实测格式组装 |
-
-```python
-def build_video_id(capacity_data, drone_sn, camera_index, video_index):
-    camera = next(c for c in capacity_data["cameras_list"] if c["index"] == camera_index)
-    video = next(v for v in camera["videos_list"] if v["index"] == video_index)
-
-    payload_index = camera["index"]
-    # 组装：{sn}/{payload_index}-{video_index}/{type}-{video_index}
-    return f"{drone_sn}/{payload_index}-{video_index}/{video['type']}-{video_index}"
-```
+| **组装规则** | `video_id = {drone_sn}/{camera.index}/{video.index}` |
+| **后端输入** | `live/start` 由后端基于 capacity 结果中的 `camera.index` 和 `video.index` 组装 |
+| **切源接口** | `live/video-source` 直接接收 `video_id` 和 `videoType` |
+| **简化** | 不保留其他推测格式，只按实测格式实现 |
 
 ### 10.5 KMZ 上传回查机制
 
@@ -599,7 +597,8 @@ def build_video_id(capacity_data, drone_sn, camera_index, video_index):
 
 | 决策项 | 说明 |
 |--------|------|
-| **直播权限** | 直播操作（live/start\|stop\|video-quality\|video-source）继续用 `drone.manage_drone` |
+| **直播读权限** | `GET /api/v1/drones/{id}/live/capacity` 使用 `drone.view_drone` |
+| **直播写权限** | `POST /api/v1/drones/{id}/live/start\|stop\|video-quality\|video-source` 使用 `drone.manage_drone` |
 | **读权限** | 航线、任务、媒体的读操作沿用各自的 view 权限 |
 | **细化** | 不新增 `live.start` 等细粒度权限，当前粒度足够 |
 | **边界** | drone-assignments 独立权限 `drone_assignment.manage` |
@@ -693,7 +692,7 @@ def build_video_id(capacity_data, drone_sn, camera_index, video_index):
 
 **结论**：按实测格式
 
-格式：`{sn}/{cameras_list[].index}/{videos_list[].type}-{videos_list[].index}`
+格式：`video_id = {drone_sn}/{camera.index}/{video.index}`
 
 实测示例：`1581F7FVC252A00CJ5TT/88-0-0/normal-0`
 
@@ -713,13 +712,13 @@ def build_video_id(capacity_data, drone_sn, camera_index, video_index):
 
 ### 11.9 直播 URL 内网访问
 
-**结论**：透传 + 标注
+**结论**：原样透传 DJI `LiveDTO`
 
 | 决策项 | 说明 |
 |--------|------|
-| **响应策略** | 直接透传 DJI URL |
-| **标注字段** | 响应增加 `_network_hint: "internal"` |
-| **前端职责** | 前端自行判断网络环境 |
+| **响应策略** | `data` 原样透传 DJI `LiveDTO` 或上游原始成功响应 |
+| **字段处理** | 不做字段裁剪和重命名 |
+| **URL 语义** | 保持 DJI 返回的 `url`、`rtmp_url`、`webrtc_url`、`play_url`、`whep_url`、`hls_url` 原样返回 |
 
 ---
 
@@ -810,11 +809,9 @@ DjiDeviceIndex
 | P1 | 媒体归属简化 | 采用 device_sn 归属，不依赖 job_id；`MediaFile.flight_record_id` 改为 nullable |
 | P1 | 设备状态双字段 | `Drone.status`（业务状态）+ `DjiDeviceIndex.is_online`（DJI 在线状态）独立存储 |
 | P1 | 媒体查询扩展 | `GET /api/v1/media_files` 增加 `device_sn` 过滤参数 |
-| P1 | 直播 URL 标注 | 响应增加 `_network_hint` 字段标注网络类型 |
 | P1 | Mission.dji_job_id | 新增字段保存 DJI job_id，用于 cancel 操作 |
 | P1 | 航线删除约束 | 检查 Mission.route_id 关联，存在活跃任务时禁止删除 |
 | P1 | 直播 url_type 默认值 | 服务端设默认值 url_type=1（RTMP） |
-| P1 | video_id 组装修正 | 按实测格式 `{drone_sn}/{payload_index}/{videos_list[].index}` 组装 |
 | P1 | 无人机 SN 提取 | 认领时存储 children.device_sn，回退兼容 device_sn |
 | P1 | DjiDeviceIndex 固件字段 | 新增 firmware_version、firmware_status 字段 |
 | P1 | domain 字段过滤 | 同步时按 children.domain=0 过滤无人机 |
@@ -828,7 +825,6 @@ DjiDeviceIndex
 | P2 | 媒体下载 302 处理 | 透传 302 让前端直接访问 DJI 存储地址 |
 | P1 | Mission 创建原子事务 | 同一事务创建 Mission + 同步 DJI + 写入 dji_job_id |
 | P1 | Mission.cancel 调用 DJI | 先删 DJI 再改本地状态，失败则整体失败 |
-| P1 | video_id 组装修正 | 按实测格式 `{sn}/{cameras_index}-{video_index}/{type}-{video_index}` 组装 |
 | P1 | available 接口实现 | 差集 = 共享池 - 已认领，不做在线过滤 |
 | P2 | 同步幂等性策略 | 只标记 ERROR，不做自动清理 |
 | P2 | 设备在线状态展示规则 | 前端按 last_seen_at 阈值（3min/10min）展示在线状态 |
