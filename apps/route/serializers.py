@@ -1,14 +1,29 @@
-from datetime import datetime
-
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from apps.route.models import Route
 
 
+class StrictUnknownFieldsMixin:
+    def validate(self, attrs):
+        initial_data = getattr(self, "initial_data", None)
+        if isinstance(initial_data, dict):
+            unknown_fields = sorted(set(initial_data.keys()) - set(self.fields.keys()))
+            if unknown_fields:
+                raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
+        return super().validate(attrs)
+
+
+class RouteWaypointSerializer(StrictUnknownFieldsMixin, serializers.Serializer):
+    sequence = serializers.IntegerField(min_value=1)
+    latitude = serializers.DecimalField(max_digits=12, decimal_places=8)
+    longitude = serializers.DecimalField(max_digits=12, decimal_places=8)
+    altitude = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+
 class RouteReadSerializer(serializers.ModelSerializer):
-    sync_status = serializers.SerializerMethodField()
-    last_sync_at = serializers.SerializerMethodField()
-    error_msg = serializers.SerializerMethodField()
+    is_published = serializers.SerializerMethodField()
+    waypoints = serializers.SerializerMethodField()
 
     class Meta:
         model = Route
@@ -21,27 +36,23 @@ class RouteReadSerializer(serializers.ModelSerializer):
             "estimated_duration",
             "waypoint_count",
             "creator_name",
-            "status",
-            "sync_status",
-            "last_sync_at",
-            "error_msg",
+            "is_published",
+            "waypoints",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
 
-    def get_sync_status(self, obj) -> str:
-        return getattr(getattr(obj, "dji_index", None), "sync_status", "")
+    def get_is_published(self, obj) -> bool:
+        return bool(getattr(getattr(obj, "dji_index", None), "is_published", False))
 
-    def get_last_sync_at(self, obj) -> datetime | None:
-        return getattr(getattr(obj, "dji_index", None), "last_sync_at", None)
-
-    def get_error_msg(self, obj) -> str:
-        return getattr(getattr(obj, "dji_index", None), "error_msg", "")
+    @extend_schema_field(RouteWaypointSerializer(many=True))
+    def get_waypoints(self, obj):
+        return RouteWaypointSerializer(obj.waypoint_rows.all(), many=True).data
 
 
-class RouteCreateSerializer(serializers.ModelSerializer):
-    file = serializers.FileField(write_only=True, help_text="KMZ 航线文件。")
+class RouteWriteSerializer(StrictUnknownFieldsMixin, serializers.ModelSerializer):
+    waypoints = RouteWaypointSerializer(many=True, required=False)
 
     class Meta:
         model = Route
@@ -51,46 +62,26 @@ class RouteCreateSerializer(serializers.ModelSerializer):
             "drone_type_id",
             "total_distance",
             "estimated_duration",
-            "file",
+            "waypoints",
         ]
         extra_kwargs = {
             "name": {"help_text": "航线名称。"},
-            "route_type": {"help_text": "航线类型扩展位。"},
+            "route_type": {"help_text": "航线类型扩展位。", "required": False},
             "drone_type_id": {"help_text": "适用无人机类型 ID，可为空。", "required": False},
             "total_distance": {"help_text": "航线总长度，单位米，可为空。", "required": False},
             "estimated_duration": {"help_text": "预计飞行时长，单位秒，可为空。", "required": False},
         }
 
-    def validate(self, attrs):
-        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
-        if unknown_fields:
-            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
-        return attrs
+    def validate_waypoints(self, value):
+        sequences = [item["sequence"] for item in value]
+        if len(sequences) != len(set(sequences)):
+            raise serializers.ValidationError("同一航线下航点序号不能重复")
+        return value
 
 
-class RouteUpdateSerializer(serializers.ModelSerializer):
-    file = serializers.FileField(write_only=True, required=False, help_text="可选。提交新 KMZ 时重新导入 DJI。")
+class RouteCreateSerializer(RouteWriteSerializer):
+    pass
 
-    class Meta:
-        model = Route
-        fields = [
-            "name",
-            "route_type",
-            "drone_type_id",
-            "total_distance",
-            "estimated_duration",
-            "file",
-        ]
-        extra_kwargs = {
-            "name": {"help_text": "航线名称。"},
-            "route_type": {"help_text": "航线类型扩展位。"},
-            "drone_type_id": {"help_text": "适用无人机类型 ID，可为空。", "required": False},
-            "total_distance": {"help_text": "航线总长度，单位米，可为空。", "required": False},
-            "estimated_duration": {"help_text": "预计飞行时长，单位秒，可为空。", "required": False},
-        }
 
-    def validate(self, attrs):
-        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
-        if unknown_fields:
-            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
-        return attrs
+class RouteUpdateSerializer(RouteWriteSerializer):
+    pass

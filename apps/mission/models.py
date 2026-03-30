@@ -3,7 +3,6 @@ from django.db import models
 
 from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
 from apps.drone.models import DroneStatus
-from apps.route.models import RouteStatus
 
 
 class MissionStatus(models.IntegerChoices):
@@ -66,8 +65,6 @@ class Mission(models.Model):
             raise ValidationError({"route": "route 必须属于当前 tenant"})
         if self.tenant_id and self.drone_id and self.drone.tenant_id != self.tenant_id:
             raise ValidationError({"drone": "drone 必须属于当前 tenant"})
-        if self.route_id and self.route.status != RouteStatus.ACTIVE:
-            raise ValidationError({"route": "仅允许绑定状态为正常的航线"})
         if self.tenant_id and self.pilot_id and self.pilot.tenant_id != self.tenant_id:
             raise ValidationError({"pilot": "pilot 必须属于当前 tenant"})
         if self.pilot_id and self.pilot.status != TenantMemberStatus.ACTIVE:

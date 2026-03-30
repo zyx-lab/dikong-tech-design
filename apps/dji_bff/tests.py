@@ -145,7 +145,7 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
             tenant=self.tenant,
             route=route,
             dji_wayline_id="callback-wayline-001",
-            sync_status=SyncStatus.PENDING,
+            is_published=False,
         )
 
         sync_response = self.client.post(
@@ -169,8 +169,7 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
         self.assertEqual(callback_response.status_code, 200)
         route_index.refresh_from_db()
-        self.assertEqual(route_index.sync_status, SyncStatus.SYNCED)
-        self.assertIsNotNone(route_index.last_sync_at)
+        self.assertTrue(route_index.is_published)
 
     def test_media_callback_should_mark_existing_index_as_synced(self):
         media_file = MediaFile.objects.create(

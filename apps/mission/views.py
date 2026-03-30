@@ -134,9 +134,10 @@ class MissionViewSet(
             return Response(validation_error_payload(serializer.errors), status=status.HTTP_400_BAD_REQUEST)
 
         route = serializer.validated_data["route"]
-        if getattr(route, "dji_index", None) is None:
+        route_index = getattr(route, "dji_index", None)
+        if route_index is None or not route_index.is_published or not route_index.dji_wayline_id:
             return Response(
-                validation_error_payload({"route": ["航线尚未同步到 DJI"]}),
+                validation_error_payload({"route": ["航线尚未发布到 DJI"]}),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

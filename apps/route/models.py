@@ -34,13 +34,8 @@ class Route(models.Model):
         blank=True,
     )
     estimated_duration = models.PositiveIntegerField("预计飞行时长(秒)", null=True, blank=True)
-    waypoint_count = models.PositiveIntegerField("航点数量", null=True, blank=True)
+    waypoint_count = models.PositiveIntegerField("航点数量", default=0)
     creator_name = models.CharField("创建人姓名", max_length=50, blank=True, default="")
-    status = models.PositiveSmallIntegerField(
-        "状态",
-        choices=RouteStatus.choices,
-        default=RouteStatus.ACTIVE,
-    )
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
     updated_at = models.DateTimeField("更新时间", auto_now=True)
 

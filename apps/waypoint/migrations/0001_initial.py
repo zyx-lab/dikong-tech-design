@@ -33,7 +33,7 @@ class Migration(migrations.Migration):
                     "route",
                     models.ForeignKey(
                         on_delete=django.db.models.deletion.PROTECT,
-                        related_name="waypoints",
+                        related_name="waypoint_rows",
                         to="route.route",
                         verbose_name="所属航线",
                     ),
@@ -42,7 +42,6 @@ class Migration(migrations.Migration):
             options={
                 "db_table": "waypoints",
                 "ordering": ["route_id", "sequence", "id"],
-                "permissions": [("view_waypoint", "可查看航点"), ("manage_waypoint", "可管理航点")],
                 "default_permissions": (),
             },
         ),

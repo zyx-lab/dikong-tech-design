@@ -16,9 +16,16 @@ from apps.access.test_support import (
 from apps.drone.models import Drone, DroneStatus
 from apps.flight_record.models import FlightRecord, FlightRecordStatus
 from apps.mission.models import Mission, MissionStatus
-from apps.route.models import Route, RouteStatus
+from apps.route.models import Route
 
 User = get_user_model()
+
+
+def _persist_mission_fixture(**kwargs) -> Mission:
+    # Flight record tests only need a persisted mission fixture.
+    mission = Mission(**kwargs)
+    Mission.objects.bulk_create([mission])
+    return Mission.objects.get(pk=mission.pk)
 
 
 class FlightRecordApiTests(TestCase):
@@ -57,7 +64,7 @@ class FlightRecordApiTests(TestCase):
         self.pilot_member = pilot_member
         ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手")
 
-        self.route = Route.objects.create(tenant=self.tenant, name="飞行记录测试航线", status=RouteStatus.ACTIVE)
+        self.route = Route.objects.create(tenant=self.tenant, name="飞行记录测试航线", creator_name="管理员")
         self.drone = Drone.objects.create(
             tenant=self.tenant,
             code="FR-DRN-001",
@@ -66,7 +73,7 @@ class FlightRecordApiTests(TestCase):
             device_sn="SN-FR-001",
             status=DroneStatus.ENABLED,
         )
-        self.mission = Mission.objects.create(
+        self.mission = _persist_mission_fixture(
             tenant=self.tenant,
             name="飞行记录测试任务",
             route=self.route,
@@ -150,7 +157,7 @@ class FlightRecordApiTests(TestCase):
             role_code="flight_record_model_other_role",
             role_name="飞行记录模型其他租户角色",
         )
-        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", status=RouteStatus.ACTIVE)
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", creator_name="管理员")
         other_drone = Drone.objects.create(
             tenant=other_tenant,
             code="FR-OTHER-MODEL-DRONE",
@@ -166,7 +173,7 @@ class FlightRecordApiTests(TestCase):
             role_name="飞手",
         )
         ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
-        other_mission = Mission.objects.create(
+        other_mission = _persist_mission_fixture(
             tenant=other_tenant,
             name="其他租户任务",
             route=other_route,
@@ -205,7 +212,7 @@ class FlightRecordApiTests(TestCase):
             role_code="flight_record_other_role",
             role_name="飞行记录其他租户角色",
         )
-        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", status=RouteStatus.ACTIVE)
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", creator_name="管理员")
         other_drone = Drone.objects.create(
             tenant=other_tenant,
             code="FR-OTHER-DRN-001",
@@ -221,7 +228,7 @@ class FlightRecordApiTests(TestCase):
             role_name="飞手",
         )
         ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
-        other_mission = Mission.objects.create(
+        other_mission = _persist_mission_fixture(
             tenant=other_tenant,
             name="其他租户任务",
             route=other_route,
@@ -470,7 +477,7 @@ class FlightRecordApiTests(TestCase):
             role_name="飞手",
         )
         ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
-        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", status=RouteStatus.ACTIVE)
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", creator_name="管理员")
         other_drone = Drone.objects.create(
             tenant=other_tenant,
             code="FR-OTHER-UNIQ-DRN-001",
@@ -479,7 +486,7 @@ class FlightRecordApiTests(TestCase):
             device_sn="FR-OTHER-UNIQ-SN-001",
             status=DroneStatus.ENABLED,
         )
-        other_mission = Mission.objects.create(
+        other_mission = _persist_mission_fixture(
             tenant=other_tenant,
             name="其他租户任务",
             route=other_route,
@@ -991,7 +998,7 @@ class FlightRecordPilotScopeTests(TestCase):
         )
         ensure_tenant_member_position(self.other_pilot_member, code="pilot_operator", name="飞手")
 
-        self.route = Route.objects.create(tenant=self.tenant, name="飞行记录范围航线", status=RouteStatus.ACTIVE)
+        self.route = Route.objects.create(tenant=self.tenant, name="飞行记录范围航线", creator_name="管理员")
         self.drone = Drone.objects.create(
             tenant=self.tenant,
             code="FRS-DRN-001",
@@ -1000,7 +1007,7 @@ class FlightRecordPilotScopeTests(TestCase):
             device_sn="FRS-SN-001",
             status=DroneStatus.ENABLED,
         )
-        self.my_mission = Mission.objects.create(
+        self.my_mission = _persist_mission_fixture(
             tenant=self.tenant,
             name="我的飞行任务",
             route=self.route,
@@ -1011,7 +1018,7 @@ class FlightRecordPilotScopeTests(TestCase):
             pilot_name=self.pilot_staff.name,
             status=MissionStatus.RUNNING,
         )
-        self.other_mission = Mission.objects.create(
+        self.other_mission = _persist_mission_fixture(
             tenant=self.tenant,
             name="别人的飞行任务",
             route=self.route,

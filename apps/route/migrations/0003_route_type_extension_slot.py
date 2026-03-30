@@ -1,4 +1,4 @@
-from django.db import migrations, models
+from django.db import migrations
 
 
 class Migration(migrations.Migration):
@@ -6,14 +6,4 @@ class Migration(migrations.Migration):
         ("route", "0002_align_route_with_overall_design"),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name="route",
-            name="route_type",
-            field=models.PositiveSmallIntegerField(
-                choices=[(0, "待扩展")],
-                default=0,
-                verbose_name="航线类型扩展位",
-            ),
-        ),
-    ]
+    operations = []

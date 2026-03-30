@@ -56,7 +56,7 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
             tenant=self.tenant,
             route=self.route,
             dji_wayline_id="wayline-001",
-            sync_status=SyncStatus.SYNCED,
+            is_published=True,
         )
         self.drone = Drone.objects.create(
             tenant=self.tenant,
@@ -87,13 +87,14 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertIn(mission.dji_job_id, mock_dji_state.jobs)
         self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["dock_sn"], "dock-001")
 
-    def test_create_should_reject_unsynced_route(self):
-        self.route_index.delete()
+    def test_create_should_reject_unpublished_route(self):
+        self.route_index.is_published = False
+        self.route_index.save(update_fields=["is_published", "updated_at"])
 
         response = self.client.post(
             "/api/v1/missions",
             {
-                "name": "未同步航线任务",
+                "name": "未发布航线任务",
                 "route": self.route.id,
                 "drone": self.drone.id,
                 "pilot": self.pilot_member.id,

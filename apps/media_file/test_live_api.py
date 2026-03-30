@@ -49,7 +49,7 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
             tenant=self.tenant,
             route=self.route,
             dji_wayline_id="media-live-wayline",
-            sync_status=SyncStatus.SYNCED,
+            is_published=True,
         )
         self.drone = Drone.objects.create(
             tenant=self.tenant,

@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Q
 
 
 class SyncStatus(models.TextChoices):
@@ -42,17 +43,21 @@ class DjiDeviceIndex(models.Model):
 class TenantRouteIndex(models.Model):
     tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="dji_route_indexes")
     route = models.OneToOneField("route.Route", on_delete=models.CASCADE, related_name="dji_index")
-    dji_wayline_id = models.CharField("DJI 航线 ID", max_length=128)
-    sync_status = models.CharField("同步状态", max_length=32, choices=SyncStatus.choices, default=SyncStatus.PENDING)
-    last_sync_at = models.DateTimeField("最近同步时间", null=True, blank=True)
-    error_msg = models.CharField("同步错误", max_length=255, blank=True, default="")
+    dji_wayline_id = models.CharField("DJI 航线 ID", max_length=128, blank=True, default="")
+    is_published = models.BooleanField("是否已发布", default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "tenant_route_indexes"
         ordering = ["-id"]
-        constraints = [models.UniqueConstraint(fields=["tenant", "dji_wayline_id"], name="uniq_tenant_dji_wayline_id")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "dji_wayline_id"],
+                condition=Q(dji_wayline_id__isnull=False) & ~Q(dji_wayline_id=""),
+                name="uniq_tenant_dji_wayline_id",
+            )
+        ]
 
 
 class TenantMissionIndex(models.Model):

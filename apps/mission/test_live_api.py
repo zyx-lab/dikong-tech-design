@@ -8,7 +8,7 @@ from apps.access.test_support import (
     ensure_tenant_role_binding,
     grant_role_permissions,
 )
-from apps.dji_bff.models import SyncStatus, TenantRouteIndex
+from apps.dji_bff.models import TenantRouteIndex
 from apps.dji_mock.state import mock_dji_state
 from apps.drone.models import Drone
 from apps.route.models import Route
@@ -48,7 +48,7 @@ class LiveMissionApiTests(LiveDjiGatewayApiTestCase):
             tenant=self.tenant,
             route=self.route,
             dji_wayline_id="mission-wayline",
-            sync_status=SyncStatus.SYNCED,
+            is_published=True,
         )
         self.drone = Drone.objects.create(
             tenant=self.tenant,

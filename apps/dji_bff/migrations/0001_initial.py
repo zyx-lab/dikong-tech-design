@@ -2,6 +2,7 @@
 
 import django.db.models.deletion
 from django.db import migrations, models
+from django.db.models import Q
 
 
 class Migration(migrations.Migration):
@@ -51,18 +52,8 @@ class Migration(migrations.Migration):
             name="TenantRouteIndex",
             fields=[
                 ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
-                ("dji_wayline_id", models.CharField(max_length=128, verbose_name="DJI 航线 ID")),
-                (
-                    "sync_status",
-                    models.CharField(
-                        choices=[("PENDING", "同步中"), ("SYNCED", "同步成功"), ("ERROR", "同步失败")],
-                        default="PENDING",
-                        max_length=32,
-                        verbose_name="同步状态",
-                    ),
-                ),
-                ("last_sync_at", models.DateTimeField(blank=True, null=True, verbose_name="最近同步时间")),
-                ("error_msg", models.CharField(blank=True, default="", max_length=255, verbose_name="同步错误")),
+                ("dji_wayline_id", models.CharField(blank=True, default="", max_length=128, verbose_name="DJI 航线 ID")),
+                ("is_published", models.BooleanField(default=False, verbose_name="是否已发布")),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
                 (
@@ -148,7 +139,11 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name="tenantrouteindex",
-            constraint=models.UniqueConstraint(fields=("tenant", "dji_wayline_id"), name="uniq_tenant_dji_wayline_id"),
+            constraint=models.UniqueConstraint(
+                condition=Q(dji_wayline_id__isnull=False) & ~Q(dji_wayline_id=""),
+                fields=("tenant", "dji_wayline_id"),
+                name="uniq_tenant_dji_wayline_id",
+            ),
         ),
         migrations.AddConstraint(
             model_name="tenantmissionindex",
@@ -159,4 +154,3 @@ class Migration(migrations.Migration):
             constraint=models.UniqueConstraint(fields=("tenant", "dji_file_id"), name="uniq_tenant_dji_file_id"),
         ),
     ]
-

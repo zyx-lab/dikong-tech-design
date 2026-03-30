@@ -1,49 +1,7 @@
 # 航线逻辑模型
 
-- updated_at: 2026-03-15T14:35:00Z
+- updated_at: 2026-03-30T00:00:00Z
 - entity: route
-
-## 数据库
-
-PostgreSQL
-
----
-
-## 文档格式说明
-
-本文档为 **逻辑模型** 类型文档，记录实体关系、状态机、生命周期、接口语义等。
-
-### 更新本文档的指南（大模型用）
-
-当需要更新此文档时，请遵循以下格式：
-
-```
-## 实体主表
-- table: {表名}
-- 主键: {主键定义}
-
-## 状态机
-- {状态字段}: {状态值列表}
-
-## 关系与约束
-- {外键关系}
-- {业务约束}
-
-## 生命周期入口
-- {HTTP方法} {路径}: {功能描述}
-
-## 接口语义
-### {API名称}
-- 功能：{功能描述}
-- 路径：{API路径}
-- 方法：{HTTP方法}
-- 状态流转：{状态变化}
-- 有效状态：{允许执行该操作的状态}
-- 无效状态：{禁止执行该操作的状态列表}
-- 业务码：{返回的业务码}
-```
-
----
 
 ## 实体主表
 
@@ -51,58 +9,91 @@ PostgreSQL
 - 主键: id (BigAutoField)
 - 排序规则: `ordering = ['-id']`
 
-## 状态机
+## 聚合边界
 
-| 状态字段 | 值 | 含义 |
-|---------|-----|------|
-| status | 0 | 禁用 |
-| status | 1 | 正常 |
-| route_type | 0 | 待扩展 |
+- `Route` 是公开业务聚合根。
+- `waypoints[]` 是 `Route` 的内部编辑结构，不再是独立业务资源。
+- `waypoints` 表仍存在，但只承担内部持久化，不再单独暴露 API、权限和状态机。
+
+## 发布状态模型
+
+当前设计不再使用 `Route.status`。
+
+Route 与 DJI 的发布关系由 `TenantRouteIndex` 表达：
+
+| 字段 | 含义 |
+|---|---|
+| dji_wayline_id | 当前已发布 DJI 航线 ID；未发布时为空串 |
+| is_published | 当前本地 route 草稿是否已与最新一次成功发布结果一致 |
+
+语义：
+
+- `is_published = false`
+  - 从未发布，或
+  - 曾发布，但本地 route 草稿在此后又发生编辑
+- `is_published = true`
+  - 当前本地草稿与最新一次成功 DJI 发布结果一致
 
 ## 关系与约束
 
-- tenant -> access.Tenant
-- 当前模型无其他显式业务 ForeignKey（`drone_type_id` 为外部 ID 引用位）
-- 唯一约束: N/A
-- 冗余字段约束：`waypoint_count` 为系统维护字段，只能由航点创建/删除链回写，不允许业务接口直写
+- `route.tenant -> access.Tenant`
+- `tenant_route_indexes.route -> route.Route`（一对一）
+- `waypoints.route_id -> routes.id`
+- `waypoint_count` 为系统维护冗余字段，只能由 route 聚合写链路回写
+- `waypoints(route_id, sequence)` 唯一
 
 ## 生命周期入口
 
 | 操作 | 路径 | 说明 |
 |-----|------|------|
-| 创建 | POST /api/v1/routes | 新增航线 |
+| 创建草稿 | POST /api/v1/routes | 新增本地 route 草稿，可带完整 `waypoints[]` |
 | 列表 | GET /api/v1/routes | 航线列表查询 |
-| 详情 | GET /api/v1/routes/{id} | 航线详情 |
-| 更新 | PUT / PATCH /api/v1/routes/{id} | 全量或局部更新航线 |
-| 删除 | DELETE /api/v1/routes/{id} | 删除航线 |
-| 启用 | POST /api/v1/routes/{id}/enable | 启用航线 |
-| 禁用 | POST /api/v1/routes/{id}/disable | 禁用航线 |
+| 详情 | GET /api/v1/routes/{id} | 读取 route 及完整 `waypoints[]` |
+| 更新草稿 | PUT / PATCH /api/v1/routes/{id} | 更新 route 元数据或完整 waypoint 集 |
+| 发布 | POST /api/v1/routes/{id}/publish | 将当前草稿显式发布到 DJI |
+| 下载 | GET /api/v1/routes/{id}/download | 下载当前已发布航线 |
+| 删除 | DELETE /api/v1/routes/{id} | 删除 route |
 
 ## 接口语义
 
-### 更新航线 PUT / PATCH /api/v1/routes/{id}
-- 功能：全量或局部更新航线元数据
-- 可写字段：name, route_type, drone_type_id, total_distance, estimated_duration
-- 约束：status、creator_name、waypoint_count 不可通过 PATCH 修改
-- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
+### 创建草稿 POST /api/v1/routes
 
-### 删除航线 DELETE /api/v1/routes/{id}
-- 功能：删除航线
-- 约束：若被任务引用则软禁用(status=0)，否则物理删除
-- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
+- 功能：创建 route 草稿
+- DJI 行为：不上传 DJI
+- 写入结果：
+  - 创建 `Route`
+  - 创建 `TenantRouteIndex(dji_wayline_id="", is_published=false)`
+  - 若提交 `waypoints[]`，写入内部 waypoint 行
 
-### 启用航线 POST /api/v1/routes/{id}/enable
-- 状态流转：DISABLED -> ACTIVE
-- 有效状态：DISABLED
-- 无效状态：ACTIVE
-- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
+### 更新草稿 PUT / PATCH /api/v1/routes/{id}
 
-### 禁用航线 POST /api/v1/routes/{id}/disable
-- 功能：按 route 主键显式执行禁用状态动作，与 DELETE 删除语义分离
-- 路径：/api/v1/routes/{id}/disable
-- 方法：POST
-- 状态流转：ACTIVE -> DISABLED
-- 有效状态：ACTIVE
-- 无效状态：N/A（DISABLED 按幂等成功返回当前状态）
-- 约束：请求体必须为空；不承担航点删除、任务解绑或批量停用编排
-- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
+- 功能：更新 route 草稿
+- 可写字段：`name`、`route_type`、`drone_type_id`、`total_distance`、`estimated_duration`、`waypoints[]`
+- 语义：
+  - `PUT` / `PATCH` 提交 `waypoints[]` 时，视为整条航线完整替换
+  - `PATCH` 未提交 `waypoints[]` 时，仅更新元数据
+  - 任意本地编辑后都将 `is_published` 置回 `false`
+
+### 发布 POST /api/v1/routes/{id}/publish
+
+- 功能：把当前 route 草稿显式发布到 DJI
+- 前置条件：至少存在一个 waypoint
+- 过程：
+  - 从当前内部 waypoint 行生成 KMZ
+  - 以系统名 `route-{route.id}-{uuid}` 上传 DJI
+  - 发布成功后写回 `dji_wayline_id` 并设置 `is_published=true`
+  - 若此前已有旧的 DJI 航线，则新航线上传成功后删除旧航线
+
+### 下载 GET /api/v1/routes/{id}/download
+
+- 功能：下载当前已发布航线
+- 前置条件：`is_published=true`
+- 未发布行为：返回 `409 / C0201`
+
+### 删除 DELETE /api/v1/routes/{id}
+
+- 功能：删除 route
+- 约束：
+  - 若存在 `PENDING/RUNNING` 任务引用，则拒绝删除
+  - 否则删除本地 route 与内部 waypoint 行
+  - 若已存在 `dji_wayline_id`，同步删除 DJI 航线

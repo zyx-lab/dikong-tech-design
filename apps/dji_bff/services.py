@@ -16,17 +16,14 @@ def handle_wayline_upload_callback(payload: dict, *, request=None) -> dict[str, 
         or metadata.get("file_id")
         or ""
     ).strip()
-    now = timezone.now()
     resolved_count = 0
     ignored_count = 0
 
     if dji_wayline_id:
         route_index = TenantRouteIndex.objects.filter(dji_wayline_id=dji_wayline_id).first()
         if route_index is not None:
-            route_index.sync_status = SyncStatus.SYNCED
-            route_index.last_sync_at = now
-            route_index.error_msg = ""
-            route_index.save(update_fields=["sync_status", "last_sync_at", "error_msg", "updated_at"])
+            route_index.is_published = True
+            route_index.save(update_fields=["is_published", "updated_at"])
             resolved_count = 1
         else:
             ignored_count = 1
@@ -34,10 +31,8 @@ def handle_wayline_upload_callback(payload: dict, *, request=None) -> dict[str, 
         route_indexes = list(TenantRouteIndex.objects.select_related("route").filter(route__name=name))
         if len(route_indexes) == 1:
             route_index = route_indexes[0]
-            route_index.sync_status = SyncStatus.SYNCED
-            route_index.last_sync_at = now
-            route_index.error_msg = ""
-            route_index.save(update_fields=["sync_status", "last_sync_at", "error_msg", "updated_at"])
+            route_index.is_published = True
+            route_index.save(update_fields=["is_published", "updated_at"])
             resolved_count = 1
         else:
             ignored_count = 1

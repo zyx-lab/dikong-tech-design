@@ -5,7 +5,6 @@ from rest_framework import serializers
 from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
 from apps.api_v1.tenant_scope import require_request_tenant
 from apps.mission.models import Mission, MissionStatus
-from apps.route.models import RouteStatus
 
 
 def _pilot_display_name(pilot_member) -> str:
@@ -72,8 +71,6 @@ class MissionCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"route": "仅允许绑定当前租户下的航线"})
         if drone is not None and drone.tenant_id != current_tenant.id:
             raise serializers.ValidationError({"drone": "仅允许绑定当前租户下的无人机"})
-        if route is not None and route.status != RouteStatus.ACTIVE:
-            raise serializers.ValidationError({"route": "仅允许绑定状态为正常的航线"})
         if pilot is not None and pilot.tenant_id != current_tenant.id:
             raise serializers.ValidationError({"pilot": "仅允许绑定当前租户下的成员"})
         if pilot is not None and pilot.status != TenantMemberStatus.ACTIVE:
@@ -114,7 +111,7 @@ class MissionCreateSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {
             "name": {"help_text": "任务名称，用于调度展示和日志定位。"},
-            "route": {"help_text": "任务绑定的航线 ID；必须属于当前租户且为 ACTIVE。"},
+            "route": {"help_text": "任务绑定的航线 ID；必须属于当前租户。"},
             "drone": {"help_text": "任务绑定的无人机 ID；必须属于当前租户。"},
             "pilot": {"help_text": "任务绑定的飞手成员 ID；必须为当前租户 ACTIVE 成员且具备 pilot_operator 角色。"},
             "dock_sn": {"help_text": "任务下发时透传给 DJI 的 dock_sn，可为空。", "required": False},

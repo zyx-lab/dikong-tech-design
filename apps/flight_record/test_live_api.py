@@ -24,7 +24,14 @@ from apps.access.test_support import (
 from apps.drone.models import Drone, DroneStatus
 from apps.flight_record.models import FlightRecord, FlightRecordStatus
 from apps.mission.models import Mission, MissionStatus
-from apps.route.models import Route, RouteStatus
+from apps.route.models import Route
+
+
+def _persist_mission_fixture(**kwargs) -> Mission:
+    # Live flight record tests only need persisted missions for downstream APIs.
+    mission = Mission(**kwargs)
+    Mission.objects.bulk_create([mission])
+    return Mission.objects.get(pk=mission.pk)
 
 
 class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
@@ -125,7 +132,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
         )
         ensure_tenant_member_position(self.other_tenant_pilot_member, code="pilot_operator", name="飞手")
 
-        self.route = Route.objects.create(tenant=self.tenant, name="实时飞行记录航线", status=RouteStatus.ACTIVE)
+        self.route = Route.objects.create(tenant=self.tenant, name="实时飞行记录航线", creator_name="管理员")
         self.drone = Drone.objects.create(
             tenant=self.tenant,
             code="FRL-DRN-001",
@@ -142,7 +149,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             device_sn="FRL-SN-002",
             status=DroneStatus.ENABLED,
         )
-        self.mission = Mission.objects.create(
+        self.mission = _persist_mission_fixture(
             tenant=self.tenant,
             name="实时飞行记录任务",
             route=self.route,
@@ -153,7 +160,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             pilot_name=self.pilot_staff.name,
             status=MissionStatus.RUNNING,
         )
-        self.other_mission = Mission.objects.create(
+        self.other_mission = _persist_mission_fixture(
             tenant=self.tenant,
             name="实时飞行记录他人任务",
             route=self.route,
@@ -165,7 +172,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             status=MissionStatus.RUNNING,
         )
 
-        self.other_route = Route.objects.create(tenant=self.other_tenant, name="其他租户飞行记录航线", status=RouteStatus.ACTIVE)
+        self.other_route = Route.objects.create(tenant=self.other_tenant, name="其他租户飞行记录航线", creator_name="管理员")
         self.other_drone = Drone.objects.create(
             tenant=self.other_tenant,
             code="FRL-OTHER-DRN-001",
@@ -174,7 +181,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             device_sn="FRL-OTHER-SN-001",
             status=DroneStatus.ENABLED,
         )
-        self.other_tenant_mission = Mission.objects.create(
+        self.other_tenant_mission = _persist_mission_fixture(
             tenant=self.other_tenant,
             name="其他租户飞行记录任务",
             route=self.other_route,

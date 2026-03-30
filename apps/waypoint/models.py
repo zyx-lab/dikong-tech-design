@@ -1,7 +1,4 @@
-from django.core.exceptions import ValidationError
 from django.db import models
-
-from apps.route.models import RouteStatus
 
 
 class Waypoint(models.Model):
@@ -10,7 +7,7 @@ class Waypoint(models.Model):
     route = models.ForeignKey(
         "route.Route",
         on_delete=models.PROTECT,
-        related_name="waypoints",
+        related_name="waypoint_rows",
         verbose_name="所属航线",
     )
     sequence = models.PositiveIntegerField("航点序号")
@@ -23,21 +20,9 @@ class Waypoint(models.Model):
         db_table = "waypoints"
         ordering = ["route_id", "sequence", "id"]
         default_permissions = ()
-        permissions = [
-            ("view_waypoint", "可查看航点"),
-            ("manage_waypoint", "可管理航点"),
-        ]
         constraints = [
             models.UniqueConstraint(fields=["route", "sequence"], name="waypoints_route_seq_unique"),
         ]
 
     def __str__(self):
         return f"{self.route_id}-{self.sequence}"
-
-    def clean(self):
-        if self.route_id and self.route.status != RouteStatus.ACTIVE:
-            raise ValidationError({"route": "仅允许绑定状态为正常的航线"})
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        return super().save(*args, **kwargs)
