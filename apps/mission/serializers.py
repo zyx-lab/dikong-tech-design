@@ -1,8 +1,9 @@
+from datetime import datetime
+
 from rest_framework import serializers
 
 from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
 from apps.api_v1.tenant_scope import require_request_tenant
-from apps.drone.models import DroneStatus
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import RouteStatus
 
@@ -17,6 +18,10 @@ def _pilot_display_name(pilot_member) -> str:
 
 
 class MissionReadSerializer(serializers.ModelSerializer):
+    sync_status = serializers.SerializerMethodField()
+    execution_status = serializers.SerializerMethodField()
+    last_sync_at = serializers.SerializerMethodField()
+
     class Meta:
         model = Mission
         fields = [
@@ -31,23 +36,37 @@ class MissionReadSerializer(serializers.ModelSerializer):
             "scheduled_at",
             "remark",
             "status",
+            "dji_job_id",
+            "sync_status",
+            "execution_status",
+            "last_sync_at",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
 
+    def get_sync_status(self, obj) -> str:
+        return getattr(getattr(obj, "dji_index", None), "sync_status", "")
 
-class MissionWriteSerializer(serializers.ModelSerializer):
+    def get_execution_status(self, obj) -> str:
+        return getattr(getattr(obj, "dji_index", None), "execution_status", "")
+
+    def get_last_sync_at(self, obj) -> datetime | None:
+        return getattr(getattr(obj, "dji_index", None), "last_sync_at", None)
+
+
+class MissionCreateSerializer(serializers.ModelSerializer):
+    dock_sn = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
     def validate(self, attrs):
         unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
         if unknown_fields:
             raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
 
         current_tenant = require_request_tenant(self.context)
-        instance = getattr(self, "instance", None)
-        route = attrs.get("route", instance.route if instance is not None else None)
-        drone = attrs.get("drone", instance.drone if instance is not None else None)
-        pilot = attrs.get("pilot", instance.pilot if instance is not None else None)
+        route = attrs.get("route")
+        drone = attrs.get("drone")
+        pilot = attrs.get("pilot")
 
         if route is not None and route.tenant_id != current_tenant.id:
             raise serializers.ValidationError({"route": "仅允许绑定当前租户下的航线"})
@@ -55,8 +74,6 @@ class MissionWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"drone": "仅允许绑定当前租户下的无人机"})
         if route is not None and route.status != RouteStatus.ACTIVE:
             raise serializers.ValidationError({"route": "仅允许绑定状态为正常的航线"})
-        if drone is not None and drone.status != DroneStatus.ENABLED:
-            raise serializers.ValidationError({"drone": "仅允许绑定启用状态无人机"})
         if pilot is not None and pilot.tenant_id != current_tenant.id:
             raise serializers.ValidationError({"pilot": "仅允许绑定当前租户下的成员"})
         if pilot is not None and pilot.status != TenantMemberStatus.ACTIVE:
@@ -77,23 +94,12 @@ class MissionWriteSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        validated_data.pop("dock_sn", "")
         validated_data["route_name"] = validated_data["route"].name
         validated_data["drone_name"] = validated_data["drone"].name
         validated_data["pilot_name"] = _pilot_display_name(validated_data["pilot"])
         validated_data["status"] = MissionStatus.PENDING
         return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        route = validated_data.get("route")
-        drone = validated_data.get("drone")
-        pilot = validated_data.get("pilot")
-        if route is not None:
-            validated_data["route_name"] = route.name
-        if drone is not None:
-            validated_data["drone_name"] = drone.name
-        if pilot is not None:
-            validated_data["pilot_name"] = _pilot_display_name(pilot)
-        return super().update(instance, validated_data)
 
     class Meta:
         model = Mission
@@ -102,14 +108,37 @@ class MissionWriteSerializer(serializers.ModelSerializer):
             "route",
             "drone",
             "pilot",
+            "dock_sn",
             "scheduled_at",
             "remark",
         ]
         extra_kwargs = {
             "name": {"help_text": "任务名称，用于调度展示和日志定位。"},
             "route": {"help_text": "任务绑定的航线 ID；必须属于当前租户且为 ACTIVE。"},
-            "drone": {"help_text": "任务绑定的无人机 ID；必须属于当前租户且为 ENABLED。"},
+            "drone": {"help_text": "任务绑定的无人机 ID；必须属于当前租户。"},
             "pilot": {"help_text": "任务绑定的飞手成员 ID；必须为当前租户 ACTIVE 成员且具备 pilot_operator 角色。"},
+            "dock_sn": {"help_text": "任务下发时透传给 DJI 的 dock_sn，可为空。", "required": False},
             "scheduled_at": {"help_text": "计划执行时间，可为空。"},
             "remark": {"help_text": "任务备注，可为空。"},
+        }
+
+
+class MissionUpdateSerializer(serializers.ModelSerializer):
+    def validate(self, attrs):
+        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
+        if unknown_fields:
+            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
+        return attrs
+
+    class Meta:
+        model = Mission
+        fields = [
+            "name",
+            "scheduled_at",
+            "remark",
+        ]
+        extra_kwargs = {
+            "name": {"help_text": "任务名称。"},
+            "scheduled_at": {"help_text": "计划执行时间，可为空。", "required": False},
+            "remark": {"help_text": "任务备注，可为空。", "required": False},
         }

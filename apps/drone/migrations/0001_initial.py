@@ -21,7 +21,7 @@ class Migration(migrations.Migration):
                 ('name', models.CharField(max_length=128, verbose_name='无人机名称')),
                 ('model', models.CharField(max_length=128, verbose_name='型号')),
                 ('serial_no', models.CharField(max_length=128, unique=True, verbose_name='出厂序列号')),
-                ('status', models.CharField(choices=[('ENABLED', '启用'), ('DISABLED', '停用'), ('MAINTENANCE', '维护中'), ('RETIRED', '已退役')], default='DISABLED', max_length=16, verbose_name='状态')),
+                ('status', models.CharField(choices=[('ENABLED', '启用'), ('DISABLED', '停用')], default='DISABLED', max_length=16, verbose_name='状态')),
                 ('org_id', models.BigIntegerField(blank=True, null=True, verbose_name='组织 ID')),
                 ('created_by_staff_id', models.BigIntegerField(blank=True, null=True, verbose_name='创建人 Staff ID')),
                 ('created_at', models.DateTimeField(auto_now_add=True, verbose_name='创建时间')),

@@ -131,6 +131,9 @@
 14. `GET /api/v1/drones/{id}/live/capacity` 使用 `drone.view_drone` 权限。
 15. `POST /api/v1/drones/{id}/live/start|stop|video-quality|video-source` 使用 `drone.manage_drone` 权限。
 16. live API 引入时同步删除 `enable`、`disable`、`maintenance`、`retire` 四个本地状态 action。
+17. `Drone.status` 枚举只保留 `ENABLED` / `DISABLED`，不再保留 `MAINTENANCE` / `RETIRED` 两个旧台账状态。
+18. `Drone.status` 当前只表达设备在线摘要：同步命中上游设备时记为 `ENABLED`，本轮未命中时记为 `DISABLED`。
+19. 删除 `MAINTENANCE` / `RETIRED` 后，相关代码、校验和测试一起删除，不保留兼容逻辑。
 
 ### 7.2 Route 模块
 
@@ -220,6 +223,46 @@
 6. 回调与同步结果先落本地索引表，再影响 tenant 可见结果。
 7. 回调与同步操作写系统审计日志。
 8. 回调与同步流程不依赖本地 `tenant_member -> DJI user` 映射。
+
+### 10.1 同步调度入口（Django management command）
+
+1. 当前最小闭环方案不引入 Celery、beat 或额外调度基础设施。
+2. 后台同步通过 Django management command 启动，命令名为 `run_dji_sync_scheduler`。
+3. Django management command 的含义是：由 Django 提供的命令行管理入口，用于执行迁移、启动服务、导数和后台任务等系统级操作。
+4. 运行方式统一是 `python manage.py <command>`；它是 CLI 命令，不是 HTTP API，不通过浏览器、Swagger 或前端调用。
+5. 当前命令负责按系统身份循环执行设备索引同步、任务索引同步和媒体索引同步。
+6. 常见用法：
+   - `python manage.py run_dji_sync_scheduler --once`
+   - `python manage.py run_dji_sync_scheduler --interval-seconds 60`
+   - `python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2`
+7. 参数语义：
+   - `--once`：只执行一轮，适合人工触发、排障或验证配置
+   - `--interval-seconds`：两轮之间的等待秒数
+   - `--max-cycles`：最多执行多少轮，适合测试和受控运行
+8. 部署时可由 systemd、supervisor、容器入口脚本或 k8s job/sidecar 拉起该命令；当前阶段不为此额外引入新框架。
+
+### 10.2 `run_dji_sync_scheduler` 副作用清单
+
+1. 该命令不是只读诊断命令；每一轮同步都会真实写本地数据库。
+2. 当前一轮同步顺序固定为：设备索引同步 -> 任务索引同步 -> 媒体索引同步。
+3. 当前实现不会自动清理本地旧记录；策略是新增、更新、标记 `ERROR` 或忽略。
+
+| 同步环节 | 写入表 | 操作 | 明确写入字段 |
+|------|------|------|------|
+| 设备索引同步 | `dji_device_indexes` | `update_or_create`，按 `device_sn` 幂等更新 | `device_sn`（首次创建）、`last_payload`、`last_seen_at`、`firmware_version`、`firmware_status`、`created_at`（首次创建）、`updated_at` |
+| 设备索引同步 | `drones` | 批量更新已认领设备状态 | `status`、`updated_at`；规则是“本轮在 DJI 共享池中出现的非退役设备置为 `ENABLED`，未出现的非退役设备置为 `DISABLED`” |
+| 任务索引同步 | `tenant_mission_indexes` | 逐条更新现有索引；不新建索引 | 正常命中上游任务时写 `execution_status`、`sync_status=SYNCED`、`error_msg=\"\"`、`last_sync_at`、`updated_at`；上游任务缺失时写 `sync_status=ERROR`、`error_msg=\"上游任务不存在\"`、`last_sync_at`、`updated_at` |
+| 任务索引同步 | `missions` | 按 DJI 状态映射更新本地任务状态 | `status`、`updated_at` |
+| 媒体索引同步 | `media_files` | 若本地不存在则创建，存在则更新 | `tenant_id`、`flight_record_id`、`media_type`、`file_name`、`file_url`、`thumbnail_url`、`file_size`、`latitude`、`longitude`、`captured_at`、`is_deleted=false`、`deleted_at=null`、`created_at`（首次创建） |
+| 媒体索引同步 | `tenant_media_indexes` | 若本地不存在则创建，存在则更新 | `tenant_id`、`media_file_id`、`dji_file_id`、`device_sn`、`mission_id`、`sync_status=SYNCED`、`last_sync_at`、`error_msg=\"\"`、`created_at`（首次创建）、`updated_at` |
+| 每类同步结束 | `auth_audit_logs` | 新增审计日志 | `tenant=null`、`actor_user=null`、`action`、`target_type`、`target_id=\"\"`、`after_data`、`created_at` |
+
+补充规则：
+1. `media_files` 当前没有 `updated_at` 字段，因此媒体记录更新时不会额外记录更新时间列。
+2. `auth_audit_logs` 每轮会至少新增三条系统审计日志，分别对应 `DJI_DEVICE_SYNC`、`DJI_MISSION_SYNC`、`DJI_MEDIA_SYNC`。
+3. 媒体同步会读取 `flight_records` 来尝试回填 `flight_record_id`，但不会修改 `flight_records` 本身。
+4. 当前命令会读取 `dji_workspace_configs` 中的 `workspace_id`、`access_token` 等配置，但不会回写该表。
+5. 当前命令不会修改 `routes`、`tenant_route_indexes`、`drone_assignments`、`waypoints`。
 
 ## 11. 响应与错误处理规则
 

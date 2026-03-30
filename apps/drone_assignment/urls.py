@@ -1,8 +1,13 @@
-from rest_framework.routers import SimpleRouter
+from django.urls import path
 
 from apps.drone_assignment.views import DroneAssignmentViewSet
 
-router = SimpleRouter(trailing_slash=False)
-router.register("drone-assignments", DroneAssignmentViewSet, basename="drone-assignment")
+drone_assignment_list = DroneAssignmentViewSet.as_view({"get": "list", "post": "create"})
+drone_assignment_detail = DroneAssignmentViewSet.as_view({"get": "retrieve"})
+drone_assignment_cancel = DroneAssignmentViewSet.as_view({"post": "cancel"})
 
-urlpatterns = router.urls
+urlpatterns = [
+    path("drone-assignments", drone_assignment_list, name="drone-assignment-list"),
+    path("drone-assignments/<int:pk>", drone_assignment_detail, name="drone-assignment-detail"),
+    path("drone-assignments/<int:pk>/cancel", drone_assignment_cancel, name="drone-assignment-cancel"),
+]

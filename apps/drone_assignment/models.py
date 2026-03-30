@@ -3,9 +3,6 @@ from django.db import models
 from django.db.models import Q
 
 from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
-from apps.drone.models import DroneStatus
-
-
 class DroneAssignmentStatus(models.TextChoices):
     ACTIVE = "ACTIVE", "生效中"
     INACTIVE = "INACTIVE", "已失效"
@@ -60,8 +57,6 @@ class DroneAssignment(models.Model):
     def clean(self):
         if self.tenant_id and self.drone_id and self.drone.tenant_id != self.tenant_id:
             raise ValidationError({"drone": "drone 必须属于当前 tenant"})
-        if self.drone_id and self.drone.status == DroneStatus.RETIRED:
-            raise ValidationError({"drone": "已退役无人机不能创建分配关系"})
         if self.tenant_id and self.tenant_member_id and self.tenant_member.tenant_id != self.tenant_id:
             raise ValidationError({"tenant_member": "tenant_member 必须属于当前 tenant"})
         if self.tenant_member_id and self.tenant_member.status != TenantMemberStatus.ACTIVE:

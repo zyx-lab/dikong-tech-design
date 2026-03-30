@@ -3,7 +3,6 @@ from drf_spectacular.utils import extend_schema_field
 
 from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMember, TenantMemberRoleStatus, TenantMemberStatus
 from apps.api_v1.tenant_scope import require_request_tenant
-from apps.drone.models import DroneStatus
 from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
 
 
@@ -49,9 +48,6 @@ class DroneAssignmentCreateSerializer(serializers.ModelSerializer):
         if drone.tenant_id != current_tenant.id:
             raise serializers.ValidationError({"drone": "仅允许绑定当前租户下的无人机"})
 
-        if drone.status == DroneStatus.RETIRED:
-            raise serializers.ValidationError({"drone": "已退役无人机不能创建分配关系"})
-
         if tenant_member.tenant_id != current_tenant.id:
             raise serializers.ValidationError({"tenant_member": "仅允许绑定当前租户下的成员"})
         if tenant_member.status != TenantMemberStatus.ACTIVE:
@@ -94,6 +90,6 @@ class DroneAssignmentCreateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id"]
         extra_kwargs = {
-            "drone": {"help_text": "当前租户下要分配的无人机 ID；不允许传其他租户或已退役无人机。"},
+            "drone": {"help_text": "当前租户下要分配的无人机 ID。"},
             "tenant_member": {"help_text": "当前租户下要接收分配的成员 ID；必须是 ACTIVE 且具备 pilot_operator 角色。"},
         }

@@ -1,18 +1,16 @@
-"""IAM schema exposure test events.
-
-- business schema 暴露当前 formal IAM 路由
-- 旧 internal auth 路由已卸载
-"""
+"""IAM schema exposure smoke tests."""
 
 from apps.access.test_live_base import LiveIamApiTestCase
 
 
 class LiveIamSchemaTests(LiveIamApiTestCase):
-    def test_business_schema_should_expose_current_iam_paths(self):
+    def test_business_schema_should_expose_current_iam_and_refactored_business_paths(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)
         schema = response.json()
-        expected_paths = {
+        paths = schema["paths"]
+
+        expected_iam_paths = {
             "/api/v1/iam/session/login",
             "/api/v1/iam/session/refresh",
             "/api/v1/iam/session/logout",
@@ -38,10 +36,17 @@ class LiveIamSchemaTests(LiveIamApiTestCase):
             "/api/v1/iam/platform/tenants/{tenantId}/disable",
             "/api/v1/iam/platform/tenants/{tenantId}/initialize-admin",
         }
-        self.assertTrue(expected_paths.issubset(set(schema["paths"].keys())))
-        self.assertNotIn("/internal/auth/login", schema["paths"])
-        self.assertNotIn("/api/v1/iam/me/permissions", schema["paths"])
-        self.assertIn("BearerAuth", schema["components"]["securitySchemes"])
+        self.assertTrue(expected_iam_paths.issubset(set(paths.keys())))
+
+        self.assertIn("/api/v1/drones/available", paths)
+        self.assertIn("/api/v1/drones/{id}/live/start", paths)
+        self.assertIn("/api/v1/routes/{id}/download", paths)
+        self.assertIn("/api/v1/missions/{id}/cancel", paths)
+        self.assertIn("/api/v1/media-files/{id}/download", paths)
+        self.assertNotIn("/api/v1/drones/{id}/enable", paths)
+        self.assertNotIn("/api/v1/routes/{id}/enable", paths)
+        self.assertNotIn("/api/v1/missions/{id}/start", paths)
+        self.assertNotIn("/api/v1/drone-assignments/{id}/reactivate", paths)
 
     def test_old_internal_auth_routes_should_be_unmounted(self):
         response = self.client.get("/internal/auth/login")

@@ -19,7 +19,7 @@
 
 Project low_altitude_drone_assignment_current {
   database_type: 'PostgreSQL'
-  Note: '当前实现：无人机-租户成员分配关系（创建/查询/取消/恢复）'
+  Note: '当前实现：无人机-租户成员分配关系（创建/查询/取消）'
 }
 
 // ============================================================
@@ -62,10 +62,8 @@ Table drone_assignments [note: '无人机与租户成员分配关系'] {
 // 业务规则（接口层）：
 // 1) 仅允许为当前租户下 ACTIVE 且持有 pilot_operator 角色的成员创建分配
 // 2) 该成员绑定账号必须存在在职 staff_profile
-// 3) RETIRED 无人机不可创建分配
-// 4) cancel 动作幂等：INACTIVE 再次 cancel 仍返回成功态
-// 5) reactivate 动作支持 INACTIVE->ACTIVE；ACTIVE 再次 reactivate 幂等成功
-// 6) reactivate 请求体必须为空；非空返回 B0001
+// 3) cancel 动作幂等：INACTIVE 再次 cancel 仍返回成功态
+// 4) cancel 请求体必须为空；非空返回 B0001
 
 // 业务响应契约（非数据库字段）：
 // response envelope: code / msg / data

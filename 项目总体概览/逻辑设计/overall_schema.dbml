@@ -232,8 +232,8 @@ Table drones [note: '租户内无人机台账'] {
   code varchar(64) [not null, note: 'code 租户内业务编码']
   name varchar(128) [not null, note: 'name 无人机名称']
   model varchar(128) [not null, note: 'model 型号']
-  serial_no varchar(128) [not null, note: 'serial_no 出厂序列号']
-  status varchar(16) [not null, default: 'DISABLED', note: 'status ENABLED / DISABLED / MAINTENANCE / RETIRED']
+  device_sn varchar(128) [not null, note: 'device_sn 设备序列号']
+  status varchar(16) [not null, default: 'DISABLED', note: 'status ENABLED / DISABLED']
   org_id bigint [note: 'org_id 组织ID']
   created_by_tenant_member_id bigint [note: 'created_by_tenant_member_id 创建人 TenantMember ID']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
@@ -241,7 +241,7 @@ Table drones [note: '租户内无人机台账'] {
 
   indexes {
     (tenant_id, code) [unique, name: 'uniq_drone_tenant_code']
-    (tenant_id, serial_no) [unique, name: 'uniq_drone_tenant_serial_no']
+    (tenant_id, device_sn) [unique, name: 'uniq_drone_tenant_device_sn']
   }
 }
 

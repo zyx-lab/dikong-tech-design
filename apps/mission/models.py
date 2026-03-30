@@ -25,7 +25,14 @@ class Mission(models.Model):
         verbose_name="租户",
     )
     name = models.CharField("任务名称", max_length=100)
-    route = models.ForeignKey("route.Route", on_delete=models.PROTECT, related_name="missions", verbose_name="航线")
+    route = models.ForeignKey(
+        "route.Route",
+        on_delete=models.SET_NULL,
+        related_name="missions",
+        verbose_name="航线",
+        null=True,
+        blank=True,
+    )
     route_name = models.CharField("航线名称（冗余）", max_length=100, blank=True, default="")
     drone = models.ForeignKey("drone.Drone", on_delete=models.PROTECT, related_name="missions", verbose_name="无人机")
     drone_name = models.CharField("无人机名称（冗余）", max_length=100, blank=True, default="")
@@ -34,6 +41,7 @@ class Mission(models.Model):
     scheduled_at = models.DateTimeField("计划执行时间", null=True, blank=True)
     remark = models.CharField("任务备注", max_length=500, blank=True, default="")
     status = models.PositiveSmallIntegerField("任务状态", choices=MissionStatus.choices, default=MissionStatus.PENDING)
+    dji_job_id = models.CharField("DJI 任务 ID", max_length=128, blank=True, default="")
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
     updated_at = models.DateTimeField("更新时间", auto_now=True)
 
@@ -54,27 +62,12 @@ class Mission(models.Model):
         return self.pilot_id
 
     def clean(self):
-        if self.pk:
-            current_status = Mission.objects.filter(pk=self.pk).values_list("status", flat=True).first()
-            allowed_transitions = {
-                MissionStatus.PENDING: {MissionStatus.RUNNING, MissionStatus.CANCELED},
-                MissionStatus.RUNNING: {MissionStatus.PAUSED, MissionStatus.COMPLETED, MissionStatus.CANCELED, MissionStatus.FAILED},
-                MissionStatus.PAUSED: {MissionStatus.RUNNING, MissionStatus.CANCELED},
-                MissionStatus.COMPLETED: set(),
-                MissionStatus.CANCELED: set(),
-                MissionStatus.FAILED: set(),
-            }
-            if current_status is not None and self.status != current_status and self.status not in allowed_transitions.get(current_status, set()):
-                raise ValidationError({"status": "当前任务状态不允许执行该变更"})
-
         if self.tenant_id and self.route_id and self.route.tenant_id != self.tenant_id:
             raise ValidationError({"route": "route 必须属于当前 tenant"})
         if self.tenant_id and self.drone_id and self.drone.tenant_id != self.tenant_id:
             raise ValidationError({"drone": "drone 必须属于当前 tenant"})
         if self.route_id and self.route.status != RouteStatus.ACTIVE:
             raise ValidationError({"route": "仅允许绑定状态为正常的航线"})
-        if self.drone_id and self.drone.status != DroneStatus.ENABLED:
-            raise ValidationError({"drone": "仅允许绑定启用状态无人机"})
         if self.tenant_id and self.pilot_id and self.pilot.tenant_id != self.tenant_id:
             raise ValidationError({"pilot": "pilot 必须属于当前 tenant"})
         if self.pilot_id and self.pilot.status != TenantMemberStatus.ACTIVE:

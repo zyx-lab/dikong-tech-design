@@ -74,6 +74,7 @@
 |--------|------|
 | 字段重命名 | `Drone.serial_no` → `Drone.device_sn`（migration 重命名）；重命名完成后统一只使用 `device_sn` |
 | 状态字段保留 | `Drone.status` 保留，但只由后台同步更新（DJI 设备在线状态），不开放写接口 |
+| 状态枚举收敛 | `Drone.status` 只保留 `ENABLED` / `DISABLED`；删除 `MAINTENANCE` / `RETIRED` 两个旧台账状态及对应代码、校验、测试 |
 | 删除写 action | live API 引入时同步删除 `enable`、`disable`、`maintenance`、`retire` 四个 action 接口 |
 | 新增共享池表 | `DjiDeviceIndex(device_sn, last_payload, last_seen_at)`：全局共享设备池 |
 
@@ -95,6 +96,7 @@
 - `POST /api/v1/drones`：语义改为"按 `device_sn` 认领共享池设备"，请求体为 `{"device_sn": "...", "code": "..."}`
 - `code` 只是本地展示字段，不承担稳定唯一标识语义；设备硬标识使用 `device_sn`
 - `GET /api/v1/drones`、`GET /api/v1/drones/{id}`：从纯本地台账改为"认领绑定 + 上游同步摘要"的聚合查询
+- `Drone.status` 当前只表达“本轮同步是否在线”：同步命中设备记为 `ENABLED`，未命中设备记为 `DISABLED`
 - 明确删除对外 `POST /api/v1/drones/{id}/enable`
 - 明确删除对外 `POST /api/v1/drones/{id}/disable`
 - 明确删除对外 `POST /api/v1/drones/{id}/maintenance`
@@ -807,7 +809,7 @@ DjiDeviceIndex
 | P1 | dockSn 前端手动输入 | 不提供 docks 接口，前端让用户手动输入 dockSn |
 | P1 | 新增 available 接口 | `GET /api/v1/drones/available` 获取可认领设备 |
 | P1 | 媒体归属简化 | 采用 device_sn 归属，不依赖 job_id；`MediaFile.flight_record_id` 改为 nullable |
-| P1 | 设备状态双字段 | `Drone.status`（业务状态）+ `DjiDeviceIndex.is_online`（DJI 在线状态）独立存储 |
+| P1 | 设备状态简化 | 当前仅保留 `Drone.status=ENABLED/DISABLED` 作为在线摘要；不再保留 `MAINTENANCE/RETIRED`，也不新增 `DjiDeviceIndex.is_online` |
 | P1 | 媒体查询扩展 | `GET /api/v1/media_files` 增加 `device_sn` 过滤参数 |
 | P1 | Mission.dji_job_id | 新增字段保存 DJI job_id，用于 cancel 操作 |
 | P1 | 航线删除约束 | 检查 Mission.route_id 关联，存在活跃任务时禁止删除 |
@@ -820,7 +822,7 @@ DjiDeviceIndex
 | P1 | 任务状态枚举映射表 | `DJI_JOB_STATUS_MAP`，实测补充枚举值 |
 | P2 | KMZ 上传 UUID 前缀 | 上传前生成 UUID 前缀，回查时精确匹配 |
 | P2 | 任务创建两阶段回查 | 按 Mission.name + 时间窗口匹配 job_id |
-| P2 | 同步任务 Celery 配置 | beat 调度 + 指数退避重试 + 同步锁 |
+| P2 | 同步任务调度增强 | 当前先用 Django management command `run_dji_sync_scheduler` 作为独立进程调度；需要更复杂重试、分布式调度或锁时再评估 Celery/beat |
 | P2 | 同步失败监控 | 记录 error_msg，可选增加告警任务 |
 | P2 | 媒体下载 302 处理 | 透传 302 让前端直接访问 DJI 存储地址 |
 | P1 | Mission 创建原子事务 | 同一事务创建 Mission + 同步 DJI + 写入 dji_job_id |

@@ -6,6 +6,7 @@ urlpatterns = [
     path("", views.ApiV1RootView.as_view(), name="api-v1-root"),
     path("health", views.ApiV1HealthView.as_view(), name="api-v1-health"),
     path("iam/", include("apps.access.api_v1.urls")),
+    path("", include("apps.dji_bff.urls")),
     path("", include("apps.drone.urls")),
     path("", include("apps.drone_assignment.urls")),
     path("", include("apps.route.urls")),

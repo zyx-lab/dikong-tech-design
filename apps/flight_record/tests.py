@@ -63,7 +63,7 @@ class FlightRecordApiTests(TestCase):
             code="FR-DRN-001",
             name="飞行记录测试机",
             model="M300",
-            serial_no="SN-FR-001",
+            device_sn="SN-FR-001",
             status=DroneStatus.ENABLED,
         )
         self.mission = Mission.objects.create(
@@ -156,7 +156,7 @@ class FlightRecordApiTests(TestCase):
             code="FR-OTHER-MODEL-DRONE",
             name="其他租户无人机",
             model="M300",
-            serial_no="FR-OTHER-MODEL-SN",
+            device_sn="FR-OTHER-MODEL-SN",
             status=DroneStatus.ENABLED,
         )
         _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
@@ -211,7 +211,7 @@ class FlightRecordApiTests(TestCase):
             code="FR-OTHER-DRN-001",
             name="其他租户无人机",
             model="M300",
-            serial_no="FR-OTHER-SN-001",
+            device_sn="FR-OTHER-SN-001",
             status=DroneStatus.ENABLED,
         )
         _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
@@ -361,7 +361,7 @@ class FlightRecordApiTests(TestCase):
             code="FR-MISMATCH-DRONE",
             name="模型不一致无人机",
             model="M350",
-            serial_no="FR-MISMATCH-SN",
+            device_sn="FR-MISMATCH-SN",
             status=DroneStatus.ENABLED,
         )
 
@@ -476,7 +476,7 @@ class FlightRecordApiTests(TestCase):
             code="FR-OTHER-UNIQ-DRN-001",
             name="其他租户无人机",
             model="M300",
-            serial_no="FR-OTHER-UNIQ-SN-001",
+            device_sn="FR-OTHER-UNIQ-SN-001",
             status=DroneStatus.ENABLED,
         )
         other_mission = Mission.objects.create(
@@ -997,7 +997,7 @@ class FlightRecordPilotScopeTests(TestCase):
             code="FRS-DRN-001",
             name="飞行记录范围无人机",
             model="M300",
-            serial_no="FRS-SN-001",
+            device_sn="FRS-SN-001",
             status=DroneStatus.ENABLED,
         )
         self.my_mission = Mission.objects.create(

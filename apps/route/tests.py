@@ -1,660 +1,165 @@
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.access.models import (
-    AuditLog,
-    EmploymentStatus,
-    ScopeType,
-)
+from apps.access.models import EmploymentStatus, ScopeType
 from apps.access.test_support import (
     ensure_staff_profile,
     ensure_tenant_member_position,
     ensure_tenant_role_binding,
     grant_role_permissions,
 )
-from apps.drone.models import Drone, DroneStatus
+from apps.drone.models import Drone
+from apps.dji_bff.models import SyncStatus, TenantRouteIndex
+from apps.dji_mock.state import mock_dji_state
+from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
 from apps.mission.models import Mission, MissionStatus
-from apps.route.models import Route, RouteStatus, RouteType
-from apps.waypoint.models import Waypoint
+from apps.route.models import Route
 
 User = get_user_model()
 
 
-class RouteApiTests(TestCase):
+class RouteApiTests(MockDjiUpstreamTestMixin, TestCase):
     def setUp(self):
+        super().setUp()
         self.client = APIClient()
         self.user = User.objects.create_user(username="route_admin", password="pass1234", status=1)
-        self.pilot_user = User.objects.create_user(username="route_pilot", password="pass1234", status=1)
-        self.staff = ensure_staff_profile(self.user, staff_no="R-001", name="航线管理员A", employment_status=1)
-        self.pilot_staff = ensure_staff_profile(
-            self.pilot_user,
-            staff_no="P-001",
-            name="飞手A",
-            employment_status=EmploymentStatus.ACTIVE,
-        )
+        ensure_staff_profile(self.user, name="航线管理员", employment_status=EmploymentStatus.ACTIVE)
         self.tenant, self.member, self.role = ensure_tenant_role_binding(
             self.user,
             tenant_code="route_test_tenant",
             role_code="route_test_role",
             role_name="航线测试角色",
         )
-        _pilot_tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+        grant_role_permissions(
+            self.role,
+            {
+                "route.view_route": ScopeType.ALL,
+                "route.manage_route": ScopeType.ALL,
+                "mission.manage_mission": ScopeType.ALL,
+            },
+        )
+        self.client.force_authenticate(self.user)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
+
+        self.pilot_user = User.objects.create_user(username="route_pilot", password="pass1234", status=1)
+        ensure_staff_profile(self.pilot_user, name="飞手", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, self.pilot_member, _pilot_role = ensure_tenant_role_binding(
             self.pilot_user,
             tenant=self.tenant,
             role_code="pilot_operator",
             role_name="飞手",
         )
-        self.pilot_member = pilot_member
-        ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手")
-        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
+        ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手")
         self.drone = Drone.objects.create(
             tenant=self.tenant,
-            code="ROUTE-DRN-001",
-            name="航线测试机",
-            model="M300",
-            serial_no="ROUTE-SN-001",
-            status=DroneStatus.ENABLED,
+            code="ROUTE-DRONE-001",
+            name="任务无人机",
+            model="M30",
+            device_sn="ROUTE-SN-001",
         )
 
-    def _grant_permission(self, permission_code: str, with_scope: bool = True):
-        if with_scope:
-            grant_role_permissions(
-                self.role,
-                {permission_code: ScopeType.ALL},
-                group_name=f"{permission_code}-group",
-            )
+    def test_create_should_upload_kmz_and_create_route_index(self):
+        response = self.client.post(
+            "/api/v1/routes",
+            {
+                "name": "城市巡检航线",
+                "file": SimpleUploadedFile("route.kmz", b"fake-kmz", content_type="application/octet-stream"),
+            },
+        )
 
-    def _create_route(self, *, name: str, status: int = RouteStatus.ACTIVE, route_type: int = RouteType.PENDING_EXTENSION) -> Route:
-        return Route.objects.create(
+        self.assertEqual(response.status_code, 201)
+        route = Route.objects.get(name="城市巡检航线")
+        route_index = TenantRouteIndex.objects.get(route=route)
+        self.assertTrue(route_index.dji_wayline_id.startswith("mock-wayline-"))
+        self.assertEqual(route_index.sync_status, SyncStatus.SYNCED)
+        self.assertIn(route_index.dji_wayline_id, mock_dji_state.waylines)
+
+    def test_create_should_reject_duplicate_wayline_name_from_upstream(self):
+        existing_wayline = mock_dji_state.create_wayline(name="城市巡检航线")
+
+        response = self.client.post(
+            "/api/v1/routes",
+            {
+                "name": "城市巡检航线",
+                "file": SimpleUploadedFile("route.kmz", b"fake-kmz", content_type="application/octet-stream"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["data"], {"name": ["DJI 航线名称已存在"]})
+        self.assertFalse(Route.objects.filter(tenant=self.tenant, name="城市巡检航线").exists())
+        self.assertEqual(list(mock_dji_state.waylines.keys()), [existing_wayline["wayline_id"]])
+
+    def test_download_should_redirect_to_dji_url(self):
+        wayline = mock_dji_state.create_wayline(name="下载航线")
+        route = Route.objects.create(tenant=self.tenant, name="下载航线", creator_name="管理员")
+        TenantRouteIndex.objects.create(
             tenant=self.tenant,
-            name=name,
-            route_type=route_type,
-            status=status,
-            creator_name=self.staff.name,
-        )
-
-    def _create_waypoint(self, route: Route, *, sequence: int = 1) -> Waypoint:
-        return Waypoint.objects.create(
             route=route,
-            sequence=sequence,
-            latitude="22.54321012",
-            longitude="113.98765432",
-            altitude="120.50",
+            dji_wayline_id=wayline["wayline_id"],
+            sync_status=SyncStatus.SYNCED,
         )
 
-    def _create_mission(self, route: Route, *, name: str = "引用航线任务", status: int = MissionStatus.PENDING) -> Mission:
-        return Mission.objects.create(
+        response = self.client.get(f"/api/v1/routes/{route.id}/download")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], f"/__mock-dji__/_downloads/waylines/{wayline['wayline_id']}.kmz")
+
+    def test_delete_should_reject_when_active_mission_exists(self):
+        wayline = mock_dji_state.create_wayline(name="被占用航线")
+        route = Route.objects.create(tenant=self.tenant, name="被占用航线", creator_name="管理员")
+        TenantRouteIndex.objects.create(
             tenant=self.tenant,
-            name=name,
+            route=route,
+            dji_wayline_id=wayline["wayline_id"],
+            sync_status=SyncStatus.SYNCED,
+        )
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="运行中任务",
             route=route,
             route_name=route.name,
             drone=self.drone,
             drone_name=self.drone.name,
             pilot=self.pilot_member,
-            pilot_name=self.pilot_staff.name,
-            status=status,
+            pilot_name="飞手",
+            status=MissionStatus.RUNNING,
         )
 
-    def test_create_route_should_return_success(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-
-        response = self.client.post(
-            "/api/v1/routes",
-            {
-                "name": "城市中心巡检航线",
-                "route_type": RouteType.PENDING_EXTENSION,
-                "drone_type_id": 1,
-                "total_distance": "2063.50",
-                "estimated_duration": 1200,
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["name"], "城市中心巡检航线")
-        self.assertEqual(response.data["data"]["route_type"], RouteType.PENDING_EXTENSION)
-        self.assertEqual(response.data["data"]["status"], RouteStatus.ACTIVE)
-        self.assertEqual(response.data["data"]["creator_name"], self.staff.name)
-
-        route = Route.objects.get(id=response.data["data"]["id"])
-        self.assertEqual(route.creator_name, self.staff.name)
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="ROUTE_CREATE",
-                target_type="route",
-                target_id=str(route.id),
-            ).exists()
-        )
-
-    def test_create_route_same_name_should_still_be_allowed(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        payload = {
-            "name": "重复名称航线",
-            "route_type": RouteType.PENDING_EXTENSION,
-        }
-
-        first = self.client.post("/api/v1/routes", payload, format="json")
-        self.assertEqual(first.status_code, 201)
-
-        second = self.client.post("/api/v1/routes", payload, format="json")
-        self.assertEqual(second.status_code, 201)
-        self.assertEqual(second.data["code"], "00000")
-        self.assertEqual(second.data["msg"], "success")
-
-    def test_create_route_with_waypoint_count_should_return_invalid_params(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-
-        response = self.client.post(
-            "/api/v1/routes",
-            {
-                "name": "非法航点数量航线",
-                "route_type": RouteType.PENDING_EXTENSION,
-                "waypoint_count": 12,
-            },
-            format="json",
-        )
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertIn("waypoint_count", response.data["data"])
+        self.assertIn(wayline["wayline_id"], mock_dji_state.waylines)
 
-    def test_create_route_invalid_params_should_return_invalid_params(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        response = self.client.post(
-            "/api/v1/routes",
-            {
-                "route_type": RouteType.PENDING_EXTENSION,
-            },
-            format="json",
+    def test_delete_should_remove_route_when_only_historical_missions_exist(self):
+        wayline = mock_dji_state.create_wayline(name="可删除航线")
+        route = Route.objects.create(tenant=self.tenant, name="可删除航线", creator_name="管理员")
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id=wayline["wayline_id"],
+            sync_status=SyncStatus.SYNCED,
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertIn("name", response.data["data"])
-
-    def test_create_route_without_auth_should_return_permission_denied(self):
-        response = self.client.post(
-            "/api/v1/routes",
-            {
-                "name": "未认证航线",
-                "route_type": RouteType.PENDING_EXTENSION,
-            },
-            format="json",
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="已完成任务",
+            route=route,
+            route_name=route.name,
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.COMPLETED,
         )
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_create_route_without_permission_should_return_permission_denied(self):
-        self.client.force_authenticate(self.user)
-        response = self.client.post(
-            "/api/v1/routes",
-            {
-                "name": "无权限航线",
-                "route_type": RouteType.PENDING_EXTENSION,
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
-
-    def test_list_routes_should_return_success(self):
-        self._grant_permission("route.view_route")
-        self.client.force_authenticate(self.user)
-        self._create_route(name="珠海岸线巡查航线")
-        self._create_route(name="前山河巡检航线")
-
-        response = self.client.get("/api/v1/routes")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertIn("list", response.data["data"])
-        self.assertGreaterEqual(len(response.data["data"]["list"]), 2)
-
-    def test_list_routes_with_name_filter_should_return_filtered_results(self):
-        self._grant_permission("route.view_route")
-        self.client.force_authenticate(self.user)
-        self._create_route(name="城市主干道巡检航线")
-        self._create_route(name="海岸线巡查航线")
-
-        response = self.client.get("/api/v1/routes", {"name": "海岸线"})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(len(response.data["data"]["list"]), 1)
-        self.assertEqual(response.data["data"]["list"][0]["name"], "海岸线巡查航线")
-
-    def test_list_routes_without_auth_should_return_permission_denied(self):
-        response = self.client.get("/api/v1/routes")
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_list_routes_without_permission_should_return_permission_denied(self):
-        self.client.force_authenticate(self.user)
-        response = self.client.get("/api/v1/routes")
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
-
-    def test_retrieve_route_should_return_success(self):
-        self._grant_permission("route.view_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="详情航线A")
-
-        response = self.client.get(f"/api/v1/routes/{route.id}")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["id"], route.id)
-        self.assertEqual(response.data["data"]["name"], "详情航线A")
-
-    def test_retrieve_route_not_found_should_return_resource_not_found(self):
-        self._grant_permission("route.view_route")
-        self.client.force_authenticate(self.user)
-
-        response = self.client.get("/api/v1/routes/999999")
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["code"], "C0404")
-        self.assertEqual(response.data["code"], "C0404")
-
-    def test_retrieve_route_without_auth_should_return_permission_denied(self):
-        route = self._create_route(name="详情航线未认证")
-
-        response = self.client.get(f"/api/v1/routes/{route.id}")
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_retrieve_route_without_permission_should_return_permission_denied(self):
-        route = self._create_route(name="详情航线无权限")
-        self.client.force_authenticate(self.user)
-
-        response = self.client.get(f"/api/v1/routes/{route.id}")
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
-
-    def test_patch_route_should_return_success(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="待更新航线")
-
-        response = self.client.patch(
-            f"/api/v1/routes/{route.id}",
-            {
-                "name": "已更新航线",
-                "estimated_duration": 1800,
-                "total_distance": "3560.80",
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["name"], "已更新航线")
-        self.assertEqual(response.data["data"]["estimated_duration"], 1800)
-        self.assertEqual(response.data["data"]["total_distance"], "3560.80")
-        route.refresh_from_db()
-        self.assertEqual(route.name, "已更新航线")
-        self.assertEqual(route.estimated_duration, 1800)
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="ROUTE_UPDATE",
-                target_type="route",
-                target_id=str(route.id),
-            ).exists()
-        )
-
-    def test_patch_route_empty_body_should_return_invalid_params(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="空更新航线")
-
-        response = self.client.patch(
-            f"/api/v1/routes/{route.id}",
-            {},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        route.refresh_from_db()
-        self.assertEqual(route.name, "空更新航线")
-
-    def test_patch_route_should_not_allow_status_field(self):
-        """测试 PATCH 不能修改 status 字段"""
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="状态测试航线", status=RouteStatus.DISABLED)
-
-        original_status = route.status
-        response = self.client.patch(
-            f"/api/v1/routes/{route.id}",
-            {"status": RouteStatus.ACTIVE},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        route.refresh_from_db()
-        self.assertEqual(route.status, original_status)
-
-    def test_patch_route_not_found_should_return_resource_not_found(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-
-        response = self.client.patch(
-            "/api/v1/routes/999999",
-            {"name": "不存在航线"},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["code"], "C0404")
-        self.assertEqual(response.data["code"], "C0404")
-
-    def test_patch_route_without_auth_should_return_permission_denied(self):
-        route = self._create_route(name="未认证更新航线")
-
-        response = self.client.patch(
-            f"/api/v1/routes/{route.id}",
-            {"name": "未认证更新后"},
-            format="json",
-        )
-
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_patch_route_without_permission_should_return_permission_denied(self):
-        route = self._create_route(name="无权限更新航线")
-        self.client.force_authenticate(self.user)
-
-        response = self.client.patch(
-            f"/api/v1/routes/{route.id}",
-            {"name": "无权限更新后"},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
-
-    def test_enable_route_should_return_success(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="待启用航线", status=RouteStatus.DISABLED)
-
-        response = self.client.post(f"/api/v1/routes/{route.id}/enable")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["status"], RouteStatus.ACTIVE)
-
-        route.refresh_from_db()
-        self.assertEqual(route.status, RouteStatus.ACTIVE)
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="ROUTE_ENABLE",
-                target_type="route",
-                target_id=str(route.id),
-            ).exists()
-        )
-
-    def test_enable_active_route_should_be_idempotent_success(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="已启用航线", status=RouteStatus.ACTIVE)
-
-        response = self.client.post(f"/api/v1/routes/{route.id}/enable")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["status"], RouteStatus.ACTIVE)
-
-    def test_enable_route_with_body_should_return_invalid_params(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="启用参数航线", status=RouteStatus.DISABLED)
-
-        response = self.client.post(
-            f"/api/v1/routes/{route.id}/enable",
-            {"unexpected": True},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        route.refresh_from_db()
-        self.assertEqual(route.status, RouteStatus.DISABLED)
-
-    def test_enable_route_not_found_should_return_resource_not_found(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-
-        response = self.client.post("/api/v1/routes/999999/enable")
-
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["code"], "C0404")
-        self.assertEqual(response.data["code"], "C0404")
-
-    def test_enable_route_without_auth_should_return_permission_denied(self):
-        route = self._create_route(name="未认证启用航线", status=RouteStatus.DISABLED)
-
-        response = self.client.post(f"/api/v1/routes/{route.id}/enable")
-
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_enable_route_without_permission_should_return_permission_denied(self):
-        route = self._create_route(name="无权限启用航线", status=RouteStatus.DISABLED)
-        self.client.force_authenticate(self.user)
-
-        response = self.client.post(f"/api/v1/routes/{route.id}/enable")
-
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
-
-    def test_disable_route_should_return_success(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="待禁用航线", status=RouteStatus.ACTIVE)
-
-        response = self.client.post(f"/api/v1/routes/{route.id}/disable")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["status"], RouteStatus.DISABLED)
-
-        route.refresh_from_db()
-        self.assertEqual(route.status, RouteStatus.DISABLED)
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="ROUTE_DISABLE",
-                target_type="route",
-                target_id=str(route.id),
-            ).exists()
-        )
-
-    def test_disable_disabled_route_should_be_idempotent_success(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="已禁用航线", status=RouteStatus.DISABLED)
-
-        response = self.client.post(f"/api/v1/routes/{route.id}/disable")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["status"], RouteStatus.DISABLED)
-
-    def test_disable_route_with_body_should_return_invalid_params(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="禁用参数航线", status=RouteStatus.ACTIVE)
-
-        response = self.client.post(
-            f"/api/v1/routes/{route.id}/disable",
-            {"unexpected": True},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        route.refresh_from_db()
-        self.assertEqual(route.status, RouteStatus.ACTIVE)
-
-    def test_disable_route_not_found_should_return_resource_not_found(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-
-        response = self.client.post("/api/v1/routes/999999/disable")
-
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["code"], "C0404")
-        self.assertEqual(response.data["code"], "C0404")
-
-    def test_disable_route_without_auth_should_return_permission_denied(self):
-        route = self._create_route(name="未认证禁用航线", status=RouteStatus.ACTIVE)
-
-        response = self.client.post(f"/api/v1/routes/{route.id}/disable")
-
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_disable_route_without_permission_should_return_permission_denied(self):
-        route = self._create_route(name="无权限禁用航线", status=RouteStatus.ACTIVE)
-        self.client.force_authenticate(self.user)
-
-        response = self.client.post(f"/api/v1/routes/{route.id}/disable")
-
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
-
-    def test_delete_route_should_hard_delete_route_and_waypoints(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="待物理删除航线")
-        self._create_waypoint(route, sequence=1)
-        self._create_waypoint(route, sequence=2)
 
         response = self.client.delete(f"/api/v1/routes/{route.id}")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["delete_mode"], "hard")
-        self.assertEqual(response.data["data"]["deleted_waypoint_count"], 2)
         self.assertFalse(Route.objects.filter(id=route.id).exists())
-        self.assertFalse(Waypoint.objects.filter(route_id=route.id).exists())
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="ROUTE_DELETE",
-                target_type="route",
-                target_id=str(route.id),
-            ).exists()
-        )
-
-    def test_delete_route_with_missions_should_disable_instead_of_hard_delete(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="被任务引用航线", status=RouteStatus.ACTIVE)
-        self._create_mission(route)
-
-        response = self.client.delete(f"/api/v1/routes/{route.id}")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["delete_mode"], "disabled")
-        route.refresh_from_db()
-        self.assertEqual(route.status, RouteStatus.DISABLED)
-        self.assertTrue(Route.objects.filter(id=route.id).exists())
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="ROUTE_DELETE",
-                target_type="route",
-                target_id=str(route.id),
-            ).exists()
-        )
-
-    def test_delete_route_already_disabled_with_missions_should_be_idempotent(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="已禁用引用航线", status=RouteStatus.ACTIVE)
-        self._create_mission(route, name="引用禁用航线任务")
-        route.status = RouteStatus.DISABLED
-        route.save(update_fields=["status", "updated_at"])
-
-        response = self.client.delete(f"/api/v1/routes/{route.id}")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["delete_mode"], "disabled")
-        route.refresh_from_db()
-        self.assertEqual(route.status, RouteStatus.DISABLED)
-
-    def test_delete_route_with_body_should_return_invalid_params(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-        route = self._create_route(name="删除参数校验航线")
-
-        response = self.client.delete(
-            f"/api/v1/routes/{route.id}",
-            {"unexpected": True},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertTrue(Route.objects.filter(id=route.id).exists())
-
-    def test_delete_route_not_found_should_return_resource_not_found(self):
-        self._grant_permission("route.manage_route")
-        self.client.force_authenticate(self.user)
-
-        response = self.client.delete("/api/v1/routes/999999")
-
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["code"], "C0404")
-        self.assertEqual(response.data["code"], "C0404")
-
-    def test_delete_route_without_auth_should_return_permission_denied(self):
-        route = self._create_route(name="删除未认证航线")
-
-        response = self.client.delete(f"/api/v1/routes/{route.id}")
-
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_delete_route_without_permission_should_return_permission_denied(self):
-        route = self._create_route(name="删除无权限航线")
-        self.client.force_authenticate(self.user)
-
-        response = self.client.delete(f"/api/v1/routes/{route.id}")
-
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
+        mission.refresh_from_db()
+        self.assertIsNone(mission.route)
+        self.assertNotIn(wayline["wayline_id"], mock_dji_state.waylines)

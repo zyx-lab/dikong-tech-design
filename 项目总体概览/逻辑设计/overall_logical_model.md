@@ -278,8 +278,8 @@ PostgreSQL
 | code | varchar(64) | NOT NULL | 租户内业务编码 |
 | name | varchar(128) | NOT NULL | 无人机名称 |
 | model | varchar(128) | NOT NULL | 型号 |
-| serial_no | varchar(128) | NOT NULL | 出厂序列号 |
-| status | varchar(16) | NOT NULL, DEFAULT 'DISABLED' | 状态：`ENABLED / DISABLED / MAINTENANCE / RETIRED` |
+| device_sn | varchar(128) | NOT NULL | 设备序列号 |
+| status | varchar(16) | NOT NULL, DEFAULT 'DISABLED' | 状态：`ENABLED / DISABLED` |
 | org_id | bigint |  | 组织 ID |
 | created_by_tenant_member_id | bigint |  | 创建人 TenantMember ID |
 | created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
@@ -287,8 +287,8 @@ PostgreSQL
 
 约束：
 1. 唯一约束：`(tenant_id, code)`。
-2. 唯一约束：`(tenant_id, serial_no)`。
-3. `RETIRED` 状态不可逆。
+2. 唯一约束：`(tenant_id, device_sn)`。
+3. `status` 仅作为当前同步周期下的在线摘要，由后台同步任务写入。
 
 ---
 

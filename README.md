@@ -48,6 +48,42 @@ python manage.py create_business_admin_account --username biz_root --password 'Y
 python manage.py runserver 0.0.0.0:8001
 ```
 
+如需启用 DJI 后台同步，请在完成 `DJI_UPSTREAM_BASE_URL`、`DjiWorkspaceConfig` 等上游配置后，单独启动同步调度进程：
+
+补充说明：
+- Django management command 是 Django 提供的命令行管理入口，用来执行“启动服务、跑迁移、导数据、跑后台任务”这类系统级操作
+- 它不是 HTTP API，不通过浏览器或 Swagger 调用，而是在项目根目录下通过 `python manage.py <command>` 执行
+- 常见例子：
+  - `python manage.py migrate`
+  - `python manage.py runserver 0.0.0.0:8001`
+  - `python manage.py createsuperuser`
+
+当前项目里的 DJI 同步调度命令就是一个 management command，命令名为 `run_dji_sync_scheduler`：
+
+```bash
+python manage.py run_dji_sync_scheduler --interval-seconds 60
+```
+
+说明：
+- 通用格式：`python manage.py run_dji_sync_scheduler [options]`
+- 该命令默认循环执行设备、任务、媒体同步
+- `--once` 只跑一轮，适合人工触发或排障
+- `--max-cycles N` 适合受控运行和测试
+- 循环模式下单轮失败不会退出进程，下一轮会继续重试
+
+常见用法：
+
+```bash
+# 只执行一轮同步
+python manage.py run_dji_sync_scheduler --once
+
+# 每 60 秒执行一轮
+python manage.py run_dji_sync_scheduler --interval-seconds 60
+
+# 不等待间隔，连续执行 2 轮后退出
+python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
+```
+
 ## 代码与能力映射
 
 - 路由入口：`config/urls.py`
@@ -103,16 +139,14 @@ python manage.py runserver 0.0.0.0:8001
 - `POST /api/v1/iam/platform/tenants/{tenantId}/initialize-admin`
 
 5. Business API - 无人机（drone）
+- `GET /api/v1/drones/available`
 - `GET/POST /api/v1/drones`
 - `GET/PUT/PATCH /api/v1/drones/{id}`
-- `DELETE /api/v1/drones/{id}`
-- `POST /api/v1/drones/{id}/enable`
-- `POST /api/v1/drones/{id}/disable`
-- `POST /api/v1/drones/{id}/maintenance`
-- `POST /api/v1/drones/{id}/retire`
-- `GET /api/v1/drones/{id}/assignments/history`
-- `GET /api/v1/drones/{id}/assignments/active`
-- `GET /api/v1/drones/{id}/assignments/latest`
+- `GET /api/v1/drones/{id}/live/capacity`
+- `POST /api/v1/drones/{id}/live/start`
+- `POST /api/v1/drones/{id}/live/stop`
+- `POST /api/v1/drones/{id}/live/video-quality`
+- `POST /api/v1/drones/{id}/live/video-source`
 
 6. Business API - 无人机分配（drone_assignment）
 - `GET/POST /api/v1/drone-assignments`

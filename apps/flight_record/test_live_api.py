@@ -131,7 +131,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             code="FRL-DRN-001",
             name="实时飞行记录无人机",
             model="M300",
-            serial_no="FRL-SN-001",
+            device_sn="FRL-SN-001",
             status=DroneStatus.ENABLED,
         )
         self.secondary_drone = Drone.objects.create(
@@ -139,7 +139,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             code="FRL-DRN-002",
             name="实时飞行记录无人机2",
             model="M350",
-            serial_no="FRL-SN-002",
+            device_sn="FRL-SN-002",
             status=DroneStatus.ENABLED,
         )
         self.mission = Mission.objects.create(
@@ -171,7 +171,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             code="FRL-OTHER-DRN-001",
             name="其他租户飞行记录无人机",
             model="M350",
-            serial_no="FRL-OTHER-SN-001",
+            device_sn="FRL-OTHER-SN-001",
             status=DroneStatus.ENABLED,
         )
         self.other_tenant_mission = Mission.objects.create(

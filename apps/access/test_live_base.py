@@ -6,9 +6,11 @@ from urllib.request import Request, urlopen
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
-from django.test import LiveServerTestCase
+from django.test import LiveServerTestCase, override_settings
 
 from apps.access.test_support import ensure_staff_profile, ensure_tenant_role_binding
+from apps.dji_bff.models import DjiWorkspaceConfig
+from apps.dji_mock.state import mock_dji_state
 
 User = get_user_model()
 
@@ -172,3 +174,31 @@ class LivePlatformOperatorApiTestCase(LiveIamApiTestCase):
         )
         ensure_staff_profile(self.platform_user, name="平台运营管理员")
         self.login(username="platform_operator_api", password="pass1234")
+
+
+class LiveDjiGatewayApiTestCase(LiveIamApiTestCase):
+    def setUp(self):
+        self._mock_settings = override_settings(
+            ENABLE_DJI_MOCK_SERVER=True,
+            DJI_UPSTREAM_BASE_URL=f"{self.live_server_url}/__mock-dji__",
+        )
+        self._mock_settings.enable()
+        try:
+            super().setUp()
+            mock_dji_state.reset()
+            self.mock_workspace = mock_dji_state.current_workspace_payload()
+            self.mock_user = mock_dji_state.current_user_payload()
+            self.dji_workspace_config = DjiWorkspaceConfig.objects.create(
+                workspace_id=self.mock_workspace["workspace_id"],
+                dji_user_id=self.mock_user["user_id"],
+                dji_username=self.mock_user["username"],
+                dji_user_type=str(self.mock_user["user_type"]),
+                access_token=self.mock_user["access_token"],
+                mqtt_username=self.mock_user["mqtt_username"],
+                mqtt_password=self.mock_user["mqtt_password"],
+                mqtt_addr=self.mock_user["mqtt_addr"],
+            )
+        except Exception:
+            self._mock_settings.disable()
+            raise
+        self.addCleanup(self._mock_settings.disable)

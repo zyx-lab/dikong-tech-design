@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     "apps.mission",
     "apps.flight_record",
     "apps.media_file",
+    "apps.dji_bff",
     "drf_spectacular",
 ]
 
@@ -135,3 +136,8 @@ SPECTACULAR_SETTINGS = {
         "RouteTypeEnum": "apps.route.models.RouteType",
     },
 }
+
+DJI_UPSTREAM_BASE_URL = os.getenv("DJI_UPSTREAM_BASE_URL", "")
+DJI_UPSTREAM_TIMEOUT_SECONDS = int(os.getenv("DJI_UPSTREAM_TIMEOUT_SECONDS", "10"))
+ENABLE_DJI_MOCK_SERVER = os.getenv("ENABLE_DJI_MOCK_SERVER", "false").lower() == "true"
+DJI_INTERNAL_API_TOKEN = os.getenv("DJI_INTERNAL_API_TOKEN", "")

@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any, Callable, Optional
 
 from django.db.models import Q, QuerySet
@@ -149,7 +151,21 @@ def snapshot(instance) -> Optional[dict[str, Any]]:
     if instance is None:
         return None
     field_names = [field.name for field in instance._meta.fields]
-    return model_to_dict(instance, fields=field_names)
+    return _json_safe(model_to_dict(instance, fields=field_names))
+
+
+def _json_safe(value: Any):
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    return value
 
 
 def _resolve_client_ip(request) -> Optional[str]:
@@ -189,8 +205,8 @@ def log_action(
         action=action,
         target_type=target_type,
         target_id=str(target_id or ""),
-        before_data=before_data,
-        after_data=after_data,
+        before_data=_json_safe(before_data),
+        after_data=_json_safe(after_data),
         ip=_resolve_client_ip(request),
         request_id=getattr(request, "request_id", "") if request is not None else "",
     )

@@ -1,74 +1,49 @@
+from datetime import datetime
+
 from rest_framework import serializers
 
-from apps.access.models import ScopeType
-from apps.api_v1.tenant_scope import require_request_tenant
 from apps.media_file.models import MediaFile
 
 
 class MediaFileReadSerializer(serializers.ModelSerializer):
+    mission_id = serializers.SerializerMethodField()
+    device_sn = serializers.SerializerMethodField()
+    dji_file_id = serializers.SerializerMethodField()
+    sync_status = serializers.SerializerMethodField()
+    last_sync_at = serializers.SerializerMethodField()
+
     class Meta:
         model = MediaFile
         fields = [
             "id",
             "flight_record",
+            "mission_id",
+            "device_sn",
             "media_type",
             "file_name",
-            "file_url",
             "thumbnail_url",
             "file_size",
             "latitude",
             "longitude",
             "captured_at",
-            "is_deleted",
-            "deleted_at",
+            "dji_file_id",
+            "sync_status",
+            "last_sync_at",
             "created_at",
         ]
         read_only_fields = fields
 
+    def get_mission_id(self, obj) -> int | None:
+        return getattr(getattr(obj, "dji_index", None), "mission_id", None)
 
-class MediaFileWriteSerializer(serializers.ModelSerializer):
-    def _validate_assigned_scope_target(self, *, flight_record):
-        request = self.context.get("request")
-        decision = getattr(request, "_authz_decision", None) if request is not None else None
-        if decision is None or decision.scope != ScopeType.ASSIGNED:
-            return
-        if flight_record is None or flight_record.pilot_id != decision.tenant_member_id:
-            raise serializers.ValidationError({"flight_record": "ASSIGNED 范围下只能操作当前飞手自己的飞行记录媒体"})
+    def get_device_sn(self, obj) -> str:
+        return getattr(getattr(obj, "dji_index", None), "device_sn", "")
 
-    def validate(self, attrs):
-        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
-        if unknown_fields:
-            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
+    def get_dji_file_id(self, obj) -> str:
+        return getattr(getattr(obj, "dji_index", None), "dji_file_id", "")
 
-        current_tenant = require_request_tenant(self.context)
-        instance = getattr(self, "instance", None)
-        flight_record = attrs.get("flight_record", instance.flight_record if instance is not None else None)
-        if flight_record is not None and flight_record.tenant_id != current_tenant.id:
-            raise serializers.ValidationError({"flight_record": "仅允许绑定当前租户下的飞行记录"})
-        self._validate_assigned_scope_target(flight_record=flight_record)
-        return attrs
+    def get_sync_status(self, obj) -> str:
+        return getattr(getattr(obj, "dji_index", None), "sync_status", "")
 
-    class Meta:
-        model = MediaFile
-        fields = [
-            "flight_record",
-            "media_type",
-            "file_name",
-            "file_url",
-            "thumbnail_url",
-            "file_size",
-            "latitude",
-            "longitude",
-            "captured_at",
-        ]
-        extra_kwargs = {
-            "flight_record": {"help_text": "关联飞行记录 ID，可为空；若填写必须属于当前租户。"},
-            "media_type": {"help_text": "媒体类型。`1=照片`，`2=视频`。"},
-            "file_name": {"help_text": "文件名，用于列表展示和业务检索。"},
-            "file_url": {"help_text": "原始文件访问地址。"},
-            "thumbnail_url": {"help_text": "缩略图地址，可为空。"},
-            "file_size": {"help_text": "文件大小，单位字节，可为空。"},
-            "latitude": {"help_text": "拍摄位置纬度，可为空。"},
-            "longitude": {"help_text": "拍摄位置经度，可为空。"},
-            "captured_at": {"help_text": "拍摄时间，可为空。"},
-        }
+    def get_last_sync_at(self, obj) -> datetime | None:
+        return getattr(getattr(obj, "dji_index", None), "last_sync_at", None)

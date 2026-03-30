@@ -53,7 +53,7 @@ PostgreSQL
 | code | varchar(64) | NOT NULL | - | 业务编码（租户内唯一） |
 | name | varchar(128) | NOT NULL | - | 无人机名称 |
 | model | varchar(128) | NOT NULL | - | 型号 |
-| serial_no | varchar(128) | NOT NULL | - | 出厂序列号（租户内唯一） |
+| device_sn | varchar(128) | NOT NULL | - | 设备序列号（租户内唯一） |
 | status | varchar(16) | NOT NULL | DISABLED | 状态 |
 | org_id | bigint | - | - | 组织 ID（预留） |
 | created_by_tenant_member_id | bigint | - | - | 创建人 TenantMember ID |
@@ -66,15 +66,13 @@ PostgreSQL
 |----|------|
 | ENABLED | 启用 |
 | DISABLED | 停用 |
-| MAINTENANCE | 维护中 |
-| RETIRED | 已退役 |
 
 **业务规则**：
 1. `(tenant_id, code)` 唯一。
-2. `(tenant_id, serial_no)` 唯一。
+2. `(tenant_id, device_sn)` 唯一。
 3. `created_by_tenant_member_id` 用于 `OWN` 范围判定与审计。
-4. `DELETE /api/v1/drones/{id}` 仅允许空 body；若存在 `ACTIVE` 分配关系，返回 `C0201` 并拒绝删除。
-5. 已退役（`RETIRED`）状态不可逆。
+4. `status` 只保留 `ENABLED / DISABLED`，由后台同步任务按“本轮是否在线可见”写入。
+5. 当前不提供 `DELETE /api/v1/drones/{id}`，也不提供 `enable / disable / maintenance / retire` 这类状态动作接口。
 
 ---
 
@@ -150,4 +148,4 @@ PostgreSQL
 | C0404 | 404 | 目标资源不存在 |
 | E0001 | 500 | 系统异常 |
 
-当前实现中，`POST /api/v1/drones`、`DELETE /api/v1/drones/{id}` 与状态动作接口也统一返回 `code / msg / data`。
+当前实现中，`/api/v1/drones*` 与 `/api/v1/drone-assignments*` 统一返回 `code / msg / data`。
