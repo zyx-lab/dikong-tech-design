@@ -16,7 +16,7 @@
 | id | bigserial | PK | 自增 | 主键 |
 | tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
 | name | varchar(100) | NOT NULL | - | 航线名称 |
-| xml_file | varchar(500) | NOT NULL | '' | 本地 XML 草稿路径（`FileField`） |
+| xml_file | varchar(100) | NOT NULL | '' | 本地 XML 草稿路径（`FileField`） |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
@@ -25,7 +25,8 @@
 2. 上传 XML 必须可解析，否则返回 `B0001`。
 3. 所有本地编辑后都会把关联 `TenantRouteIndex.is_published` 置为 `false`。
 4. `waypoints` 表只做内部/历史存储，不再构成公开业务契约。
-5. 删除 `Route` 时，若存在 `Mission` 处于 `PENDING` 或 `RUNNING`，删除操作会被拒绝（`C0201`）。
+5. 删除 `Route` 时，若存在 `Mission` 处于 `PENDING`、`RUNNING` 或 `PAUSED`，删除操作会被拒绝（`B0001`）。
+6. 删除 `Route` 时，会先清理残留 `waypoints` 行，再删除 route 主记录与 XML 文件。
 
 ## 2. tenant_route_indexes（航线发布索引表）
 

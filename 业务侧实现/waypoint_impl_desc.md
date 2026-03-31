@@ -1,6 +1,6 @@
 # 航点实现说明
 
-- updated_at: 2026-03-30
+- updated_at: 2026-03-31
 - entity: waypoint
 
 ## 当前边界
@@ -12,7 +12,7 @@
 - 没有公开 API `/api/v1/waypoints*`
 - 没有独立权限 `waypoint.view_waypoint` / `waypoint.manage_waypoint`
 - 没有独立审计动作
-- 只保留 `waypoints` 表，作为 `Route` 聚合的内部持久化结构
+- 只保留 `waypoints` 表，作为历史内部持久化结构
 
 ## 数据模型
 
@@ -32,23 +32,15 @@
 
 - 同一 route 下 `sequence` 唯一 (`waypoints_route_seq_unique`)
 - Django 侧通过 `route.waypoint_rows` 访问
+- `route` 外键删除策略仍是 `PROTECT`，但 route 删除 API 会先主动清理残留 waypoint 行
 
-## 写入路径
+## 当前运行语义
 
-`waypoints` 的新增、替换和删除全部通过 `Route` 聚合写入：
-
-- `POST /api/v1/routes`
-- `PUT / PATCH /api/v1/routes/{id}`
-
-写入语义：
-
-- 提交 `Route.waypoints[]` 时，按整条航线全量替换内部 waypoint 行
-- 不再支持单航点独立 CRUD
-- `route.waypoint_count` 由 route 聚合写链路统一回写
+- 当前 `POST /api/v1/routes` 与 `PUT /api/v1/routes/{id}` 只写 `xml_file`，不再写入 `waypoints` 行。
+- 不再支持单航点独立 CRUD。
+- 删除 `Route` 时，系统会先清理残留 waypoint 行，避免历史数据阻塞 route 删除。
 
 ## 关键实现文件
 
 - apps/waypoint/models.py
-- apps/route/serializers.py
-- apps/route/services.py
 - apps/route/views.py

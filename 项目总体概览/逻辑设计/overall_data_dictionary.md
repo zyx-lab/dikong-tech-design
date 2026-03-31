@@ -358,24 +358,14 @@ PostgreSQL
 | id | bigserial | PK | 自增 | 航线 ID |
 | tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
 | name | varchar(100) | NOT NULL | - | 航线名称 |
-| route_type | smallint | NOT NULL | 0 | 航线类型扩展位 |
-| drone_type_id | bigint | - | - | 适用无人机类型 ID（预留字段） |
-| total_distance | numeric(12,2) | - | - | 航线总长度（米） |
-| estimated_duration | integer | - | - | 预计飞行时长（秒） |
-| waypoint_count | integer | - | - | 航点数量 |
-| creator_name | varchar(50) | NOT NULL | '' | 创建人姓名 |
+| xml_file | varchar(100) | NOT NULL | '' | 本地 XML 草稿路径 |
 | created_at | timestamp | - | now() | 创建时间 |
 | updated_at | timestamp | - | now() | 更新时间 |
 
-**route_type 状态值**：
-| 值 | 含义 |
-|----|------|
-| 0 | 待扩展 |
-
 **业务规则**：
 1. 当前设计不再使用 `Route.status`。
-2. `Route` 是公开聚合根，航点只能通过 `Route.waypoints[]` 作为内部结构读写。
-3. 删除航线时，若存在 `PENDING / RUNNING` 任务引用，则拒绝删除；否则物理删除 route 与内部 waypoint 行。
+2. `Route` 是公开聚合根，当前唯一编辑输入是 `xml_file`。
+3. 删除航线时，若存在 `PENDING / RUNNING / PAUSED` 任务引用，则拒绝删除；否则删除 route、XML 文件和残留 waypoint 行。
 
 ---
 
@@ -401,7 +391,8 @@ PostgreSQL
 **业务规则**：
 1. `waypoints` 不再是独立业务资源。
 2. 当前没有公开 `/api/v1/waypoints*` 接口。
-3. route 提交新的 `waypoints[]` 时，内部 waypoint 行按整条航线全量替换。
+3. 当前 route 创建与更新接口不再写入 `waypoints`；该表仅保留历史内部行。
+4. route 删除接口会先清理残留 `waypoints` 行，再删除 route。
 
 ---
 

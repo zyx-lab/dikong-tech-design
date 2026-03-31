@@ -323,18 +323,14 @@ PostgreSQL
 | id | bigserial | PK | 航线 ID |
 | tenant_id | bigint | NOT NULL, FK -> tenants.id | 所属租户 |
 | name | varchar(100) | NOT NULL | 航线名称 |
-| route_type | smallint | NOT NULL, DEFAULT 0 | 航线类型扩展位：当前仅 `0-待扩展` |
-| drone_type_id | bigint |  | 适用无人机类型 ID（预留字段，无外键） |
-| total_distance | numeric(12,2) |  | 航线总长度（米） |
-| estimated_duration | integer |  | 预计飞行时长（秒） |
-| waypoint_count | integer |  | 航点数量 |
-| creator_name | varchar(50) | NOT NULL, DEFAULT '' | 创建人姓名 |
+| xml_file | varchar(100) | NOT NULL, DEFAULT '' | 本地 XML 草稿路径（`FileField`） |
 | created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
 | updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
 
 说明：
 1. 当前设计不再使用 `Route.status`。
-2. `Route` 是公开聚合根，航点通过 `waypoints[]` 作为内部编辑结构读写。
+2. `Route` 是公开聚合根，当前唯一编辑输入是 `xml_file`。
+3. `waypoints` 表仅保留为历史内部表，不参与当前正常的 route 创建/更新写链路。
 
 ---
 
@@ -352,7 +348,10 @@ PostgreSQL
 
 唯一约束：`(route_id, sequence)`
 
-说明：`waypoints` 只作为 `Route` 聚合的内部持久化结构，不再存在独立 waypoint 业务 API。
+说明：
+1. `waypoints` 只作为历史内部持久化结构，不再存在独立 waypoint 业务 API。
+2. 当前 `POST /api/v1/routes` 与 `PUT /api/v1/routes/{id}` 不再写入 `waypoints` 行。
+3. 删除 route 时，API 会先清理残留 `waypoints` 行，再删除 route 主记录。
 
 ---
 

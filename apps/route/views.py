@@ -379,6 +379,8 @@ class RouteViewSet(
         route_id = route.id
         xml_name = route.xml_file.name
         xml_storage = route.xml_file.storage
+        # `waypoints` 仅保留为历史内部表；删除 route 时一并清理残留行。
+        route.waypoint_rows.all().delete()
         route.delete()
         if xml_name:
             xml_storage.delete(xml_name)

@@ -12,8 +12,8 @@
 ## 当前边界
 
 - `Waypoint` 已不再是独立业务资源。
-- `waypoints` 表只承担 `Route` 聚合的内部持久化。
-- 前端和外部系统只能通过 `Route.waypoints[]` 读写整条航线的航点集。
+- `waypoints` 表只承担历史内部持久化。
+- 当前前端和外部系统不会通过公开 API 读写 `waypoints` 行。
 
 ## 状态机
 
@@ -30,28 +30,19 @@
 
 | 操作 | 路径 | 说明 |
 |-----|------|------|
-| 创建 route 草稿并写入航点 | POST /api/v1/routes | 可随 route 一起提交完整 `waypoints[]` |
-| 更新 route 草稿并替换航点 | PUT / PATCH /api/v1/routes/{id} | 提交 `waypoints[]` 时整条航线全量替换 |
-| 删除 route | DELETE /api/v1/routes/{id} | 同步删除该 route 的内部 waypoint 行 |
+| 创建 route 草稿 | POST /api/v1/routes | 当前只上传 XML，不写 `waypoints` 行 |
+| 更新 route 草稿 | PUT /api/v1/routes/{id} | 当前只替换 XML，不写 `waypoints` 行 |
+| 删除 route | DELETE /api/v1/routes/{id} | 先清理残留 `waypoints` 行，再删除 route |
 
 ## 接口语义
 
-### 通过 Route 创建航点集 POST /api/v1/routes
+### 公开 route 写接口
 
-- 功能：创建 route 草稿时写入内部航点行
-- 输入：`waypoints[]`
-- 约束：`sequence` 必须唯一，且从 `1` 开始校验为正整数
-- 写入结果：按 `sequence` 排序后批量写入 `waypoints`
-
-### 通过 Route 更新航点集 PUT / PATCH /api/v1/routes/{id}
-
-- 功能：更新 route 草稿时维护内部航点行
-- 语义：
-  - 提交 `waypoints[]` 时，视为整条航线完整替换
-  - `PATCH` 未提交 `waypoints[]` 时，不修改已有 waypoint 行
-- 副作用：route 聚合会统一回写 `route.waypoint_count`
+- `POST /api/v1/routes` 与 `PUT /api/v1/routes/{id}` 当前只维护 `Route.xml_file`。
+- 不接受公开 `waypoints[]` 输入。
+- 当前正常业务链路不会新增或替换 `waypoints` 行。
 
 ### 通过 Route 删除航点集 DELETE /api/v1/routes/{id}
 
-- 功能：删除 route 时清理内部 waypoint 行
-- 约束：若 route 正被 `PENDING / RUNNING` 任务引用，则整条 route 不允许删除
+- 功能：删除 route 时清理残留内部 waypoint 行
+- 约束：若 route 正被 `PENDING` / `RUNNING` / `PAUSED` 任务引用，则整条 route 不允许删除

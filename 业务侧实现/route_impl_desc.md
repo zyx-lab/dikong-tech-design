@@ -99,8 +99,8 @@
 - 约束：若存在 `Mission` 在 `PENDING`、`RUNNING` 或 `PAUSED`，拒绝删除（返回 `B0001`）。
 - 删除流程：
   - 先尝试删除 DJI 上游航线（若 `TenantRouteIndex.dji_wayline_id` 非空），404 会被忽略。
-  - 删除 `Route` 与关联 XML 文件。
-  - 相关 `Waypoint` 行在外键级联下被清理（`PROTECT` 除外），但 `waypoints` 表不再承载任何公开契约。
+  - 先清理残留 `Waypoint` 行，再删除 `Route` 与关联 XML 文件。
+  - `waypoints` 表只保留历史内部语义，不再承载任何公开契约。
   - 删除后记录 `ROUTE_DELETE` 审计。
 - 权限：`route.manage_route`。
 

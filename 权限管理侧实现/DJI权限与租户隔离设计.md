@@ -137,14 +137,15 @@
 
 ### 7.2 Route 模块
 
-1. `Route` 是公开业务聚合根；`waypoints[]` 只是其内部编辑结构。
+1. `Route` 是公开业务聚合根；当前唯一编辑输入是 `xml_file`，`waypoints` 仅保留为历史内部表。
 2. `TenantRouteIndex` 负责记录 `route_id -> dji_wayline_id` 以及 `is_published`。
 3. `POST /api/v1/routes` 当前只创建本地 route 草稿，不立即上传 DJI。
-4. `PUT / PATCH /api/v1/routes/{id}` 更新本地草稿；若提交 `waypoints[]`，则整条航线全量替换，并把 `is_published` 置回 `false`。
-5. `POST /api/v1/routes/{id}/publish` 才会调用 DJI wayline 上传链路。
-6. `GET /api/v1/routes/{id}/download` 只允许下载已发布 route。
-7. `DELETE /api/v1/routes/{id}` 在本地校验后调用 DJI 删除接口，并清理本地映射。
-8. 航线读写权限继续复用 `route.view_route` 与 `route.manage_route`。
+4. `PUT /api/v1/routes/{id}` 用完整 XML 替换本地草稿，并把 `is_published` 置回 `false`。
+5. `GET /api/v1/routes/{id}/xml` 返回当前草稿的原始 XML 文件流。
+6. `POST /api/v1/routes/{id}/publish` 才会调用 DJI wayline 上传链路。
+7. 当前没有公开 `GET /api/v1/routes/{id}/download` 接口。
+8. `DELETE /api/v1/routes/{id}` 在本地校验后调用 DJI 删除接口，并清理本地映射、XML 文件与残留 waypoint 行。
+9. 航线读写权限继续复用 `route.view_route` 与 `route.manage_route`。
 
 ### 7.3 Mission 模块
 

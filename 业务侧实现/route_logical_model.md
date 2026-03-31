@@ -1,6 +1,6 @@
 # 航线逻辑模型
 
-- updated_at: 2026-03-30T00:00:00Z
+- updated_at: 2026-03-31
 - entity: route
 
 ## 实体主表
@@ -39,7 +39,6 @@ Route 与 DJI 的发布关系由 `TenantRouteIndex` 表达：
 - `route.tenant -> access.Tenant`
 - `tenant_route_indexes.route -> route.Route`（一对一）
 - `waypoints.route_id -> routes.id`
-- `waypoint_count` 为系统维护冗余字段，只能由 route 聚合写链路回写
 - `waypoints(route_id, sequence)` 唯一
 
 ## 生命周期入口
@@ -52,7 +51,7 @@ Route 与 DJI 的发布关系由 `TenantRouteIndex` 表达：
 | 更新草稿 | PUT /api/v1/routes/{id} | 替换 XML 草稿（multipart/form-data，仅 `name` + `xml_file`） |
 | XML | GET /api/v1/routes/{id}/xml | 获取当前草稿的源 XML 文件 |
 | 发布 | POST /api/v1/routes/{id}/publish | 用 XML 构建 KMZ 并上传 DJI；更新 `TenantRouteIndex` |
-| 删除 | DELETE /api/v1/routes/{id} | 删除 route（会同步删除 XML 与 DJI 航线） |
+| 删除 | DELETE /api/v1/routes/{id} | 删除 route（会同步删除 XML、DJI 航线与残留 waypoint 行） |
 
 ## 接口语义
 
@@ -64,8 +63,6 @@ Route 与 DJI 的发布关系由 `TenantRouteIndex` 表达：
   - 创建 `Route` 并关联 XML 草稿；
   - 创建 `TenantRouteIndex(dji_wayline_id="", is_published=false)`；
   - 记录 `ROUTE_CREATE` 审计。
-
-### 更新草稿 PUT / PATCH /api/v1/routes/{id}
 
 ### 更新草稿 PUT /api/v1/routes/{id}
 
@@ -84,8 +81,6 @@ Route 与 DJI 的发布关系由 `TenantRouteIndex` 表达：
 
 ### 发布 POST /api/v1/routes/{id}/publish
 
-### 发布 POST /api/v1/routes/{id}/publish
-
 - 功能：用当前 XML 构建 KMZ 并上传 DJI。
 - 请求：不接受请求体；若检测到 `Content-Length`，返回 400。
 - 过程：
@@ -97,22 +92,8 @@ Route 与 DJI 的发布关系由 `TenantRouteIndex` 表达：
 ### 删除 DELETE /api/v1/routes/{id}
 
 - 功能：删除本地航线与 XML 草稿。
-- 约束：若存在 `Mission.status` 为 `PENDING`/`RUNNING` 的引用，拒绝删除。
+- 约束：若存在 `Mission.status` 为 `PENDING` / `RUNNING` / `PAUSED` 的引用，拒绝删除。
 - 过程：
   - 删除 `TenantRouteIndex` 关联的 DJI 航线（404 忽略）。
-  - 删除 `Route` 与 XML 文件。
+  - 先清理残留 `waypoints` 行，再删除 `Route` 与 XML 文件。
   - 记录 `ROUTE_DELETE` 审计并返回 `{id, deleted:true}`。
-
-### 下载 GET /api/v1/routes/{id}/download
-
-- 功能：下载当前已发布航线
-- 前置条件：`is_published=true`
-- 未发布行为：返回 `409 / C0201`
-
-### 删除 DELETE /api/v1/routes/{id}
-
-- 功能：删除 route
-- 约束：
-  - 若存在 `PENDING/RUNNING` 任务引用，则拒绝删除
-  - 否则删除本地 route 与内部 waypoint 行
-  - 若已存在 `dji_wayline_id`，同步删除 DJI 航线

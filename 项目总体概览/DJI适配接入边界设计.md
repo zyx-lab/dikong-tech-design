@@ -151,7 +151,7 @@ def get_available_drones(request):
 #### 模型变更
 | 变更项 | 说明 |
 |--------|------|
-| 聚合边界收敛 | `Route` 作为公开聚合根；`waypoints[]` 只作为内部编辑结构，不再单独暴露 `/api/v1/waypoints*` |
+| 聚合边界收敛 | `Route` 作为公开聚合根；当前只保留 `xml_file` 作为本地草稿输入，`waypoints` 表仅保留为历史内部表 |
 | 新增索引表 | `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, is_published)` |
 
 #### 对外 API
@@ -159,14 +159,15 @@ def get_available_drones(request):
 |------|------|------|
 | `GET /api/v1/routes` | GET | 查询当前 tenant 可见航线列表 |
 | `GET /api/v1/routes/{id}` | GET | 查询单条航线详情 |
-| `POST /api/v1/routes` | POST | 创建本地 route 草稿，可带完整 `waypoints[]` |
-| `PUT/PATCH /api/v1/routes/{id}` | PUT/PATCH | 更新本地 route 草稿；提交 `waypoints[]` 时整条航线全量替换 |
+| `POST /api/v1/routes` | POST | 创建本地 route 草稿，上传完整 XML |
+| `PUT /api/v1/routes/{id}` | PUT | 更新本地 route 草稿，上传完整 XML |
+| `GET /api/v1/routes/{id}/xml` | GET | 读取当前草稿的原始 XML |
 | `POST /api/v1/routes/{id}/publish` | POST | 显式把当前 route 草稿发布到 DJI |
-| `DELETE /api/v1/routes/{id}` | DELETE | 删除航线（同步删除 DJI + 清理 TenantRouteIndex） |
-| `GET /api/v1/routes/{id}/download` | GET | 下载当前已发布航线文件 |
+| `DELETE /api/v1/routes/{id}` | DELETE | 删除航线（同步删除 DJI、本地 XML 和残留 waypoint 行） |
 
 #### 现有接口改动
 - 保留 `routes` 的核心 CRUD 路径，但把“本地编辑”和“发布到 DJI”明确拆开
+- 明确删除对外 `GET /api/v1/routes/{id}/download`
 - 明确删除对外 `POST /api/v1/routes/{id}/sync`
 - 明确删除对外 `DELETE /api/v1/routes/{id}/sync`
 - 明确删除对外 `POST /api/v1/routes/{id}/favorite`
@@ -174,45 +175,25 @@ def get_available_drones(request):
 
 #### 当前航线草稿流程
 1. 前端调用 `POST /api/v1/routes` 创建本地 route 草稿。
-2. 请求体可以带完整 `waypoints[]`；写入时按整条航线全量落内部 waypoint 行。
+2. 请求体只接受 `multipart/form-data`，可写字段仅 `name` 与 `xml_file`，上传内容必须是可解析 XML。
 3. 系统自动创建 `TenantRouteIndex(dji_wayline_id=\"\", is_published=false)`。
-4. 之后前端可通过 `PUT / PATCH /api/v1/routes/{id}` 持续编辑本地草稿。
+4. 之后前端可通过 `PUT /api/v1/routes/{id}` 持续替换本地草稿。
 5. 任意本地编辑后，`is_published` 都会被置回 `false`。
+6. 如需回读草稿源文件，前端调用 `GET /api/v1/routes/{id}/xml`。
 
 #### 发布流程
 1. 前端调用 `POST /api/v1/routes/{id}/publish`。
-2. 系统从当前内部 waypoint 行生成 KMZ。
+2. 系统从当前保存的 XML 草稿生成 KMZ。
 3. 调用 DJI `POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload` 上传。
 4. 上传成功后把新的 `dji_wayline_id` 写回 `TenantRouteIndex`，并设置 `is_published=true`。
 5. 若此前已有旧的已发布 DJI 航线，则在新航线上传成功后删除旧航线。
 
 #### 内部调用 DJI
 - `POST /api/v1/routes`：只落本地库，不调用 DJI
-- `PUT/PATCH /api/v1/routes/{id}`：只更新本地草稿，不调用 DJI
+- `PUT /api/v1/routes/{id}`：只更新本地草稿，不调用 DJI
+- `GET /api/v1/routes/{id}/xml`：只回读本地 XML 文件，不调用 DJI
 - `POST /api/v1/routes/{id}/publish`：生成 KMZ → 上传 DJI → 回写 `dji_wayline_id` / `is_published`
-- `DELETE /api/v1/routes/{id}`：调用 `DELETE /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}`
-- `GET /api/v1/routes/{id}/download`：
-  1. 校验 `is_published=true` 且 `dji_wayline_id` 非空
-  2. 调用 DJI 下载地址：`GET /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}/url`
-  3. 透传 302 重定向，让前端直接访问 DJI 地址
-  4. 不做代理下载
-
-#### 航线下载实现
-
-```python
-def download_route(request, route_id):
-    route = Route.objects.get(id=route_id)
-    tenant_route = TenantRouteIndex.objects.get(route=route)
-    if not tenant_route.is_published or not tenant_route.dji_wayline_id:
-        raise ValidationError("航线尚未发布")
-
-    # 获取 DJI 下载地址
-    gateway = DjiGateway()
-    url = gateway.get_wayline_url(tenant_route.dji_wayline_id)
-
-    # 透传 302，让前端直接访问 DJI 地址
-    return redirect(url)
-```
+- `DELETE /api/v1/routes/{id}`：若 route 已发布，先调用 `DELETE /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}`；随后删除本地 `Route`、`xml_file` 和残留 `waypoints` 行
 
 ### 4.4 `/api/v1/missions*`
 

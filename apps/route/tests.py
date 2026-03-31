@@ -21,6 +21,7 @@ from apps.drone.models import Drone
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 from apps.route.services import build_route_kmz_from_xml
+from apps.waypoint.models import Waypoint
 
 User = get_user_model()
 
@@ -428,3 +429,21 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertTrue(Route.objects.filter(id=route.id).exists())
+
+    def test_delete_should_cleanup_legacy_waypoint_rows(self):
+        route = Route.objects.create(tenant=self.tenant, name="历史航点航线")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
+        route = self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="legacy-waypoint.xml")
+        Waypoint.objects.create(
+            route=route,
+            sequence=1,
+            latitude="22.54309600",
+            longitude="114.05786500",
+            altitude="80.00",
+        )
+
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(Route.objects.filter(id=route.id).exists())
+        self.assertFalse(Waypoint.objects.filter(route_id=route.id).exists())

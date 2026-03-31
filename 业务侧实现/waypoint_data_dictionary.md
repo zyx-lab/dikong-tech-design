@@ -6,13 +6,13 @@
 
 它当前的定位是：
 
-- `Route` 聚合的内部子表
-- 只服务 `Route.waypoints[]` 的持久化
+- 历史内部子表
+- 不再参与当前公开 route 编辑链路
 - 不再拥有独立 API、权限、审计和业务状态机
 
 ## 1. waypoints（航点内部存储表）
 
-**说明**：存储 route 草稿的内部航点行。
+**说明**：存储历史 route 数据遗留的内部航点行。
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
@@ -31,11 +31,10 @@
 **业务规则**：
 
 1. 该表不再直接对外暴露。
-2. 所有写入都来自 `Route` 聚合的 `waypoints[]`。
-3. 当 route 提交新的 `waypoints[]` 时，内部 waypoint 行按整条航线全量替换。
-4. `route.waypoint_count` 由 route 聚合写链路统一维护。
+2. 当前 `POST /api/v1/routes` 与 `PUT /api/v1/routes/{id}` 只处理 XML，不再写入该表。
+3. 删除 route 时，系统会先清理残留 waypoint 行，再删除 route。
 
 ## 2. 与实现对应
 
 1. 模型：`apps/waypoint/models.py`
-2. route 聚合写链路：`apps/route/serializers.py`、`apps/route/services.py`、`apps/route/views.py`
+2. route 删除链路：`apps/route/views.py`

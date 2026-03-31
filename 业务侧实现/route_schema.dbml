@@ -10,9 +10,9 @@
 // - GET /api/v1/routes
 // - POST /api/v1/routes
 // - GET /api/v1/routes/{id}
-// - PUT / PATCH /api/v1/routes/{id}
+// - PUT /api/v1/routes/{id}
+// - GET /api/v1/routes/{id}/xml
 // - POST /api/v1/routes/{id}/publish
-// - GET /api/v1/routes/{id}/download
 // - DELETE /api/v1/routes/{id}
 // 当前设计不再使用 Route.status；发布结果由 tenant_route_indexes.is_published 表达
 
@@ -20,12 +20,7 @@ Table routes [note: '租户内 route 草稿表'] {
   id bigint [pk, increment, note: 'ID']
   tenant_id bigint [not null, note: '所属租户']
   name varchar(100) [not null, note: '航线名称']
-  route_type smallint [not null, default: 0, note: '航线类型扩展位（当前仅 0=待扩展）']
-  drone_type_id bigint [note: '适用无人机类型 ID（预留）']
-  total_distance numeric(12,2) [note: '航线总长度（米）']
-  estimated_duration integer [note: '预计飞行时长（秒）']
-  waypoint_count integer [not null, default: 0, note: '内部航点数量']
-  creator_name varchar(50) [not null, default: '', note: '创建人姓名']
+  xml_file varchar(100) [not null, default: '', note: '本地 XML 草稿路径']
   created_at timestamp [not null, note: '创建时间']
   updated_at timestamp [not null, note: '更新时间']
 }

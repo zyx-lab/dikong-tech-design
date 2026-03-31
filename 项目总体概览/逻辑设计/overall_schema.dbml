@@ -268,12 +268,7 @@ Table routes [note: '租户内航线台账'] {
   id bigserial [pk, note: 'id 航线ID']
   tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
   name varchar(100) [not null, note: 'name 航线名称']
-  route_type smallint [not null, default: 0, note: 'route_type 航线类型扩展位（当前仅 0-待扩展）']
-  drone_type_id bigint [note: 'drone_type_id 适用无人机类型 ID（预留字段，无外键）']
-  total_distance numeric(12,2) [note: 'total_distance 航线总长度（米）']
-  estimated_duration integer [note: 'estimated_duration 预计飞行时长（秒）']
-  waypoint_count integer [note: 'waypoint_count 航点数量']
-  creator_name varchar(50) [not null, default: '', note: 'creator_name 创建人姓名']
+  xml_file varchar(100) [not null, default: '', note: 'xml_file 本地 XML 草稿路径']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 }
@@ -281,7 +276,7 @@ Table routes [note: '租户内航线台账'] {
 // ============================================================
 // 16. waypoints 航点表
 // ============================================================
-Table waypoints [note: '航线中的坐标点位'] {
+Table waypoints [note: '历史航线数据遗留的内部航点表'] {
   id bigserial [pk, note: 'id 航点ID']
   route_id bigint [ref: > routes.id, not null, note: 'route_id 所属航线ID']
   sequence integer [not null, note: 'sequence 航点序号']

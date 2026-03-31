@@ -6,11 +6,11 @@
 
 // updated_at: 2026-03-31
 // entity: waypoint
-// 当前边界：waypoints 仅作为 Route 聚合内部持久化结构
+// 当前边界：waypoints 仅作为历史内部持久化结构
 // 没有公开 API /api/v1/waypoints*
-// 写入入口：POST /api/v1/routes、PUT / PATCH /api/v1/routes/{id}
+// 当前 route 写接口不再写入该表；DELETE /api/v1/routes/{id} 会清理残留行
 
-Table waypoints [note: 'Route 聚合内部航点表'] {
+Table waypoints [note: '历史 route 数据遗留的内部航点表'] {
   id bigint [pk, increment, note: 'ID']
   route_id bigint [not null, note: '所属 route ID']
   sequence integer [not null, note: '航点序号']
