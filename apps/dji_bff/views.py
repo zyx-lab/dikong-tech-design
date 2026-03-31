@@ -47,6 +47,24 @@ def _require_internal_token(request):
     return None
 
 
+def _require_internal_post(request):
+    auth_error = _require_internal_token(request)
+    if auth_error is not None:
+        return auth_error
+    if request.method != "POST":
+        raise Http404
+    return None
+
+
+def _gateway_sync_error(exc: DjiGatewayError):
+    return _error(
+        "DJI 同步失败",
+        status=exc.status_code if exc.status_code >= 400 else 502,
+        code="E0001",
+        data={"detail": str(exc), "upstream": exc.data},
+    )
+
+
 def _load_json(request) -> dict:
     if not request.body:
         return {}
@@ -58,20 +76,13 @@ def _load_json(request) -> dict:
 
 
 def _run_sync(request, sync_func):
-    auth_error = _require_internal_token(request)
-    if auth_error is not None:
-        return auth_error
-    if request.method != "POST":
-        raise Http404
+    precondition_error = _require_internal_post(request)
+    if precondition_error is not None:
+        return precondition_error
     try:
         return _success(sync_func())
     except DjiGatewayError as exc:
-        return _error(
-            "DJI 同步失败",
-            status=exc.status_code if exc.status_code >= 400 else 502,
-            code="E0001",
-            data={"detail": str(exc), "upstream": exc.data},
-        )
+        return _gateway_sync_error(exc)
 
 
 @csrf_exempt
@@ -90,11 +101,9 @@ def sync_media(request):
 
 
 def _handle_callback(request, handler):
-    auth_error = _require_internal_token(request)
-    if auth_error is not None:
-        return auth_error
-    if request.method != "POST":
-        raise Http404
+    precondition_error = _require_internal_post(request)
+    if precondition_error is not None:
+        return precondition_error
     return _success(handler(_load_json(request), request=request))
 
 

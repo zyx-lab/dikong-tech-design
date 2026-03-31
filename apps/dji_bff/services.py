@@ -6,6 +6,22 @@ from apps.access.services import log_action
 from apps.dji_bff.models import SyncStatus, TenantMediaIndex, TenantRouteIndex
 
 
+def _counts(*, resolved_count: int, ignored_count: int) -> dict[str, int]:
+    return {"resolved_count": resolved_count, "ignored_count": ignored_count}
+
+
+def _mark_route_index_published(route_index: TenantRouteIndex) -> None:
+    route_index.is_published = True
+    route_index.save(update_fields=["is_published", "updated_at"])
+
+
+def _mark_media_index_synced(media_index: TenantMediaIndex, *, now) -> None:
+    media_index.sync_status = SyncStatus.SYNCED
+    media_index.last_sync_at = now
+    media_index.error_msg = ""
+    media_index.save(update_fields=["sync_status", "last_sync_at", "error_msg", "updated_at"])
+
+
 def handle_wayline_upload_callback(payload: dict, *, request=None) -> dict[str, int]:
     name = str(payload.get("name") or "").strip()
     metadata = payload.get("metadata")
@@ -22,8 +38,7 @@ def handle_wayline_upload_callback(payload: dict, *, request=None) -> dict[str, 
     if dji_wayline_id:
         route_index = TenantRouteIndex.objects.filter(dji_wayline_id=dji_wayline_id).first()
         if route_index is not None:
-            route_index.is_published = True
-            route_index.save(update_fields=["is_published", "updated_at"])
+            _mark_route_index_published(route_index)
             resolved_count = 1
         else:
             ignored_count = 1
@@ -31,15 +46,14 @@ def handle_wayline_upload_callback(payload: dict, *, request=None) -> dict[str, 
         route_indexes = list(TenantRouteIndex.objects.select_related("route").filter(route__name=name))
         if len(route_indexes) == 1:
             route_index = route_indexes[0]
-            route_index.is_published = True
-            route_index.save(update_fields=["is_published", "updated_at"])
+            _mark_route_index_published(route_index)
             resolved_count = 1
         else:
             ignored_count = 1
     else:
         ignored_count = 1
 
-    result = {"resolved_count": resolved_count, "ignored_count": ignored_count}
+    result = _counts(resolved_count=resolved_count, ignored_count=ignored_count)
     log_action(
         action="DJI_WAYLINE_CALLBACK",
         target_type="tenant_route_index",
@@ -66,17 +80,14 @@ def handle_media_upload_callback(payload: dict, *, request=None) -> dict[str, in
     if dji_file_id:
         media_index = TenantMediaIndex.objects.filter(dji_file_id=dji_file_id).first()
         if media_index is not None:
-            media_index.sync_status = SyncStatus.SYNCED
-            media_index.last_sync_at = now
-            media_index.error_msg = ""
-            media_index.save(update_fields=["sync_status", "last_sync_at", "error_msg", "updated_at"])
+            _mark_media_index_synced(media_index, now=now)
             resolved_count = 1
         else:
             ignored_count = 1
     else:
         ignored_count = 1
 
-    result = {"resolved_count": resolved_count, "ignored_count": ignored_count}
+    result = _counts(resolved_count=resolved_count, ignored_count=ignored_count)
     log_action(
         action="DJI_MEDIA_UPLOAD_CALLBACK",
         target_type="tenant_media_index",
