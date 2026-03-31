@@ -356,7 +356,7 @@ class RouteViewSet(
         if Mission.objects.filter(
             tenant=self.get_current_tenant(),
             route=route,
-            status__in=[MissionStatus.PENDING, MissionStatus.RUNNING],
+            status__in=[MissionStatus.PENDING, MissionStatus.RUNNING, MissionStatus.PAUSED],
         ).exists():
             return Response(
                 standard_error_payload(

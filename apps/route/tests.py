@@ -17,6 +17,8 @@ from apps.dji_bff.gateway import DjiGatewayUpstreamError
 from apps.dji_bff.models import TenantRouteIndex
 from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
+from apps.drone.models import Drone
+from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 from apps.route.services import build_route_kmz_from_xml
 
@@ -390,3 +392,39 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(default_storage.exists(xml_name))
+
+    def test_delete_should_reject_route_referenced_by_paused_mission(self):
+        route = Route.objects.create(tenant=self.tenant, name="暂停任务航线")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
+        pilot_user = User.objects.create_user(username="route_pause_pilot", password="pass1234", status=1)
+        ensure_staff_profile(pilot_user, name="暂停飞手", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="ROUTE-PAUSE-DRONE-001",
+            name="暂停任务无人机",
+            model="M30",
+            device_sn="ROUTE-PAUSE-SN-001",
+        )
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="暂停中的任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            drone_name=drone.name,
+            pilot=pilot_member,
+            pilot_name="暂停飞手",
+            status=MissionStatus.PAUSED,
+            dji_job_id="",
+        )
+
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertTrue(Route.objects.filter(id=route.id).exists())

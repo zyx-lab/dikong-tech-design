@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -145,6 +147,26 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("route", response.data["data"])
         self.assertEqual(mock_dji_state.jobs, {})
+
+    def test_create_should_cancel_upstream_job_when_local_finalize_fails(self):
+        with patch("apps.mission.views.log_action", side_effect=RuntimeError("log failed after create")):
+            response = self.client.post(
+                "/api/v1/missions",
+                {
+                    "name": "补偿失败任务",
+                    "route": self.route.id,
+                    "drone": self.drone.id,
+                    "pilot": self.pilot_member.id,
+                    "dock_sn": "dock-compensate",
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertFalse(Mission.objects.filter(name="补偿失败任务").exists())
+        self.assertEqual(TenantMissionIndex.objects.count(), 0)
+        self.assertEqual(len(mock_dji_state.jobs), 1)
+        self.assertEqual(next(iter(mock_dji_state.jobs.values()))["status"], "CANCELED")
 
     def test_cancel_should_call_gateway_and_mark_mission_canceled(self):
         job = mock_dji_state.create_job({"name": "待取消任务", "dock_sn": "dock-cancel"})

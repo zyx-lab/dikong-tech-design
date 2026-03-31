@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from io import StringIO
 from datetime import timedelta
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
@@ -15,6 +17,7 @@ from apps.access.test_support import (
     ensure_tenant_member_position,
     ensure_tenant_role_binding,
 )
+from apps.dji_bff.gateway import DjiGateway, GatewayResponse
 from apps.dji_bff.models import DjiDeviceIndex, SyncStatus, TenantMediaIndex, TenantMissionIndex, TenantRouteIndex
 from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes, sync_mission_indexes
 from apps.dji_mock.state import mock_dji_state
@@ -25,6 +28,93 @@ from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 
 User = get_user_model()
+
+
+class DjiGatewayPaginationTests(TestCase):
+    def setUp(self):
+        super().setUp()
+        from apps.dji_bff.models import DjiWorkspaceConfig
+
+        DjiWorkspaceConfig.objects.create(workspace_id="mock-workspace-001", access_token="mock-access-token")
+
+    @staticmethod
+    def _page(items, *, page: int, total: int, page_size: int):
+        return GatewayResponse(
+            status_code=200,
+            headers={},
+            data={
+                "list": items,
+                "pagination": {
+                    "page": page,
+                    "total": total,
+                    "page_size": page_size,
+                },
+            },
+        )
+
+    def test_list_devices_should_collect_all_pages(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        requests = []
+
+        def fake_request(method, path, *, data=None, follow_redirects=True):
+            requests.append(path)
+            query = parse_qs(urlparse(path).query)
+            page = int(query.get("page", ["1"])[0])
+            responses = {
+                1: self._page([{"device_sn": "DEVICE-001"}, {"device_sn": "DEVICE-002"}], page=1, total=3, page_size=2),
+                2: self._page([{"device_sn": "DEVICE-003"}], page=2, total=3, page_size=2),
+            }
+            return responses[page]
+
+        with patch.object(gateway, "_request_json", side_effect=fake_request):
+            devices = gateway.list_devices()
+
+        self.assertEqual([item["device_sn"] for item in devices], ["DEVICE-001", "DEVICE-002", "DEVICE-003"])
+        self.assertEqual(len(requests), 2)
+        self.assertIn("domain=0", requests[0])
+        self.assertIn("page=2", requests[1])
+
+    def test_list_jobs_should_collect_all_pages(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        requests = []
+
+        def fake_request(method, path, *, data=None, follow_redirects=True):
+            requests.append(path)
+            query = parse_qs(urlparse(path).query)
+            page = int(query.get("page", ["1"])[0])
+            responses = {
+                1: self._page([{"job_id": "JOB-001"}, {"job_id": "JOB-002"}], page=1, total=3, page_size=2),
+                2: self._page([{"job_id": "JOB-003"}], page=2, total=3, page_size=2),
+            }
+            return responses[page]
+
+        with patch.object(gateway, "_request_json", side_effect=fake_request):
+            jobs = gateway.list_jobs()
+
+        self.assertEqual([item["job_id"] for item in jobs], ["JOB-001", "JOB-002", "JOB-003"])
+        self.assertEqual(len(requests), 2)
+        self.assertIn("page=2", requests[1])
+
+    def test_list_media_files_should_collect_all_pages(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        requests = []
+
+        def fake_request(method, path, *, data=None, follow_redirects=True):
+            requests.append(path)
+            query = parse_qs(urlparse(path).query)
+            page = int(query.get("page", ["1"])[0])
+            responses = {
+                1: self._page([{"file_id": "FILE-001"}, {"file_id": "FILE-002"}], page=1, total=3, page_size=2),
+                2: self._page([{"file_id": "FILE-003"}], page=2, total=3, page_size=2),
+            }
+            return responses[page]
+
+        with patch.object(gateway, "_request_json", side_effect=fake_request):
+            files = gateway.list_media_files()
+
+        self.assertEqual([item["file_id"] for item in files], ["FILE-001", "FILE-002", "FILE-003"])
+        self.assertEqual(len(requests), 2)
+        self.assertIn("page=2", requests[1])
 
 
 @override_settings(DJI_INTERNAL_API_TOKEN="internal-sync-token")

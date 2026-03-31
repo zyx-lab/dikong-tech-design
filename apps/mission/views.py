@@ -221,28 +221,37 @@ class MissionViewSet(
         tenant = self.get_current_tenant()
         dock_sn = serializer.validated_data.get("dock_sn", "")
         mission = serializer.save(tenant=tenant)
-        upstream_payload = DjiGateway().create_mission(
+        gateway = DjiGateway()
+        upstream_payload = gateway.create_mission(
             mission_name=mission.name,
             file_id=mission.route.dji_index.dji_wayline_id,
             dock_sn=dock_sn,
         )
-        mission.dji_job_id = upstream_payload["dji_job_id"]
-        mission.save(update_fields=["dji_job_id", "updated_at"])
-        TenantMissionIndex.objects.create(
-            tenant=tenant,
-            mission=mission,
-            dji_job_id=mission.dji_job_id,
-            execution_status=str(mission.status),
-            sync_status=SyncStatus.SYNCED,
-            last_sync_at=timezone.now(),
-        )
-        log_action(
-            request=self.request,
-            action="MISSION_CREATE",
-            target_type="mission",
-            target_id=mission.id,
-            after_data=self._payload(mission),
-        )
+        dji_job_id = upstream_payload["dji_job_id"]
+        try:
+            mission.dji_job_id = dji_job_id
+            mission.save(update_fields=["dji_job_id", "updated_at"])
+            TenantMissionIndex.objects.create(
+                tenant=tenant,
+                mission=mission,
+                dji_job_id=mission.dji_job_id,
+                execution_status=str(mission.status),
+                sync_status=SyncStatus.SYNCED,
+                last_sync_at=timezone.now(),
+            )
+            log_action(
+                request=self.request,
+                action="MISSION_CREATE",
+                target_type="mission",
+                target_id=mission.id,
+                after_data=self._payload(mission),
+            )
+        except Exception:
+            try:
+                gateway.cancel_mission(dji_job_id)
+            except DjiGatewayUpstreamError:
+                pass
+            raise
         return mission
 
     def update(self, request, *args, **kwargs):
