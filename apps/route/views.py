@@ -36,6 +36,26 @@ ROUTE_FILTER_PARAMETERS = [
 
 _WAYPOINTS_MISSING = object()
 
+def _route_success_response(view, route: Route, *, http_status: int, include_headers: bool = False):
+    payload = view._payload(route)
+    if include_headers:
+        headers = view.get_success_headers(payload)
+        return Response(payload, status=http_status, headers=headers)
+    return Response(payload, status=http_status)
+
+
+def _reject_request_body_if_present(request, *, message: str):
+    if request.data:
+        return Response(
+            standard_error_payload(
+                StandardCode.INVALID_PARAMS,
+                message,
+                {"body": "不支持请求体，请移除 body 后重试"},
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
 
 @extend_schema_view(
     list=extend_schema(
@@ -167,9 +187,7 @@ class RouteViewSet(
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         route = self.perform_create(serializer)
-        payload = self._payload(route)
-        headers = self.get_success_headers(payload)
-        return Response(payload, status=status.HTTP_201_CREATED, headers=headers)
+        return _route_success_response(self, route, http_status=status.HTTP_201_CREATED, include_headers=True)
 
     @transaction.atomic
     def perform_update(self, serializer):
@@ -200,7 +218,7 @@ class RouteViewSet(
         serializer = self.get_serializer(instance, data=request.data)
         serializer.is_valid(raise_exception=True)
         route = self.perform_update(serializer)
-        return Response(self._payload(route), status=status.HTTP_200_OK)
+        return _route_success_response(self, route, http_status=status.HTTP_200_OK)
 
     def partial_update(self, request, *args, **kwargs):
         if not request.data:
@@ -216,7 +234,7 @@ class RouteViewSet(
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         route = self.perform_update(serializer)
-        return Response(self._payload(route), status=status.HTTP_200_OK)
+        return _route_success_response(self, route, http_status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="发布航线",
@@ -228,15 +246,9 @@ class RouteViewSet(
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def publish(self, request, *args, **kwargs):
-        if request.data:
-            return Response(
-                standard_error_payload(
-                    StandardCode.INVALID_PARAMS,
-                    "publish 请求不支持提交 body 参数",
-                    {"body": "不支持请求体，请移除 body 后重试"},
-                ),
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        error_response = _reject_request_body_if_present(request, message="publish 请求不支持提交 body 参数")
+        if error_response is not None:
+            return error_response
 
         route = self.get_object()
         before_data = self._payload(route)
@@ -282,7 +294,7 @@ class RouteViewSet(
             before_data=before_data,
             after_data=self._payload(route),
         )
-        return Response(self._payload(route), status=status.HTTP_200_OK)
+        return _route_success_response(self, route, http_status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="下载航线文件",
@@ -312,15 +324,9 @@ class RouteViewSet(
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        if request.data:
-            return Response(
-                standard_error_payload(
-                    StandardCode.INVALID_PARAMS,
-                    "DELETE 请求不支持提交 body 参数",
-                    {"body": "不支持请求体，请移除 body 后重试"},
-                ),
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        error_response = _reject_request_body_if_present(request, message="DELETE 请求不支持提交 body 参数")
+        if error_response is not None:
+            return error_response
 
         route = self.get_object()
         if Mission.objects.filter(

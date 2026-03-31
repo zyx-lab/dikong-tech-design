@@ -49,6 +49,29 @@ DRONE_FILTER_PARAMETERS = [
     OpenApiParameter(name="device_sn", type=str, location=OpenApiParameter.QUERY, description="按设备 SN 精确过滤。"),
 ]
 
+def _drone_duplicate_or_validation_error_response(view, errors):
+    if view._contains_duplicate_error(errors):
+        return Response(
+            standard_error_payload(StandardCode.DUPLICATE, "资源已存在", errors),
+            status=status.HTTP_409_CONFLICT,
+        )
+    return Response(validation_error_payload(errors), status=status.HTTP_400_BAD_REQUEST)
+
+
+def _drone_validate_or_respond(view, serializer):
+    serializer.is_valid(raise_exception=False)
+    if serializer.errors:
+        return _drone_duplicate_or_validation_error_response(view, serializer.errors)
+    return None
+
+
+def _drone_success_response(view, drone: Drone, *, http_status: int, include_headers: bool = False):
+    payload = view._payload(drone)
+    if include_headers:
+        headers = view.get_success_headers(payload)
+        return Response(payload, status=http_status, headers=headers)
+    return Response(payload, status=http_status)
+
 
 @extend_schema_view(
     list=extend_schema(
@@ -191,18 +214,12 @@ class DroneViewSet(
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=False)
-        if serializer.errors:
-            if self._contains_duplicate_error(serializer.errors):
-                return Response(
-                    standard_error_payload(StandardCode.DUPLICATE, "资源已存在", serializer.errors),
-                    status=status.HTTP_409_CONFLICT,
-                )
-            return Response(validation_error_payload(serializer.errors), status=status.HTTP_400_BAD_REQUEST)
+        error_response = _drone_validate_or_respond(self, serializer)
+        if error_response is not None:
+            return error_response
 
         drone = self.perform_create(serializer)
-        headers = self.get_success_headers(self._payload(drone))
-        return Response(self._payload(drone), status=status.HTTP_201_CREATED, headers=headers)
+        return _drone_success_response(self, drone, http_status=status.HTTP_201_CREATED, include_headers=True)
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -224,32 +241,22 @@ class DroneViewSet(
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data)
-        serializer.is_valid(raise_exception=False)
-        if serializer.errors:
-            if self._contains_duplicate_error(serializer.errors):
-                return Response(
-                    standard_error_payload(StandardCode.DUPLICATE, "资源已存在", serializer.errors),
-                    status=status.HTTP_409_CONFLICT,
-                )
-            return Response(validation_error_payload(serializer.errors), status=status.HTTP_400_BAD_REQUEST)
+        error_response = _drone_validate_or_respond(self, serializer)
+        if error_response is not None:
+            return error_response
 
         drone = self.perform_update(serializer)
-        return Response(self._payload(drone), status=status.HTTP_200_OK)
+        return _drone_success_response(self, drone, http_status=status.HTTP_200_OK)
 
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=False)
-        if serializer.errors:
-            if self._contains_duplicate_error(serializer.errors):
-                return Response(
-                    standard_error_payload(StandardCode.DUPLICATE, "资源已存在", serializer.errors),
-                    status=status.HTTP_409_CONFLICT,
-                )
-            return Response(validation_error_payload(serializer.errors), status=status.HTTP_400_BAD_REQUEST)
+        error_response = _drone_validate_or_respond(self, serializer)
+        if error_response is not None:
+            return error_response
 
         drone = self.perform_update(serializer)
-        return Response(self._payload(drone), status=status.HTTP_200_OK)
+        return _drone_success_response(self, drone, http_status=status.HTTP_200_OK)
 
     @transaction.atomic
     def perform_update(self, serializer):

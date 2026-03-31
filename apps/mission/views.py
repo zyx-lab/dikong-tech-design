@@ -36,6 +36,39 @@ MISSION_FILTER_PARAMETERS = [
     OpenApiParameter(name="status", type=int, location=OpenApiParameter.QUERY, description="按任务状态过滤。"),
 ]
 
+def _mission_success_response(view, mission: Mission, *, http_status: int, include_headers: bool = False):
+    payload = view._payload(mission)
+    if include_headers:
+        headers = view.get_success_headers(payload)
+        return Response(payload, status=http_status, headers=headers)
+    return Response(payload, status=http_status)
+
+
+def _reject_empty_patch_request(request):
+    if not request.data:
+        return Response(
+            standard_error_payload(
+                StandardCode.INVALID_PARAMS,
+                "PATCH 请求至少包含一个可写字段",
+                {"body": "请至少提交一个可写字段"},
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
+
+def _reject_request_body_if_present(request, *, message: str):
+    if request.data:
+        return Response(
+            standard_error_payload(
+                StandardCode.INVALID_PARAMS,
+                message,
+                {"body": "不支持请求体，请移除 body 后重试"},
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
 
 @extend_schema_view(
     list=extend_schema(
@@ -142,8 +175,7 @@ class MissionViewSet(
             )
 
         mission = self.perform_create(serializer)
-        headers = self.get_success_headers(self._payload(mission))
-        return Response(self._payload(mission), status=status.HTTP_201_CREATED, headers=headers)
+        return _mission_success_response(self, mission, http_status=status.HTTP_201_CREATED, include_headers=True)
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -175,23 +207,17 @@ class MissionViewSet(
         serializer = self.get_serializer(instance, data=request.data)
         serializer.is_valid(raise_exception=True)
         mission = self.perform_update(serializer)
-        return Response(self._payload(mission), status=status.HTTP_200_OK)
+        return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
 
     def partial_update(self, request, *args, **kwargs):
-        if not request.data:
-            return Response(
-                standard_error_payload(
-                    StandardCode.INVALID_PARAMS,
-                    "PATCH 请求至少包含一个可写字段",
-                    {"body": "请至少提交一个可写字段"},
-                ),
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        error_response = _reject_empty_patch_request(request)
+        if error_response is not None:
+            return error_response
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         mission = self.perform_update(serializer)
-        return Response(self._payload(mission), status=status.HTTP_200_OK)
+        return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
 
     @transaction.atomic
     def perform_update(self, serializer):
@@ -218,15 +244,9 @@ class MissionViewSet(
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def cancel(self, request, *args, **kwargs):
-        if request.data:
-            return Response(
-                standard_error_payload(
-                    StandardCode.INVALID_PARAMS,
-                    "cancel 请求不支持提交 body 参数",
-                    {"body": "不支持请求体，请移除 body 后重试"},
-                ),
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        error_response = _reject_request_body_if_present(request, message="cancel 请求不支持提交 body 参数")
+        if error_response is not None:
+            return error_response
 
         mission = self.get_object()
         if not mission.dji_job_id:
@@ -263,4 +283,4 @@ class MissionViewSet(
             before_data=before_data,
             after_data=snapshot(mission),
         )
-        return Response(self._payload(mission), status=status.HTTP_200_OK)
+        return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
