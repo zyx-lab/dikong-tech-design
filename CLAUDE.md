@@ -16,10 +16,10 @@ python manage.py runserver 0.0.0.0:8001
 ### Run tests
 
 ```bash
-python manage.py test
-python manage.py test apps.access apps.api_v1
-python manage.py test apps.drone.test_live_api
-python manage.py test apps.mission.test_live_api apps.route.test_live_api
+.venv/bin/python manage.py test
+.venv/bin/python manage.py test apps.access apps.api_v1
+.venv/bin/python manage.py test apps.drone.test_live_api
+.venv/bin/python manage.py test apps.mission.test_live_api apps.route.test_live_api
 ```
 
 ### Generate OpenAPI schema
@@ -33,9 +33,11 @@ python manage.py spectacular --file /tmp/openapi.yaml --urlconf config.business_
 ### API layout
 - All public API entrypoints are mounted from `config/urls.py`.
 - `/api/v1/` is the single API root and is assembled in `apps/api_v1/urls.py`.
-- There are two planes under the same prefix:
+- There are three HTTP surfaces under the same runtime:
   - IAM plane: `/api/v1/iam/*`
-  - Business plane: `/api/v1/{resource}` for drones, drone assignments, routes, waypoints, missions, flight records, and media files.
+  - Business plane: `/api/v1/{resource}` for drones, drone assignments, routes, missions, flight records, and media files.
+  - Internal DJI bridge: `/api/v1/__internal__/dji/*`
+- A mock DJI upstream for tests and local integration is exposed separately at `/__mock-dji__/api/v1/*`.
 
 ### Core cross-cutting patterns
 - Business APIs use a uniform `code/msg/data` envelope via `apps/api_v1/business_response.py`.
@@ -47,8 +49,10 @@ python manage.py spectacular --file /tmp/openapi.yaml --urlconf config.business_
 ### App responsibilities
 - `apps/access`: custom user model, tenant/platform IAM, auth sessions, RBAC, audit logs, tenant middleware.
 - `apps/api_v1`: API root view, pagination, shared response/schema helpers, OpenAPI hooks.
-- `apps/drone`, `apps/drone_assignment`, `apps/route`, `apps/waypoint`, `apps/mission`, `apps/flight_record`, `apps/media_file`: business resource modules; each module owns its model, serializer, views, urls, and tests.
-- `apps/dji_bff`: DJI integration boundary. This is intended to be the only place that knows DJI upstream concepts like workspace, tokens, and upstream resource IDs.
+- `apps/drone`, `apps/drone_assignment`, `apps/route`, `apps/mission`, `apps/flight_record`, `apps/media_file`: public business resource modules.
+- `apps/waypoint`: internal route-owned waypoint storage; no public `/api/v1/waypoints*` API remains.
+- `apps/dji_bff`: DJI integration boundary; owns the upstream gateway, sync tasks, internal callback entrypoints, and local DJI index tables.
+- `apps/dji_mock`: test-only mock DJI upstream used by live HTTP tests and local integration.
 
 ### Permission and scope model
 - Tenant-side authorization flows through:
@@ -61,10 +65,11 @@ python manage.py spectacular --file /tmp/openapi.yaml --urlconf config.business_
 - Many business viewsets combine these mixins in the same pattern: `BusinessApiResponseMixin`, `TenantScopedBusinessMixin`, `PermissionMapMixin`, `ScopedQuerysetMixin`.
 
 ### Current DJI integration direction
-- The design baseline is documented in `项目总体概览/DJI适配接入边界设计.md`.
+- The design baseline is documented in `项目总体概览/DJI适配接入边界设计.md` and `权限管理侧实现/DJI权限与租户隔离设计.md`.
 - The intended model is: tenant isolation remains local, while DJI is treated as a single upstream resource pool behind `apps/dji_bff`.
 - `Drone` is being shifted from pure local asset CRUD to “claim a shared upstream device by device_sn”.
-- `apps/dji_bff/gateway.py` currently contains patchable placeholder methods rather than a real DJI client. Keep DJI-specific behavior behind that boundary instead of leaking it into business apps.
+- `apps/dji_bff/gateway.py` is a concrete HTTP client with mock-friendly behavior. Keep DJI-specific behavior behind that boundary instead of leaking it into business apps.
+- `apps/dji_bff/tasks.py` plus `run_dji_sync_scheduler` form the minimum runnable sync loop for devices, missions, and media.
 - `apps/dji_bff/models.py` holds the local index/mapping tables used to relate tenant resources to DJI resources.
 
 ### Testing and contract validation
@@ -73,6 +78,7 @@ python manage.py spectacular --file /tmp/openapi.yaml --urlconf config.business_
   - `apps/api_v1/tests.py`
   - `apps/access/test_live_schema_api.py`
   - `apps/*/test_live_api.py`
+- DJI bridge and mock-upstream behavior are covered in `apps/dji_bff/tests.py` and `apps/dji_mock/tests.py`.
 - When changing API shape, update schema assertions and live API tests together.
 
 ## Important repository conventions

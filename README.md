@@ -1,8 +1,8 @@
 # 低空平台权限系统（V3）
 
-## 当前状态（对齐日期：2026-03-19）
+## 当前状态（对齐日期：2026-03-31）
 
-本仓库当前是一个 Django + DRF 的正式 `/api/v1/*` API 项目，现状已经收敛为两类接口：
+本仓库当前是一个 Django + DRF 的正式 API 项目，现状已经收敛为四类 HTTP 入口：
 
 1. Formal IAM Plane（正式权限与身份接口）
 - 前缀：`/api/v1/iam/*`
@@ -17,23 +17,39 @@
 - 前缀：`/api/v1/*`
 - 文档：`/api/v1/docs/`
 - 已实现业务域：
-  - 无人机台账（drone）：CRUD + 状态流转（启用/停用/维护/退役）
-  - 无人机分配（drone_assignment）：CRUD + 状态流转（取消/恢复）
-  - 航线（route）：CRUD + 状态流转（启用/禁用）
-  - 航点（waypoint）：CRUD
-  - 任务（mission）：CRUD + 状态流转（启动/暂停/恢复/完成/失败/取消）
+  - 无人机台账（drone）：认领共享设备、读取/编辑本地管理字段、直播控制
+  - 无人机分配（drone_assignment）：查询、创建、取消
+  - 航线（route）：草稿 CRUD、发布到 DJI、下载已发布航线；`waypoints[]` 作为 route 内部编辑结构
+  - 任务（mission）：查询、创建、更新、取消；创建时同步 DJI job
   - 飞行记录（flight_record）：CRUD + 状态流转（完成/异常终止）
-  - 媒体文件（media_file）：CRUD + 逻辑删除
+  - 媒体文件（media_file）：只读查询 + 下载；数据由 DJI 同步沉淀
 
-3. Unified OpenAPI Docs（统一文档）
+3. Internal DJI Bridge（系统内部 DJI 桥接）
+- 前缀：`/api/v1/__internal__/dji/*`
+- 用途：
+  - 受控触发设备 / 任务 / 媒体同步
+  - 接收 DJI 侧上传回调
+- 认证：
+  - 不走 Bearer Token
+  - 通过 `X-DJI-Internal-Token` 做系统内部鉴权
+
+4. Mock DJI Upstream（测试用模拟上游）
+- 前缀：`/__mock-dji__/api/v1/*`
+- 用途：
+  - live tests
+  - 本地联调
+  - 替代真实 DJI 上游做受控验证
+
+5. Unified OpenAPI Docs（统一文档）
 - Swagger UI：`/api/v1/docs/`
 - OpenAPI Schema(JSON)：`/api/v1/docs/schema/`
-- 用途：统一查看当前仓库正式 `/api/v1/*` 接口；`/api/v1/docs/schema/` 可直接导入 Apifox
+- 用途：统一查看当前仓库正式 IAM + Business API；`/api/v1/docs/schema/` 可直接导入 Apifox
 
 说明：
 - 旧 `/internal/auth/*` 已下线，不保留兼容入口。
 - 正式 IAM 认证已切换为 Bearer Token，不再使用 Django Session / Basic 作为正式 API 认证方式。
 - 邀请流、`me/permissions`、`set-plan`、全局用户目录等旧能力不再属于正式 API。
+- `Waypoint` 已降级为 `Route` 聚合内部存储结构，不再公开 `/api/v1/waypoints*`。
 
 ## 快速启动
 
@@ -98,11 +114,13 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 - 业务域：
   - `apps/drone/*` - 无人机台账
   - `apps/drone_assignment/*` - 无人机分配
-  - `apps/route/*` - 航线
-  - `apps/waypoint/*` - 航点
+  - `apps/route/*` - 航线聚合与 `waypoints[]` 读写
+  - `apps/waypoint/*` - route 内部航点存储模型
   - `apps/mission/*` - 任务
   - `apps/flight_record/*` - 飞行记录
   - `apps/media_file/*` - 媒体文件
+  - `apps/dji_bff/*` - DJI 网关、同步任务、内部回调入口
+  - `apps/dji_mock/*` - 测试用 mock DJI upstream
 
 ### 已实现接口清单（与当前代码一致）
 
@@ -152,40 +170,37 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 - `GET/POST /api/v1/drone-assignments`
 - `GET /api/v1/drone-assignments/{id}`
 - `POST /api/v1/drone-assignments/{id}/cancel`
-- `POST /api/v1/drone-assignments/{id}/reactivate`
 
 7. Business API - 航线（route）
 - `GET/POST /api/v1/routes`
 - `GET/PUT/PATCH /api/v1/routes/{id}`
 - `DELETE /api/v1/routes/{id}`
-- `POST /api/v1/routes/{id}/enable`
-- `POST /api/v1/routes/{id}/disable`
+- `POST /api/v1/routes/{id}/publish`
+- `GET /api/v1/routes/{id}/download`
 
-8. Business API - 航点（waypoint）
-- `GET/POST /api/v1/waypoints`
-- `GET/PUT/PATCH /api/v1/waypoints/{id}`
-- `DELETE /api/v1/waypoints/{id}`
-
-9. Business API - 任务（mission）
+8. Business API - 任务（mission）
 - `GET/POST /api/v1/missions`
 - `GET/PUT/PATCH /api/v1/missions/{id}`
-- `POST /api/v1/missions/{id}/start`
-- `POST /api/v1/missions/{id}/pause`
-- `POST /api/v1/missions/{id}/resume`
-- `POST /api/v1/missions/{id}/complete`
-- `POST /api/v1/missions/{id}/fail`
 - `POST /api/v1/missions/{id}/cancel`
 
-10. Business API - 飞行记录（flight_record）
+9. Business API - 飞行记录（flight_record）
 - `GET/POST /api/v1/flight-records`
 - `GET/PUT/PATCH /api/v1/flight-records/{id}`
 - `POST /api/v1/flight-records/{id}/complete`
 - `POST /api/v1/flight-records/{id}/abort`
 
-11. Business API - 媒体文件（media_file）
-- `GET/POST /api/v1/media-files`
-- `GET/PUT/PATCH /api/v1/media-files/{id}`
-- `DELETE /api/v1/media-files/{id}`
+10. Business API - 媒体文件（media_file）
+- `GET /api/v1/media-files`
+- `GET /api/v1/media-files/{id}`
+- `GET /api/v1/media-files/{id}/download`
+
+11. Internal DJI Bridge
+- `POST /api/v1/__internal__/dji/sync/devices`
+- `POST /api/v1/__internal__/dji/sync/missions`
+- `POST /api/v1/__internal__/dji/sync/media`
+- `POST /api/v1/__internal__/dji/callbacks/wayline-upload`
+- `POST /api/v1/__internal__/dji/callbacks/media-upload`
+- `POST /api/v1/__internal__/dji/callbacks/media-group-upload`
 
 ## `/api/v1/*` 响应契约
 
@@ -275,8 +290,9 @@ User(is_platform_admin=true)
 - 总体逻辑模型：[overall_logical_model.md](项目总体概览/逻辑设计/overall_logical_model.md)
 - 总体数据字典：[overall_data_dictionary.md](项目总体概览/逻辑设计/overall_data_dictionary.md)
 - 总体 DBML：[overall_schema.dbml](项目总体概览/逻辑设计/overall_schema.dbml)
+- DJI 适配边界：[DJI适配接入边界设计.md](项目总体概览/DJI适配接入边界设计.md)
+- DJI 权限与租户隔离：[DJI权限与租户隔离设计.md](权限管理侧实现/DJI权限与租户隔离设计.md)
 - 业务接口扩展指南：[业务接口扩展指南.md](项目总体概览/业务接口扩展指南.md)
-- IAM 正式重构方案：[api重构文档.md](项目总体概览/api重构文档.md)
 
 ### 业务侧实现（业务侧实现/）
 
@@ -289,6 +305,9 @@ User(is_platform_admin=true)
 | 任务 | [mission_data_dictionary.md](业务侧实现/mission_data_dictionary.md) | [mission_impl_desc.md](业务侧实现/mission_impl_desc.md) | [mission_logical_model.md](业务侧实现/mission_logical_model.md) | [mission_schema.dbml](业务侧实现/mission_schema.dbml) |
 | 飞行记录 | [flight_record_data_dictionary.md](业务侧实现/flight_record_data_dictionary.md) | [flight_record_impl_desc.md](业务侧实现/flight_record_impl_desc.md) | [flight_record_logical_model.md](业务侧实现/flight_record_logical_model.md) | [flight_record_schema.dbml](业务侧实现/flight_record_schema.dbml) |
 | 媒体文件 | [media_file_data_dictionary.md](业务侧实现/media_file_data_dictionary.md) | [media_file_impl_desc.md](业务侧实现/media_file_impl_desc.md) | [media_file_logical_model.md](业务侧实现/media_file_logical_model.md) | [media_file_schema.dbml](业务侧实现/media_file_schema.dbml) |
+
+说明：
+- `Waypoint` 四件套当前只描述 route 聚合内部存储，不代表存在公开 waypoint 业务 API。
 
 ### 权限管理侧实现（权限管理侧实现/）
 - 权限设计基线：[权限设计.md](权限管理侧实现/权限设计.md)

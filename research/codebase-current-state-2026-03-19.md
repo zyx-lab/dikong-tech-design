@@ -1,4 +1,8 @@
-# Codebase Research: Current State (2026-03-19)
+# Codebase Research Snapshot (2026-03-19)
+
+> This file is a dated research snapshot captured on 2026-03-19.
+> It is no longer the canonical current-state contract after the DJI boundary refactor, route/waypoint aggregation change, and later simplification work.
+> For the current implementation baseline, read `README.md`, `项目总体概览/DJI适配接入边界设计.md`, `权限管理侧实现/DJI权限与租户隔离设计.md`, and the docs under `业务侧实现/` and `权限管理侧实现/`.
 
 ## High-level summary
 This repository is a Django 5.1.6 + Django REST Framework 3.15.2 API service with drf-spectacular used for OpenAPI generation and Swagger UI exposure. The active HTTP surface is mounted under `/api/v1/`, with formal IAM endpoints under `/api/v1/iam/*`, business APIs under `/api/v1/*`, and OpenAPI docs exposed at `/api/v1/docs/` and `/api/v1/docs/schema/`. Request processing combines request ID middleware, tenant-header resolution, Bearer-token authentication backed by `AuthSession`, tenant-scoped authorization, and a standardized `code/msg/data` response envelope. The business implementation is split across seven apps: `drone`, `drone_assignment`, `route`, `waypoint`, `mission`, `flight_record`, and `media_file`. Automated tests exist for the shared API layer, IAM layer, and each business domain app.
