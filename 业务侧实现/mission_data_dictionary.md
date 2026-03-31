@@ -1,65 +1,31 @@
 # 低空智能巡检平台 - 任务
 
-## 数据库
-
-PostgreSQL
-
----
-
-## 文档格式说明
-
-本文档为 **数据字典** 类型文档，记录数据库表结构、字段定义、约束和业务规则。
-
-### 更新本文档的指南（大模型用）
-
-当需要更新此文档时，请遵循以下格式：
-
-```
-## N. {表名中文名}
-
-**说明**：{表用途简述}
-
-| 字段名 | 类型 | 约束 | 默认值 | 说明 |
-| ------ | ---- | ---- | ------ | ---- |
-| {字段名} | {PostgreSQL类型} | {约束} | {默认值} | {字段说明} |
-
-**{某字段} 状态值**：
-
-| 值 | 含义 |
-|----|------|
-| {枚举值} | {含义} |
-
-**业务规则**：
-1. {规则1}
-2. {规则2}
-```
-
----
-
 ## 阅读说明
 
-本数据字典覆盖当前已落地的业务表：`missions`。
+本数据字典覆盖当前 mission 业务域已落地的两张核心表：
 
----
+- `missions`
+- `tenant_mission_indexes`
 
 ## 1. missions（任务表）
 
-**说明**：存储任务执行计划信息。
+**说明**：存储 tenant 内任务主记录，以及与 DJI job 关联所需的最小本地字段。
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
 | tenant_id | bigint | FK, NOT NULL | - | 租户 ID |
 | name | varchar(100) | NOT NULL | - | 任务名称 |
-| route_id | bigint | FK, NOT NULL | - | 航线 ID |
-| route_name | varchar(100) | - | "" | 航线名称（冗余） |
+| route_id | bigint | FK | - | 航线 ID；route 删除后可为空 |
+| route_name | varchar(100) | NOT NULL | '' | 航线名称（冗余） |
 | drone_id | bigint | FK, NOT NULL | - | 无人机 ID |
-| drone_name | varchar(100) | - | "" | 无人机名称（冗余） |
+| drone_name | varchar(100) | NOT NULL | '' | 无人机名称（冗余） |
 | pilot_id | bigint | FK, NOT NULL | - | 飞手成员 ID（TenantMember） |
-| pilot_name | varchar(50) | - | "" | 飞手姓名（冗余） |
+| pilot_name | varchar(50) | NOT NULL | '' | 飞手姓名（冗余） |
 | scheduled_at | timestamp | - | - | 计划执行时间 |
-| remark | varchar(500) | - | "" | 任务备注 |
-| status | smallint | NOT NULL | 0 | 任务状态 |
+| remark | varchar(500) | NOT NULL | '' | 任务备注 |
+| status | smallint | NOT NULL | 0 | 本地任务状态摘要 |
+| dji_job_id | varchar(128) | NOT NULL | '' | DJI job ID |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
@@ -75,37 +41,44 @@ PostgreSQL
 | 5 | 执行失败 |
 
 **业务规则**：
-1. `route`、`drone`、`pilot` 必须属于当前租户。
-2. 创建任务时 `route` 必须为 `ACTIVE`，`drone` 必须为 `ENABLED`。
-3. `pilot` 必须是当前租户下的 `ACTIVE TenantMember`，其账号需存在在职 `staff_profile`，且成员已绑定 `pilot_operator`。
-4. status 不可通过 PATCH 直接修改，需通过状态动作接口。
+1. 创建接口要求 `route`、`drone`、`pilot` 必须属于当前租户。
+2. 创建接口要求 `route` 已发布到 DJI。
+3. 创建接口要求 `pilot` 为 `ACTIVE` 成员，账号存在在职 `staff_profile`，且成员已绑定 `pilot_operator`。
+4. `status` 不再由本地 `start / pause / resume / complete / fail` action 推进；主要由 DJI 同步结果回写。
 
----
+## 2. tenant_mission_indexes（任务同步索引表）
 
-## 2. 与实现对应
+**说明**：存储 mission 与 DJI job 的一对一映射，以及最近一次同步摘要。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
+| mission_id | bigint | FK, NOT NULL, UNIQUE | - | 对应任务 |
+| dji_job_id | varchar(128) | NOT NULL | - | DJI 任务 ID |
+| execution_status | varchar(64) | NOT NULL | '' | 最近一次同步到的 DJI 执行状态原文 |
+| sync_status | varchar(32) | NOT NULL | PENDING | 同步状态 |
+| last_sync_at | timestamp | - | - | 最近同步时间 |
+| error_msg | varchar(255) | NOT NULL | '' | 同步错误信息 |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+**sync_status 枚举值**：
+
+| 值 | 含义 |
+|----|------|
+| PENDING | 同步中 |
+| SYNCED | 同步成功 |
+| ERROR | 同步失败 |
+
+**业务规则**：
+1. 创建 mission 并成功调用 DJI 后，自动创建一条 `tenant_mission_indexes`。
+2. 后台同步任务会刷新 `execution_status`、`sync_status`、`last_sync_at`、`error_msg`。
+3. 若上游 job 不存在，则标记 `sync_status=ERROR`，但不自动删除本地 mission。
+
+## 3. 与实现对应
 
 1. 模型：`apps/mission/models.py`
-2. 序列化与校验：`apps/mission/serializers.py`
-3. 接口：`apps/mission/views.py`
-
----
-
-## 3. 业务响应契约（Business API）
-
-说明：业务 API 响应体统一包含 `code`、`msg`、`data` 三个字段。
-
-| 字段 | 类型 | 说明 |
-| ------ | ------ | ------ |
-| code | string | 业务码。成功固定为 `00000` |
-| msg | string | 响应消息。成功通常为 `success` |
-| data | object / array / null | 业务数据；失败时为错误上下文 |
-
-| code | 典型 HTTP | 语义 |
-| ------ | ------ | ------ |
-| 00000 | 200 / 201 | 业务处理成功 |
-| A0401 | 401 | 未登录或登录已失效 |
-| A0403 | 403 | 无操作权限 |
-| B0001 | 400 | 请求参数校验失败 |
-| C0201 | 409 | 当前状态不允许操作 |
-| C0404 | 404 | 目标资源不存在 |
-| E0001 | 500 | 系统异常 |
+2. DJI 索引：`apps/dji_bff/models.py`
+3. 同步任务：`apps/dji_bff/tasks.py`
+4. 接口：`apps/mission/views.py`

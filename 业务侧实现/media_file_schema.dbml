@@ -4,71 +4,45 @@
 // 文档类型：图表 (schema)
 // ============================================================
 
-// 文档格式说明：
-// 本文件为 DBML 格式的数据库图表文件。
-// 更新本文档时，请遵循以下格式：
-// ```
-// Table {表名} [note: '{表说明}'] {
-//   {字段名} {类型} [约束, note: '{字段说明}']
-//   indexes {
-//     {索引字段} [name: '{索引名}']
-//   }
-// }
-// ```
-
-// generated_at: 2026-03-08T11:18:06.896282Z
+// updated_at: 2026-03-31
 // entity: media_file
+// 当前 API：
+// - GET /api/v1/media-files
+// - GET /api/v1/media-files/{id}
+// - GET /api/v1/media-files/{id}/download
+// 当前实现不再公开 POST / PUT / PATCH / DELETE /api/v1/media-files*
 
-Table media_files {
+Table media_files [note: '媒体读模型主表'] {
   id bigint [pk, increment, note: 'ID']
-  flight_record bigint [note: 'flight_record.FlightRecord']
-  media_type text [not null, note: '媒体类型']
+  tenant_id bigint [not null, note: '所属租户']
+  flight_record_id bigint [note: '关联飞行记录']
+  media_type integer [not null, note: '媒体类型']
   file_name varchar(255) [not null, note: '文件名']
-  file_url varchar(500) [not null, note: '文件URL']
-  thumbnail_url varchar(500) [not null, note: '缩略图URL']
+  file_url varchar(500) [not null, note: '内部文件 URL 占位']
+  thumbnail_url varchar(500) [not null, default: '', note: '缩略图 URL']
   file_size bigint [note: '文件大小（字节）']
-  latitude text [note: '拍摄位置-纬度']
-  longitude text [note: '拍摄位置-经度']
+  latitude numeric(12,8) [note: '拍摄位置纬度']
+  longitude numeric(12,8) [note: '拍摄位置经度']
   captured_at timestamp [note: '拍摄时间']
-  is_deleted boolean [not null, note: '是否已删除']
+  is_deleted boolean [not null, default: false, note: '是否逻辑删除']
   deleted_at timestamp [note: '删除时间']
   created_at timestamp [not null, note: '创建时间']
 }
 
-// 本轮增补（2026-03-08）
-// focus_api: GET /api/v1/media-files/{id}
-// retrieve 语义：按 media_files.id 读取单条详情；is_deleted=true 记录按 C0404 返回。
-// 权限语义：需具备 media_file.view_media_file；未认证/无权限返回 A0401 / A0403。
-// 说明：本轮仅补对象级读取语义，不引入新的数据表字段。
+Table tenant_media_indexes [note: 'media_file 与 DJI 文件的同步索引'] {
+  id bigint [pk, increment, note: 'ID']
+  tenant_id bigint [not null, note: '所属租户']
+  media_file_id bigint [not null, unique, note: '业务媒体文件']
+  dji_file_id varchar(128) [not null, note: 'DJI 文件 ID']
+  device_sn varchar(128) [not null, default: '', note: '设备序列号']
+  mission_id bigint [note: '关联任务 ID']
+  sync_status varchar(32) [not null, default: 'PENDING', note: '同步状态']
+  last_sync_at timestamp [note: '最近同步时间']
+  error_msg varchar(255) [not null, default: '', note: '同步错误']
+  created_at timestamp [not null, note: '创建时间']
+  updated_at timestamp [not null, note: '更新时间']
 
-// 本轮增补（2026-03-08，迭代16）
-// focus_api: DELETE /api/v1/media-files/{id}
-// destroy 语义：按 media_files.id 执行逻辑删除，更新 is_deleted=true 与 deleted_at。
-// 权限语义：需具备 media_file.manage_media_file；未认证/无权限返回 A0401 / A0403。
-// 返回语义：00000=删除成功；C0404=记录不存在或已删除。
-
-
-
-
-
-
-// 本轮增补（2026-03-08，迭代17）
-// focus_api: POST /api/v1/media-files
-// create 语义：写入 media_files 新记录；flight_record 可选绑定。
-// 默认值语义：新建记录固定 is_deleted=false，deleted_at=null。
-// 权限语义：需具备 media_file.manage_media_file；无权限返回 A0403。
-// 业务码语义：00000=成功；B0001=参数错误；A0401/A0403=未认证或越权。
-
-// 本轮增补（2026-03-09）
-// focus_api: PUT / PATCH /api/v1/media-files/{id}
-// update 语义：按 media_files.id 更新媒体元数据，仅允许白名单字段写入。
-// 边界语义：空请求体返回 B0001；is_deleted=true 记录按 C0404 处理。
-// 审计语义：成功更新后写入 MEDIA_FILE_UPDATE，保存 before/after 快照。
-// 权限语义：需具备 media_file.manage_media_file；未认证/无权限返回 A0401 / A0403。
-
-// stage6_doc_sync::media_file::schema.dbml::start
-// focus_api_keys: PUT / PATCH /api/v1/media-files/{id}
-// business_events: EVT-001 更新媒体文件
-// required_codes: 00000, A0401, A0403, B0001, C0404, E0001
-// permission_boundary: 代码权限码: view_media_file (可查看媒体文件), manage_media_file (可管理媒体文件)
-// stage6_doc_sync::media_file::schema.dbml::end
+  indexes {
+    (tenant_id, dji_file_id) [unique, name: 'uniq_tenant_dji_file_id']
+  }
+}

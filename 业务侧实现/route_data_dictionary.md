@@ -1,71 +1,29 @@
 # 低空智能巡检平台 - 航线
 
-## 数据库
-
-PostgreSQL
-
----
-
-## 文档格式说明
-
-本文档为 **数据字典** 类型文档，记录数据库表结构、字段定义、约束和业务规则。
-
-### 更新本文档的指南（大模型用）
-
-当需要更新此文档时，请遵循以下格式：
-
-```
-## N. {表名中文名}
-
-**说明**：{表用途简述}
-
-| 字段名 | 类型 | 约束 | 默认值 | 说明 |
-| ------ | ---- | ---- | ------ | ---- |
-| {字段名} | {PostgreSQL类型} | {约束} | {默认值} | {字段说明} |
-
-**{某字段} 状态值**：
-
-| 值 | 含义 |
-|----|------|
-| {枚举值} | {含义} |
-
-**业务规则**：
-1. {规则1}
-2. {规则2}
-```
-
----
-
 ## 阅读说明
 
-本数据字典覆盖当前已落地的业务表：`routes`。
+本数据字典覆盖当前 route 业务域已落地的两张核心表：
 
----
+- `routes`
+- `tenant_route_indexes`
 
 ## 1. routes（航线表）
 
-**说明**：存储航线基础信息与状态。
+**说明**：存储租户内 route 草稿主记录；对外编辑边界以 route 为聚合根。
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
+| tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
 | name | varchar(100) | NOT NULL | - | 航线名称 |
 | route_type | smallint | NOT NULL | 0 | 航线类型扩展位 |
-| drone_type_id | bigint | - | - | 适用无人机类型 ID |
-| total_distance | decimal(12,2) | - | - | 航线总长度（米） |
-| estimated_duration | int | - | - | 预计飞行时长（秒） |
-| waypoint_count | int | - | - | 航点数量 |
-| creator_name | varchar(50) | - | "" | 创建人姓名 |
-| status | smallint | NOT NULL | 1 | 状态：0=禁用, 1=正常 |
+| drone_type_id | bigint | - | - | 适用无人机类型 ID（预留） |
+| total_distance | numeric(12,2) | - | - | 航线总长度（米） |
+| estimated_duration | integer | - | - | 预计飞行时长（秒） |
+| waypoint_count | integer | NOT NULL | 0 | 内部航点数量 |
+| creator_name | varchar(50) | NOT NULL | '' | 创建人姓名 |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
-
-**status 状态值**：
-
-| 值 | 含义 |
-|----|------|
-| 0 | 禁用 |
-| 1 | 正常 |
 
 **route_type 枚举值**：
 
@@ -74,22 +32,40 @@ PostgreSQL
 | 0 | 待扩展 |
 
 **业务规则**：
-1. 删除航线时，若已被任务引用，则软禁用（status=0）而非物理删除。
-2. 显式启用/禁用航线通过状态动作接口完成，不能通过 PATCH 直接改写 status。
-3. `POST /api/v1/routes/{id}/disable` 只修改 `routes.status`，不删除航点、不解绑任务，请求体必须为空。
-4. 已处于禁用态的航线重复执行 `disable` 按幂等成功返回当前状态。
+1. `Route` 不再有独立 `status` 字段。
+2. `waypoints` 不再是独立业务资源，只能通过 `Route.waypoints[]` 读写。
+3. 提交新的 `waypoints[]` 时，内部 waypoint 行按整条航线全量替换。
+4. `waypoint_count` 由 route 聚合写链路统一维护。
+5. 删除 route 时，若存在 `PENDING / RUNNING` 任务引用，则拒绝删除；否则物理删除 route 与内部 waypoint 行。
 
----
+## 2. tenant_route_indexes（航线发布索引表）
 
-## 2. 与实现对应
+**说明**：存储 route 与 DJI 航线的最小发布映射。
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+| ------ | ---- | ---- | ------ | ---- |
+| id | bigserial | PK | 自增 | 主键 |
+| tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
+| route_id | bigint | FK, NOT NULL, UNIQUE | - | 对应 route |
+| dji_wayline_id | varchar(128) | NOT NULL | '' | 当前已发布 DJI 航线 ID；未发布时为空串 |
+| is_published | boolean | NOT NULL | false | 当前本地草稿是否已与最近一次成功发布结果一致 |
+| created_at | timestamp | NOT NULL | now() | 创建时间 |
+| updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+**约束与规则**：
+1. `route_id` 一对一绑定 `routes.id`。
+2. `(tenant_id, dji_wayline_id)` 仅在 `dji_wayline_id` 非空时唯一。
+3. 创建 route 草稿时自动创建一条 `tenant_route_indexes`，初始值为 `dji_wayline_id=''`、`is_published=false`。
+4. 任意本地编辑 route 后，都要把 `is_published` 置回 `false`。
+5. `POST /api/v1/routes/{id}/publish` 成功后回写新的 `dji_wayline_id`，并把 `is_published` 置为 `true`。
+
+## 3. 与实现对应
 
 1. 模型：`apps/route/models.py`
-2. 序列化与校验：`apps/route/serializers.py`
-3. 接口：`apps/route/views.py`
+2. DJI 映射：`apps/dji_bff/models.py`
+3. 航点聚合写链路：`apps/route/serializers.py`、`apps/route/services.py`、`apps/route/views.py`
 
----
-
-## 3. 业务响应契约（Business API）
+## 4. 业务响应契约（Business API）
 
 说明：业务 API 响应体统一包含 `code`、`msg`、`data` 三个字段。
 
@@ -105,5 +81,6 @@ PostgreSQL
 | A0401 | 401 | 未登录或登录已失效 |
 | A0403 | 403 | 无操作权限 |
 | B0001 | 400 | 请求参数校验失败 |
+| C0201 | 409 | 当前状态不允许操作 |
 | C0404 | 404 | 目标资源不存在 |
 | E0001 | 500 | 系统异常 |

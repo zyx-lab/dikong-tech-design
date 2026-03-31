@@ -1,49 +1,7 @@
 # 任务逻辑模型
 
-- updated_at: 2026-03-15T14:20:00+08:00
+- updated_at: 2026-03-31
 - entity: mission
-
-## 数据库
-
-PostgreSQL
-
----
-
-## 文档格式说明
-
-本文档为 **逻辑模型** 类型文档，记录实体关系、状态机、生命周期、接口语义等。
-
-### 更新本文档的指南（大模型用）
-
-当需要更新此文档时，请遵循以下格式：
-
-```
-## 实体主表
-- table: {表名}
-- 主键: {主键定义}
-
-## 状态机
-- {状态字段}: {状态值列表}
-
-## 关系与约束
-- {外键关系}
-- {业务约束}
-
-## 生命周期入口
-- {HTTP方法} {路径}: {功能描述}
-
-## 接口语义
-### {API名称}
-- 功能：{功能描述}
-- 路径：{API路径}
-- 方法：{HTTP方法}
-- 状态流转：{状态变化}
-- 有效状态：{允许执行该操作的状态}
-- 无效状态：{禁止执行该操作的状态列表}
-- 业务码：{返回的业务码}
-```
-
----
 
 ## 实体主表
 
@@ -51,77 +9,72 @@ PostgreSQL
 - 主键: id (BigAutoField)
 - 排序规则: `ordering = ['-id']`
 
-## 状态机
+## 状态模型
 
-| 状态字段 | 值 | 含义 |
-|---------|-----|------|
-| status | 0 | 待执行 |
-| status | 1 | 执行中 |
-| status | 2 | 已暂停 |
-| status | 3 | 已完成 |
-| status | 4 | 已取消 |
-| status | 5 | 执行失败 |
+`Mission.status` 仍保留本地摘要状态：
+
+| 值 | 含义 |
+|----|------|
+| 0 | 待执行 |
+| 1 | 执行中 |
+| 2 | 已暂停 |
+| 3 | 已完成 |
+| 4 | 已取消 |
+| 5 | 执行失败 |
+
+当前语义：
+
+- 创建任务时，本地初始化为 `PENDING`
+- `cancel` 动作会直接把本地状态写为 `CANCELED`
+- 后台同步任务会根据 DJI job 状态刷新本地 `Mission.status`
+- 不再存在本地 `start / pause / resume / complete / fail` 动作接口
 
 ## 关系与约束
 
-- tenant -> access.Tenant（FK, CASCADE）
-- route -> route.Route（FK, PROTECT）
-- drone -> drone.Drone（FK, PROTECT）
-- pilot -> access.TenantMember（FK, PROTECT）
-- 创建约束：`route`、`drone`、`pilot` 必须属于当前 `tenant`
-- 创建约束：`route.status=ACTIVE`，`drone.status=ENABLED`
-- 创建约束：`pilot.status=ACTIVE`，且其账号存在在职 `staff_profile`
-- 创建约束：`pilot` 必须已绑定 `pilot_operator`
+- `mission.tenant -> access.Tenant`
+- `mission.route -> route.Route`（`SET_NULL`，DB 允许为空；创建接口仍要求必填）
+- `mission.drone -> drone.Drone`
+- `mission.pilot -> access.TenantMember`
+- `tenant_mission_indexes.mission -> mission.Mission`（一对一）
+- 创建接口约束：
+  - `route`、`drone`、`pilot` 必须属于当前 tenant
+  - `pilot` 必须为 `ACTIVE` 成员，且账号存在在职 `staff_profile`
+  - `pilot` 必须已绑定 `pilot_operator`
+  - `route` 必须已发布到 DJI
 
 ## 生命周期入口
 
 | 操作 | 路径 | 说明 |
 |-----|------|------|
-| 创建 | POST /api/v1/missions | 新增任务 |
+| 创建 | POST /api/v1/missions | 创建本地任务并同步 DJI job |
 | 列表 | GET /api/v1/missions | 任务列表查询 |
 | 详情 | GET /api/v1/missions/{id} | 任务详情 |
-| 更新 | PUT / PATCH /api/v1/missions/{id} | 全量或局部更新任务 |
-| 启动 | POST /api/v1/missions/{id}/start | 启动任务 |
-| 暂停 | POST /api/v1/missions/{id}/pause | 暂停任务 |
-| 恢复 | POST /api/v1/missions/{id}/resume | 恢复任务 |
-| 完成 | POST /api/v1/missions/{id}/complete | 完成任务 |
-| 失败 | POST /api/v1/missions/{id}/fail | 标记失败 |
-| 取消 | POST /api/v1/missions/{id}/cancel | 取消任务 |
+| 更新 | PUT / PATCH /api/v1/missions/{id} | 仅更新本地管理字段 |
+| 取消 | POST /api/v1/missions/{id}/cancel | 取消 DJI job 并回写本地状态 |
 
 ## 接口语义
 
-### 启动任务 POST /api/v1/missions/{id}/start
-- 状态流转：PENDING -> RUNNING
-- 有效状态：PENDING
-- 无效状态：PAUSED / COMPLETED / CANCELED / FAILED
-- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
+### 创建任务 POST /api/v1/missions
 
-### 暂停任务 POST /api/v1/missions/{id}/pause
-- 状态流转：RUNNING -> PAUSED
-- 有效状态：RUNNING
-- 无效状态：PENDING / COMPLETED / CANCELED / FAILED
-- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
+- 功能：创建 mission，并立刻在 DJI 创建 job
+- 写入结果：
+  - 创建 `Mission(status=PENDING)`
+  - 写回 `missions.dji_job_id`
+  - 创建 `TenantMissionIndex`
+- 扩展输入：可选 `dock_sn`，仅用于透传 DJI，不落本地主表
 
-### 恢复任务 POST /api/v1/missions/{id}/resume
-- 状态流转：PAUSED -> RUNNING
-- 有效状态：PAUSED
-- 无效状态：PENDING / COMPLETED / CANCELED / FAILED
-- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
+### 更新任务 PUT / PATCH /api/v1/missions/{id}
 
-### 完成任务 POST /api/v1/missions/{id}/complete
-- 状态流转：RUNNING -> COMPLETED
-- 有效状态：RUNNING
-- 无效状态：PENDING / PAUSED / CANCELED / FAILED
-- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
-
-### 标记失败 POST /api/v1/missions/{id}/fail
-- 状态流转：RUNNING -> FAILED
-- 有效状态：RUNNING
-- 无效状态：PENDING / PAUSED / COMPLETED / CANCELED
-- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
+- 功能：修改 mission 本地管理字段
+- 可写字段：`name`、`scheduled_at`、`remark`
+- 约束：不允许通过更新接口改写 `route`、`drone`、`pilot`、`status`、`dji_job_id`
 
 ### 取消任务 POST /api/v1/missions/{id}/cancel
-- 状态流转：PENDING/RUNNING/PAUSED -> CANCELED
-- 有效状态：PENDING / RUNNING / PAUSED
-- 无效状态：COMPLETED / CANCELED / FAILED
-- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
+
+- 功能：取消 DJI job
+- 前置条件：`mission.dji_job_id` 非空
+- 输入边界：请求体必须为空
+- 幂等语义：若 DJI 已返回 `404`，本地仍按取消成功收敛
+- 副作用：
+  - `missions.status = CANCELED`
+  - 若存在 `tenant_mission_indexes`，同步更新 `execution_status`、`sync_status`、`last_sync_at`、`error_msg`

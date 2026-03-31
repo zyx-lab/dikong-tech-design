@@ -1,89 +1,56 @@
 # 媒体文件逻辑模型
 
-- generated_at: 2026-03-08T11:18:06.896282Z
+- updated_at: 2026-03-31
 - entity: media_file
-
-## 数据库
-
-PostgreSQL
-
----
-
-## 文档格式说明
-
-本文档为 **逻辑模型** 类型文档，记录实体关系、状态机、生命周期、接口语义等。
-
-### 更新本文档的指南（大模型用）
-
-当需要更新此文档时，请遵循以下格式：
-
-```
-## 实体主表
-- table: {表名}
-- 主键: {主键定义}
-
-## 状态机
-- {状态字段}: {状态值列表}
-
-## 关系与约束
-- {外键关系}
-- {业务约束}
-
-## 生命周期入口
-- {HTTP方法} {路径}: {功能描述}
-
-## 接口语义
-### {API名称}
-- 功能：{功能描述}
-- 路径：{API路径}
-- 方法：{HTTP方法}
-- 状态流转：{状态变化}
-- 有效状态：{允许执行该操作的状态}
-- 无效状态：{禁止执行该操作的状态列表}
-- 业务码：{返回的业务码}
-```
-
----
 
 ## 实体主表
 
 - table: media_files
 - 主键: id (BigAutoField)
 
+## 当前边界
+
+- `MediaFile` 当前是索引驱动的只读模型。
+- 公开业务接口只保留列表、详情、下载。
+- 媒体记录主要由 DJI 同步任务写入，不由前端手工创建或编辑。
+
 ## 状态机
 
-- N/A（媒体文件无状态机）
+- `MediaFile` 无独立业务状态机
+- 删除语义仍保留在表结构中：`is_deleted=true` 表示逻辑删除
 
 ## 关系与约束
 
-- flight_record -> flight_record.FlightRecord
-- 逻辑删除：is_deleted=true 表示已删除
+- `media_files.tenant_id -> tenants.id`
+- `media_files.flight_record_id -> flight_records.id`
+- `tenant_media_indexes.media_file_id -> media_files.id`（一对一）
+- `tenant_media_indexes.mission_id -> missions.id`（可为空）
+- 对外查询固定过滤：`is_deleted=false` 且 `dji_index` 存在
 
 ## 生命周期入口
 
 | 操作 | 路径 | 说明 |
 |-----|------|------|
-| 创建 | POST /api/v1/media-files | 新增媒体文件 |
-| 列表 | GET /api/v1/media-files | 媒体文件列表查询 |
-| 详情 | GET /api/v1/media-files/{id} | 媒体文件详情 |
-| 更新 | PUT / PATCH /api/v1/media-files/{id} | 全量或局部更新媒体文件 |
-| 删除 | DELETE /api/v1/media-files/{id} | 逻辑删除媒体文件 |
+| 列表 | GET /api/v1/media-files | 查询当前 tenant 可见媒体列表 |
+| 详情 | GET /api/v1/media-files/{id} | 查询媒体详情 |
+| 下载 | GET /api/v1/media-files/{id}/download | 下载 DJI 媒体文件 |
 
 ## 接口语义
 
-### 创建媒体文件 POST /api/v1/media-files
-- 功能：创建媒体文件元数据记录
-- 必填：media_type, file_name, file_url
-- 约束：is_deleted 默认为 false
-- 业务码：`00000`, `B0001`, `A0401 / A0403`
+### 查询媒体列表 GET /api/v1/media-files
 
-### 更新媒体文件 PUT / PATCH /api/v1/media-files/{id}
-- 功能：全量或局部更新媒体文件元数据
-- 可写字段：flight_record, media_type, file_name, file_url, thumbnail_url, file_size, latitude, longitude, captured_at
-- 约束：已逻辑删除的记录不参与更新
-- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
+- 功能：按本地读模型查询媒体
+- 可用筛选：`flight_record_id`、`mission_id`、`device_sn`、`media_type`、`file_name`
+- 业务码：`00000`, `A0401 / A0403`
 
-### 删除媒体文件 DELETE /api/v1/media-files/{id}
-- 功能：逻辑删除媒体文件
-- 约束：执行 is_deleted=true, deleted_at=当前时间，不做物理删除
+### 查询媒体详情 GET /api/v1/media-files/{id}
+
+- 功能：读取单条媒体详情
+- 约束：已删除记录或未建立 DJI 映射的记录不对外暴露
 - 业务码：`00000`, `C0404`, `A0401 / A0403`
+
+### 下载媒体文件 GET /api/v1/media-files/{id}/download
+
+- 功能：跳转到 DJI 提供的下载地址
+- 行为：返回 `302`，不做代理下载
+- 业务码：`302`, `C0404`, `A0401 / A0403`

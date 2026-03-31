@@ -90,7 +90,7 @@ erDiagram
         bigint id PK "无人机ID"
         string code "业务编码"
         string model "型号"
-        string serial_no "序列号"
+        string device_sn "设备序列号"
         string status "状态"
     }
 
@@ -105,7 +105,6 @@ erDiagram
         bigint id PK "航线ID"
         string name "航线名称"
         int route_type "扩展位"
-        int status "状态"
     }
 
     Waypoint_航点 {
@@ -156,7 +155,7 @@ erDiagram
     User_账号 ||--o{ AuditLog_审计日志 : "发起操作 (1:N)"
     Tenant_租户 ||--o{ Drone_无人机 : "管理无人机 (1:N)"
     Tenant_租户 ||--o{ Route_航线 : "管理航线 (1:N)"
-    Route_航线 ||--o{ Waypoint_航点 : "包含航点 (1:N)"
+    Route_航线 ||--o{ Waypoint_航点 : "包含内部航点 (1:N)"
     Tenant_租户 ||--o{ Mission_任务 : "管理任务 (1:N)"
     Route_航线 ||--o{ Mission_任务 : "任务使用航线 (1:N)"
     Drone_无人机 ||--o{ Mission_任务 : "任务绑定无人机 (1:N)"

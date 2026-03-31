@@ -4,35 +4,42 @@
 // 文档类型：图表 (schema)
 // ============================================================
 
-// 文档格式说明：
-// 本文件为 DBML 格式的数据库图表文件。
-// 更新本文档时，请遵循以下格式：
-// ```
-// Table {表名} [note: '{表说明}'] {
-//   {字段名} {类型} [约束, note: '{字段说明}']
-//   indexes {
-//     {索引字段} [name: '{索引名}']
-//   }
-// }
-// ```
-
-// updated_at: 2026-03-10T10:30:00Z
+// updated_at: 2026-03-31
 // entity: route
-// 历史保留：上一轮已新增 PUT / PATCH /api/v1/routes/{id}，routes 表结构未变化
-// 本轮增补：新增 POST /api/v1/routes/{id}/disable，仍不改 routes 表结构
-// 当前轮接口语义：按 route 主键显式把 status 从 ACTIVE 置为 DISABLED；请求体必须为空；重复 disable 幂等成功
-// 当前轮业务码：00000 / A0401 / A0403 / B0001 / C0404 / E0001
+// 当前 API：
+// - GET /api/v1/routes
+// - POST /api/v1/routes
+// - GET /api/v1/routes/{id}
+// - PUT / PATCH /api/v1/routes/{id}
+// - POST /api/v1/routes/{id}/publish
+// - GET /api/v1/routes/{id}/download
+// - DELETE /api/v1/routes/{id}
+// 当前设计不再使用 Route.status；发布结果由 tenant_route_indexes.is_published 表达
 
-Table routes {
+Table routes [note: '租户内 route 草稿表'] {
   id bigint [pk, increment, note: 'ID']
+  tenant_id bigint [not null, note: '所属租户']
   name varchar(100) [not null, note: '航线名称']
-  route_type int [not null, note: '航线类型扩展位(0=待扩展)']
-  drone_type_id bigint [note: '适用无人机类型 ID']
-  total_distance decimal(12,2) [note: '航线总长度(米)']
-  estimated_duration int [note: '预计飞行时长(秒)']
-  waypoint_count int [note: '航点数量']
-  creator_name varchar(50) [not null, note: '创建人姓名']
-  status int [not null, note: '状态(0=禁用,1=正常)']
+  route_type smallint [not null, default: 0, note: '航线类型扩展位（当前仅 0=待扩展）']
+  drone_type_id bigint [note: '适用无人机类型 ID（预留）']
+  total_distance numeric(12,2) [note: '航线总长度（米）']
+  estimated_duration integer [note: '预计飞行时长（秒）']
+  waypoint_count integer [not null, default: 0, note: '内部航点数量']
+  creator_name varchar(50) [not null, default: '', note: '创建人姓名']
   created_at timestamp [not null, note: '创建时间']
   updated_at timestamp [not null, note: '更新时间']
+}
+
+Table tenant_route_indexes [note: 'route 与 DJI 航线的最小发布映射'] {
+  id bigint [pk, increment, note: 'ID']
+  tenant_id bigint [not null, note: '所属租户']
+  route_id bigint [not null, unique, note: '业务 route']
+  dji_wayline_id varchar(128) [not null, default: '', note: '当前已发布 DJI 航线 ID']
+  is_published boolean [not null, default: false, note: '当前本地草稿是否已成功发布']
+  created_at timestamp [not null, note: '创建时间']
+  updated_at timestamp [not null, note: '更新时间']
+
+  indexes {
+    (tenant_id, dji_wayline_id) [name: 'uniq_tenant_dji_wayline_id']
+  }
 }

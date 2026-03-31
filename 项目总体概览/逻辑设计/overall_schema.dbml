@@ -274,7 +274,6 @@ Table routes [note: '租户内航线台账'] {
   estimated_duration integer [note: 'estimated_duration 预计飞行时长（秒）']
   waypoint_count integer [note: 'waypoint_count 航点数量']
   creator_name varchar(50) [not null, default: '', note: 'creator_name 创建人姓名']
-  status smallint [not null, default: 1, note: 'status 状态：1-正常, 0-禁用']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 }
@@ -303,7 +302,7 @@ Table missions [note: '巡检任务主记录'] {
   id bigserial [pk, note: 'id 任务ID']
   tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
   name varchar(100) [not null, note: 'name 任务名称']
-  route_id bigint [not null, ref: > routes.id, note: 'route_id 任务航线']
+  route_id bigint [ref: > routes.id, note: 'route_id 任务航线；route 删除后可为空']
   route_name varchar(100) [not null, default: '', note: 'route_name 航线名称（冗余）']
   drone_id bigint [not null, ref: > drones.id, note: 'drone_id 执行无人机']
   drone_name varchar(100) [not null, default: '', note: 'drone_name 无人机名称（冗余）']
@@ -312,6 +311,7 @@ Table missions [note: '巡检任务主记录'] {
   scheduled_at timestamp [note: 'scheduled_at 计划执行时间']
   remark varchar(500) [not null, default: '', note: 'remark 任务备注']
   status smallint [not null, default: 0, note: 'status PENDING / RUNNING / PAUSED / COMPLETED / CANCELED / FAILED']
+  dji_job_id varchar(128) [not null, default: '', note: 'dji_job_id DJI 任务 ID']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 }
@@ -363,4 +363,94 @@ Table media_files [note: '飞行过程产生的图片与视频'] {
   is_deleted boolean [not null, default: false, note: 'is_deleted 是否逻辑删除']
   deleted_at timestamp [note: 'deleted_at 删除时间']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+}
+
+// ============================================================
+// 20. dji_workspace_configs DJI 工作空间配置表
+// ============================================================
+Table dji_workspace_configs [note: '系统托管的 DJI workspace / user 会话配置'] {
+  id bigserial [pk, note: 'id 主键']
+  workspace_id varchar(128) [not null, unique, note: 'workspace_id DJI workspace ID']
+  dji_user_id varchar(128) [not null, default: '', note: 'dji_user_id DJI user ID']
+  dji_username varchar(128) [not null, default: '', note: 'dji_username DJI 用户名']
+  dji_user_type varchar(64) [not null, default: '', note: 'dji_user_type DJI 用户类型']
+  access_token varchar(512) [not null, default: '', note: 'access_token 访问令牌']
+  mqtt_username varchar(128) [not null, default: '', note: 'mqtt_username MQTT 用户名']
+  mqtt_password varchar(256) [not null, default: '', note: 'mqtt_password MQTT 密码']
+  mqtt_addr varchar(256) [not null, default: '', note: 'mqtt_addr MQTT 地址']
+  expires_at timestamp [note: 'expires_at 访问令牌过期时间']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+}
+
+// ============================================================
+// 21. dji_device_indexes DJI 设备索引表
+// ============================================================
+Table dji_device_indexes [note: '共享设备池快照'] {
+  id bigserial [pk, note: 'id 主键']
+  device_sn varchar(128) [not null, unique, note: 'device_sn 设备序列号']
+  last_payload json [not null, default: '{}', note: 'last_payload 最近一次 DJI 原始载荷']
+  last_seen_at timestamp [note: 'last_seen_at 最近见到时间']
+  firmware_version varchar(128) [not null, default: '', note: 'firmware_version 固件版本']
+  firmware_status varchar(64) [not null, default: '', note: 'firmware_status 固件状态']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+}
+
+// ============================================================
+// 22. tenant_route_indexes 航线发布索引表
+// ============================================================
+Table tenant_route_indexes [note: 'route 与 DJI 航线的最小发布映射'] {
+  id bigserial [pk, note: 'id 主键']
+  tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
+  route_id bigint [not null, unique, ref: > routes.id, note: 'route_id 业务航线']
+  dji_wayline_id varchar(128) [not null, default: '', note: 'dji_wayline_id DJI 航线 ID']
+  is_published boolean [not null, default: false, note: 'is_published 当前本地草稿是否已发布']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+
+  indexes {
+    (tenant_id, dji_wayline_id) [name: 'uniq_tenant_dji_wayline_id']
+  }
+}
+
+// ============================================================
+// 23. tenant_mission_indexes 任务同步索引表
+// ============================================================
+Table tenant_mission_indexes [note: 'mission 与 DJI job 的一对一映射'] {
+  id bigserial [pk, note: 'id 主键']
+  tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
+  mission_id bigint [not null, unique, ref: > missions.id, note: 'mission_id 业务任务']
+  dji_job_id varchar(128) [not null, note: 'dji_job_id DJI 任务 ID']
+  execution_status varchar(64) [not null, default: '', note: 'execution_status 最近一次同步到的 DJI 状态原文']
+  sync_status varchar(32) [not null, default: 'PENDING', note: 'sync_status 同步状态']
+  last_sync_at timestamp [note: 'last_sync_at 最近同步时间']
+  error_msg varchar(255) [not null, default: '', note: 'error_msg 同步错误']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+
+  indexes {
+    (tenant_id, dji_job_id) [unique, name: 'uniq_tenant_dji_job_id']
+  }
+}
+
+// ============================================================
+// 24. tenant_media_indexes 媒体同步索引表
+// ============================================================
+Table tenant_media_indexes [note: 'media_file 与 DJI 文件的一对一映射'] {
+  id bigserial [pk, note: 'id 主键']
+  tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
+  media_file_id bigint [not null, unique, ref: > media_files.id, note: 'media_file_id 业务媒体']
+  dji_file_id varchar(128) [not null, note: 'dji_file_id DJI 文件 ID']
+  device_sn varchar(128) [not null, default: '', note: 'device_sn 设备序列号']
+  mission_id bigint [ref: > missions.id, note: 'mission_id 关联任务']
+  sync_status varchar(32) [not null, default: 'PENDING', note: 'sync_status 同步状态']
+  last_sync_at timestamp [note: 'last_sync_at 最近同步时间']
+  error_msg varchar(255) [not null, default: '', note: 'error_msg 同步错误']
+  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
+  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+
+  indexes {
+    (tenant_id, dji_file_id) [unique, name: 'uniq_tenant_dji_file_id']
+  }
 }

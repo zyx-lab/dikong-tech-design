@@ -8,7 +8,7 @@ PostgreSQL
 
 ## 1. 表结构概览
 
-> 当前总览对齐正式 `/api/v1/*` 实现，覆盖 Formal IAM Plane 与 Business API Plane 的核心业务表，不展开 Django 内部运行表。
+> 当前总览对齐正式 `/api/v1/*` 实现，覆盖 Formal IAM Plane、Business API Plane 与 DJI 适配层的核心表，不展开 Django 内部运行表。
 
 | 序号 | 表名 | 中文名 | 说明 |
 | ---- | ---- | ---- | ---- |
@@ -27,10 +27,15 @@ PostgreSQL
 | 13 | drones | 无人机表 | 租户内无人机台账 |
 | 14 | drone_assignments | 无人机分配表 | 无人机与飞手成员的分配关系 |
 | 15 | routes | 航线表 | 租户内航线台账 |
-| 16 | waypoints | 航点表 | 航线中的坐标点位 |
+| 16 | waypoints | 航点表 | Route 聚合内部航点表 |
 | 17 | missions | 任务表 | 巡检任务主记录 |
 | 18 | flight_records | 飞行记录表 | 飞行执行过程记录 |
 | 19 | media_files | 媒体文件表 | 飞行过程产生的图片与视频 |
+| 20 | dji_workspace_configs | DJI 工作空间配置表 | 系统托管的 DJI workspace / user 会话 |
+| 21 | dji_device_indexes | DJI 设备索引表 | 共享设备池快照 |
+| 22 | tenant_route_indexes | 航线发布索引表 | route 与 DJI 航线映射 |
+| 23 | tenant_mission_indexes | 任务同步索引表 | mission 与 DJI job 映射 |
+| 24 | tenant_media_indexes | 媒体同步索引表 | media_file 与 DJI 文件映射 |
 
 补充说明：
 1. 当前实现不存在独立 `drone_types` 表。
@@ -324,9 +329,12 @@ PostgreSQL
 | estimated_duration | integer |  | 预计飞行时长（秒） |
 | waypoint_count | integer |  | 航点数量 |
 | creator_name | varchar(50) | NOT NULL, DEFAULT '' | 创建人姓名 |
-| status | smallint | NOT NULL, DEFAULT 1 | 状态：1-正常, 0-禁用 |
 | created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
 | updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
+
+说明：
+1. 当前设计不再使用 `Route.status`。
+2. `Route` 是公开聚合根，航点通过 `waypoints[]` 作为内部编辑结构读写。
 
 ---
 
@@ -344,7 +352,7 @@ PostgreSQL
 
 唯一约束：`(route_id, sequence)`
 
-说明：仅允许向状态为 `ACTIVE` 的航线新增航点。
+说明：`waypoints` 只作为 `Route` 聚合的内部持久化结构，不再存在独立 waypoint 业务 API。
 
 ---
 
@@ -355,7 +363,7 @@ PostgreSQL
 | id | bigserial | PK | 任务 ID |
 | tenant_id | bigint | NOT NULL, FK -> tenants.id | 所属租户 |
 | name | varchar(100) | NOT NULL | 任务名称 |
-| route_id | bigint | NOT NULL, FK -> routes.id | 任务航线 |
+| route_id | bigint | FK -> routes.id | 任务航线；route 删除后可为空 |
 | route_name | varchar(100) | NOT NULL, DEFAULT '' | 航线名称冗余 |
 | drone_id | bigint | NOT NULL, FK -> drones.id | 执行无人机 |
 | drone_name | varchar(100) | NOT NULL, DEFAULT '' | 无人机名称冗余 |
@@ -364,10 +372,13 @@ PostgreSQL
 | scheduled_at | timestamp |  | 计划执行时间 |
 | remark | varchar(500) | NOT NULL, DEFAULT '' | 任务备注 |
 | status | smallint | NOT NULL, DEFAULT 0 | 状态：`PENDING / RUNNING / PAUSED / COMPLETED / CANCELED / FAILED` |
+| dji_job_id | varchar(128) | NOT NULL, DEFAULT '' | DJI 任务 ID |
 | created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
 | updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
 
-说明：飞手字段不是独立 `pilot` 表，而是 `tenant_members` 中拥有 `pilot_operator` 角色的成员。
+说明：
+1. 飞手字段不是独立 `pilot` 表，而是 `tenant_members` 中拥有 `pilot_operator` 角色的成员。
+2. 创建 mission 时要求 route 已发布到 DJI；本地 `start / pause / resume / complete / fail` 动作接口已删除。
 
 ---
 
@@ -422,6 +433,95 @@ PostgreSQL
 
 ---
 
+### 2.20 dji_workspace_configs（DJI 工作空间配置表）
+
+| 字段名 | 类型 | 约束 | 说明 |
+| ------ | ---- | ---- | ---- |
+| id | bigserial | PK | 主键 |
+| workspace_id | varchar(128) | NOT NULL, UNIQUE | DJI workspace ID |
+| dji_user_id | varchar(128) | NOT NULL, DEFAULT '' | DJI user ID |
+| dji_username | varchar(128) | NOT NULL, DEFAULT '' | DJI 用户名 |
+| dji_user_type | varchar(64) | NOT NULL, DEFAULT '' | DJI 用户类型 |
+| access_token | varchar(512) | NOT NULL, DEFAULT '' | 访问令牌 |
+| mqtt_username | varchar(128) | NOT NULL, DEFAULT '' | MQTT 用户名 |
+| mqtt_password | varchar(256) | NOT NULL, DEFAULT '' | MQTT 密码 |
+| mqtt_addr | varchar(256) | NOT NULL, DEFAULT '' | MQTT 地址 |
+| expires_at | timestamp |  | 访问令牌过期时间 |
+| created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
+| updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
+
+---
+
+### 2.21 dji_device_indexes（DJI 设备索引表）
+
+| 字段名 | 类型 | 约束 | 说明 |
+| ------ | ---- | ---- | ---- |
+| id | bigserial | PK | 主键 |
+| device_sn | varchar(128) | NOT NULL, UNIQUE | 设备序列号 |
+| last_payload | json | NOT NULL, DEFAULT {} | 最近一次 DJI 原始载荷 |
+| last_seen_at | timestamp |  | 最近见到时间 |
+| firmware_version | varchar(128) | NOT NULL, DEFAULT '' | 固件版本 |
+| firmware_status | varchar(64) | NOT NULL, DEFAULT '' | 固件状态 |
+| created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
+| updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
+
+---
+
+### 2.22 tenant_route_indexes（航线发布索引表）
+
+| 字段名 | 类型 | 约束 | 说明 |
+| ------ | ---- | ---- | ---- |
+| id | bigserial | PK | 主键 |
+| tenant_id | bigint | NOT NULL, FK -> tenants.id | 所属租户 |
+| route_id | bigint | NOT NULL, UNIQUE, FK -> routes.id | 业务航线 |
+| dji_wayline_id | varchar(128) | NOT NULL, DEFAULT '' | DJI 航线 ID |
+| is_published | boolean | NOT NULL, DEFAULT false | 当前本地草稿是否已发布 |
+| created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
+| updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
+
+唯一约束：`(tenant_id, dji_wayline_id)` 仅在 `dji_wayline_id` 非空时生效。
+
+---
+
+### 2.23 tenant_mission_indexes（任务同步索引表）
+
+| 字段名 | 类型 | 约束 | 说明 |
+| ------ | ---- | ---- | ---- |
+| id | bigserial | PK | 主键 |
+| tenant_id | bigint | NOT NULL, FK -> tenants.id | 所属租户 |
+| mission_id | bigint | NOT NULL, UNIQUE, FK -> missions.id | 业务任务 |
+| dji_job_id | varchar(128) | NOT NULL | DJI 任务 ID |
+| execution_status | varchar(64) | NOT NULL, DEFAULT '' | 最近一次同步到的 DJI 状态原文 |
+| sync_status | varchar(32) | NOT NULL, DEFAULT 'PENDING' | 同步状态 |
+| last_sync_at | timestamp |  | 最近同步时间 |
+| error_msg | varchar(255) | NOT NULL, DEFAULT '' | 同步错误 |
+| created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
+| updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
+
+唯一约束：`(tenant_id, dji_job_id)`
+
+---
+
+### 2.24 tenant_media_indexes（媒体同步索引表）
+
+| 字段名 | 类型 | 约束 | 说明 |
+| ------ | ---- | ---- | ---- |
+| id | bigserial | PK | 主键 |
+| tenant_id | bigint | NOT NULL, FK -> tenants.id | 所属租户 |
+| media_file_id | bigint | NOT NULL, UNIQUE, FK -> media_files.id | 业务媒体 |
+| dji_file_id | varchar(128) | NOT NULL | DJI 文件 ID |
+| device_sn | varchar(128) | NOT NULL, DEFAULT '' | 设备序列号 |
+| mission_id | bigint | FK -> missions.id | 关联任务 |
+| sync_status | varchar(32) | NOT NULL, DEFAULT 'PENDING' | 同步状态 |
+| last_sync_at | timestamp |  | 最近同步时间 |
+| error_msg | varchar(255) | NOT NULL, DEFAULT '' | 同步错误 |
+| created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
+| updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
+
+唯一约束：`(tenant_id, dji_file_id)`
+
+---
+
 ## 3. 关系图
 
 ```mermaid
@@ -443,16 +543,23 @@ erDiagram
     tenant_members ||--o{ drone_assignments : "1:N"
     tenants ||--o{ routes : "1:N"
     routes ||--o{ waypoints : "1:N"
+    tenants ||--o{ tenant_route_indexes : "1:N"
+    routes ||--|| tenant_route_indexes : "1:1"
     tenants ||--o{ missions : "1:N"
     routes ||--o{ missions : "1:N"
     drones ||--o{ missions : "1:N"
     tenant_members ||--o{ missions : "1:N"
+    tenants ||--o{ tenant_mission_indexes : "1:N"
+    missions ||--|| tenant_mission_indexes : "1:1"
     tenants ||--o{ flight_records : "1:N"
     missions ||--o{ flight_records : "1:N"
     drones ||--o{ flight_records : "1:N"
     tenant_members ||--o{ flight_records : "1:N"
     tenants ||--o{ media_files : "1:N"
     flight_records ||--o{ media_files : "1:N"
+    tenants ||--o{ tenant_media_indexes : "1:N"
+    media_files ||--|| tenant_media_indexes : "1:1"
+    missions ||--o{ tenant_media_indexes : "1:N"
 ```
 
 ---
@@ -465,3 +572,4 @@ erDiagram
 4. 所有业务表均显式带 `tenant_id`，用于多租户数据隔离。
 5. 当前不存在独立 `pilots` 表，飞手由 `tenant_members` 承载；任务、分配、飞行记录都直接外键到 `tenant_members`。
 6. 当前不存在独立 `drone_types` 表；`routes.drone_type_id` 为预留扩展字段，当前没有外键约束。
+7. DJI 适配层当前已引入 `dji_workspace_configs`、`dji_device_indexes`、`tenant_route_indexes`、`tenant_mission_indexes`、`tenant_media_indexes` 五张核心表。

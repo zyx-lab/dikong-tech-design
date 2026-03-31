@@ -36,7 +36,7 @@
 | **无人机** | Drone | 租户内无人机台账 | `drones/*` |
 | **无人机分配** | DroneAssignment | 无人机与飞手成员的分配关系 | `drone-assignments/*` |
 | **航线** | Route | 租户内航线台账 | `routes/*` |
-| **航点** | Waypoint | 航线中的坐标点位 | `waypoints/*` |
+| **航点** | Waypoint | 航线内部航点结构，不再独立对外开放 | `routes/*` |
 | **任务** | Mission | 租户内巡检任务 | `missions/*` |
 | **飞行记录** | FlightRecord | 任务执行过程中的飞行记录 | `flight-records/*` |
 | **媒体文件** | MediaFile | 飞行过程产生的图片与视频 | `media-files/*` |
@@ -134,7 +134,7 @@ erDiagram
         bigint id PK "无人机ID"
         string code "业务编码"
         string model "型号"
-        string serial_no "序列号"
+        string device_sn "设备序列号"
         string status "状态"
     }
 
@@ -149,7 +149,6 @@ erDiagram
         bigint id PK "航线ID"
         string name "航线名称"
         int route_type "扩展位"
-        int status "状态"
     }
 
     Waypoint_航点 {
@@ -200,7 +199,7 @@ erDiagram
     User_账号 ||--o{ AuditLog_审计日志 : "发起操作 (1:N)"
     Tenant_租户 ||--o{ Drone_无人机 : "管理无人机 (1:N)"
     Tenant_租户 ||--o{ Route_航线 : "管理航线 (1:N)"
-    Route_航线 ||--o{ Waypoint_航点 : "包含航点 (1:N)"
+    Route_航线 ||--o{ Waypoint_航点 : "包含内部航点 (1:N)"
     Tenant_租户 ||--o{ Mission_任务 : "管理任务 (1:N)"
     Route_航线 ||--o{ Mission_任务 : "任务使用航线 (1:N)"
     Drone_无人机 ||--o{ Mission_任务 : "任务绑定无人机 (1:N)"
@@ -230,7 +229,7 @@ erDiagram
 | Drone — DroneAssignment | 1:N | 一架无人机可形成多条历史分配记录 |
 | TenantMember — DroneAssignment | 1:N | 一个飞手成员可拥有多条历史分配记录 |
 | Tenant — Route | 1:N | 航线按租户隔离 |
-| Route — Waypoint | 1:N | 一条航线包含多个航点 |
+| Route — Waypoint | 1:N | 一条航线包含多个内部航点；当前不再单独暴露 waypoint 资源 |
 | Route — Mission | 1:N | 一条航线可被多个任务复用 |
 | Drone — Mission | 1:N | 一架无人机可执行多个任务 |
 | TenantMember — Mission | 1:N | 飞手成员可执行多个任务 |

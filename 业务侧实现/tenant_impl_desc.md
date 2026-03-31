@@ -90,7 +90,7 @@ tenant_member -> TenantMember(ACTIVE) + 租户内角色绑定
 
 ### 当前 `pilot_operator` 权限收口
 
-- `pilot_operator` 当前对 `drone.view_drone / mission.view_mission / flight_record.view_flight_record / flight_record.manage_flight_record / media_file.view_media_file / media_file.manage_media_file` 都按 `ASSIGNED` 生效。
+- `pilot_operator` 当前对 `drone.view_drone / mission.view_mission / flight_record.view_flight_record / flight_record.manage_flight_record / media_file.view_media_file` 都按 `ASSIGNED` 生效。
 - `ASSIGNED` 的主体统一按当前租户内的 `TenantMember.id` 判定。
 - 具体口径：
   - 无人机：命中当前成员的 `DroneAssignment`
@@ -102,7 +102,7 @@ tenant_member -> TenantMember(ACTIVE) + 租户内角色绑定
 
 - `Tenant.code` 全局唯一。
 - `TenantMember.member_no` 按租户内唯一。
-- 业务表里的 `Drone.code / Drone.serial_no / FlightRecord.flight_no` 都按租户内唯一处理。
+- 业务表里的 `Drone.code / Drone.device_sn / FlightRecord.flight_no` 都按租户内唯一处理。
 - API 校验统一口径：同租户重复拒绝，跨租户重复允许。
 
 ### 模型层硬约束

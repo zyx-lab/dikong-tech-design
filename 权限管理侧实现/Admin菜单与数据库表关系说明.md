@@ -18,7 +18,7 @@
 
 ---
 
-## 2. 当前系统的表清单（当前工作库实例共 27 张，未包含 `auth_sessions`）
+## 2. 当前系统的表清单（以当前代码模型为准）
 
 ### 2.1 权限系统核心表（当前数据库实例）
 1. `auth_users`：账号主表（自定义 `User`）
@@ -50,14 +50,19 @@
 3. `django_migrations`：迁移记录
 4. `django_session`：Session 会话
 
-### 2.4 业务表（当前已落地）
+### 2.4 业务与 DJI 适配表（当前已落地）
 1. `drones`：无人机台账
 2. `drone_assignments`：无人机分配关系
 3. `routes`：航线
-4. `waypoints`：航点
+4. `waypoints`：航线内部航点表
 5. `missions`：任务
 6. `flight_records`：飞行记录
 7. `media_files`：媒体文件
+8. `dji_workspace_configs`：DJI workspace 与系统执行账号配置
+9. `dji_device_indexes`：DJI 共享设备池索引
+10. `tenant_route_indexes`：route 发布索引
+11. `tenant_mission_indexes`：任务同步索引
+12. `tenant_media_indexes`：媒体同步索引
 
 ---
 
@@ -93,7 +98,7 @@
 例如：
 - `auth_group`、`auth_permission` 等 Django 兼容表
 - `django_*` 运行表
-- `drones`、`missions`、`media_files` 等业务表
+- `drones`、`missions`、`media_files`、`dji_*`、`tenant_*_indexes` 等业务与适配表
 
 这些表当前不在 `apps/access/admin.py` 的左侧菜单注册范围内，因此不会显示。
 

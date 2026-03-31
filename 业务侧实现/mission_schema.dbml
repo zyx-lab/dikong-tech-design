@@ -4,77 +4,47 @@
 // 文档类型：图表 (schema)
 // ============================================================
 
-// 文档格式说明：
-// 本文件为 DBML 格式的数据库图表文件。
-// 更新本文档时，请遵循以下格式：
-// ```
-// Table {表名} [note: '{表说明}'] {
-//   {字段名} {类型} [约束, note: '{字段说明}']
-//   indexes {
-//     {索引字段} [name: '{索引名}']
-//   }
-// }
-// ```
-
-// updated_at: 2026-03-15T14:20:00+08:00
+// updated_at: 2026-03-31
 // entity: mission
-// 历史保留 + 当前轮增补：当前轮新增 PUT / PATCH /api/v1/missions/{id}（更新）、POST /api/v1/missions/{id}/start（启动）、POST /api/v1/missions/{id}/pause（暂停）、POST /api/v1/missions/{id}/resume（恢复）与 POST /api/v1/missions/{id}/cancel（取消）
-// 当前轮接口语义：
-// 1) PUT / PATCH 按 mission 主键更新 name/route/drone/pilot/scheduled_at/remark
-// 2) start 将 PENDING 流转到 RUNNING；RUNNING 重复 start 幂等成功，请求体必须为空
-// 3) pause 将 RUNNING 流转到 PAUSED；PAUSED 重复 pause 幂等成功，请求体必须为空
-// 4) resume 将 PAUSED 流转到 RUNNING；RUNNING 重复 resume 幂等成功，请求体必须为空
-// 5) cancel 将 PENDING/RUNNING/PAUSED 流转到 CANCELED，请求体必须为空
-// 当前轮业务码：00000 / A0401 / A0403 / B0001 / C0201 / C0404 / E0001
+// 当前 API：
+// - GET /api/v1/missions
+// - POST /api/v1/missions
+// - GET /api/v1/missions/{id}
+// - PUT / PATCH /api/v1/missions/{id}
+// - POST /api/v1/missions/{id}/cancel
+// 当前实现已删除 start / pause / resume / complete / fail 动作接口
 
-Table missions {
+Table missions [note: '任务主表'] {
   id bigint [pk, increment, note: 'ID']
-  tenant_id bigint [not null, note: '租户ID（FK: access.Tenant）']
+  tenant_id bigint [not null, note: '租户 ID']
   name varchar(100) [not null, note: '任务名称']
-  route_id bigint [not null, note: '航线ID（FK: route.Route）']
-  route_name varchar(100) [not null, note: '航线名称（冗余）']
-  drone_id bigint [not null, note: '无人机ID（FK: drone.Drone）']
-  drone_name varchar(100) [not null, note: '无人机名称（冗余）']
-  pilot_id bigint [not null, note: '飞手成员ID（FK: access.TenantMember）']
-  pilot_name varchar(50) [not null, note: '飞手姓名（冗余）']
+  route_id bigint [note: '航线 ID；route 删除后可为空']
+  route_name varchar(100) [not null, default: '', note: '航线名称（冗余）']
+  drone_id bigint [not null, note: '无人机 ID']
+  drone_name varchar(100) [not null, default: '', note: '无人机名称（冗余）']
+  pilot_id bigint [not null, note: '飞手成员 ID']
+  pilot_name varchar(50) [not null, default: '', note: '飞手姓名（冗余）']
   scheduled_at timestamp [note: '计划执行时间']
-  remark varchar(500) [not null, note: '任务备注']
-  status int [not null, note: '任务状态(0待执行/1执行中/2已暂停/3已完成/4已取消/5执行失败)']
+  remark varchar(500) [not null, default: '', note: '任务备注']
+  status integer [not null, default: 0, note: '任务状态(0待执行/1执行中/2已暂停/3已完成/4已取消/5执行失败)']
+  dji_job_id varchar(128) [not null, default: '', note: 'DJI 任务 ID']
   created_at timestamp [not null, note: '创建时间']
   updated_at timestamp [not null, note: '更新时间']
 }
 
-// pilot 字段语义：
-// - 接口传入 / 返回的 pilot 都是 TenantMember.id
-// - 仅允许绑定当前租户下 ACTIVE 且带 pilot_operator 的成员
+Table tenant_mission_indexes [note: 'mission 与 DJI job 的最小同步索引'] {
+  id bigint [pk, increment, note: 'ID']
+  tenant_id bigint [not null, note: '租户 ID']
+  mission_id bigint [not null, unique, note: '业务任务']
+  dji_job_id varchar(128) [not null, note: 'DJI 任务 ID']
+  execution_status varchar(64) [not null, default: '', note: '最近一次同步到的 DJI 状态原文']
+  sync_status varchar(32) [not null, default: 'PENDING', note: '同步状态']
+  last_sync_at timestamp [note: '最近同步时间']
+  error_msg varchar(255) [not null, default: '', note: '同步错误']
+  created_at timestamp [not null, note: '创建时间']
+  updated_at timestamp [not null, note: '更新时间']
 
-// 本轮增补（2026-03-09）
-// focus_api: POST /api/v1/missions/{id}/start
-// start 语义：按 missions.id 启动单条任务，仅更新 status=RUNNING。
-// 状态边界：仅允许 PENDING 启动；RUNNING 再次启动按 00000 处理；PAUSED/COMPLETED/CANCELED/FAILED 返回 C0201。
-// 输入边界：start 请求不支持提交 body 参数，非空请求体返回 B0001。
-
-// 本轮增补（2026-03-09）
-// focus_api: POST /api/v1/missions/{id}/pause
-// pause 语义：按 missions.id 暂停单条任务，仅更新 status=PAUSED。
-// 状态边界：仅允许 RUNNING 暂停；PAUSED 再次暂停按 00000 处理；PENDING/COMPLETED/CANCELED/FAILED 返回 C0201。
-// 输入边界：pause 请求不支持提交 body 参数，非空请求体返回 B0001。
-
-// 本轮增补（2026-03-09）
-// focus_api: POST /api/v1/missions/{id}/resume
-// resume 语义：按 missions.id 恢复单条任务，仅更新 status=RUNNING。
-// 状态边界：仅允许 PAUSED 恢复；RUNNING 再次恢复按 00000 处理；PENDING/COMPLETED/CANCELED/FAILED 返回 C0201。
-// 输入边界：resume 请求不支持提交 body 参数，非空请求体返回 B0001。
-
-// 本轮增补（2026-03-09）
-// focus_api: POST /api/v1/missions/{id}/cancel
-// cancel 语义：按 missions.id 取消单条任务，仅更新 status=CANCELED。
-// 状态边界：仅允许 PENDING/RUNNING/PAUSED 取消；COMPLETED/CANCELED/FAILED 返回 C0201。
-// 输入边界：cancel 请求不支持提交 body 参数，非空请求体返回 B0001。
-
-// stage6_doc_sync::mission::schema.dbml::start
-// focus_api_keys: POST /api/v1/missions/{id}/fail
-// business_events: EVT-001 失败任务
-// required_codes: 00000, A0401, A0403, B0001, C0201, C0404, E0001
-// permission_boundary: 代码权限码: view_mission (可查看任务), manage_mission (可新增与编辑任务)
-// stage6_doc_sync::mission::schema.dbml::end
+  indexes {
+    (tenant_id, dji_job_id) [unique, name: 'uniq_tenant_dji_job_id']
+  }
+}

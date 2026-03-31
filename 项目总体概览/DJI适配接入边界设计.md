@@ -17,9 +17,9 @@
 3. 当前按单 user / 单 workspace 的最简单方案落地，不为未来假设场景提前引入多资源池编排、多账号路由、多 workspace 映射等抽象。
 4. tenant 隔离只依赖我方最小本地映射，不依赖 DJI 多 workspace：
    - Drone 本身即为认领绑定：`Drone(tenant_id, device_sn, code, org_id, ...)`
-   - `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, summary_json, sync_status, last_sync_at)`
-   - `TenantMissionIndex(tenant_id, mission_id, dji_job_id, summary_json, execution_status, last_sync_at)`
-   - `TenantMediaIndex(tenant_id, media_id, dji_file_id, device_sn, mission_id, summary_json, sync_status, last_sync_at)`
+   - `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, is_published)`
+   - `TenantMissionIndex(tenant_id, mission_id, dji_job_id, execution_status, sync_status, last_sync_at, error_msg)`
+   - `TenantMediaIndex(tenant_id, media_file_id, dji_file_id, device_sn, mission_id, sync_status, last_sync_at, error_msg)`
 5. tenant 可见性规则：
    - 设备：只有已认领的 Drone 记录对 tenant 可见（`tenant_id + device_sn` 组合唯一）。
    - 航线：只有本 tenant 通过我方 API 创建出来并落了 `TenantRouteIndex` 的航线可见。
@@ -72,10 +72,10 @@
 #### 模型变更
 | 变更项 | 说明 |
 |--------|------|
-| 字段重命名 | `Drone.serial_no` → `Drone.device_sn`（migration 重命名）；重命名完成后统一只使用 `device_sn` |
+| 设备标识统一 | 当前代码已经统一使用 `Drone.device_sn`；不再保留 `serial_no` 业务字段 |
 | 状态字段保留 | `Drone.status` 保留，但只由后台同步更新（DJI 设备在线状态），不开放写接口 |
 | 状态枚举收敛 | `Drone.status` 只保留 `ENABLED` / `DISABLED`；删除 `MAINTENANCE` / `RETIRED` 两个旧台账状态及对应代码、校验、测试 |
-| 删除写 action | live API 引入时同步删除 `enable`、`disable`、`maintenance`、`retire` 四个 action 接口 |
+| 删除写 action | 当前实现已删除 `enable`、`disable`、`maintenance`、`retire` 四个 action 接口 |
 | 新增共享池表 | `DjiDeviceIndex(device_sn, last_payload, last_seen_at)`：全局共享设备池 |
 
 #### 对外 API
@@ -151,42 +151,51 @@ def get_available_drones(request):
 #### 模型变更
 | 变更项 | 说明 |
 |--------|------|
-| 新增索引表 | `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, sync_status, last_sync_at)` |
+| 聚合边界收敛 | `Route` 作为公开聚合根；`waypoints[]` 只作为内部编辑结构，不再单独暴露 `/api/v1/waypoints*` |
+| 新增索引表 | `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, is_published)` |
 
 #### 对外 API
 | 接口 | 方法 | 说明 |
 |------|------|------|
 | `GET /api/v1/routes` | GET | 查询当前 tenant 可见航线列表 |
 | `GET /api/v1/routes/{id}` | GET | 查询单条航线详情 |
-| `POST /api/v1/routes` | POST | 创建航线（上传 KMZ → DJI 导入 → 落 TenantRouteIndex） |
-| `PUT/PATCH /api/v1/routes/{id}` | PUT/PATCH | 更新本地管理字段；若文件变化则重新导入 DJI |
+| `POST /api/v1/routes` | POST | 创建本地 route 草稿，可带完整 `waypoints[]` |
+| `PUT/PATCH /api/v1/routes/{id}` | PUT/PATCH | 更新本地 route 草稿；提交 `waypoints[]` 时整条航线全量替换 |
+| `POST /api/v1/routes/{id}/publish` | POST | 显式把当前 route 草稿发布到 DJI |
 | `DELETE /api/v1/routes/{id}` | DELETE | 删除航线（同步删除 DJI + 清理 TenantRouteIndex） |
-| `GET /api/v1/routes/{id}/download` | GET | 下载航线文件 |
+| `GET /api/v1/routes/{id}/download` | GET | 下载当前已发布航线文件 |
 
 #### 现有接口改动
-- 保留 `routes` 的核心 CRUD 路径，不再区分"本地创建 + 手动同步"两套动作
+- 保留 `routes` 的核心 CRUD 路径，但把“本地编辑”和“发布到 DJI”明确拆开
 - 明确删除对外 `POST /api/v1/routes/{id}/sync`
 - 明确删除对外 `DELETE /api/v1/routes/{id}/sync`
 - 明确删除对外 `POST /api/v1/routes/{id}/favorite`
 - 明确删除对外 `DELETE /api/v1/routes/{id}/favorite`
 
-#### 航线创建流程（KMZ 上传链路）
-1. 前端调用 `POST /api/v1/routes`，以 `multipart/form-data` 上传 KMZ 文件
-2. 我方调用 `GET /api/v1/wayline/workspaces/{workspace_id}/waylines/duplicate-names` 做重名校验
-3. 调用 `POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload` 导入 KMZ
-4. 回查 DJI 航线列表获取 `wayline_id`
-5. 写入 Route 表 + TenantRouteIndex 记录
+#### 当前航线草稿流程
+1. 前端调用 `POST /api/v1/routes` 创建本地 route 草稿。
+2. 请求体可以带完整 `waypoints[]`；写入时按整条航线全量落内部 waypoint 行。
+3. 系统自动创建 `TenantRouteIndex(dji_wayline_id=\"\", is_published=false)`。
+4. 之后前端可通过 `PUT / PATCH /api/v1/routes/{id}` 持续编辑本地草稿。
+5. 任意本地编辑后，`is_published` 都会被置回 `false`。
+
+#### 发布流程
+1. 前端调用 `POST /api/v1/routes/{id}/publish`。
+2. 系统从当前内部 waypoint 行生成 KMZ。
+3. 调用 DJI `POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload` 上传。
+4. 上传成功后把新的 `dji_wayline_id` 写回 `TenantRouteIndex`，并设置 `is_published=true`。
+5. 若此前已有旧的已发布 DJI 航线，则在新航线上传成功后删除旧航线。
 
 #### 内部调用 DJI
-- `POST /api/v1/routes`：重名校验 → KMZ 上传 → 回查结果 → 落 TenantRouteIndex
-- `PUT/PATCH /api/v1/routes/{id}`：只有航线文件变化才走 DJI 导入链路
+- `POST /api/v1/routes`：只落本地库，不调用 DJI
+- `PUT/PATCH /api/v1/routes/{id}`：只更新本地草稿，不调用 DJI
+- `POST /api/v1/routes/{id}/publish`：生成 KMZ → 上传 DJI → 回写 `dji_wayline_id` / `is_published`
 - `DELETE /api/v1/routes/{id}`：调用 `DELETE /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}`
 - `GET /api/v1/routes/{id}/download`：
-  1. 获取 TenantRouteIndex 中的 `dji_wayline_id`
+  1. 校验 `is_published=true` 且 `dji_wayline_id` 非空
   2. 调用 DJI 下载地址：`GET /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}/url`
   3. 透传 302 重定向，让前端直接访问 DJI 地址
   4. 不做代理下载
-- 后台同步任务：刷新 `syncStatus`、`lastSyncAt`
 
 #### 航线下载实现
 
@@ -194,6 +203,8 @@ def get_available_drones(request):
 def download_route(request, route_id):
     route = Route.objects.get(id=route_id)
     tenant_route = TenantRouteIndex.objects.get(route=route)
+    if not tenant_route.is_published or not tenant_route.dji_wayline_id:
+        raise ValidationError("航线尚未发布")
 
     # 获取 DJI 下载地址
     gateway = DjiGateway()
@@ -581,17 +592,18 @@ def cancel(self, request, *args, **kwargs):
 
 #### TenantRouteIndex / TenantMissionIndex / TenantMediaIndex
 
-| 字段 | 类型 | 说明 |
+| 对象 | 字段 | 说明 |
 |------|------|------|
-| sync_status | enum | PENDING / SYNCED / ERROR |
-| last_sync_at | datetime | 最近同步时间 |
-| error_msg | string (nullable) | 同步失败时的错误信息 |
+| `TenantRouteIndex` | `dji_wayline_id` | 当前已发布 DJI 航线 ID |
+| `TenantRouteIndex` | `is_published` | 当前本地 route 草稿是否已与最近一次成功发布结果一致 |
+| `TenantMissionIndex` | `sync_status / last_sync_at / error_msg / execution_status` | 任务同步摘要 |
+| `TenantMediaIndex` | `sync_status / last_sync_at / error_msg` | 媒体同步摘要 |
 
 ### 10.9 DjiWorkspaceConfig
 
 | 决策项 | 说明 |
 |--------|------|
-| **当前设计** | 单实例：`DjiWorkspaceConfig(workspace_id, access_token, expires_at)` |
+| **当前设计** | 单实例：`DjiWorkspaceConfig(workspace_id, dji_user_id, dji_username, dji_user_type, access_token, mqtt_username, mqtt_password, mqtt_addr, expires_at)` |
 | **扩展预留** | 若未来支持多 workspace，改为 `DjiWorkspaceConfig(code, workspace_id, ...)` 一对多 |
 | **原则** | 不提前抽象，保持当前最简 |
 

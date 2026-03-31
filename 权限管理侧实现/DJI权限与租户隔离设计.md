@@ -48,19 +48,19 @@
 2. `apps/dji_bff/gateway.py` 负责登录、token 刷新、当前用户探测、工作空间用户探测、`workspace_id` 托管、`dji_user_id` 托管、HTTP 调用和重试。
 3. `apps/dji_bff/models.py` 负责共享索引与映射索引表。
 4. `apps/dji_bff/tasks.py` 负责设备、任务、媒体等后台同步任务。
-5. `apps/dji_bff/services/` 负责按业务域封装 DJI 调用。
-6. `apps/dji_bff/views/` 负责回调入口和只属于系统身份的管理入口。
+5. `apps/dji_bff/services.py` 负责 DJI 回调后的最小业务收敛。
+6. `apps/dji_bff/views.py` 负责内部同步入口与回调入口。
 7. `apps/dji_bff` 是内部模块，不承担新的前台业务概念。
 
 ### 5.2 建议的数据模型
 
 | 模型 | 作用 | tenant 属性 |
 |------|------|-------------|
-| `DjiWorkspaceConfig(workspace_id, dji_user_id, dji_username, dji_user_type, access_token, mqtt_username, mqtt_password, mqtt_addr)` | 托管当前上游 workspace 与系统执行 user 会话 | 无 |
+| `DjiWorkspaceConfig(workspace_id, dji_user_id, dji_username, dji_user_type, access_token, mqtt_username, mqtt_password, mqtt_addr, expires_at)` | 托管当前上游 workspace 与系统执行 user 会话 | 无 |
 | `DjiDeviceIndex(device_sn, last_payload, last_seen_at)` | 保存 DJI 共享设备快照 | 无 |
-| `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, sync_status, last_sync_at)` | 保存本地航线与 DJI 航线映射 | 有 |
-| `TenantMissionIndex(tenant_id, mission_id, dji_job_id, execution_status, last_sync_at)` | 保存本地任务与 DJI 任务映射 | 有 |
-| `TenantMediaIndex(tenant_id, media_id, dji_file_id, device_sn, mission_id, sync_status)` | 保存本地媒体与 DJI 媒体映射 | 有 |
+| `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, is_published)` | 保存本地 route 草稿与 DJI 已发布航线的映射 | 有 |
+| `TenantMissionIndex(tenant_id, mission_id, dji_job_id, execution_status, sync_status, last_sync_at, error_msg)` | 保存本地任务与 DJI 任务映射 | 有 |
+| `TenantMediaIndex(tenant_id, media_file_id, dji_file_id, device_sn, mission_id, sync_status, last_sync_at, error_msg)` | 保存本地媒体与 DJI 媒体映射 | 有 |
 
 ### 5.3 推荐调用链路
 
@@ -89,7 +89,7 @@
 | 文件 | 作用 | 重构动作 |
 |------|------|----------|
 | `config/urls.py` | 全局 URL 入口 | 保持 `/api/v1/` 不变 |
-| `apps/api_v1/urls.py` | 业务 API 总路由 | 继续保留业务路由分发；如有系统回调入口，可在此挂内部入口 |
+| `apps/api_v1/urls.py` | 业务 API 总路由 | 当前已挂载 `apps.dji_bff.urls` 内部入口与业务路由 |
 | `apps/api_v1/business_response.py` | 标准响应码与统一响应结构 | DJI 相关返回继续走 `code/msg/data` |
 | `apps/access/middleware.py` | `X-TENANT-CODE` 解析与 tenant 上下文注入 | DJI 业务请求继续依赖该租户上下文 |
 | `apps/api_v1/tenant_scope.py` | tenant 业务入口约束与 `platform_admin` 禁入规则 | DJI 业务请求继续复用 |
@@ -116,7 +116,7 @@
 ### 7.1 Drone 模块
 
 1. `Drone` 从纯本地台账调整为“tenant 已认领设备”。
-2. `Drone.serial_no` 迁移重命名为 `Drone.device_sn`，重命名完成后统一只使用 `device_sn`。
+2. 当前代码已经统一使用 `Drone.device_sn`，不再保留 `serial_no` 业务字段。
 3. `POST /api/v1/drones` 的创建语义调整为认领语义。
 4. 设备共享池由 `DjiDeviceIndex` 提供。
 5. 新增 `GET /api/v1/drones/available` 作为共享池查询入口。
@@ -130,19 +130,21 @@
 13. 直播 `data` 原样透传 DJI `LiveDTO` 或上游原始成功响应，不做字段裁剪和重命名。
 14. `GET /api/v1/drones/{id}/live/capacity` 使用 `drone.view_drone` 权限。
 15. `POST /api/v1/drones/{id}/live/start|stop|video-quality|video-source` 使用 `drone.manage_drone` 权限。
-16. live API 引入时同步删除 `enable`、`disable`、`maintenance`、`retire` 四个本地状态 action。
+16. 当前实现已经删除 `enable`、`disable`、`maintenance`、`retire` 四个本地状态 action。
 17. `Drone.status` 枚举只保留 `ENABLED` / `DISABLED`，不再保留 `MAINTENANCE` / `RETIRED` 两个旧台账状态。
 18. `Drone.status` 当前只表达设备在线摘要：同步命中上游设备时记为 `ENABLED`，本轮未命中时记为 `DISABLED`。
 19. 删除 `MAINTENANCE` / `RETIRED` 后，相关代码、校验和测试一起删除，不保留兼容逻辑。
 
 ### 7.2 Route 模块
 
-1. `Route` 继续作为本地航线业务实体。
-2. `TenantRouteIndex` 负责记录 `route_id -> dji_wayline_id` 映射。
-3. `POST /api/v1/routes` 在本地鉴权通过后调用 DJI wayline 上传链路。
-4. `GET /api/v1/routes/{id}/download` 通过 `dji_wayline_id` 获取上游下载地址。
-5. `DELETE /api/v1/routes/{id}` 在本地校验后调用 DJI 删除接口，并清理本地映射。
-6. 航线读写权限继续复用 `route.view_route` 与 `route.manage_route`。
+1. `Route` 是公开业务聚合根；`waypoints[]` 只是其内部编辑结构。
+2. `TenantRouteIndex` 负责记录 `route_id -> dji_wayline_id` 以及 `is_published`。
+3. `POST /api/v1/routes` 当前只创建本地 route 草稿，不立即上传 DJI。
+4. `PUT / PATCH /api/v1/routes/{id}` 更新本地草稿；若提交 `waypoints[]`，则整条航线全量替换，并把 `is_published` 置回 `false`。
+5. `POST /api/v1/routes/{id}/publish` 才会调用 DJI wayline 上传链路。
+6. `GET /api/v1/routes/{id}/download` 只允许下载已发布 route。
+7. `DELETE /api/v1/routes/{id}` 在本地校验后调用 DJI 删除接口，并清理本地映射。
+8. 航线读写权限继续复用 `route.view_route` 与 `route.manage_route`。
 
 ### 7.3 Mission 模块
 
@@ -224,6 +226,44 @@
 7. 回调与同步操作写系统审计日志。
 8. 回调与同步流程不依赖本地 `tenant_member -> DJI user` 映射。
 
+### 10.0 当前内部入口
+
+1. 当前已落地的系统内部同步入口为：
+   - `POST /api/v1/__internal__/dji/sync/devices`
+   - `POST /api/v1/__internal__/dji/sync/missions`
+   - `POST /api/v1/__internal__/dji/sync/media`
+2. 当前已落地的系统内部回调入口为：
+   - `POST /api/v1/__internal__/dji/callbacks/wayline-upload`
+   - `POST /api/v1/__internal__/dji/callbacks/media-upload`
+   - `POST /api/v1/__internal__/dji/callbacks/media-group-upload`
+3. 这些入口都要求请求头 `X-DJI-Internal-Token` 命中 `settings.DJI_INTERNAL_API_TOKEN`。
+
+### 10.0.1 这些内部接口与 `run_dji_sync_scheduler` 的关系
+
+1. `run_dji_sync_scheduler` 是当前系统运行闭环里的主调度入口。
+2. 该 management command 不会通过 HTTP 再去调用 `/api/v1/__internal__/dji/sync/*`。
+3. 当前实现里，management command 和 `sync/*` 内部接口是两层不同入口，但共用同一组底层同步函数：
+   - `sync_device_indexes()`
+   - `sync_mission_indexes()`
+   - `sync_media_indexes()`
+4. 也就是说：
+   - `python manage.py run_dji_sync_scheduler` 是 CLI 调度入口
+   - `POST /api/v1/__internal__/dji/sync/*` 是 HTTP 触发入口
+   - 两者最终执行的是同一套同步逻辑，写同样的表、字段和审计日志
+5. 因此，`sync/*` 不是 management command 的“前置步骤”或“下游回调”；它只是同一套同步能力的另一种内部触发方式。
+6. 当前推荐关系是：
+   - 正常部署和持续运行：优先用 `run_dji_sync_scheduler`
+   - 人工排障、受控触发、系统内网编排、接口联调：可用 `POST /api/v1/__internal__/dji/sync/*`
+7. `callbacks/*` 又是另一类入口，它们不负责主动拉取同步，也不会被 management command 主动调用。
+8. `callbacks/*` 的职责是接收上游或内部转发来的异步事件，然后把事件结果收敛回本地索引：
+   - `wayline-upload`：补充确认 route 发布结果
+   - `media-upload`：补充确认单文件媒体上传结果
+   - `media-group-upload`：记录文件组上传回调摘要
+9. 所以当前关系可以概括为：
+   - management command = 主调度器
+   - `sync/*` = 同步任务的 HTTP 包装入口
+   - `callbacks/*` = 异步事件接收入口
+
 ### 10.1 同步调度入口（Django management command）
 
 1. 当前最小闭环方案不引入 Celery、beat 或额外调度基础设施。
@@ -250,7 +290,7 @@
 | 同步环节 | 写入表 | 操作 | 明确写入字段 |
 |------|------|------|------|
 | 设备索引同步 | `dji_device_indexes` | `update_or_create`，按 `device_sn` 幂等更新 | `device_sn`（首次创建）、`last_payload`、`last_seen_at`、`firmware_version`、`firmware_status`、`created_at`（首次创建）、`updated_at` |
-| 设备索引同步 | `drones` | 批量更新已认领设备状态 | `status`、`updated_at`；规则是“本轮在 DJI 共享池中出现的非退役设备置为 `ENABLED`，未出现的非退役设备置为 `DISABLED`” |
+| 设备索引同步 | `drones` | 批量更新已认领设备状态 | `status`、`updated_at`；规则是“本轮在 DJI 共享池中出现的已认领设备置为 `ENABLED`，未出现的已认领设备置为 `DISABLED`” |
 | 任务索引同步 | `tenant_mission_indexes` | 逐条更新现有索引；不新建索引 | 正常命中上游任务时写 `execution_status`、`sync_status=SYNCED`、`error_msg=\"\"`、`last_sync_at`、`updated_at`；上游任务缺失时写 `sync_status=ERROR`、`error_msg=\"上游任务不存在\"`、`last_sync_at`、`updated_at` |
 | 任务索引同步 | `missions` | 按 DJI 状态映射更新本地任务状态 | `status`、`updated_at` |
 | 媒体索引同步 | `media_files` | 若本地不存在则创建，存在则更新 | `tenant_id`、`flight_record_id`、`media_type`、`file_name`、`file_url`、`thumbnail_url`、`file_size`、`latitude`、`longitude`、`captured_at`、`is_deleted=false`、`deleted_at=null`、`created_at`（首次创建） |
