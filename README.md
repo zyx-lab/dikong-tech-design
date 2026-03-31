@@ -19,7 +19,7 @@
 - 已实现业务域：
   - 无人机台账（drone）：认领共享设备、读取/编辑本地管理字段、直播控制
   - 无人机分配（drone_assignment）：查询、创建、取消
-  - 航线（route）：草稿 CRUD、发布到 DJI、下载已发布航线；`waypoints[]` 作为 route 内部编辑结构
+  - 航线（route）：XML 草稿 CRUD（只写 `name` + `xml_file`，`multipart/form-data` 提交），通过 `GET /api/v1/routes/{id}/xml` 读取源 XML，并通过 `POST /api/v1/routes/{id}/publish` 发布到 DJI；`waypoints` 表只能做内部/历史持久化，前端不再写入 `waypoints[]`
   - 任务（mission）：查询、创建、更新、取消；创建时同步 DJI job
   - 飞行记录（flight_record）：CRUD + 状态流转（完成/异常终止）
   - 媒体文件（media_file）：只读查询 + 下载；数据由 DJI 同步沉淀
@@ -172,11 +172,15 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 - `POST /api/v1/drone-assignments/{id}/cancel`
 
 7. Business API - 航线（route）
-- `GET/POST /api/v1/routes`
-- `GET/PUT/PATCH /api/v1/routes/{id}`
-- `DELETE /api/v1/routes/{id}`
-- `POST /api/v1/routes/{id}/publish`
-- `GET /api/v1/routes/{id}/download`
+ - `GET /api/v1/routes`
+ - `POST /api/v1/routes`
+ - `GET /api/v1/routes/{id}`
+ - `PUT /api/v1/routes/{id}`
+ - `DELETE /api/v1/routes/{id}`
+ - `GET /api/v1/routes/{id}/xml`
+ - `POST /api/v1/routes/{id}/publish`
+ - `POST /api/v1/routes` 与 `PUT /api/v1/routes/{id}` 仅接受 `multipart/form-data`，可写字段仅 `name` 和 `xml_file`，旧字段（`route_type`、`waypoints[]` 等）会被拒绝
+ - `GET /api/v1/routes/{id}/xml` 直接返回源 XML 文件流，`POST /api/v1/routes/{id}/publish` 以此 XML 构建 KMZ 上传 DJI
 
 8. Business API - 任务（mission）
 - `GET/POST /api/v1/missions`
