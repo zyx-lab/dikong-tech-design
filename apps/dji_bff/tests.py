@@ -77,7 +77,7 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(missing_drone.status, DroneStatus.DISABLED)
 
     def test_sync_mission_indexes_should_update_execution_status_and_local_status(self):
-        route = Route.objects.create(tenant=self.tenant, name="同步任务航线", creator_name="管理员")
+        route = Route.objects.create(tenant=self.tenant, name="同步任务航线")
         drone = Drone.objects.create(
             tenant=self.tenant,
             code="MISSION-SYNC-DRONE",
@@ -117,6 +117,23 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(mission_index.execution_status, "SUCCESS")
         self.assertEqual(mission_index.sync_status, SyncStatus.SYNCED)
 
+    def test_sync_device_indexes_should_disable_all_claimed_drones_when_bound_pool_is_empty(self):
+        visible_drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="SYNC-EMPTY-DRONE-001",
+            name="已认领无人机",
+            model="M30",
+            device_sn="MOCK-DRONE-001",
+            status=DroneStatus.ENABLED,
+        )
+        mock_dji_state.bound_device_sns = set()
+
+        summary = sync_device_indexes()
+
+        self.assertEqual(summary["synced_count"], 0)
+        visible_drone.refresh_from_db()
+        self.assertEqual(visible_drone.status, DroneStatus.DISABLED)
+
     def test_sync_media_indexes_should_create_local_read_model_from_upstream_media(self):
         Drone.objects.create(
             tenant=self.tenant,
@@ -140,7 +157,7 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.json()["code"], "A0403")
 
     def test_internal_sync_and_callback_endpoints_should_follow_minimal_contract(self):
-        route = Route.objects.create(tenant=self.tenant, name="回调航线", creator_name="管理员")
+        route = Route.objects.create(tenant=self.tenant, name="回调航线")
         route_index = TenantRouteIndex.objects.create(
             tenant=self.tenant,
             route=route,

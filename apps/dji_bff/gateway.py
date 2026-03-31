@@ -59,7 +59,7 @@ class DjiGateway:
         workspace_id = self._workspace_id()
         payload = self._request_json(
             "GET",
-            f"/api/v1/manage/workspaces/{workspace_id}/devices",
+            f"/api/v1/manage/workspaces/{workspace_id}/devices/bound",
         ).data
         return self._extract_items(payload)
 
@@ -140,11 +140,12 @@ class DjiGateway:
             f"/api/v1/wayline/workspaces/{workspace_id}/waylines/{dji_wayline_id}",
         ).data
 
-    def create_mission(self, *, mission_name: str, dock_sn: str | None = None):
+    def create_mission(self, *, mission_name: str, file_id: str, dock_sn: str | None = None):
         workspace_id = self._workspace_id()
         payload = {"name": mission_name}
+        payload["fileId"] = file_id
         if dock_sn:
-            payload["dock_sn"] = dock_sn
+            payload["dockSn"] = dock_sn
         response = self._request_json(
             "POST",
             f"/api/v1/wayline/workspaces/{workspace_id}/flight-tasks",

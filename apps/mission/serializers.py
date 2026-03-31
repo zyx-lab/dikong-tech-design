@@ -110,7 +110,7 @@ class MissionCreateSerializer(RejectUnknownFieldsMixin, serializers.ModelSeriali
         ]
         extra_kwargs = {
             "name": {"help_text": "任务名称，用于调度展示和日志定位。"},
-            "route": {"help_text": "任务绑定的航线 ID；必须属于当前租户。"},
+            "route": {"help_text": "任务绑定的航线 ID；必须属于当前租户。", "required": True, "allow_null": False},
             "drone": {"help_text": "任务绑定的无人机 ID；必须属于当前租户。"},
             "pilot": {"help_text": "任务绑定的飞手成员 ID；必须为当前租户 ACTIVE 成员且具备 pilot_operator 角色。"},
             "dock_sn": {"help_text": "任务下发时透传给 DJI 的 dock_sn，可为空。", "required": False},

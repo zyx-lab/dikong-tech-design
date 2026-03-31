@@ -64,7 +64,7 @@ class FlightRecordApiTests(TestCase):
         self.pilot_member = pilot_member
         ensure_tenant_member_position(pilot_member, code="pilot_operator", name="飞手")
 
-        self.route = Route.objects.create(tenant=self.tenant, name="飞行记录测试航线", creator_name="管理员")
+        self.route = Route.objects.create(tenant=self.tenant, name="飞行记录测试航线")
         self.drone = Drone.objects.create(
             tenant=self.tenant,
             code="FR-DRN-001",
@@ -157,7 +157,7 @@ class FlightRecordApiTests(TestCase):
             role_code="flight_record_model_other_role",
             role_name="飞行记录模型其他租户角色",
         )
-        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", creator_name="管理员")
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线")
         other_drone = Drone.objects.create(
             tenant=other_tenant,
             code="FR-OTHER-MODEL-DRONE",
@@ -212,7 +212,7 @@ class FlightRecordApiTests(TestCase):
             role_code="flight_record_other_role",
             role_name="飞行记录其他租户角色",
         )
-        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", creator_name="管理员")
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线")
         other_drone = Drone.objects.create(
             tenant=other_tenant,
             code="FR-OTHER-DRN-001",
@@ -477,7 +477,7 @@ class FlightRecordApiTests(TestCase):
             role_name="飞手",
         )
         ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
-        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线", creator_name="管理员")
+        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线")
         other_drone = Drone.objects.create(
             tenant=other_tenant,
             code="FR-OTHER-UNIQ-DRN-001",
@@ -998,7 +998,7 @@ class FlightRecordPilotScopeTests(TestCase):
         )
         ensure_tenant_member_position(self.other_pilot_member, code="pilot_operator", name="飞手")
 
-        self.route = Route.objects.create(tenant=self.tenant, name="飞行记录范围航线", creator_name="管理员")
+        self.route = Route.objects.create(tenant=self.tenant, name="飞行记录范围航线")
         self.drone = Drone.objects.create(
             tenant=self.tenant,
             code="FRS-DRN-001",

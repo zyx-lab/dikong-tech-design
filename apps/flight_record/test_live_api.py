@@ -132,7 +132,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
         )
         ensure_tenant_member_position(self.other_tenant_pilot_member, code="pilot_operator", name="飞手")
 
-        self.route = Route.objects.create(tenant=self.tenant, name="实时飞行记录航线", creator_name="管理员")
+        self.route = Route.objects.create(tenant=self.tenant, name="实时飞行记录航线")
         self.drone = Drone.objects.create(
             tenant=self.tenant,
             code="FRL-DRN-001",
@@ -172,7 +172,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             status=MissionStatus.RUNNING,
         )
 
-        self.other_route = Route.objects.create(tenant=self.other_tenant, name="其他租户飞行记录航线", creator_name="管理员")
+        self.other_route = Route.objects.create(tenant=self.other_tenant, name="其他租户飞行记录航线")
         self.other_drone = Drone.objects.create(
             tenant=self.other_tenant,
             code="FRL-OTHER-DRN-001",

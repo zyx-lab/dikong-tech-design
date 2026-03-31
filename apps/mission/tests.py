@@ -86,6 +86,23 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(mission_index.dji_job_id, mission.dji_job_id)
         self.assertIn(mission.dji_job_id, mock_dji_state.jobs)
         self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["dock_sn"], "dock-001")
+        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["file_id"], "wayline-001")
+
+    def test_create_should_require_route(self):
+        response = self.client.post(
+            "/api/v1/missions",
+            {
+                "name": "缺少航线任务",
+                "drone": self.drone.id,
+                "pilot": self.pilot_member.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["data"], {"route": ["该字段是必填项。"]})
+        self.assertEqual(mock_dji_state.jobs, {})
 
     def test_create_should_reject_unpublished_route(self):
         self.route_index.is_published = False

@@ -21,7 +21,7 @@ class DjiMockServerTests(SimpleTestCase):
             )
         self.assertEqual(response.status_code, 404)
 
-    def test_login_and_devices_should_follow_minimal_http_contract(self):
+    def test_login_and_bound_devices_should_follow_minimal_http_contract(self):
         login_response = self.client.post(
             "/__mock-dji__/api/v1/manage/login",
             data=json.dumps({"username": "admin", "password": "admin"}),
@@ -31,14 +31,15 @@ class DjiMockServerTests(SimpleTestCase):
         payload = login_response.json()["data"]
         self.assertEqual(payload["workspace_id"], "mock-workspace-001")
         token = payload["access_token"]
+        mock_dji_state.bound_device_sns = {"MOCK-DRONE-001"}
 
         devices_response = self.client.get(
-            "/__mock-dji__/api/v1/manage/workspaces/mock-workspace-001/devices",
+            "/__mock-dji__/api/v1/manage/workspaces/mock-workspace-001/devices/bound",
             HTTP_X_AUTH_TOKEN=token,
         )
         self.assertEqual(devices_response.status_code, 200)
         body = devices_response.json()["data"]
-        self.assertEqual(body["pagination"]["total"], 2)
+        self.assertEqual(body["pagination"]["total"], 1)
         self.assertEqual(body["list"][0]["device_sn"], "MOCK-DRONE-001")
 
     def test_protected_endpoints_should_require_valid_token(self):
@@ -89,6 +90,15 @@ class DjiMockServerTests(SimpleTestCase):
         )
         self.assertEqual(cancel_response.status_code, 200)
         self.assertEqual(cancel_response.json()["data"]["cancelled_job_ids"], [job_id])
+
+        invalid_job_response = self.client.post(
+            "/__mock-dji__/api/v1/wayline/workspaces/mock-workspace-001/flight-tasks",
+            data=json.dumps({"name": "Mission Missing Route"}),
+            content_type="application/json",
+            HTTP_X_AUTH_TOKEN=token,
+        )
+        self.assertEqual(invalid_job_response.status_code, 400)
+        self.assertEqual(invalid_job_response.json()["code"], "B0001")
 
         media_response = self.client.get(
             "/__mock-dji__/api/v1/media/workspaces/mock-workspace-001/files",

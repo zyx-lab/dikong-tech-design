@@ -9,6 +9,7 @@ urlpatterns = [
     path("api/v1/manage/users/current", views.current_user),
     path("api/v1/manage/workspaces/current", views.current_workspace),
     path("api/v1/manage/workspaces/<str:workspace_id>/devices", views.workspace_devices),
+    path("api/v1/manage/workspaces/<str:workspace_id>/devices/bound", views.workspace_bound_devices),
     path("api/v1/manage/live/capacity", views.live_capacity),
     path("api/v1/manage/live/streams/start", views.live_start),
     path("api/v1/manage/live/streams/stop", views.live_stop),

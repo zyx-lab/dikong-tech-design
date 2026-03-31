@@ -75,6 +75,7 @@ class LiveMissionApiTests(LiveDjiGatewayApiTestCase):
         self.assertEqual(create_response.status_code, 201)
         mission_id = create_response.json()["data"]["id"]
         dji_job_id = create_response.json()["data"]["dji_job_id"]
+        self.assertEqual(mock_dji_state.jobs[dji_job_id]["file_id"], "mission-wayline")
 
         cancel_response = self.client.post(f"/api/v1/missions/{mission_id}/cancel")
         self.assertEqual(cancel_response.status_code, 200)

@@ -37,6 +37,7 @@ class MockDjiState:
                 "mqtt_addr": "tcp://mock-broker:1883",
             }
             self.devices: dict[str, dict] = {}
+            self.bound_device_sns: set[str] = set()
             self.live_capacity: dict[str, dict] = {}
             self.waylines: dict[str, dict] = {}
             self.jobs: dict[str, dict] = {}
@@ -71,7 +72,7 @@ class MockDjiState:
         with self._lock:
             return deepcopy(self.workspace)
 
-    def seed_device(self, *, device_sn: str, name: str, model: str, domain: int = 0):
+    def seed_device(self, *, device_sn: str, name: str, model: str, domain: int = 0, bound: bool = True):
         with self._lock:
             seen_at = _iso()
             device = {
@@ -79,6 +80,7 @@ class MockDjiState:
                 "name": name,
                 "model": model,
                 "domain": domain,
+                "bound": bound,
                 "last_seen_at": seen_at,
                 "firmware_version": "v1.0.0",
                 "firmware_status": "latest",
@@ -101,6 +103,10 @@ class MockDjiState:
                 ],
             }
             self.devices[device_sn] = device
+            if bound:
+                self.bound_device_sns.add(device_sn)
+            else:
+                self.bound_device_sns.discard(device_sn)
             self.live_capacity[device_sn] = {
                 "device_sn": device_sn,
                 "name": name,
@@ -122,6 +128,18 @@ class MockDjiState:
     def list_devices(self) -> dict:
         with self._lock:
             items = [deepcopy(self.devices[key]) for key in sorted(self.devices.keys())]
+            return {
+                "list": items,
+                "pagination": {
+                    "page": 1,
+                    "page_size": len(items) or 1,
+                    "total": len(items),
+                },
+            }
+
+    def list_bound_devices(self) -> dict:
+        with self._lock:
+            items = [deepcopy(self.devices[key]) for key in sorted(self.bound_device_sns) if key in self.devices]
             return {
                 "list": items,
                 "pagination": {

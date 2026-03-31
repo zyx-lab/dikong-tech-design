@@ -116,6 +116,15 @@ def workspace_devices(request, workspace_id: str):
 
 
 @protected_mock_dji_view
+def workspace_bound_devices(request, workspace_id: str):
+    if request.method != "GET":
+        raise Http404
+    if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
+        return _error("C0404", "workspace not found", status=404)
+    return _success(mock_dji_state.list_bound_devices())
+
+
+@protected_mock_dji_view
 def live_capacity(request):
     if request.method != "GET":
         raise Http404
@@ -233,7 +242,10 @@ def create_job(request, workspace_id: str):
         raise Http404
     if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
         return _error("C0404", "workspace not found", status=404)
-    job = mock_dji_state.create_job(_load_json(request))
+    payload = _load_json(request)
+    if not str(payload.get("fileId") or payload.get("file_id") or "").strip():
+        return _error("B0001", "file_id is required", status=400, data={"file_id": ["该字段是必填项。"]})
+    job = mock_dji_state.create_job(payload)
     return _success(
         {
             "dji_job_id": job["job_id"],

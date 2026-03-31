@@ -200,7 +200,12 @@ class MissionViewSet(
         if serializer.errors:
             return Response(validation_error_payload(serializer.errors), status=status.HTTP_400_BAD_REQUEST)
 
-        route = serializer.validated_data["route"]
+        route = serializer.validated_data.get("route")
+        if route is None:
+            return Response(
+                validation_error_payload({"route": ["该字段是必填项。"]}),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         route_index = getattr(route, "dji_index", None)
         if route_index is None or not route_index.is_published or not route_index.dji_wayline_id:
             return Response(
@@ -216,7 +221,11 @@ class MissionViewSet(
         tenant = self.get_current_tenant()
         dock_sn = serializer.validated_data.get("dock_sn", "")
         mission = serializer.save(tenant=tenant)
-        upstream_payload = DjiGateway().create_mission(mission_name=mission.name, dock_sn=dock_sn)
+        upstream_payload = DjiGateway().create_mission(
+            mission_name=mission.name,
+            file_id=mission.route.dji_index.dji_wayline_id,
+            dock_sn=dock_sn,
+        )
         mission.dji_job_id = upstream_payload["dji_job_id"]
         mission.save(update_fields=["dji_job_id", "updated_at"])
         TenantMissionIndex.objects.create(
