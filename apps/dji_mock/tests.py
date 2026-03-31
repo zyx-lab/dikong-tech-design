@@ -34,13 +34,23 @@ class DjiMockServerTests(SimpleTestCase):
         mock_dji_state.bound_device_sns = {"MOCK-DRONE-001"}
 
         devices_response = self.client.get(
-            "/__mock-dji__/api/v1/manage/workspaces/mock-workspace-001/devices/bound",
+            "/__mock-dji__/api/v1/manage/workspaces/mock-workspace-001/devices/bound?domain=0",
             HTTP_X_AUTH_TOKEN=token,
         )
         self.assertEqual(devices_response.status_code, 200)
         body = devices_response.json()["data"]
         self.assertEqual(body["pagination"]["total"], 1)
         self.assertEqual(body["list"][0]["device_sn"], "MOCK-DRONE-001")
+
+    def test_bound_devices_should_require_domain_query_param(self):
+        response = self.client.get(
+            "/__mock-dji__/api/v1/manage/workspaces/mock-workspace-001/devices/bound",
+            HTTP_X_AUTH_TOKEN=mock_dji_state.access_token,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["code"], "B0001")
+        self.assertEqual(response.json()["data"], {"domain": ["该字段是必填项。"]})
 
     def test_protected_endpoints_should_require_valid_token(self):
         response = self.client.get("/__mock-dji__/api/v1/manage/users/current")
@@ -70,7 +80,17 @@ class DjiMockServerTests(SimpleTestCase):
 
         job_response = self.client.post(
             "/__mock-dji__/api/v1/wayline/workspaces/mock-workspace-001/flight-tasks",
-            data=json.dumps({"name": "Mission A", "fileId": dji_wayline_id, "dockSn": "DOCK-001"}),
+            data=json.dumps(
+                {
+                    "name": "Mission A",
+                    "fileId": dji_wayline_id,
+                    "dockSn": "DOCK-001",
+                    "waylineType": 0,
+                    "taskType": 0,
+                    "rthAltitude": 30,
+                    "outOfControlAction": 0,
+                }
+            ),
             content_type="application/json",
             HTTP_X_AUTH_TOKEN=token,
         )

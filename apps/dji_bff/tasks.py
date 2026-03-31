@@ -183,6 +183,7 @@ def sync_device_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
         else:
             summary.updated_count += 1
 
+    DjiDeviceIndex.objects.exclude(device_sn__in=seen_device_sns).delete()
     Drone.objects.filter(device_sn__in=seen_device_sns).update(status=DroneStatus.ENABLED)
     Drone.objects.exclude(device_sn__in=seen_device_sns).update(status=DroneStatus.DISABLED)
 

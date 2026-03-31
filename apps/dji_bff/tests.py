@@ -15,7 +15,7 @@ from apps.access.test_support import (
     ensure_tenant_member_position,
     ensure_tenant_role_binding,
 )
-from apps.dji_bff.models import SyncStatus, TenantMediaIndex, TenantMissionIndex, TenantRouteIndex
+from apps.dji_bff.models import DjiDeviceIndex, SyncStatus, TenantMediaIndex, TenantMissionIndex, TenantRouteIndex
 from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes, sync_mission_indexes
 from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
@@ -133,6 +133,17 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(summary["synced_count"], 0)
         visible_drone.refresh_from_db()
         self.assertEqual(visible_drone.status, DroneStatus.DISABLED)
+
+    def test_sync_device_indexes_should_delete_stale_shared_device_indexes(self):
+        DjiDeviceIndex.objects.create(device_sn="STALE-DRONE-001", last_payload={"name": "stale"})
+        DjiDeviceIndex.objects.create(device_sn="MOCK-DRONE-001", last_payload={"name": "old visible"})
+        mock_dji_state.bound_device_sns = {"MOCK-DRONE-001"}
+
+        summary = sync_device_indexes()
+
+        self.assertEqual(summary["synced_count"], 1)
+        self.assertFalse(DjiDeviceIndex.objects.filter(device_sn="STALE-DRONE-001").exists())
+        self.assertTrue(DjiDeviceIndex.objects.filter(device_sn="MOCK-DRONE-001").exists())
 
     def test_sync_media_indexes_should_create_local_read_model_from_upstream_media(self):
         Drone.objects.create(

@@ -121,7 +121,14 @@ def workspace_bound_devices(request, workspace_id: str):
         raise Http404
     if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
         return _error("C0404", "workspace not found", status=404)
-    return _success(mock_dji_state.list_bound_devices())
+    raw_domain = request.GET.get("domain")
+    if raw_domain in (None, ""):
+        return _error("B0001", "domain is required", status=400, data={"domain": ["该字段是必填项。"]})
+    try:
+        domain = int(raw_domain)
+    except (TypeError, ValueError):
+        return _error("B0001", "domain is invalid", status=400, data={"domain": ["必须是整数。"]})
+    return _success(mock_dji_state.list_bound_devices(domain=domain))
 
 
 @protected_mock_dji_view
@@ -245,6 +252,24 @@ def create_job(request, workspace_id: str):
     payload = _load_json(request)
     if not str(payload.get("fileId") or payload.get("file_id") or "").strip():
         return _error("B0001", "file_id is required", status=400, data={"file_id": ["该字段是必填项。"]})
+    if not str(payload.get("dockSn") or payload.get("dock_sn") or "").strip():
+        return _error("B0001", "dock_sn is required", status=400, data={"dock_sn": ["该字段是必填项。"]})
+    if payload.get("waylineType") is None:
+        return _error("B0001", "waylineType is required", status=400, data={"waylineType": ["该字段是必填项。"]})
+    if payload.get("taskType") is None:
+        return _error("B0001", "taskType is required", status=400, data={"taskType": ["该字段是必填项。"]})
+    rth_altitude = payload.get("rthAltitude")
+    if not isinstance(rth_altitude, int) or isinstance(rth_altitude, bool):
+        return _error("B0001", "rthAltitude is required", status=400, data={"rthAltitude": ["该字段是必填项。"]})
+    if rth_altitude < 20 or rth_altitude > 500:
+        return _error("B0001", "rthAltitude is invalid", status=400, data={"rthAltitude": ["取值范围必须在 20 到 500 之间。"]})
+    if payload.get("outOfControlAction") is None:
+        return _error(
+            "B0001",
+            "outOfControlAction is required",
+            status=400,
+            data={"outOfControlAction": ["该字段是必填项。"]},
+        )
     job = mock_dji_state.create_job(payload)
     return _success(
         {

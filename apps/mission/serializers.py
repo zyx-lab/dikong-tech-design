@@ -56,7 +56,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
 
 
 class MissionCreateSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
-    dock_sn = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    dock_sn = serializers.CharField(write_only=True, required=True, allow_blank=False)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -113,7 +113,7 @@ class MissionCreateSerializer(RejectUnknownFieldsMixin, serializers.ModelSeriali
             "route": {"help_text": "任务绑定的航线 ID；必须属于当前租户。", "required": True, "allow_null": False},
             "drone": {"help_text": "任务绑定的无人机 ID；必须属于当前租户。"},
             "pilot": {"help_text": "任务绑定的飞手成员 ID；必须为当前租户 ACTIVE 成员且具备 pilot_operator 角色。"},
-            "dock_sn": {"help_text": "任务下发时透传给 DJI 的 dock_sn，可为空。", "required": False},
+            "dock_sn": {"help_text": "任务下发时透传给 DJI 的 dock_sn。", "required": True},
             "scheduled_at": {"help_text": "计划执行时间，可为空。"},
             "remark": {"help_text": "任务备注，可为空。"},
         }

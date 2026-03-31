@@ -98,7 +98,8 @@ PostgreSQL
 
 #### 2. GET /api/v1/drones/available
 - 功能：查询当前租户可认领的共享设备
-- 返回：DJI 共享设备池中、且尚未被任何租户认领的设备
+- 返回：DJI 当前 bound 设备池中、且尚未被任何租户认领的设备
+- 说明：共享池后台同步固定调用 `GET /api/v1/manage/workspaces/{workspace_id}/devices/bound?domain=0`；每轮同步后会删除未再次出现在当前 bound 池中的旧索引记录
 - 权限：drone.view_drone
 - 业务码：`00000`, `A0401 / A0403`
 

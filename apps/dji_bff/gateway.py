@@ -37,6 +37,11 @@ class DjiGatewayUpstreamError(DjiGatewayError):
 class DjiGateway:
     """Mock-friendly DJI gateway with a concrete HTTP implementation."""
 
+    DEFAULT_WAYLINE_TYPE = 0
+    DEFAULT_TASK_TYPE = 0
+    DEFAULT_RTH_ALTITUDE = 30
+    DEFAULT_OUT_OF_CONTROL_ACTION = 0
+
     def __init__(self, *, base_url: str | None = None, timeout: int | None = None):
         self.base_url = (base_url or getattr(settings, "DJI_UPSTREAM_BASE_URL", "")).rstrip("/")
         self.timeout = timeout or int(getattr(settings, "DJI_UPSTREAM_TIMEOUT_SECONDS", 10))
@@ -59,7 +64,7 @@ class DjiGateway:
         workspace_id = self._workspace_id()
         payload = self._request_json(
             "GET",
-            f"/api/v1/manage/workspaces/{workspace_id}/devices/bound",
+            f"/api/v1/manage/workspaces/{workspace_id}/devices/bound?{urlencode({'domain': 0})}",
         ).data
         return self._extract_items(payload)
 
@@ -142,10 +147,15 @@ class DjiGateway:
 
     def create_mission(self, *, mission_name: str, file_id: str, dock_sn: str | None = None):
         workspace_id = self._workspace_id()
-        payload = {"name": mission_name}
-        payload["fileId"] = file_id
-        if dock_sn:
-            payload["dockSn"] = dock_sn
+        payload = {
+            "name": mission_name,
+            "fileId": file_id,
+            "dockSn": dock_sn or "",
+            "waylineType": self.DEFAULT_WAYLINE_TYPE,
+            "taskType": self.DEFAULT_TASK_TYPE,
+            "rthAltitude": self.DEFAULT_RTH_ALTITUDE,
+            "outOfControlAction": self.DEFAULT_OUT_OF_CONTROL_ACTION,
+        }
         response = self._request_json(
             "POST",
             f"/api/v1/wayline/workspaces/{workspace_id}/flight-tasks",

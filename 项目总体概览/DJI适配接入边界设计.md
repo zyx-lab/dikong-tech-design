@@ -13,7 +13,7 @@
 
 ## 2. 最简单隔离方案（Django 只看单上游资源池）
 1. 平台侧只维护一个 `DjiWorkspaceConfig`，保存当前上游 `workspace_id`、会话刷新配置等内部信息；这些信息只在 `DjiGateway` 内部使用，不进入 Django 业务语义。
-2. `DjiGateway` 后台定时从当前上游资源池同步设备快照到共享索引表 `DjiDeviceIndex(device_sn, last_payload, last_seen_at)`；即便上游未来调整 `workspace` / `user` 结构，Django 侧仍只消费统一资源池结果。
+2. `DjiGateway` 后台定时从当前上游资源池同步设备快照到共享索引表 `DjiDeviceIndex(device_sn, last_payload, last_seen_at)`；当前同步源固定为 `GET /api/v1/manage/workspaces/{workspace_id}/devices/bound?domain=0`，并在每轮同步后删除不再出现在当前 bound 池里的旧索引；即便上游未来调整 `workspace` / `user` 结构，Django 侧仍只消费统一资源池结果。
 3. 当前按单 user / 单 workspace 的最简单方案落地，不为未来假设场景提前引入多资源池编排、多账号路由、多 workspace 映射等抽象。
 4. tenant 隔离只依赖我方最小本地映射，不依赖 DJI 多 workspace：
    - Drone 本身即为认领绑定：`Drone(tenant_id, device_sn, code, org_id, ...)`
@@ -103,7 +103,7 @@
 - 明确删除对外 `POST /api/v1/drones/{id}/retire`
 
 #### 认领流程
-1. 平台侧后台定时同步 DJI 设备快照到 `DjiDeviceIndex`
+1. 平台侧后台定时同步 DJI 当前 bound 设备快照到 `DjiDeviceIndex`
 2. 前端调用 `GET /api/v1/drones/available` 获取可认领设备列表
 3. 前端提交 `POST /api/v1/drones` 发起认领：`{"device_sn": "...", "code": "...", "name": "..."}`
 4. 我方校验 `device_sn` 是否存在于 DjiDeviceIndex 且未被其他 tenant 认领
@@ -126,8 +126,8 @@ def get_available_drones(request):
     return DjiDeviceIndex.objects.filter(device_sn__in=available_sns)
 ```
 
-- 不分在线过滤，保持简单
-- 已下线设备也能认领
+- 不额外做在线过滤，保持简单
+- 可认领集合以“当前 bound 设备池 - 已认领设备”差集为准；若设备后续不再出现在当前 bound 池，同步任务会清理其共享索引记录
 
 #### 直播接口详情
 - `GET /api/v1/drones/{id}/live/capacity` 先调用 DJI `GET /api/v1/manage/live/capacity`，再按当前 Drone 的 `device_sn` 过滤，只返回当前 `{id}` 对应设备的能力对象，不透传全量数组。
@@ -138,7 +138,7 @@ def get_available_drones(request):
 - `POST /api/v1/drones/{id}/live/start|stop|video-quality|video-source` 使用 `drone.manage_drone` 权限。
 
 #### 内部调用 DJI
-- 后台设备同步：`GET /api/v1/manage/workspaces/{workspace_id}/devices`
+- 后台设备同步：`GET /api/v1/manage/workspaces/{workspace_id}/devices/bound?domain=0`
 - `POST /api/v1/drones`：不调用 DJI 创建设备；只做本地校验和落库
 - `GET /api/v1/drones/{id}/live/capacity`：调用 DJI `GET /api/v1/manage/live/capacity` 后按 `device_sn` 过滤
 - `POST /api/v1/drones/{id}/live/start`：调用 DJI `POST /api/v1/manage/live/streams/start`
@@ -750,6 +750,9 @@ DjiDeviceIndex
 ```
 
 无 tenant_id（全局共享池）。
+
+- 数据来源：仅保存当前 DJI `devices/bound?domain=0` 返回的设备
+- 收敛规则：每轮同步后删除未再次出现在当前 bound 池中的旧记录
 
 ---
 

@@ -87,6 +87,27 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertIn(mission.dji_job_id, mock_dji_state.jobs)
         self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["dock_sn"], "dock-001")
         self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["file_id"], "wayline-001")
+        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["wayline_type"], 0)
+        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["task_type"], 0)
+        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["rth_altitude"], 30)
+        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["out_of_control_action"], 0)
+
+    def test_create_should_require_dock_sn(self):
+        response = self.client.post(
+            "/api/v1/missions",
+            {
+                "name": "缺少机库任务",
+                "route": self.route.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_member.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["data"], {"dock_sn": ["该字段是必填项。"]})
+        self.assertEqual(mock_dji_state.jobs, {})
 
     def test_create_should_require_route(self):
         response = self.client.post(
@@ -95,6 +116,7 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
                 "name": "缺少航线任务",
                 "drone": self.drone.id,
                 "pilot": self.pilot_member.id,
+                "dock_sn": "dock-missing-route",
             },
             format="json",
         )
@@ -115,6 +137,7 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
                 "route": self.route.id,
                 "drone": self.drone.id,
                 "pilot": self.pilot_member.id,
+                "dock_sn": "dock-unpublished-route",
             },
             format="json",
         )

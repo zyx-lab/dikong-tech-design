@@ -66,8 +66,8 @@
 ### 2. POST /api/v1/missions
 
 - 功能：创建本地任务并同步创建 DJI job
-- 必填：`name`、`route`、`drone`、`pilot`
-- 可选：`dock_sn`、`scheduled_at`、`remark`
+- 必填：`name`、`route`、`drone`、`pilot`、`dock_sn`
+- 可选：`scheduled_at`、`remark`
 - 前置条件：
   - `route`、`drone`、`pilot` 必须属于当前租户
   - `pilot` 必须是当前租户下 `ACTIVE` 成员，且账号存在在职 `staff_profile`
@@ -76,6 +76,7 @@
 - 关键行为：
   - 先创建本地 `Mission(status=PENDING)`
   - 调用 `DjiGateway.create_mission(...)`
+  - 上游请求固定补齐 DJI `flight-tasks` 的最小必填参数：`waylineType=0`、`taskType=0`、`rthAltitude=30`、`outOfControlAction=0`
   - 把返回的 `dji_job_id` 写回 `missions`
   - 创建 `TenantMissionIndex(sync_status=SYNCED, execution_status=str(MissionStatus.PENDING))`
 - 权限：`mission.manage_mission`

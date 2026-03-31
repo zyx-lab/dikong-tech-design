@@ -137,9 +137,13 @@ class MockDjiState:
                 },
             }
 
-    def list_bound_devices(self) -> dict:
+    def list_bound_devices(self, *, domain: int | None = None) -> dict:
         with self._lock:
-            items = [deepcopy(self.devices[key]) for key in sorted(self.bound_device_sns) if key in self.devices]
+            items = [
+                deepcopy(self.devices[key])
+                for key in sorted(self.bound_device_sns)
+                if key in self.devices and (domain is None or self.devices[key].get("domain") == domain)
+            ]
             return {
                 "list": items,
                 "pagination": {
@@ -198,6 +202,10 @@ class MockDjiState:
                 "name": payload.get("name") or f"Mock Job {job_id[-4:]}",
                 "file_id": payload.get("fileId") or payload.get("file_id", ""),
                 "dock_sn": payload.get("dockSn") or payload.get("dock_sn", ""),
+                "wayline_type": payload.get("waylineType"),
+                "task_type": payload.get("taskType"),
+                "rth_altitude": payload.get("rthAltitude"),
+                "out_of_control_action": payload.get("outOfControlAction"),
                 "status": payload.get("status", "READY"),
                 "created_at": created_at,
                 "updated_at": created_at,
