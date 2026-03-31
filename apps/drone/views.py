@@ -15,7 +15,11 @@ from apps.api_v1.business_response import (
     validation_error_payload,
 )
 from apps.api_v1.schema import (
+    BUSINESS_DUPLICATE_RESPONSE,
+    BUSINESS_INVALID_PARAMS_RESPONSE,
     BUSINESS_INTERNAL_ERROR_RESPONSE,
+    BUSINESS_NOT_FOUND_RESPONSE,
+    BUSINESS_PERMISSION_DENIED_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
     object_envelope_serializer,
     paginated_envelope_serializer,
@@ -77,34 +81,68 @@ def _drone_success_response(view, drone: Drone, *, http_status: int, include_hea
     list=extend_schema(
         summary="查询当前租户已认领设备",
         parameters=DRONE_FILTER_PARAMETERS,
-        responses={200: OpenApiResponse(response=DRONE_LIST_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=DRONE_LIST_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     ),
     retrieve=extend_schema(
         summary="读取设备详情",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        responses={200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     ),
     create=extend_schema(
-        summary="认领共享池设备",
+        summary="认领已绑定设备",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneClaimSerializer,
-        responses={201: OpenApiResponse(response=DRONE_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            201: OpenApiResponse(response=DRONE_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            409: BUSINESS_DUPLICATE_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     ),
     update=extend_schema(
         summary="全量更新本地管理字段",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneUpdateSerializer,
-        responses={200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            409: BUSINESS_DUPLICATE_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     ),
     partial_update=extend_schema(
         summary="局部更新本地管理字段",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneUpdateSerializer,
-        responses={200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            409: BUSINESS_DUPLICATE_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     ),
 )
@@ -195,9 +233,14 @@ class DroneViewSet(
         return dict(DroneReadSerializer(drone, context={"request": self.request}).data)
 
     @extend_schema(
-        summary="查询可认领设备",
+        summary="查询可认领已绑定设备",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        responses={200: OpenApiResponse(response=AVAILABLE_DRONE_LIST_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=AVAILABLE_DRONE_LIST_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     )
     @action(detail=False, methods=["get"], url_path="available")
@@ -276,7 +319,13 @@ class DroneViewSet(
     @extend_schema(
         summary="查询设备直播能力",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     )
     @action(detail=True, methods=["get"], url_path="live/capacity")
@@ -296,7 +345,14 @@ class DroneViewSet(
         summary="启动直播",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneLiveStartSerializer,
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     )
     @action(detail=True, methods=["post"], url_path="live/start")
@@ -320,7 +376,14 @@ class DroneViewSet(
         summary="停止直播",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneLiveStopSerializer,
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     )
     @action(detail=True, methods=["post"], url_path="live/stop")
@@ -342,7 +405,14 @@ class DroneViewSet(
         summary="调整直播画质",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneLiveVideoQualitySerializer,
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     )
     @action(detail=True, methods=["post"], url_path="live/video-quality")
@@ -364,7 +434,14 @@ class DroneViewSet(
         summary="切换直播视频源",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneLiveVideoSourceSerializer,
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone"],
     )
     @action(detail=True, methods=["post"], url_path="live/video-source")

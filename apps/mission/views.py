@@ -14,7 +14,10 @@ from apps.api_v1.business_response import (
     validation_error_payload,
 )
 from apps.api_v1.schema import (
+    BUSINESS_INVALID_PARAMS_RESPONSE,
     BUSINESS_INTERNAL_ERROR_RESPONSE,
+    BUSINESS_NOT_FOUND_RESPONSE,
+    BUSINESS_PERMISSION_DENIED_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
     object_envelope_serializer,
     paginated_envelope_serializer,
@@ -74,34 +77,65 @@ def _reject_request_body_if_present(request, *, message: str):
     list=extend_schema(
         summary="查询任务列表",
         parameters=MISSION_FILTER_PARAMETERS,
-        responses={200: OpenApiResponse(response=MISSION_LIST_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=MISSION_LIST_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Mission"],
     ),
     retrieve=extend_schema(
         summary="读取任务详情",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        responses={200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Mission"],
     ),
     create=extend_schema(
         summary="创建任务并同步 DJI job",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=MissionCreateSerializer,
-        responses={201: OpenApiResponse(response=MISSION_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            201: OpenApiResponse(response=MISSION_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Mission"],
     ),
     update=extend_schema(
         summary="全量更新本地任务字段",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=MissionUpdateSerializer,
-        responses={200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Mission"],
     ),
     partial_update=extend_schema(
         summary="局部更新本地任务字段",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=MissionUpdateSerializer,
-        responses={200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Mission"],
     ),
 )
@@ -238,7 +272,14 @@ class MissionViewSet(
         summary="取消任务",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=None,
-        responses={200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Mission"],
     )
     @action(detail=True, methods=["post"])

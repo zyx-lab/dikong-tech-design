@@ -95,6 +95,80 @@ BUSINESS_INTERNAL_ERROR_RESPONSE = business_error_response(
     ],
 )
 
+BUSINESS_PERMISSION_DENIED_RESPONSE = business_error_response(
+    description="未认证、无权限、缺少租户上下文，或 platform_admin 访问业务 API 被拒绝。",
+    examples=[
+        business_error_example(
+            "未登录",
+            code="A0401",
+            msg="登录状态已失效",
+            status_codes=["401"],
+        ),
+        business_error_example(
+            "无权限",
+            code="A0403",
+            msg="无操作权限",
+            status_codes=["403"],
+        ),
+        business_error_example(
+            "缺少租户上下文",
+            code="A0403",
+            msg="缺少租户上下文",
+            status_codes=["403"],
+        ),
+        business_error_example(
+            "平台管理员访问业务 API",
+            code="A0403",
+            msg="平台管理员不可访问租户业务接口",
+            status_codes=["403"],
+        ),
+    ],
+)
+
+BUSINESS_INVALID_PARAMS_RESPONSE = business_error_response(
+    description="请求体、查询参数或资源绑定关系不合法时返回 400 + B0001。",
+    examples=[
+        business_error_example(
+            "字段校验失败",
+            code="B0001",
+            msg="参数校验失败",
+            status_codes=["400"],
+            data={"field": ["该字段是必填项。"]},
+        ),
+        business_error_example(
+            "动作接口提交 body",
+            code="B0001",
+            msg="参数校验失败",
+            status_codes=["400"],
+            data={"body": "不支持请求体，请移除 body 后重试"},
+        ),
+    ],
+)
+
+BUSINESS_DUPLICATE_RESPONSE = business_error_response(
+    description="唯一键或业务唯一约束冲突时返回 409 + C0101。",
+    examples=[
+        business_error_example(
+            "资源已存在",
+            code="C0101",
+            msg="资源已存在",
+            status_codes=["409"],
+        )
+    ],
+)
+
+BUSINESS_NOT_FOUND_RESPONSE = business_error_response(
+    description="目标资源不存在，或在当前租户/授权作用域下不可见。",
+    examples=[
+        business_error_example(
+            "资源不存在",
+            code="C0404",
+            msg="资源不存在",
+            status_codes=["404"],
+        )
+    ],
+)
+
 
 def object_envelope_serializer(name, serializer):
     return _standard_envelope(

@@ -10,7 +10,11 @@ from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermissi
 from apps.access.services import IdentityService, log_action, snapshot
 from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload, validation_error_payload
 from apps.api_v1.schema import (
+    BUSINESS_DUPLICATE_RESPONSE,
+    BUSINESS_INVALID_PARAMS_RESPONSE,
     BUSINESS_INTERNAL_ERROR_RESPONSE,
+    BUSINESS_NOT_FOUND_RESPONSE,
+    BUSINESS_PERMISSION_DENIED_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
     object_envelope_serializer,
     paginated_envelope_serializer,
@@ -34,20 +38,38 @@ DRONE_ASSIGNMENT_FILTER_PARAMETERS = [
     list=extend_schema(
         summary="查询无人机分配列表",
         parameters=DRONE_ASSIGNMENT_FILTER_PARAMETERS,
-        responses={200: OpenApiResponse(response=DRONE_ASSIGNMENT_LIST_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=DRONE_ASSIGNMENT_LIST_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone Assignment"],
     ),
     retrieve=extend_schema(
         summary="读取无人机分配详情",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        responses={200: OpenApiResponse(response=DRONE_ASSIGNMENT_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=DRONE_ASSIGNMENT_DETAIL_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone Assignment"],
     ),
     create=extend_schema(
         summary="创建无人机分配",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneAssignmentCreateSerializer,
-        responses={201: OpenApiResponse(response=DRONE_ASSIGNMENT_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            201: OpenApiResponse(response=DRONE_ASSIGNMENT_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            409: BUSINESS_DUPLICATE_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone Assignment"],
     ),
 )
@@ -140,7 +162,14 @@ class DroneAssignmentViewSet(
         summary="取消无人机分配",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=None,
-        responses={200: OpenApiResponse(response=DRONE_ASSIGNMENT_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=DRONE_ASSIGNMENT_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Drone Assignment"],
     )
     @action(detail=True, methods=["post"])

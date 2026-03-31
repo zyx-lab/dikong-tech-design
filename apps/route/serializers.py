@@ -1,34 +1,20 @@
+import xml.etree.ElementTree as ET
+
 from rest_framework import serializers
-from drf_spectacular.utils import extend_schema_field
 
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.route.models import Route
 
 
-class RouteWaypointSerializer(RejectUnknownFieldsMixin, serializers.Serializer):
-    sequence = serializers.IntegerField(min_value=1)
-    latitude = serializers.DecimalField(max_digits=12, decimal_places=8)
-    longitude = serializers.DecimalField(max_digits=12, decimal_places=8)
-    altitude = serializers.DecimalField(max_digits=10, decimal_places=2)
-
-
 class RouteReadSerializer(serializers.ModelSerializer):
     is_published = serializers.SerializerMethodField()
-    waypoints = serializers.SerializerMethodField()
 
     class Meta:
         model = Route
         fields = [
             "id",
             "name",
-            "route_type",
-            "drone_type_id",
-            "total_distance",
-            "estimated_duration",
-            "waypoint_count",
-            "creator_name",
             "is_published",
-            "waypoints",
             "created_at",
             "updated_at",
         ]
@@ -37,36 +23,26 @@ class RouteReadSerializer(serializers.ModelSerializer):
     def get_is_published(self, obj) -> bool:
         return bool(getattr(getattr(obj, "dji_index", None), "is_published", False))
 
-    @extend_schema_field(RouteWaypointSerializer(many=True))
-    def get_waypoints(self, obj):
-        return RouteWaypointSerializer(obj.waypoint_rows.all(), many=True).data
-
 
 class RouteWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
-    waypoints = RouteWaypointSerializer(many=True, required=False)
+    xml_file = serializers.FileField(required=True, allow_empty_file=False)
 
     class Meta:
         model = Route
-        fields = [
-            "name",
-            "route_type",
-            "drone_type_id",
-            "total_distance",
-            "estimated_duration",
-            "waypoints",
-        ]
+        fields = ["name", "xml_file"]
         extra_kwargs = {
             "name": {"help_text": "航线名称。"},
-            "route_type": {"help_text": "航线类型扩展位。", "required": False},
-            "drone_type_id": {"help_text": "适用无人机类型 ID，可为空。", "required": False},
-            "total_distance": {"help_text": "航线总长度，单位米，可为空。", "required": False},
-            "estimated_duration": {"help_text": "预计飞行时长，单位秒，可为空。", "required": False},
+            "xml_file": {"help_text": "航线 XML 文件。"},
         }
 
-    def validate_waypoints(self, value):
-        sequences = [item["sequence"] for item in value]
-        if len(sequences) != len(set(sequences)):
-            raise serializers.ValidationError("同一航线下航点序号不能重复")
+    def validate_xml_file(self, value):
+        try:
+            value.seek(0)
+            ET.fromstring(value.read())
+        except (ET.ParseError, TypeError, ValueError):
+            raise serializers.ValidationError("上传文件必须是可解析 XML")
+        finally:
+            value.seek(0)
         return value
 
 

@@ -1,7 +1,8 @@
+import os
 import uuid
 
 from django.db import transaction
-from django.http import HttpResponseRedirect
+from django.http import FileResponse, Http404
 from rest_framework import mixins, parsers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,10 +10,14 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
-from apps.access.services import IdentityService, log_action, snapshot
+from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.api_v1.schema import (
+    BusinessDeleteResultSerializer,
+    BUSINESS_INVALID_PARAMS_RESPONSE,
     BUSINESS_INTERNAL_ERROR_RESPONSE,
+    BUSINESS_NOT_FOUND_RESPONSE,
+    BUSINESS_PERMISSION_DENIED_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
     object_envelope_serializer,
     paginated_envelope_serializer,
@@ -23,18 +28,17 @@ from apps.dji_bff.models import TenantRouteIndex
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 from apps.route.serializers import RouteCreateSerializer, RouteReadSerializer, RouteUpdateSerializer
-from apps.route.services import build_route_kmz, replace_route_waypoints
+from apps.route.services import build_route_kmz_from_xml
 
 ROUTE_LIST_RESPONSE = paginated_envelope_serializer("RouteListResponse", RouteReadSerializer)
 ROUTE_DETAIL_RESPONSE = object_envelope_serializer("RouteDetailResponse", RouteReadSerializer)
+ROUTE_DELETE_RESPONSE = object_envelope_serializer("RouteDeleteResponse", BusinessDeleteResultSerializer)
 
 ROUTE_FILTER_PARAMETERS = [
     TENANT_CODE_HEADER_PARAMETER,
     OpenApiParameter(name="name", type=str, location=OpenApiParameter.QUERY, description="按航线名称模糊匹配。"),
-    OpenApiParameter(name="route_type", type=int, location=OpenApiParameter.QUERY, description="按航线类型过滤。"),
 ]
 
-_WAYPOINTS_MISSING = object()
 
 def _route_success_response(view, route: Route, *, http_status: int, include_headers: bool = False):
     payload = view._payload(route)
@@ -45,7 +49,7 @@ def _route_success_response(view, route: Route, *, http_status: int, include_hea
 
 
 def _reject_request_body_if_present(request, *, message: str):
-    if request.data:
+    if request.META.get("CONTENT_LENGTH") not in (None, "", "0"):
         return Response(
             standard_error_payload(
                 StandardCode.INVALID_PARAMS,
@@ -61,41 +65,65 @@ def _reject_request_body_if_present(request, *, message: str):
     list=extend_schema(
         summary="查询当前租户航线",
         parameters=ROUTE_FILTER_PARAMETERS,
-        responses={200: OpenApiResponse(response=ROUTE_LIST_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=ROUTE_LIST_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Route"],
     ),
     retrieve=extend_schema(
         summary="读取航线详情",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        responses={200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Route"],
     ),
     create=extend_schema(
         summary="创建本地航线",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=RouteCreateSerializer,
-        responses={201: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            201: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Route"],
     ),
     update=extend_schema(
-        summary="全量更新本地航线字段",
+        summary="全量更新本地航线 XML 草稿",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=RouteUpdateSerializer,
-        responses={200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
-        tags=["Business API - Route"],
-    ),
-    partial_update=extend_schema(
-        summary="局部更新本地航线字段",
-        parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=RouteUpdateSerializer,
-        responses={200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Route"],
     ),
     destroy=extend_schema(
         summary="删除航线",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=None,
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=ROUTE_DELETE_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Route"],
     ),
 )
@@ -106,22 +134,20 @@ class RouteViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
-    mixins.UpdateModelMixin,
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
-    queryset = Route.objects.select_related("dji_index").prefetch_related("waypoint_rows").all().order_by("-id")
+    queryset = Route.objects.select_related("dji_index").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
-    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+    http_method_names = ["get", "post", "put", "delete", "head", "options"]
 
     permission_map = {
         "list": "route.view_route",
         "retrieve": "route.view_route",
-        "download": "route.view_route",
+        "xml": "route.view_route",
         "create": "route.manage_route",
         "update": "route.manage_route",
-        "partial_update": "route.manage_route",
         "publish": "route.manage_route",
         "destroy": "route.manage_route",
     }
@@ -129,18 +155,19 @@ class RouteViewSet(
     def get_serializer_class(self):
         if self.action == "create":
             return RouteCreateSerializer
-        if self.action in {"update", "partial_update"}:
+        if self.action == "update":
             return RouteUpdateSerializer
         return RouteReadSerializer
 
+    def check_permissions(self, request):
+        if request.method.lower() not in getattr(self, "action_map", {}):
+            return
+        return super().check_permissions(request)
+
     def get_queryset(self):
         queryset = self.scope_queryset_to_tenant(super().get_queryset())
-        params = self.request.query_params
-
-        if params.get("name"):
-            queryset = queryset.filter(name__icontains=params["name"])
-        if params.get("route_type"):
-            queryset = queryset.filter(route_type=params["route_type"])
+        if self.request.query_params.get("name"):
+            queryset = queryset.filter(name__icontains=self.request.query_params["name"])
         return queryset
 
     def _payload(self, route: Route) -> dict:
@@ -150,7 +177,7 @@ class RouteViewSet(
         route_index, _ = TenantRouteIndex.objects.get_or_create(
             tenant=self.get_current_tenant(),
             route=route,
-            defaults={"is_published": False},
+            defaults={"is_published": False, "dji_wayline_id": ""},
         )
         route_index.is_published = False
         route_index.save(update_fields=["is_published", "updated_at"])
@@ -159,14 +186,7 @@ class RouteViewSet(
 
     @transaction.atomic
     def perform_create(self, serializer):
-        waypoints = serializer.validated_data.pop("waypoints", [])
-        staff = IdentityService.get_staff(self.request.user)
-        route = serializer.save(
-            tenant=self.get_current_tenant(),
-            creator_name=staff.name if staff else "",
-        )
-        if waypoints:
-            replace_route_waypoints(route, waypoints)
+        route = serializer.save(tenant=self.get_current_tenant())
         route_index = TenantRouteIndex.objects.create(
             tenant=self.get_current_tenant(),
             route=route,
@@ -193,15 +213,13 @@ class RouteViewSet(
     def perform_update(self, serializer):
         route = self.get_object()
         before_data = self._payload(route)
-        waypoints = serializer.validated_data.pop("waypoints", _WAYPOINTS_MISSING)
+        old_xml_name = route.xml_file.name
+        xml_storage = route.xml_file.storage
         route = serializer.save()
-
-        if waypoints is not _WAYPOINTS_MISSING:
-            replace_route_waypoints(route, waypoints)
-            if getattr(route, "_prefetched_objects_cache", None):
-                route._prefetched_objects_cache = {}
-
         self._mark_route_unpublished(route)
+
+        if old_xml_name and old_xml_name != route.xml_file.name:
+            xml_storage.delete(old_xml_name)
 
         log_action(
             request=self.request,
@@ -220,31 +238,22 @@ class RouteViewSet(
         route = self.perform_update(serializer)
         return _route_success_response(self, route, http_status=status.HTTP_200_OK)
 
-    def partial_update(self, request, *args, **kwargs):
-        if not request.data:
-            return Response(
-                standard_error_payload(
-                    StandardCode.INVALID_PARAMS,
-                    "PATCH 请求至少包含一个可写字段",
-                    {"body": "请至少提交一个可写字段"},
-                ),
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        route = self.perform_update(serializer)
-        return _route_success_response(self, route, http_status=status.HTTP_200_OK)
-
     @extend_schema(
         summary="发布航线",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=None,
-        responses={200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Route"],
     )
-    @action(detail=True, methods=["post"])
     @transaction.atomic
+    @action(detail=True, methods=["post"])
     def publish(self, request, *args, **kwargs):
         error_response = _reject_request_body_if_present(request, message="publish 请求不支持提交 body 参数")
         if error_response is not None:
@@ -252,75 +261,90 @@ class RouteViewSet(
 
         route = self.get_object()
         before_data = self._payload(route)
-        waypoints = list(route.waypoint_rows.all())
-        if not waypoints:
+        route_index, _ = TenantRouteIndex.objects.get_or_create(
+            tenant=self.get_current_tenant(),
+            route=route,
+            defaults={"dji_wayline_id": "", "is_published": False},
+        )
+        old_wayline_id = route_index.dji_wayline_id
+
+        try:
+            kmz_file = build_route_kmz_from_xml(route)
+        except ValueError:
             return Response(
                 standard_error_payload(
                     StandardCode.INVALID_PARAMS,
-                    "航线至少需要一个航点后才能发布",
+                    "当前 XML 草稿无法转换为可发布 KMZ",
                     {"route_id": route.id},
                 ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        route_index, _ = TenantRouteIndex.objects.get_or_create(
-            tenant=self.get_current_tenant(),
-            route=route,
-            defaults={"is_published": False},
-        )
-        old_wayline_id = route_index.dji_wayline_id
-        kmz_file = build_route_kmz(route, waypoints)
-        upstream_payload = DjiGateway().upload_route(
+        gateway = DjiGateway()
+
+        def _delete_upstream_wayline_if_exists(wayline_id: str, *, best_effort: bool = False):
+            if not wayline_id:
+                return
+            try:
+                gateway.delete_route(wayline_id)
+            except DjiGatewayUpstreamError as exc:
+                if exc.status_code != 404 and not best_effort:
+                    raise
+
+        upstream_payload = gateway.upload_route(
             route_name=f"route-{route.id}-{uuid.uuid4().hex}",
             file_obj=kmz_file,
         )
-        route_index.dji_wayline_id = upstream_payload["dji_wayline_id"]
-        route_index.is_published = True
-        route_index.save(update_fields=["dji_wayline_id", "is_published", "updated_at"])
-        route.dji_index = route_index
+        new_wayline_id = upstream_payload["dji_wayline_id"]
 
-        if old_wayline_id and old_wayline_id != route_index.dji_wayline_id:
-            try:
-                DjiGateway().delete_route(old_wayline_id)
-            except DjiGatewayUpstreamError as exc:
-                if exc.status_code != 404:
-                    raise
+        try:
+            route_index.dji_wayline_id = new_wayline_id
+            route_index.is_published = True
+            route_index.save(update_fields=["dji_wayline_id", "is_published", "updated_at"])
+            route.dji_index = route_index
 
-        log_action(
-            request=request,
-            action="ROUTE_PUBLISH",
-            target_type="route",
-            target_id=route.id,
-            before_data=before_data,
-            after_data=self._payload(route),
-        )
+            if old_wayline_id and old_wayline_id != new_wayline_id:
+                transaction.on_commit(
+                    lambda wayline_id=old_wayline_id: _delete_upstream_wayline_if_exists(
+                        wayline_id,
+                        best_effort=True,
+                    )
+                )
+
+            log_action(
+                request=request,
+                action="ROUTE_PUBLISH",
+                target_type="route",
+                target_id=route.id,
+                before_data=before_data,
+                after_data=self._payload(route),
+            )
+        except Exception:
+            _delete_upstream_wayline_if_exists(new_wayline_id)
+            raise
+
         return _route_success_response(self, route, http_status=status.HTTP_200_OK)
 
     @extend_schema(
-        summary="下载航线文件",
+        summary="读取航线 XML 草稿",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
         responses={
-            302: OpenApiResponse(description="302 重定向到 DJI 下载地址。"),
-            409: OpenApiResponse(description="航线尚未发布。"),
+            200: OpenApiResponse(response=OpenApiTypes.BINARY),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Route"],
     )
     @action(detail=True, methods=["get"])
-    def download(self, request, *args, **kwargs):
+    def xml(self, request, *args, **kwargs):
         route = self.get_object()
-        route_index = getattr(route, "dji_index", None)
-        if route_index is None or not route_index.is_published or not route_index.dji_wayline_id:
-            return Response(
-                standard_error_payload(
-                    StandardCode.STATE_CONFLICT,
-                    "航线尚未发布",
-                    {"route_id": route.id},
-                ),
-                status=status.HTTP_409_CONFLICT,
-            )
-        download_url = DjiGateway().get_route_download_url(route_index.dji_wayline_id)
-        return HttpResponseRedirect(download_url)
+        if not route.xml_file or not route.xml_file.name or not route.xml_file.storage.exists(route.xml_file.name):
+            raise Http404("航线 XML 不存在")
+        filename = os.path.basename(route.xml_file.name) or "route.xml"
+        return FileResponse(route.xml_file.open("rb"), content_type="application/xml", filename=filename)
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
@@ -343,7 +367,7 @@ class RouteViewSet(
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        before_data = snapshot(route)
+        before_data = self._payload(route)
         route_index = getattr(route, "dji_index", None)
         if route_index is not None and route_index.dji_wayline_id:
             try:
@@ -351,8 +375,14 @@ class RouteViewSet(
             except DjiGatewayUpstreamError as exc:
                 if exc.status_code != 404:
                     raise
+
         route_id = route.id
+        xml_name = route.xml_file.name
+        xml_storage = route.xml_file.storage
         route.delete()
+        if xml_name:
+            xml_storage.delete(xml_name)
+
         log_action(
             request=request,
             action="ROUTE_DELETE",

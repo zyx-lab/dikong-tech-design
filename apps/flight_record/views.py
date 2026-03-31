@@ -89,7 +89,7 @@ FLIGHT_RECORD_PERMISSION_DENIED_RESPONSE = business_error_response(
 )
 
 FLIGHT_RECORD_INVALID_PARAMS_RESPONSE = business_error_response(
-    description="请求体不合法或绑定关系不满足约束；架次编号重复时会返回 IDEMPOTENT_DUPLICATE。",
+    description="请求体不合法或绑定关系不满足约束；架次编号重复时会返回 C0101。",
     examples=[
         business_error_example(
             "缺少架次编号",

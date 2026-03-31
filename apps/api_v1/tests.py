@@ -62,6 +62,19 @@ class OpenApiDocsTests(TestCase):
     def setUp(self):
         self.client = APIClient()
 
+    def _operation(self, schema, *, path, method):
+        return schema["paths"][path][method]
+
+    def _resolve_route_write_schema(self, schema, *, path, method):
+        operation = self._operation(schema, path=path, method=method)
+        request_body = operation["requestBody"]["content"]
+        media_schema = request_body.get("multipart/form-data") or request_body.get("application/json")
+        if media_schema is None:
+            media_schema = next(iter(request_body.values()))
+        schema_ref = media_schema["schema"]["$ref"]
+        schema_name = schema_ref.split("/")[-1]
+        return schema_name, schema["components"]["schemas"][schema_name]
+
     def test_swagger_ui_should_be_available(self):
         response = self.client.get("/api/v1/docs/")
         self.assertEqual(response.status_code, 200)
@@ -77,7 +90,7 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("/api/v1/drones/available", paths)
         self.assertIn("/api/v1/drones/{id}/live/capacity", paths)
         self.assertIn("/api/v1/drones/{id}/live/start", paths)
-        self.assertIn("/api/v1/routes/{id}/download", paths)
+        self.assertIn("/api/v1/routes/{id}/xml", paths)
         self.assertIn("/api/v1/missions/{id}/cancel", paths)
         self.assertIn("/api/v1/media-files/{id}/download", paths)
         self.assertIn("/api/v1/drone-assignments/{id}/cancel", paths)
@@ -93,16 +106,152 @@ class OpenApiDocsTests(TestCase):
         self.assertNotIn("/api/v1/drones/{id}/retire", paths)
         self.assertNotIn("/api/v1/routes/{id}/enable", paths)
         self.assertNotIn("/api/v1/routes/{id}/disable", paths)
+        self.assertNotIn("/api/v1/routes/{id}/download", paths)
         self.assertNotIn("/api/v1/missions/{id}/start", paths)
         self.assertNotIn("/api/v1/missions/{id}/pause", paths)
         self.assertNotIn("/api/v1/missions/{id}/resume", paths)
         self.assertNotIn("/api/v1/missions/{id}/complete", paths)
         self.assertNotIn("/api/v1/missions/{id}/fail", paths)
         self.assertNotIn("/api/v1/drone-assignments/{id}/reactivate", paths)
+        self.assertNotIn("patch", paths["/api/v1/routes/{id}"])
         self.assertNotIn("post", paths["/api/v1/media-files"])
         self.assertNotIn("put", paths["/api/v1/media-files/{id}"])
         self.assertNotIn("patch", paths["/api/v1/media-files/{id}"])
         self.assertNotIn("delete", paths["/api/v1/media-files/{id}"])
+
+    def test_business_schema_should_lock_route_xml_only_write_contract(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+        self.assertIn("/api/v1/routes/{id}/xml", schema["paths"])
+        self.assertNotIn("/api/v1/routes/{id}/download", schema["paths"])
+        self.assertNotIn("patch", schema["paths"]["/api/v1/routes/{id}"])
+        create_schema_name, create_schema = self._resolve_route_write_schema(
+            schema,
+            path="/api/v1/routes",
+            method="post",
+        )
+        update_schema_name, update_schema = self._resolve_route_write_schema(
+            schema,
+            path="/api/v1/routes/{id}",
+            method="put",
+        )
+
+        self.assertEqual(create_schema_name, "RouteCreate")
+        self.assertEqual(update_schema_name, "RouteUpdate")
+        self.assertEqual(set(create_schema.get("properties", {}).keys()), {"name", "xml_file"})
+        self.assertEqual(set(update_schema.get("properties", {}).keys()), {"name", "xml_file"})
+        self.assertNotIn("PatchedRouteUpdate", schema["components"]["schemas"])
+        for removed_field in ("waypoints", "description", "flight_height", "speed", "start_point"):
+            self.assertNotIn(removed_field, create_schema.get("properties", {}))
+            self.assertNotIn(removed_field, update_schema.get("properties", {}))
+
+    def test_business_schema_should_describe_bound_drone_pool_and_current_duplicate_codes(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        drone_claim = schema["components"]["schemas"]["DroneClaim"]
+        self.assertIn("已绑定", drone_claim["properties"]["device_sn"]["description"])
+        self.assertIn("已绑定", schema["paths"]["/api/v1/drones/available"]["get"]["summary"])
+        self.assertIn("已绑定", schema["paths"]["/api/v1/drones"]["post"]["summary"])
+
+        flight_record_create = schema["paths"]["/api/v1/flight-records"]["post"]
+        self.assertNotIn("IDEMPOTENT_DUPLICATE", flight_record_create["responses"]["400"]["description"])
+        self.assertIn("C0101", flight_record_create["responses"]["400"]["description"])
+
+    def test_business_schema_should_lock_current_operation_surface_and_bodyless_actions(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        expected_methods = {
+            "/api/v1/drones": {"get", "post"},
+            "/api/v1/drones/{id}": {"get", "put", "patch"},
+            "/api/v1/routes": {"get", "post"},
+            "/api/v1/routes/{id}": {"get", "put", "delete"},
+            "/api/v1/missions": {"get", "post"},
+            "/api/v1/missions/{id}": {"get", "put", "patch"},
+            "/api/v1/flight-records": {"get", "post"},
+            "/api/v1/flight-records/{id}": {"get", "put", "patch"},
+            "/api/v1/drone-assignments": {"get", "post"},
+            "/api/v1/drone-assignments/{id}": {"get"},
+            "/api/v1/media-files": {"get"},
+            "/api/v1/media-files/{id}": {"get"},
+        }
+        for path, methods in expected_methods.items():
+            self.assertEqual(set(schema["paths"][path].keys()), methods)
+
+        for path, method in (
+            ("/api/v1/routes/{id}", "delete"),
+            ("/api/v1/routes/{id}/publish", "post"),
+            ("/api/v1/routes/{id}/xml", "get"),
+            ("/api/v1/missions/{id}/cancel", "post"),
+            ("/api/v1/flight-records/{id}/complete", "post"),
+            ("/api/v1/flight-records/{id}/abort", "post"),
+            ("/api/v1/drone-assignments/{id}/cancel", "post"),
+            ("/api/v1/media-files/{id}/download", "get"),
+        ):
+            self.assertNotIn("requestBody", self._operation(schema, path=path, method=method))
+
+    def test_business_schema_should_describe_current_business_error_responses(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        expected_responses = {
+            ("/api/v1/drones", "get"): {"200", "401", "403", "500"},
+            ("/api/v1/drones", "post"): {"201", "400", "401", "403", "409", "500"},
+            ("/api/v1/drones/{id}", "get"): {"200", "401", "403", "404", "500"},
+            ("/api/v1/drones/{id}", "put"): {"200", "400", "401", "403", "404", "409", "500"},
+            ("/api/v1/drones/{id}", "patch"): {"200", "400", "401", "403", "404", "409", "500"},
+            ("/api/v1/drones/{id}/live/capacity", "get"): {"200", "401", "403", "404", "500"},
+            ("/api/v1/drones/{id}/live/start", "post"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/drones/{id}/live/stop", "post"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/drones/{id}/live/video-quality", "post"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/drones/{id}/live/video-source", "post"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/routes", "get"): {"200", "401", "403", "500"},
+            ("/api/v1/routes", "post"): {"201", "400", "401", "403", "500"},
+            ("/api/v1/routes/{id}", "get"): {"200", "401", "403", "404", "500"},
+            ("/api/v1/routes/{id}", "put"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/routes/{id}", "delete"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/routes/{id}/publish", "post"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/routes/{id}/xml", "get"): {"200", "401", "403", "404", "500"},
+            ("/api/v1/missions", "get"): {"200", "401", "403", "500"},
+            ("/api/v1/missions", "post"): {"201", "400", "401", "403", "500"},
+            ("/api/v1/missions/{id}", "get"): {"200", "401", "403", "404", "500"},
+            ("/api/v1/missions/{id}", "put"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/missions/{id}", "patch"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/missions/{id}/cancel", "post"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/drone-assignments", "get"): {"200", "401", "403", "500"},
+            ("/api/v1/drone-assignments", "post"): {"201", "400", "401", "403", "409", "500"},
+            ("/api/v1/drone-assignments/{id}", "get"): {"200", "401", "403", "404", "500"},
+            ("/api/v1/drone-assignments/{id}/cancel", "post"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/media-files", "get"): {"200", "401", "403", "500"},
+            ("/api/v1/media-files/{id}", "get"): {"200", "401", "403", "404", "500"},
+            ("/api/v1/media-files/{id}/download", "get"): {"302", "401", "403", "404", "500"},
+        }
+
+        for (path, method), statuses in expected_responses.items():
+            operation = self._operation(schema, path=path, method=method)
+            self.assertTrue(
+                statuses.issubset(set(operation["responses"].keys())),
+                msg=f"{method.upper()} {path} responses drifted: {sorted(operation['responses'].keys())}",
+            )
+
+    def test_business_schema_should_describe_route_delete_result_shape(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        delete_schema = self._operation(schema, path="/api/v1/routes/{id}", method="delete")["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+        data_schema = delete_schema["properties"]["data"]
+        if "$ref" in data_schema:
+            data_schema = schema["components"]["schemas"][data_schema["$ref"].split("/")[-1]]
+        self.assertEqual(data_schema["type"], "object")
+        self.assertEqual(set(data_schema["properties"].keys()), {"id", "deleted"})
 
 
 class BusinessApiTenantBoundaryTests(TestCase):

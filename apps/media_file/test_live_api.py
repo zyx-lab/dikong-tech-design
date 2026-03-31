@@ -44,7 +44,7 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
         )
         ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手")
 
-        self.route = Route.objects.create(tenant=self.tenant, name="实时媒体航线", creator_name="管理员")
+        self.route = Route.objects.create(tenant=self.tenant, name="实时媒体航线")
         TenantRouteIndex.objects.create(
             tenant=self.tenant,
             route=self.route,

@@ -181,7 +181,7 @@ class FlightRecordWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSer
             "airport_name",
         ]
         extra_kwargs = {
-            "flight_no": {"help_text": "架次编号，租户内唯一。重复提交时会返回 IDEMPOTENT_DUPLICATE。"},
+            "flight_no": {"help_text": "架次编号，租户内唯一。重复提交时会返回 C0101。"},
             "mission": {"help_text": "关联任务 ID，可为空；必须属于当前租户。"},
             "drone": {"help_text": "执行无人机 ID，可为空；若 mission 已绑定 drone，则必须保持一致。"},
             "pilot": {"help_text": "执行飞手成员 ID，可为空；必须为当前租户 ACTIVE 飞手。"},

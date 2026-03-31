@@ -7,6 +7,8 @@ from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermissi
 from apps.api_v1.business_response import BusinessApiResponseMixin
 from apps.api_v1.schema import (
     BUSINESS_INTERNAL_ERROR_RESPONSE,
+    BUSINESS_NOT_FOUND_RESPONSE,
+    BUSINESS_PERMISSION_DENIED_RESPONSE,
     TENANT_CODE_HEADER_PARAMETER,
     object_envelope_serializer,
     paginated_envelope_serializer,
@@ -39,13 +41,24 @@ MEDIA_FILE_FILTER_PARAMETERS = [
     list=extend_schema(
         summary="查询媒体列表",
         parameters=MEDIA_FILE_FILTER_PARAMETERS,
-        responses={200: OpenApiResponse(response=MEDIA_FILE_LIST_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=MEDIA_FILE_LIST_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Media File"],
     ),
     retrieve=extend_schema(
         summary="读取媒体详情",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        responses={200: OpenApiResponse(response=MEDIA_FILE_DETAIL_RESPONSE), 500: BUSINESS_INTERNAL_ERROR_RESPONSE},
+        responses={
+            200: OpenApiResponse(response=MEDIA_FILE_DETAIL_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
         tags=["Business API - Media File"],
     ),
 )
@@ -95,6 +108,9 @@ class MediaFileViewSet(
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         responses={
             302: OpenApiResponse(description="302 重定向到 DJI 下载地址。"),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Media File"],

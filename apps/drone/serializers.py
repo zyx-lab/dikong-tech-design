@@ -95,7 +95,7 @@ class DroneClaimSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer
         ]
         extra_kwargs = {
             "code": {"help_text": "租户内展示编码，租户内唯一。"},
-            "device_sn": {"help_text": "共享设备池中的设备序列号。"},
+            "device_sn": {"help_text": "已绑定 DJI 平台的共享设备序列号。"},
             "name": {"required": False, "help_text": "本地展示名称，可为空。"},
             "model": {"required": False, "help_text": "本地展示型号，可为空。"},
             "org_id": {"required": False, "help_text": "业务组织 ID，可为空。"},
@@ -110,7 +110,7 @@ class DroneClaimSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer
         device_index = _device_index_for_sn(device_sn)
 
         if device_index is None:
-            raise serializers.ValidationError({"device_sn": "共享设备池中不存在该 device_sn"})
+            raise serializers.ValidationError({"device_sn": "已绑定设备池中不存在该 device_sn"})
 
         if code and Drone.objects.filter(tenant=current_tenant, code=code).exists():
             raise serializers.ValidationError({"code": "当前租户下已存在相同业务编码"})
