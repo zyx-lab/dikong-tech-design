@@ -3,6 +3,7 @@ from datetime import datetime
 from rest_framework import serializers
 
 from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
+from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.api_v1.tenant_scope import require_request_tenant
 from apps.mission.models import Mission, MissionStatus
 
@@ -54,13 +55,11 @@ class MissionReadSerializer(serializers.ModelSerializer):
         return getattr(getattr(obj, "dji_index", None), "last_sync_at", None)
 
 
-class MissionCreateSerializer(serializers.ModelSerializer):
+class MissionCreateSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
     dock_sn = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     def validate(self, attrs):
-        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
-        if unknown_fields:
-            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
+        attrs = super().validate(attrs)
 
         current_tenant = require_request_tenant(self.context)
         route = attrs.get("route")
@@ -120,12 +119,9 @@ class MissionCreateSerializer(serializers.ModelSerializer):
         }
 
 
-class MissionUpdateSerializer(serializers.ModelSerializer):
+class MissionUpdateSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
     def validate(self, attrs):
-        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
-        if unknown_fields:
-            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
-        return attrs
+        return super().validate(attrs)
 
     class Meta:
         model = Mission

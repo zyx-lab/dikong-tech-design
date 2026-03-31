@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from apps.access.models import DirectoryStatus, EmploymentStatus, ScopeType, TenantMemberRoleStatus, TenantMemberStatus
+from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.api_v1.tenant_scope import require_request_tenant
 from apps.flight_record.models import FlightRecord
 
@@ -40,7 +41,7 @@ class FlightRecordReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class FlightRecordWriteSerializer(serializers.ModelSerializer):
+class FlightRecordWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
     def _validate_assigned_scope_target(self, *, mission, pilot):
         request = self.context.get("request")
         decision = getattr(request, "_authz_decision", None) if request is not None else None
@@ -56,9 +57,7 @@ class FlightRecordWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"pilot": "ASSIGNED 范围下只能操作当前飞手自己的飞行记录"})
 
     def validate(self, attrs):
-        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
-        if unknown_fields:
-            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
+        attrs = super().validate(attrs)
 
         current_tenant = require_request_tenant(self.context)
         instance = getattr(self, "instance", None)

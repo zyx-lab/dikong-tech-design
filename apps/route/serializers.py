@@ -1,20 +1,11 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
 
+from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.route.models import Route
 
 
-class StrictUnknownFieldsMixin:
-    def validate(self, attrs):
-        initial_data = getattr(self, "initial_data", None)
-        if isinstance(initial_data, dict):
-            unknown_fields = sorted(set(initial_data.keys()) - set(self.fields.keys()))
-            if unknown_fields:
-                raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
-        return super().validate(attrs)
-
-
-class RouteWaypointSerializer(StrictUnknownFieldsMixin, serializers.Serializer):
+class RouteWaypointSerializer(RejectUnknownFieldsMixin, serializers.Serializer):
     sequence = serializers.IntegerField(min_value=1)
     latitude = serializers.DecimalField(max_digits=12, decimal_places=8)
     longitude = serializers.DecimalField(max_digits=12, decimal_places=8)
@@ -51,7 +42,7 @@ class RouteReadSerializer(serializers.ModelSerializer):
         return RouteWaypointSerializer(obj.waypoint_rows.all(), many=True).data
 
 
-class RouteWriteSerializer(StrictUnknownFieldsMixin, serializers.ModelSerializer):
+class RouteWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
     waypoints = RouteWaypointSerializer(many=True, required=False)
 
     class Meta:

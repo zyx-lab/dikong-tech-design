@@ -3,6 +3,7 @@ from typing import Any
 
 from rest_framework import serializers
 
+from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.api_v1.tenant_scope import require_request_tenant
 from apps.dji_bff.models import DjiDeviceIndex
 from apps.drone.models import Drone
@@ -78,7 +79,7 @@ class DroneReadSerializer(serializers.ModelSerializer):
         return device_index.firmware_status if device_index is not None else ""
 
 
-class DroneClaimSerializer(serializers.ModelSerializer):
+class DroneClaimSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
     name = serializers.CharField(required=False, allow_blank=True)
     model = serializers.CharField(required=False, allow_blank=True)
     org_id = serializers.IntegerField(required=False, allow_null=True)
@@ -101,9 +102,7 @@ class DroneClaimSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, attrs):
-        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
-        if unknown_fields:
-            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
+        attrs = super().validate(attrs)
 
         current_tenant = require_request_tenant(self.context)
         code = attrs.get("code")
@@ -141,7 +140,7 @@ class DroneClaimSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-class DroneUpdateSerializer(serializers.ModelSerializer):
+class DroneUpdateSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
     org_id = serializers.IntegerField(required=False, allow_null=True)
 
     class Meta:
@@ -160,9 +159,7 @@ class DroneUpdateSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, attrs):
-        unknown_fields = sorted(set(self.initial_data.keys()) - set(self.fields.keys()))
-        if unknown_fields:
-            raise serializers.ValidationError({field: "该字段在此接口不可写" for field in unknown_fields})
+        attrs = super().validate(attrs)
 
         current_tenant = require_request_tenant(self.context)
         instance = getattr(self, "instance", None)

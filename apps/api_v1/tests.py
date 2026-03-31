@@ -136,3 +136,17 @@ class BusinessApiTenantBoundaryTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["code"], "A0403")
+
+
+class RejectUnknownFieldsMixinTests(TestCase):
+    def test_unknown_fields_should_be_rejected_with_expected_message(self):
+        from rest_framework import serializers
+
+        from apps.api_v1.serializers import RejectUnknownFieldsMixin
+
+        class ExampleSerializer(RejectUnknownFieldsMixin, serializers.Serializer):
+            known = serializers.CharField()
+
+        serializer = ExampleSerializer(data={"known": "ok", "unexpected": "nope"})
+        self.assertFalse(serializer.is_valid())
+        self.assertEqual(serializer.errors, {"unexpected": ["该字段在此接口不可写"]})
