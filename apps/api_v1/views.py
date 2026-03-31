@@ -27,6 +27,7 @@ class ApiV1RootView(BusinessApiResponseMixin, APIView):
                     "drone_assignments": reverse("drone-assignment-list", request=request),
                     "routes": reverse("route-list", request=request),
                     "missions": reverse("mission-list", request=request),
+                    "flight_records": reverse("flight-record-list", request=request),
                     "media_files": reverse("media-file-list", request=request),
                 },
             }

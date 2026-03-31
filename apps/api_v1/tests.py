@@ -43,6 +43,7 @@ class BusinessApiResponseContractTests(TestCase):
         self.assertEqual(response.data["code"], "00000")
         self.assertEqual(response.data["msg"], "success")
         self.assertIn("/api/v1/drones", response.data["data"]["endpoints"]["drones"])
+        self.assertIn("/api/v1/flight-records", response.data["data"]["endpoints"]["flight_records"])
 
     def test_attach_standard_envelope_should_normalize_error_payload(self):
         self.assertEqual(
