@@ -1,4 +1,4 @@
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ErrorDetail
@@ -229,6 +229,49 @@ class DroneViewSet(
             return any(marker in text for marker in ("已存在", "already exists", "认领", "claimed", "unique"))
         return False
 
+    @staticmethod
+    def _is_device_sn_integrity_error(error_text: str) -> bool:
+        markers = (
+            "uniq_drone_device_sn_global",
+            "drones.device_sn",
+        )
+        return any(marker in error_text for marker in markers)
+
+    @staticmethod
+    def _is_code_integrity_error(error_text: str) -> bool:
+        markers = (
+            "uniq_drone_tenant_code",
+            "drones.tenant_id, drones.code",
+        )
+        return any(marker in error_text for marker in markers)
+
+    def _duplicate_integrity_response(self, serializer, exc: IntegrityError):
+        error_text = str(exc).lower()
+        if self._is_device_sn_integrity_error(error_text):
+            device_sn = serializer.validated_data.get("device_sn")
+            existing_drone = Drone.objects.filter(device_sn=device_sn).first()
+            current_tenant = self.get_current_tenant()
+            if existing_drone is not None and existing_drone.tenant_id == current_tenant.id:
+                errors = {"device_sn": ["当前租户下已认领该设备"]}
+            else:
+                errors = {"device_sn": ["该设备已被其他租户认领"]}
+            return Response(
+                standard_error_payload(StandardCode.DUPLICATE, "资源已存在", errors),
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if self._is_code_integrity_error(error_text):
+            return Response(
+                standard_error_payload(
+                    StandardCode.DUPLICATE,
+                    "资源已存在",
+                    {"code": ["当前租户下已存在相同业务编码"]},
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        raise exc
+
     def _payload(self, drone: Drone) -> dict:
         return dict(DroneReadSerializer(drone, context={"request": self.request}).data)
 
@@ -261,7 +304,10 @@ class DroneViewSet(
         if error_response is not None:
             return error_response
 
-        drone = self.perform_create(serializer)
+        try:
+            drone = self.perform_create(serializer)
+        except IntegrityError as exc:
+            return self._duplicate_integrity_response(serializer, exc)
         return _drone_success_response(self, drone, http_status=status.HTTP_201_CREATED, include_headers=True)
 
     @transaction.atomic

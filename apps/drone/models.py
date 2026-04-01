@@ -38,6 +38,7 @@ class Drone(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["tenant", "code"], name="uniq_drone_tenant_code"),
             models.UniqueConstraint(fields=["tenant", "device_sn"], name="uniq_drone_tenant_device_sn"),
+            models.UniqueConstraint(fields=["device_sn"], name="uniq_drone_device_sn_global"),
         ]
         permissions = [
             ("view_drone", "可查看无人机"),

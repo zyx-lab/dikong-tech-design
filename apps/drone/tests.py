@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from django.test import TestCase
 from rest_framework.test import APIClient
+from unittest.mock import patch
 
 from apps.access.models import EmploymentStatus, ScopeType, Tenant, TenantStatus
 from apps.access.test_support import (
@@ -92,6 +94,40 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
             {"code": "DJ-CLAIM-002", "device_sn": "SN-CONFLICT-001"},
             format="json",
         )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], "C0101")
+        self.assertIn("device_sn", response.data["data"])
+
+    def test_device_sn_should_be_globally_unique_across_tenants(self):
+        other_tenant = Tenant.objects.create(code="drone_global_unique_tenant", name="全局唯一租户", status=TenantStatus.ACTIVE)
+        Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-GLOBAL-001",
+            name="先认领设备",
+            model="M30",
+            device_sn="SN-GLOBAL-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        with self.assertRaises(IntegrityError):
+            Drone.objects.create(
+                tenant=other_tenant,
+                code="DJ-GLOBAL-002",
+                name="重复认领设备",
+                model="M30",
+                device_sn="SN-GLOBAL-001",
+            )
+
+    def test_claim_should_return_duplicate_when_db_unique_conflict_happens(self):
+        DjiDeviceIndex.objects.create(device_sn="SN-RACE-001", last_payload={"name": "竞态设备"})
+
+        with patch("apps.drone.views.DroneViewSet.perform_create", side_effect=IntegrityError("UNIQUE constraint failed: drones.device_sn")):
+            response = self.client.post(
+                "/api/v1/drones",
+                {"code": "DJ-RACE-001", "device_sn": "SN-RACE-001"},
+                format="json",
+            )
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["code"], "C0101")
