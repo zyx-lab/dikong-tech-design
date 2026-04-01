@@ -89,45 +89,17 @@ def _datetime_value(payload: dict, *keys: str):
 
 
 def _device_sn_from_payload(payload: dict) -> str:
-    device_sn = _string(payload, "device_sn", "deviceSn", "sn")
-    if device_sn:
-        return device_sn
-    children = payload.get("children")
-    if isinstance(children, list):
-        for child in children:
-            if not isinstance(child, dict):
-                continue
-            device_sn = _string(child, "device_sn", "deviceSn", "sn")
-            if device_sn:
-                return device_sn
-    return ""
+    # 直接取外层 device_sn（无人机 SN）
+    # children 是摄像头/负载，不需要取其 SN
+    return _string(payload, "device_sn", "deviceSn", "sn")
 
 
 def _device_domain(payload: dict):
-    children = payload.get("children")
-    if isinstance(children, list):
-        for child in children:
-            if not isinstance(child, dict):
-                continue
-            value = _int(child, "domain")
-            if value is not None:
-                return value
     return _int(payload, "domain")
 
 
 def _firmware_value(payload: dict, *keys: str) -> str:
-    value = _string(payload, *keys)
-    if value:
-        return value
-    children = payload.get("children")
-    if isinstance(children, list):
-        for child in children:
-            if not isinstance(child, dict):
-                continue
-            value = _string(child, *keys)
-            if value:
-                return value
-    return ""
+    return _string(payload, *keys)
 
 
 def _file_name(payload: dict) -> str:

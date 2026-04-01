@@ -86,21 +86,6 @@ class MockDjiState:
                 "firmware_status": "latest",
                 "created_at": seen_at,
                 "updated_at": seen_at,
-                "children": [
-                    {
-                        "device_sn": device_sn,
-                        "domain": domain,
-                        "firmware_version": "v1.0.0",
-                        "firmware_status": "latest",
-                        "camera_index": "camera-0",
-                        "videos": [
-                            {
-                                "index": "normal-0",
-                                "videoType": "normal",
-                            }
-                        ],
-                    }
-                ],
             }
             self.devices[device_sn] = device
             if bound:

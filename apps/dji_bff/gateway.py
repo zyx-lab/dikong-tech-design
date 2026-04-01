@@ -518,12 +518,6 @@ class DjiGateway:
             payload.get("sn"),
             payload.get("deviceSn"),
         ]
-        children = payload.get("children")
-        if isinstance(children, list):
-            for child in children:
-                if not isinstance(child, dict):
-                    continue
-                candidates.extend([child.get("device_sn"), child.get("sn"), child.get("deviceSn")])
         return device_sn in {value for value in candidates if isinstance(value, str)}
 
 
