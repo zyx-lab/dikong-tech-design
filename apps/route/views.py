@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
-from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission
+from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.api_v1.schema import (
@@ -131,6 +131,7 @@ class RouteViewSet(
     BusinessApiResponseMixin,
     TenantScopedBusinessMixin,
     PermissionMapMixin,
+    ScopedQuerysetMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
@@ -168,6 +169,8 @@ class RouteViewSet(
         queryset = self.scope_queryset_to_tenant(super().get_queryset())
         if self.request.query_params.get("name"):
             queryset = queryset.filter(name__icontains=self.request.query_params["name"])
+        if self.action in {"list", "retrieve", "update", "destroy", "publish", "xml"}:
+            return self.apply_scope(queryset)
         return queryset
 
     def _payload(self, route: Route) -> dict:

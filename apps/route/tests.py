@@ -447,3 +447,57 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(Route.objects.filter(id=route.id).exists())
         self.assertFalse(Waypoint.objects.filter(route_id=route.id).exists())
+
+
+class RouteScopeTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.owner_user = User.objects.create_user(username="route_scope_owner", password="pass1234", status=1)
+        ensure_staff_profile(self.owner_user, name="航线所有者", employment_status=EmploymentStatus.ACTIVE)
+        self.tenant, self.owner_member, self.owner_role = ensure_tenant_role_binding(
+            self.owner_user,
+            tenant_code="route_scope_tenant",
+            role_code="route_scope_owner_role",
+            role_name="航线所有者角色",
+        )
+        grant_role_permissions(
+            self.owner_role,
+            {
+                "route.view_route": ScopeType.ALL,
+                "route.manage_route": ScopeType.ALL,
+            },
+        )
+
+        self.route = Route.objects.create(tenant=self.tenant, name="范围收敛航线")
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=self.route,
+            dji_wayline_id="scope-wayline-001",
+            is_published=True,
+        )
+
+        self.assigned_user = User.objects.create_user(username="route_scope_assigned", password="pass1234", status=1)
+        ensure_staff_profile(self.assigned_user, name="范围成员", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, self.assigned_member, self.assigned_role = ensure_tenant_role_binding(
+            self.assigned_user,
+            tenant=self.tenant,
+            role_code="route_scope_assigned_role",
+            role_name="范围成员角色",
+        )
+        grant_role_permissions(self.assigned_role, {"route.view_route": ScopeType.ASSIGNED})
+
+        self.client.force_authenticate(self.assigned_user)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
+
+    def test_assigned_scope_should_not_list_routes_without_assignment_semantics(self):
+        response = self.client.get("/api/v1/routes")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["total"], 0)
+        self.assertEqual(response.data["data"]["list"], [])
+
+    def test_assigned_scope_should_not_retrieve_routes_without_assignment_semantics(self):
+        response = self.client.get(f"/api/v1/routes/{self.route.id}")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["code"], "C0404")
