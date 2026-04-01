@@ -18,7 +18,7 @@ from apps.access.test_support import (
     ensure_tenant_role_binding,
 )
 from apps.dji_bff.gateway import DjiGateway, GatewayResponse
-from apps.dji_bff.models import DjiDeviceIndex, SyncStatus, TenantMediaIndex, TenantMissionIndex, TenantRouteIndex
+from apps.dji_bff.models import DjiDeviceIndex, DjiWorkspaceConfig, SyncStatus, TenantMediaIndex, TenantMissionIndex, TenantRouteIndex
 from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes, sync_mission_indexes
 from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
@@ -115,6 +115,48 @@ class DjiGatewayPaginationTests(TestCase):
         self.assertEqual([item["file_id"] for item in files], ["FILE-001", "FILE-002", "FILE-003"])
         self.assertEqual(len(requests), 2)
         self.assertIn("page=2", requests[1])
+
+
+@override_settings(
+    DJI_UPSTREAM_USERNAME="mock-admin",
+    DJI_UPSTREAM_PASSWORD="mock-password",
+    DJI_UPSTREAM_LOGIN_FLAG=1,
+)
+class DjiGatewayAutoAuthTests(MockDjiUpstreamTestMixin, TestCase):
+    def test_gateway_should_login_and_persist_workspace_config_when_config_is_missing(self):
+        DjiWorkspaceConfig.objects.all().delete()
+
+        devices = DjiGateway().list_devices()
+
+        self.assertEqual(len(devices), 2)
+        config = DjiWorkspaceConfig.objects.get()
+        self.assertEqual(config.workspace_id, mock_dji_state.current_workspace_payload()["workspace_id"])
+        self.assertEqual(config.dji_user_id, mock_dji_state.current_user_payload()["user_id"])
+        self.assertEqual(config.dji_username, mock_dji_state.current_user_payload()["username"])
+        self.assertEqual(config.access_token, mock_dji_state.access_token)
+
+    def test_gateway_should_refresh_expired_token_before_request(self):
+        old_token = self.dji_workspace_config.access_token
+        self.dji_workspace_config.expires_at = timezone.now() - timedelta(minutes=1)
+        self.dji_workspace_config.save(update_fields=["expires_at", "updated_at"])
+
+        payload = DjiGateway().get_current_user()
+
+        self.assertEqual(payload["username"], mock_dji_state.current_user_payload()["username"])
+        self.dji_workspace_config.refresh_from_db()
+        self.assertNotEqual(self.dji_workspace_config.access_token, old_token)
+        self.assertEqual(self.dji_workspace_config.access_token, mock_dji_state.access_token)
+
+    def test_gateway_should_relogin_after_unauthorized_response_and_retry_once(self):
+        self.dji_workspace_config.access_token = "stale-token"
+        self.dji_workspace_config.expires_at = timezone.now() + timedelta(minutes=10)
+        self.dji_workspace_config.save(update_fields=["access_token", "expires_at", "updated_at"])
+
+        payload = DjiGateway().get_current_user()
+
+        self.assertEqual(payload["user_id"], mock_dji_state.current_user_payload()["user_id"])
+        self.dji_workspace_config.refresh_from_db()
+        self.assertEqual(self.dji_workspace_config.access_token, mock_dji_state.access_token)
 
 
 @override_settings(DJI_INTERNAL_API_TOKEN="internal-sync-token")

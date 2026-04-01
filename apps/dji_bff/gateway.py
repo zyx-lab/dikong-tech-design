@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone as dt_timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from django.conf import settings
+from django.utils import timezone
 
 from apps.dji_bff.models import DjiWorkspaceConfig
 
@@ -199,29 +202,149 @@ class DjiGateway:
         return self._request_paginated_items(f"/api/v1/media/workspaces/{workspace_id}/files")
 
     def _workspace_id(self) -> str:
-        config = DjiWorkspaceConfig.objects.order_by("-id").first()
-        if config is None or not config.workspace_id:
+        config = self._ensure_authenticated()
+        if not config.workspace_id:
             raise DjiGatewayConfigurationError("DJI workspace 未配置", status_code=500)
         return config.workspace_id
 
-    def _headers(self, *, content_type: str | None = None) -> dict[str, str]:
+    def _current_config(self) -> DjiWorkspaceConfig | None:
+        return DjiWorkspaceConfig.objects.order_by("-id").first()
+
+    def _ensure_authenticated(self) -> DjiWorkspaceConfig:
+        config = self._current_config()
+        if config is None or not config.access_token or not config.workspace_id:
+            return self._login_session(config=config)
+        if config.expires_at is not None and config.expires_at <= timezone.now():
+            try:
+                return self._refresh_session(config)
+            except DjiGatewayUpstreamError:
+                return self._login_session(config=config)
+        return config
+
+    def _reauthenticate(self) -> DjiWorkspaceConfig:
+        config = self._current_config()
+        if config is not None and config.access_token:
+            try:
+                return self._refresh_session(config)
+            except DjiGatewayUpstreamError:
+                pass
+        return self._login_session(config=config)
+
+    def _login_session(self, *, config: DjiWorkspaceConfig | None = None) -> DjiWorkspaceConfig:
+        username, password = self._configured_credentials()
+        payload = {
+            "username": username,
+            "password": password,
+            "flag": self._configured_login_flag(),
+        }
+        response = self._request(
+            "POST",
+            "/api/v1/manage/login",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=self._headers(content_type="application/json"),
+            follow_redirects=True,
+        )
+        return self._save_session(response.data, config=config)
+
+    def _refresh_session(self, config: DjiWorkspaceConfig) -> DjiWorkspaceConfig:
+        if not config.access_token:
+            raise DjiGatewayUpstreamError("DJI access_token 缺失，无法续期", status_code=401)
+        response = self._request(
+            "POST",
+            "/api/v1/manage/token/refresh",
+            data=None,
+            headers=self._headers(content_type="application/json", auth_token=config.access_token),
+            follow_redirects=True,
+        )
+        return self._save_session(response.data, config=config)
+
+    def _save_session(self, payload, *, config: DjiWorkspaceConfig | None = None) -> DjiWorkspaceConfig:
+        if not isinstance(payload, dict):
+            raise DjiGatewayUpstreamError("DJI 登录态响应格式不正确", status_code=502, data=payload)
+
+        workspace_id = self._string_value(payload.get("workspace_id")) or getattr(config, "workspace_id", "")
+        access_token = self._string_value(payload.get("access_token"))
+        if not workspace_id or not access_token:
+            raise DjiGatewayUpstreamError("DJI 登录态响应缺少关键字段", status_code=502, data=payload)
+
+        DjiWorkspaceConfig.objects.exclude(pk=getattr(config, "pk", None)).delete()
+        workspace_config = config or DjiWorkspaceConfig()
+        workspace_config.workspace_id = workspace_id
+        workspace_config.dji_user_id = self._string_value(payload.get("user_id"))
+        workspace_config.dji_username = self._string_value(payload.get("username"))
+        workspace_config.dji_user_type = self._string_value(payload.get("user_type"))
+        workspace_config.access_token = access_token
+        workspace_config.mqtt_username = self._string_value(payload.get("mqtt_username"))
+        workspace_config.mqtt_password = self._string_value(payload.get("mqtt_password"))
+        workspace_config.mqtt_addr = self._string_value(payload.get("mqtt_addr"))
+        workspace_config.expires_at = self._token_expires_at(access_token)
+        if workspace_config.pk is None:
+            workspace_config.save()
+        else:
+            workspace_config.save(
+                update_fields=[
+                    "workspace_id",
+                    "dji_user_id",
+                    "dji_username",
+                    "dji_user_type",
+                    "access_token",
+                    "mqtt_username",
+                    "mqtt_password",
+                    "mqtt_addr",
+                    "expires_at",
+                    "updated_at",
+                ]
+            )
+        return workspace_config
+
+    def _configured_credentials(self) -> tuple[str, str]:
+        username = str(getattr(settings, "DJI_UPSTREAM_USERNAME", "") or "").strip()
+        password = str(getattr(settings, "DJI_UPSTREAM_PASSWORD", "") or "")
+        if not username or not password:
+            raise DjiGatewayConfigurationError("DJI upstream 账号或密码未配置", status_code=500)
+        return username, password
+
+    def _configured_login_flag(self) -> int:
+        raw = getattr(settings, "DJI_UPSTREAM_LOGIN_FLAG", 1)
+        try:
+            return int(raw)
+        except (TypeError, ValueError) as exc:
+            raise DjiGatewayConfigurationError("DJI_UPSTREAM_LOGIN_FLAG 配置无效", status_code=500) from exc
+
+    def _headers(self, *, content_type: str | None = None, auth_token: str | None = None) -> dict[str, str]:
         if not self.base_url:
             raise DjiGatewayConfigurationError("DJI_UPSTREAM_BASE_URL 未配置", status_code=500)
 
-        config = DjiWorkspaceConfig.objects.order_by("-id").first()
         headers = {"Accept": "application/json"}
-        if config is not None and config.access_token:
-            headers["x-auth-token"] = config.access_token
+        if auth_token:
+            headers["x-auth-token"] = auth_token
         if content_type:
             headers["Content-Type"] = content_type
         return headers
 
-    def _request_json(self, method: str, path: str, *, data=None, follow_redirects: bool = True) -> GatewayResponse:
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        data=None,
+        follow_redirects: bool = True,
+        authenticate: bool = True,
+    ) -> GatewayResponse:
         body = None
-        headers = self._headers(content_type="application/json")
+        auth_token = None
         if data is not None:
             body = json.dumps(data).encode("utf-8")
-        return self._request(method, path, data=body, headers=headers, follow_redirects=follow_redirects)
+        if authenticate:
+            auth_token = self._ensure_authenticated().access_token
+        headers = self._headers(content_type="application/json", auth_token=auth_token)
+        try:
+            return self._request(method, path, data=body, headers=headers, follow_redirects=follow_redirects)
+        except DjiGatewayUpstreamError as exc:
+            if not authenticate or not self._is_auth_error(exc):
+                raise
+            headers = self._headers(content_type="application/json", auth_token=self._reauthenticate().access_token)
+            return self._request(method, path, data=body, headers=headers, follow_redirects=follow_redirects)
 
     def _request_paginated_items(self, path: str, *, query: dict | None = None, page_size: int = 100) -> list[dict]:
         items: list[dict] = []
@@ -267,8 +390,20 @@ class DjiGateway:
             body.extend(content)
             body.extend(b"\r\n")
         body.extend(f"--{boundary}--\r\n".encode("utf-8"))
-        headers = self._headers(content_type=f"multipart/form-data; boundary={boundary}")
-        return self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
+        headers = self._headers(
+            content_type=f"multipart/form-data; boundary={boundary}",
+            auth_token=self._ensure_authenticated().access_token,
+        )
+        try:
+            return self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
+        except DjiGatewayUpstreamError as exc:
+            if not self._is_auth_error(exc):
+                raise
+            headers = self._headers(
+                content_type=f"multipart/form-data; boundary={boundary}",
+                auth_token=self._reauthenticate().access_token,
+            )
+            return self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
 
     def _request(self, method: str, path: str, *, data: bytes | None, headers: dict[str, str], follow_redirects: bool) -> GatewayResponse:
         url = f"{self.base_url}{path}"
@@ -300,6 +435,37 @@ class DjiGateway:
         if isinstance(payload, dict) and "data" in payload:
             return payload["data"]
         return payload
+
+    @staticmethod
+    def _is_auth_error(exc: DjiGatewayUpstreamError) -> bool:
+        return exc.status_code == 401
+
+    @staticmethod
+    def _token_expires_at(access_token: str):
+        if not isinstance(access_token, str) or access_token.count(".") < 2:
+            return None
+        try:
+            payload_segment = access_token.split(".")[1]
+            payload_segment += "=" * (-len(payload_segment) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(payload_segment.encode("ascii")).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return None
+        exp = payload.get("exp")
+        if isinstance(exp, bool):
+            return None
+        try:
+            exp_value = int(exp)
+        except (TypeError, ValueError):
+            return None
+        return datetime.fromtimestamp(exp_value, tz=dt_timezone.utc)
+
+    @staticmethod
+    def _string_value(value) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        return str(value).strip()
 
     @staticmethod
     def _extract_items(payload) -> list[dict]:
@@ -337,7 +503,6 @@ class DjiGateway:
     def _with_query(path: str, query: dict) -> str:
         split = urlsplit(path)
         existing = parse_qsl(split.query, keep_blank_values=True)
-        existing_keys = {key for key, _ in existing}
         merged = [(key, value) for key, value in existing if key not in query]
         for key, value in query.items():
             if isinstance(value, (list, tuple)):

@@ -64,7 +64,19 @@ python manage.py create_business_admin_account --username biz_root --password 'Y
 python manage.py runserver 0.0.0.0:8001
 ```
 
-如需启用 DJI 后台同步，请在完成 `DJI_UPSTREAM_BASE_URL`、`DjiWorkspaceConfig` 等上游配置后，单独启动同步调度进程：
+如需启用 DJI 后台同步，请先配置 DJI 上游环境变量；`DjiGateway` 会在运行时自动登录、自动续期，并把当前 `workspace_id`、`access_token`、`mqtt_*` 等会话字段回写到 `DjiWorkspaceConfig`：
+
+```bash
+export DJI_UPSTREAM_BASE_URL=http://8.129.135.140
+export DJI_UPSTREAM_USERNAME=adminPC
+export DJI_UPSTREAM_PASSWORD=adminPC1234567890
+export DJI_UPSTREAM_LOGIN_FLAG=1
+```
+
+说明：
+- `DJI_UPSTREAM_LOGIN_FLAG` 默认值为 `1`，只有上游登录参数不同的环境才需要覆盖
+- 不再需要手工预写 `DjiWorkspaceConfig.access_token`
+- `DjiWorkspaceConfig` 仍然是当前上游会话的唯一持久化落点，供业务请求和同步调度复用
 
 补充说明：
 - Django management command 是 Django 提供的命令行管理入口，用来执行“启动服务、跑迁移、导数据、跑后台任务”这类系统级操作

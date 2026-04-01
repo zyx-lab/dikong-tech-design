@@ -430,12 +430,13 @@ def cancel(self, request, *args, **kwargs):
    - 对 Django 来说，只存在“当前可用上游无人机资源、航线资源、任务资源、媒体资源”；上游账号结构是 `DjiGateway` 内部实现细节。
 2. 登录入口
    - 由服务端 `DjiGateway` 调用 DJI `POST /api/v1/manage/login` 获取 `access_token`、`workspace_id`、`mqtt_username`、`mqtt_password`、`mqtt_addr`。
-   - 登录凭据只保存在服务端配置中，不下发给浏览器或前端应用。
+   - 当前最小运行配置为 `DJI_UPSTREAM_BASE_URL`、`DJI_UPSTREAM_USERNAME`、`DJI_UPSTREAM_PASSWORD`，以及可选的 `DJI_UPSTREAM_LOGIN_FLAG`。
+   - 登录凭据只保存在服务端环境变量中，不下发给浏览器或前端应用。
 3. token 与 workspace 托管
-   - `DjiGateway` 在内存或服务端受控存储中缓存当前 `access_token` 和 `workspace_id`。
-   - 所有业务模块调用 DJI 时都只能向 `DjiGateway` 传业务参数，由 `DjiGateway` 统一补齐 `x-auth-token` 和 `workspace_id`。
+   - `DjiGateway` 自动把当前 `workspace_id`、`dji_user_id`、`dji_username`、`dji_user_type`、`access_token`、`mqtt_*`、`expires_at` 回写到 `DjiWorkspaceConfig`。
+   - `DjiWorkspaceConfig` 是当前上游会话的唯一持久化落点；所有业务模块调用 DJI 时都只能向 `DjiGateway` 传业务参数，由 `DjiGateway` 统一补齐 `x-auth-token` 和 `workspace_id`。
 4. 刷新与重登
-   - 服务端优先调用 DJI `POST /api/v1/manage/token/refresh` 续期登录态。
+   - 服务端优先调用 DJI `POST /api/v1/manage/token/refresh` 续期登录态；当前实现会携带已有 `x-auth-token` 发起 refresh。
    - 若 refresh 失败、token 失效或上游返回未登录，则 `DjiGateway` 使用服务端托管凭据重新调用 `POST /api/v1/manage/login`，再重试原请求一次。
 5. 单 user / 单 workspace 的当前策略
    - 当前实现按单 user / 单 workspace 落地，直接托管一套上游登录态即可。
