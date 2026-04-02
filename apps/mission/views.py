@@ -178,14 +178,15 @@ class MissionViewSet(
         queryset = self.scope_queryset_to_tenant(super().get_queryset())
         params = self.request.query_params
 
-        if params.get("route_id"):
-            queryset = queryset.filter(route_id=params["route_id"])
-        if params.get("drone_id"):
-            queryset = queryset.filter(drone_id=params["drone_id"])
-        if params.get("pilot_id"):
-            queryset = queryset.filter(pilot_id=params["pilot_id"])
-        if params.get("status"):
-            queryset = queryset.filter(status=params["status"])
+        for query_key, model_field in (
+            ("route_id", "route_id"),
+            ("drone_id", "drone_id"),
+            ("pilot_id", "pilot_id"),
+            ("status", "status"),
+        ):
+            value = params.get(query_key)
+            if value:
+                queryset = queryset.filter(**{model_field: value})
 
         if self.action in {"list", "retrieve", "update", "partial_update", "cancel"}:
             return self.apply_scope(queryset)
@@ -193,6 +194,17 @@ class MissionViewSet(
 
     def _payload(self, mission: Mission) -> dict:
         return dict(MissionReadSerializer(mission, context={"request": self.request}).data)
+
+    def _update_mission(self, request, *, partial: bool):
+        if partial:
+            error_response = _reject_empty_patch_request(request)
+            if error_response is not None:
+                return error_response
+
+        serializer = self.get_serializer(self.get_object(), data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        mission = self.perform_update(serializer)
+        return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -202,16 +214,10 @@ class MissionViewSet(
 
         route = serializer.validated_data.get("route")
         if route is None:
-            return Response(
-                validation_error_payload({"route": ["该字段是必填项。"]}),
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response(validation_error_payload({"route": ["该字段是必填项。"]}), status=status.HTTP_400_BAD_REQUEST)
         route_index = getattr(route, "dji_index", None)
         if route_index is None or not route_index.is_published or not route_index.dji_wayline_id:
-            return Response(
-                validation_error_payload({"route": ["航线尚未发布到 DJI"]}),
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response(validation_error_payload({"route": ["航线尚未发布到 DJI"]}), status=status.HTTP_400_BAD_REQUEST)
 
         mission = self.perform_create(serializer)
         return _mission_success_response(self, mission, http_status=status.HTTP_201_CREATED, include_headers=True)
@@ -255,25 +261,14 @@ class MissionViewSet(
         return mission
 
     def update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data)
-        serializer.is_valid(raise_exception=True)
-        mission = self.perform_update(serializer)
-        return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
+        return self._update_mission(request, partial=False)
 
     def partial_update(self, request, *args, **kwargs):
-        error_response = _reject_empty_patch_request(request)
-        if error_response is not None:
-            return error_response
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        mission = self.perform_update(serializer)
-        return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
+        return self._update_mission(request, partial=True)
 
     @transaction.atomic
     def perform_update(self, serializer):
-        mission = self.get_object()
+        mission = serializer.instance
         before_data = snapshot(mission)
         mission = serializer.save()
         log_action(

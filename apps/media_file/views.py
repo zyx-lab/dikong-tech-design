@@ -90,16 +90,16 @@ class MediaFileViewSet(
         queryset = self.scope_queryset_to_tenant(super().get_queryset()).filter(is_deleted=False, dji_index__isnull=False)
         params = self.request.query_params
 
-        if params.get("flight_record_id"):
-            queryset = queryset.filter(flight_record_id=params["flight_record_id"])
-        if params.get("mission_id"):
-            queryset = queryset.filter(dji_index__mission_id=params["mission_id"])
-        if params.get("device_sn"):
-            queryset = queryset.filter(dji_index__device_sn=params["device_sn"])
-        if params.get("media_type"):
-            queryset = queryset.filter(media_type=params["media_type"])
-        if params.get("file_name"):
-            queryset = queryset.filter(file_name__icontains=params["file_name"])
+        for query_key, model_field in (
+            ("flight_record_id", "flight_record_id"),
+            ("mission_id", "dji_index__mission_id"),
+            ("device_sn", "dji_index__device_sn"),
+            ("media_type", "media_type"),
+            ("file_name", "file_name__icontains"),
+        ):
+            value = params.get(query_key)
+            if value:
+                queryset = queryset.filter(**{model_field: value})
 
         return self.apply_scope(queryset)
 

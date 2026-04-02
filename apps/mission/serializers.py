@@ -120,9 +120,6 @@ class MissionCreateSerializer(RejectUnknownFieldsMixin, serializers.ModelSeriali
 
 
 class MissionUpdateSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
-    def validate(self, attrs):
-        return super().validate(attrs)
-
     class Meta:
         model = Mission
         fields = [

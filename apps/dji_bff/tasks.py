@@ -94,14 +94,6 @@ def _device_sn_from_payload(payload: dict) -> str:
     return _string(payload, "device_sn", "deviceSn", "sn")
 
 
-def _device_domain(payload: dict):
-    return _int(payload, "domain")
-
-
-def _firmware_value(payload: dict, *keys: str) -> str:
-    return _string(payload, *keys)
-
-
 def _file_name(payload: dict) -> str:
     return _string(payload, "name", "file_name", "fileName") or "unknown"
 
@@ -131,7 +123,7 @@ def sync_device_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
             summary.ignored_count += 1
             continue
 
-        domain = _device_domain(payload)
+        domain = _int(payload, "domain")
         if domain not in (None, 0):
             summary.ignored_count += 1
             continue
@@ -144,8 +136,8 @@ def sync_device_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
         defaults = {
             "last_payload": payload,
             "last_seen_at": _datetime_value(payload, "last_seen_at", "lastSeenAt", "updated_at", "updatedAt") or now,
-            "firmware_version": _firmware_value(payload, "firmware_version", "firmwareVersion"),
-            "firmware_status": _firmware_value(payload, "firmware_status", "firmwareStatus"),
+            "firmware_version": _string(payload, "firmware_version", "firmwareVersion"),
+            "firmware_status": _string(payload, "firmware_status", "firmwareStatus"),
         }
         _, created = DjiDeviceIndex.objects.update_or_create(device_sn=device_sn, defaults=defaults)
         seen_device_sns.add(device_sn)

@@ -384,7 +384,7 @@ class DroneViewSet(
 
     @transaction.atomic
     def perform_update(self, serializer):
-        drone = self.get_object()
+        drone = serializer.instance
         before_data = snapshot(drone)
         drone = serializer.save()
         log_action(

@@ -374,25 +374,32 @@ class FlightRecordViewSet(
         )
         return Response(after_payload, status=status.HTTP_200_OK)
 
+    def _update_record(self, request, *, partial: bool):
+        if partial and not request.data:
+            return self._empty_patch_response()
+
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        record = self.perform_update(serializer)
+        if getattr(instance, "_prefetched_objects_cache", None):
+            instance._prefetched_objects_cache = {}
+        return self._record_response(record)
+
     def get_queryset(self):
         queryset = self.scope_queryset_to_tenant(super().get_queryset())
         params = self.request.query_params
-        mission_id = params.get("mission_id")
-        drone_id = params.get("drone_id")
-        pilot_id = params.get("pilot_id")
-        status_value = params.get("status")
-        flight_no = params.get("flight_no")
 
-        if mission_id:
-            queryset = queryset.filter(mission_id=mission_id)
-        if drone_id:
-            queryset = queryset.filter(drone_id=drone_id)
-        if pilot_id:
-            queryset = queryset.filter(pilot_id=pilot_id)
-        if status_value:
-            queryset = queryset.filter(status=status_value)
-        if flight_no:
-            queryset = queryset.filter(flight_no__icontains=flight_no)
+        for query_key, lookup in (
+            ("mission_id", "mission_id"),
+            ("drone_id", "drone_id"),
+            ("pilot_id", "pilot_id"),
+            ("status", "status"),
+            ("flight_no", "flight_no__icontains"),
+        ):
+            value = params.get(query_key)
+            if value:
+                queryset = queryset.filter(**{lookup: value})
 
         if self.action in {"list", "retrieve", "update", "partial_update", "complete", "abort"}:
             return self.apply_scope(queryset)
@@ -419,29 +426,10 @@ class FlightRecordViewSet(
         return serializer.save(tenant=self.get_current_tenant())
 
     def partial_update(self, request, *args, **kwargs):
-        if not request.data:
-            return self._empty_patch_response()
-
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        record = self.perform_update(serializer)
-
-        if getattr(instance, "_prefetched_objects_cache", None):
-            instance._prefetched_objects_cache = {}
-
-        return self._record_response(record)
+        return self._update_record(request, partial=True)
 
     def update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=False)
-        serializer.is_valid(raise_exception=True)
-        record = self.perform_update(serializer)
-
-        if getattr(instance, "_prefetched_objects_cache", None):
-            instance._prefetched_objects_cache = {}
-
-        return self._record_response(record)
+        return self._update_record(request, partial=False)
 
     @_flight_record_transition_schema(
         summary="完成飞行记录",
@@ -481,7 +469,7 @@ class FlightRecordViewSet(
 
     @transaction.atomic
     def perform_update(self, serializer):
-        record = self.get_object()
+        record = serializer.instance
         before_payload = self._record_payload(record)
         record = serializer.save()
         after_payload = self._record_payload(record)

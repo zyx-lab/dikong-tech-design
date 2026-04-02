@@ -192,9 +192,10 @@ class RouteViewSet(
 
     @transaction.atomic
     def perform_create(self, serializer):
-        route = serializer.save(tenant=self.get_current_tenant())
+        tenant = self.get_current_tenant()
+        route = serializer.save(tenant=tenant)
         route_index = TenantRouteIndex.objects.create(
-            tenant=self.get_current_tenant(),
+            tenant=tenant,
             route=route,
             dji_wayline_id="",
             is_published=False,
@@ -217,7 +218,7 @@ class RouteViewSet(
 
     @transaction.atomic
     def perform_update(self, serializer):
-        route = self.get_object()
+        route = serializer.instance
         before_data = self._payload(route)
         old_xml_name = route.xml_file.name
         xml_storage = route.xml_file.storage

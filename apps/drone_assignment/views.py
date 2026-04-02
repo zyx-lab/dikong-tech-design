@@ -103,12 +103,10 @@ class DroneAssignmentViewSet(
         queryset = self.scope_queryset_to_tenant(super().get_queryset())
         params = self.request.query_params
 
-        if params.get("drone_id"):
-            queryset = queryset.filter(drone_id=params["drone_id"])
-        if params.get("tenant_member_id"):
-            queryset = queryset.filter(tenant_member_id=params["tenant_member_id"])
-        if params.get("status"):
-            queryset = queryset.filter(status=params["status"])
+        for query_key, model_field in (("drone_id", "drone_id"), ("tenant_member_id", "tenant_member_id"), ("status", "status")):
+            value = params.get(query_key)
+            if value:
+                queryset = queryset.filter(**{model_field: value})
         return self.apply_scope(queryset)
 
     @staticmethod
@@ -138,8 +136,9 @@ class DroneAssignmentViewSet(
             return Response(validation_error_payload(serializer.errors), status=status.HTTP_400_BAD_REQUEST)
 
         assignment = self.perform_create(serializer)
-        headers = self.get_success_headers(self._payload(assignment))
-        return Response(self._payload(assignment), status=status.HTTP_201_CREATED, headers=headers)
+        payload = self._payload(assignment)
+        headers = self.get_success_headers(payload)
+        return Response(payload, status=status.HTTP_201_CREATED, headers=headers)
 
     @transaction.atomic
     def perform_create(self, serializer):
