@@ -160,6 +160,38 @@ class DjiGatewayPaginationTests(TestCase):
         mock_callback.assert_called_once()
         mock_resolve.assert_called_once_with(wayline_name="route-1")
 
+    def test_upload_object_via_s3_sts_should_use_gateway_request_and_build_sigv4_headers(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        credentials = {
+            "access_key_id": "ak",
+            "access_key_secret": "sk",
+            "security_token": "token",
+        }
+        with patch.object(
+            gateway,
+            "_request",
+            return_value=GatewayResponse(status_code=200, headers={}, data={}),
+        ) as mock_request:
+            gateway._upload_object_via_s3_sts(
+                endpoint="http://storage.local",
+                bucket="bucket-a",
+                object_key="wayline/file-1.kmz",
+                region="us-east-1",
+                credentials=credentials,
+                file_obj=StringIO("kmz-bytes-placeholder"),
+            )
+
+        mock_request.assert_called_once()
+        method, upload_url = mock_request.call_args.args[:2]
+        self.assertEqual(method, "PUT")
+        self.assertEqual(upload_url, "http://storage.local/bucket-a/wayline/file-1.kmz")
+        self.assertEqual(mock_request.call_args.kwargs["follow_redirects"], True)
+        headers = mock_request.call_args.kwargs["headers"]
+        self.assertEqual(headers["Content-Type"], "application/vnd.google-earth.kmz")
+        self.assertIn("Authorization", headers)
+        self.assertIn("x-amz-date", headers)
+        self.assertIn("x-amz-content-sha256", headers)
+
 
 @override_settings(
     DJI_UPSTREAM_USERNAME="mock-admin",

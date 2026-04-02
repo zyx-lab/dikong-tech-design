@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone as dt_timezone
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from django.conf import settings
@@ -264,34 +264,100 @@ class DjiGateway:
         if not isinstance(content, (bytes, bytearray)):
             raise DjiGatewayUpstreamError("上传对象内容类型不正确", status_code=500)
 
-        try:
-            import boto3
-        except ImportError as exc:
-            raise DjiGatewayConfigurationError(
-                "缺少 boto3 依赖，无法使用 STS 上传对象；请安装 boto3。",
-                status_code=500,
-            ) from exc
+        import hashlib
+        import hmac
 
-        client = boto3.client(
-            "s3",
-            endpoint_url=endpoint,
-            aws_access_key_id=access_key_id,
-            aws_secret_access_key=access_key_secret,
-            aws_session_token=security_token,
-            region_name=region or "us-east-1",
-        )
-        try:
-            client.put_object(
-                Bucket=bucket,
-                Key=object_key,
-                Body=bytes(content),
-                ContentType="application/vnd.google-earth.kmz",
+        now = datetime.utcnow()
+        amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+        date_stamp = now.strftime("%Y%m%d")
+        region_val = region or "us-east-1"
+        service = "s3"
+        normalized_endpoint = endpoint.strip()
+        if not normalized_endpoint.startswith(("http://", "https://")):
+            normalized_endpoint = f"https://{normalized_endpoint}"
+        endpoint_parts = urlsplit(normalized_endpoint)
+        host = endpoint_parts.netloc
+        if not host:
+            raise DjiGatewayUpstreamError(
+                "DJI STS endpoint 无效",
+                status_code=502,
+                data={"endpoint": endpoint},
             )
-        except Exception as exc:
+        base_path = endpoint_parts.path.rstrip("/")
+        object_path = f"{base_path}/{bucket}/{object_key.lstrip('/')}" if base_path else f"/{bucket}/{object_key.lstrip('/')}"
+        canonical_uri = quote(object_path, safe="/-_.~")
+        payload_hash = hashlib.sha256(content).hexdigest()
+
+        signed_header_values = {
+            "content-type": "application/vnd.google-earth.kmz",
+            "host": host,
+            "x-amz-content-sha256": payload_hash,
+            "x-amz-date": amz_date,
+            "x-amz-security-token": security_token,
+        }
+        signed_header_names = sorted(signed_header_values.keys())
+        canonical_headers = "".join(f"{key}:{signed_header_values[key]}\n" for key in signed_header_names)
+        signed_headers = ";".join(signed_header_names)
+        canonical_request = (
+            "PUT\n"
+            f"{canonical_uri}\n"
+            "\n"
+            f"{canonical_headers}"
+            f"\n"
+            f"{signed_headers}\n"
+            f"{payload_hash}"
+        )
+        algorithm = "AWS4-HMAC-SHA256"
+        credential_scope = f"{date_stamp}/{region_val}/{service}/aws4_request"
+        string_to_sign = (
+            f"{algorithm}\n"
+            f"{amz_date}\n"
+            f"{credential_scope}\n"
+            f"{hashlib.sha256(canonical_request.encode()).hexdigest()}"
+        )
+
+        # Signing key
+        k_date = hmac.new(f"AWS4{access_key_secret}".encode(), date_stamp.encode(), hashlib.sha256).digest()
+        k_region = hmac.new(k_date, region_val.encode(), hashlib.sha256).digest()
+        k_service = hmac.new(k_region, service.encode(), hashlib.sha256).digest()
+        k_signing = hmac.new(k_service, b"aws4_request", hashlib.sha256).digest()
+        signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()
+
+        authorization_header = (
+            f"{algorithm} "
+            f"Credential={access_key_id}/{credential_scope}, "
+            f"SignedHeaders={signed_headers}, "
+            f"Signature={signature}"
+        )
+
+        headers = {
+            "Content-Type": "application/vnd.google-earth.kmz",
+            "Host": host,
+            "x-amz-date": amz_date,
+            "x-amz-content-sha256": payload_hash,
+            "x-amz-security-token": security_token,
+            "Authorization": authorization_header,
+        }
+        upload_url = urlunsplit((endpoint_parts.scheme, endpoint_parts.netloc, canonical_uri, "", ""))
+
+        try:
+            self._request(
+                "PUT",
+                upload_url,
+                data=bytes(content),
+                headers=headers,
+                follow_redirects=True,
+            )
+        except DjiGatewayUpstreamError as exc:
             raise DjiGatewayUpstreamError(
                 "DJI STS 对象上传失败",
-                status_code=502,
-                data={"bucket": bucket, "object_key": object_key, "endpoint": endpoint},
+                status_code=exc.status_code,
+                data={
+                    "bucket": bucket,
+                    "object_key": object_key,
+                    "endpoint": endpoint,
+                    "upstream": exc.data,
+                },
             ) from exc
 
     def get_duplicate_route_names(self, names: list[str]) -> list[str]:
