@@ -201,32 +201,30 @@ class DroneViewSet(
         }
 
     def get_serializer_class(self):
-        if self.action == "create":
-            return DroneClaimSerializer
-        if self.action in {"update", "partial_update"}:
-            return DroneUpdateSerializer
-        if self.action == "live_start":
-            return DroneLiveStartSerializer
-        if self.action == "live_stop":
-            return DroneLiveStopSerializer
-        if self.action == "live_video_quality":
-            return DroneLiveVideoQualitySerializer
-        if self.action == "live_video_source":
-            return DroneLiveVideoSourceSerializer
-        return DroneReadSerializer
+        serializer_map = {
+            "create": DroneClaimSerializer,
+            "update": DroneUpdateSerializer,
+            "partial_update": DroneUpdateSerializer,
+            "live_start": DroneLiveStartSerializer,
+            "live_stop": DroneLiveStopSerializer,
+            "live_video_quality": DroneLiveVideoQualitySerializer,
+            "live_video_source": DroneLiveVideoSourceSerializer,
+        }
+        return serializer_map.get(self.action, DroneReadSerializer)
 
     def get_queryset(self):
         queryset = self.scope_queryset_to_tenant(super().get_queryset())
         params = self.request.query_params
 
-        if params.get("code"):
-            queryset = queryset.filter(code__icontains=params["code"])
-        if params.get("name"):
-            queryset = queryset.filter(name__icontains=params["name"])
-        if params.get("model"):
-            queryset = queryset.filter(model__icontains=params["model"])
-        if params.get("device_sn"):
-            queryset = queryset.filter(device_sn=params["device_sn"])
+        for param, lookup in (
+            ("code", "code__icontains"),
+            ("name", "name__icontains"),
+            ("model", "model__icontains"),
+            ("device_sn", "device_sn"),
+        ):
+            value = params.get(param)
+            if value:
+                queryset = queryset.filter(**{lookup: value})
         if self.action in {"list", "retrieve", "update", "partial_update", "destroy", "live_capacity", "live_start", "live_stop", "live_video_quality", "live_video_source"}:
             queryset = queryset.exclude(status=DroneStatus.RELEASED)
             return self.apply_scope(queryset)
@@ -248,25 +246,9 @@ class DroneViewSet(
             return any(marker in text for marker in ("已存在", "already exists", "认领", "claimed", "unique"))
         return False
 
-    @staticmethod
-    def _is_device_sn_integrity_error(error_text: str) -> bool:
-        markers = (
-            "uniq_drone_device_sn_global",
-            "drones.device_sn",
-        )
-        return any(marker in error_text for marker in markers)
-
-    @staticmethod
-    def _is_code_integrity_error(error_text: str) -> bool:
-        markers = (
-            "uniq_drone_tenant_code",
-            "drones.tenant_id, drones.code",
-        )
-        return any(marker in error_text for marker in markers)
-
     def _duplicate_integrity_response(self, serializer, exc: IntegrityError):
         error_text = str(exc).lower()
-        if self._is_device_sn_integrity_error(error_text):
+        if any(marker in error_text for marker in ("uniq_drone_device_sn_global", "drones.device_sn")):
             device_sn = serializer.validated_data.get("device_sn")
             existing_drone = Drone.objects.exclude(status=DroneStatus.RELEASED).filter(device_sn=device_sn).first()
             current_tenant = self.get_current_tenant()
@@ -279,7 +261,7 @@ class DroneViewSet(
                 status=status.HTTP_409_CONFLICT,
             )
 
-        if self._is_code_integrity_error(error_text):
+        if any(marker in error_text for marker in ("uniq_drone_tenant_code", "drones.tenant_id, drones.code")):
             return Response(
                 standard_error_payload(
                     StandardCode.DUPLICATE,
@@ -293,6 +275,43 @@ class DroneViewSet(
 
     def _payload(self, drone: Drone) -> dict:
         return dict(DroneReadSerializer(drone, context={"request": self.request}).data)
+
+    @staticmethod
+    def _audit_after_data(payload):
+        return payload if isinstance(payload, dict) else {"result": payload}
+
+    @staticmethod
+    def _build_live_start_payload(drone: Drone, payload: dict) -> dict:
+        resolved = dict(payload)
+        resolved["video_id"] = f"{drone.device_sn}/{resolved.pop('camera_index')}/{resolved.pop('video_index')}"
+        return resolved
+
+    def _execute_live_action(
+        self,
+        request,
+        *,
+        drone: Drone,
+        action_name: str,
+        gateway_method_name: str,
+        allow_empty_body: bool = False,
+        payload_transform=None,
+    ):
+        serializer_input = (request.data or {}) if allow_empty_body else request.data
+        serializer = self.get_serializer(data=serializer_input)
+        serializer.is_valid(raise_exception=True)
+        payload = dict(serializer.validated_data)
+        if payload_transform is not None:
+            payload = payload_transform(drone, payload)
+        gateway_method = getattr(DjiGateway(), gateway_method_name)
+        result = gateway_method(drone.device_sn, **payload)
+        log_action(
+            request=request,
+            action=action_name,
+            target_type="drone",
+            target_id=drone.id,
+            after_data=self._audit_after_data(result),
+        )
+        return Response(result, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="查询可认领已绑定设备",
@@ -349,22 +368,17 @@ class DroneViewSet(
         return drone
 
     def update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data)
-        error_response = _drone_validate_or_respond(self, serializer)
-        if error_response is not None:
-            return error_response
-
-        drone = self.perform_update(serializer)
-        return _drone_success_response(self, drone, http_status=status.HTTP_200_OK)
+        return self._update_with_serializer(request, partial=False)
 
     def partial_update(self, request, *args, **kwargs):
+        return self._update_with_serializer(request, partial=True)
+
+    def _update_with_serializer(self, request, *, partial: bool):
         instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
         error_response = _drone_validate_or_respond(self, serializer)
         if error_response is not None:
             return error_response
-
         drone = self.perform_update(serializer)
         return _drone_success_response(self, drone, http_status=status.HTTP_200_OK)
 
@@ -428,7 +442,7 @@ class DroneViewSet(
             action="DRONE_LIVE_CAPACITY",
             target_type="drone",
             target_id=drone.id,
-            after_data=payload if isinstance(payload, dict) else {"result": payload},
+            after_data=self._audit_after_data(payload),
         )
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -449,19 +463,13 @@ class DroneViewSet(
     @action(detail=True, methods=["post"], url_path="live/start")
     def live_start(self, request, *args, **kwargs):
         drone = self.get_object()
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        payload = dict(serializer.validated_data)
-        payload["video_id"] = f"{drone.device_sn}/{payload.pop('camera_index')}/{payload.pop('video_index')}"
-        result = DjiGateway().start_live(drone.device_sn, **payload)
-        log_action(
-            request=request,
-            action="DRONE_LIVE_START",
-            target_type="drone",
-            target_id=drone.id,
-            after_data=result if isinstance(result, dict) else {"result": result},
+        return self._execute_live_action(
+            request,
+            drone=drone,
+            action_name="DRONE_LIVE_START",
+            gateway_method_name="start_live",
+            payload_transform=self._build_live_start_payload,
         )
-        return Response(result, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="停止直播",
@@ -480,17 +488,13 @@ class DroneViewSet(
     @action(detail=True, methods=["post"], url_path="live/stop")
     def live_stop(self, request, *args, **kwargs):
         drone = self.get_object()
-        serializer = self.get_serializer(data=request.data or {})
-        serializer.is_valid(raise_exception=True)
-        result = DjiGateway().stop_live(drone.device_sn, **serializer.validated_data)
-        log_action(
-            request=request,
-            action="DRONE_LIVE_STOP",
-            target_type="drone",
-            target_id=drone.id,
-            after_data=result if isinstance(result, dict) else {"result": result},
+        return self._execute_live_action(
+            request,
+            drone=drone,
+            action_name="DRONE_LIVE_STOP",
+            gateway_method_name="stop_live",
+            allow_empty_body=True,
         )
-        return Response(result, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="调整直播画质",
@@ -509,17 +513,12 @@ class DroneViewSet(
     @action(detail=True, methods=["post"], url_path="live/video-quality")
     def live_video_quality(self, request, *args, **kwargs):
         drone = self.get_object()
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        result = DjiGateway().set_live_video_quality(drone.device_sn, **serializer.validated_data)
-        log_action(
-            request=request,
-            action="DRONE_LIVE_VIDEO_QUALITY",
-            target_type="drone",
-            target_id=drone.id,
-            after_data=result if isinstance(result, dict) else {"result": result},
+        return self._execute_live_action(
+            request,
+            drone=drone,
+            action_name="DRONE_LIVE_VIDEO_QUALITY",
+            gateway_method_name="set_live_video_quality",
         )
-        return Response(result, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="切换直播视频源",
@@ -538,14 +537,9 @@ class DroneViewSet(
     @action(detail=True, methods=["post"], url_path="live/video-source")
     def live_video_source(self, request, *args, **kwargs):
         drone = self.get_object()
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        result = DjiGateway().set_live_video_source(drone.device_sn, **serializer.validated_data)
-        log_action(
-            request=request,
-            action="DRONE_LIVE_VIDEO_SOURCE",
-            target_type="drone",
-            target_id=drone.id,
-            after_data=result if isinstance(result, dict) else {"result": result},
+        return self._execute_live_action(
+            request,
+            drone=drone,
+            action_name="DRONE_LIVE_VIDEO_SOURCE",
+            gateway_method_name="set_live_video_source",
         )
-        return Response(result, status=status.HTTP_200_OK)
