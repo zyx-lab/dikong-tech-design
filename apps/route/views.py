@@ -1,5 +1,6 @@
 import os
 import uuid
+import logging
 
 from django.db import transaction
 from django.http import FileResponse, Http404
@@ -29,6 +30,8 @@ from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 from apps.route.serializers import RouteCreateSerializer, RouteReadSerializer, RouteUpdateSerializer
 from apps.route.services import build_route_kmz_from_xml
+
+logger = logging.getLogger(__name__)
 
 ROUTE_LIST_RESPONSE = paginated_envelope_serializer("RouteListResponse", RouteReadSerializer)
 ROUTE_DETAIL_RESPONSE = object_envelope_serializer("RouteDetailResponse", RouteReadSerializer)
@@ -263,9 +266,24 @@ class RouteViewSet(
             return error_response
 
         route = self.get_object()
+        tenant = self.get_current_tenant()
         before_data = self._payload(route)
+        publish_trace_id = uuid.uuid4().hex
+
+        def _log_stage(stage: str, **extra):
+            payload = {
+                "stage": stage,
+                "publish_trace_id": publish_trace_id,
+                "request_id": getattr(request, "request_id", ""),
+                "tenant_code": getattr(tenant, "code", ""),
+                "route_id": route.id,
+            }
+            payload.update(extra)
+            logger.info("route_publish_stage %s", payload)
+
+        _log_stage("start")
         route_index, _ = TenantRouteIndex.objects.get_or_create(
-            tenant=self.get_current_tenant(),
+            tenant=tenant,
             route=route,
             defaults={"dji_wayline_id": "", "is_published": False},
         )
@@ -273,7 +291,9 @@ class RouteViewSet(
 
         try:
             kmz_file = build_route_kmz_from_xml(route)
+            _log_stage("kmz_built", kmz_name=getattr(kmz_file, "name", ""), kmz_size=getattr(kmz_file, "size", None))
         except ValueError:
+            _log_stage("kmz_build_failed")
             return Response(
                 standard_error_payload(
                     StandardCode.INVALID_PARAMS,
@@ -284,21 +304,48 @@ class RouteViewSet(
             )
 
         gateway = DjiGateway()
+        object_key = ""
 
         def _delete_upstream_wayline_if_exists(wayline_id: str, *, best_effort: bool = False):
             if not wayline_id:
                 return
             try:
                 gateway.delete_route(wayline_id)
+                _log_stage("upstream_wayline_deleted", dji_wayline_id=wayline_id, best_effort=best_effort)
             except DjiGatewayUpstreamError as exc:
                 if exc.status_code != 404 and not best_effort:
                     raise
 
-        upstream_payload = gateway.upload_route(
-            route_name=f"route-{route.id}-{uuid.uuid4().hex}",
-            file_obj=kmz_file,
-        )
+        try:
+            _log_stage("upstream_publish_start")
+            upstream_payload = gateway.publish_route_via_sts(
+                route_name=f"route-{route.id}-{uuid.uuid4().hex}",
+                file_obj=kmz_file,
+            )
+        except DjiGatewayUpstreamError as exc:
+            upstream_data = exc.data if isinstance(exc.data, dict) else {}
+            upstream_code = str(upstream_data.get("code") or "").strip().upper()
+            upstream_msg_raw = str(upstream_data.get("msg") or "")
+            upstream_msg = upstream_msg_raw.lower()
+            _log_stage(
+                "upstream_publish_failed",
+                status_code=exc.status_code,
+                upstream_code=upstream_code,
+                upstream_msg=upstream_msg_raw,
+            )
+            if upstream_code == "E0001" and "file format is incorrect" in upstream_msg:
+                return Response(
+                    standard_error_payload(
+                        StandardCode.INVALID_PARAMS,
+                        "当前 XML 草稿不符合 DJI WPML 航线格式",
+                        {"route_id": route.id},
+                    ),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            raise
         new_wayline_id = upstream_payload["dji_wayline_id"]
+        object_key = str(upstream_payload.get("object_key") or "")
+        _log_stage("upstream_publish_succeeded", dji_wayline_id=new_wayline_id, object_key=object_key)
 
         try:
             route_index.dji_wayline_id = new_wayline_id
@@ -313,6 +360,7 @@ class RouteViewSet(
                         best_effort=True,
                     )
                 )
+                _log_stage("upstream_old_wayline_cleanup_scheduled", old_wayline_id=old_wayline_id)
 
             log_action(
                 request=request,
@@ -322,10 +370,17 @@ class RouteViewSet(
                 before_data=before_data,
                 after_data=self._payload(route),
             )
+            _log_stage("audit_log_written")
         except Exception:
+            _log_stage(
+                "db_persist_failed",
+                dji_wayline_id=new_wayline_id,
+                object_key=object_key,
+            )
             _delete_upstream_wayline_if_exists(new_wayline_id)
             raise
 
+        _log_stage("done", dji_wayline_id=new_wayline_id, object_key=object_key)
         return _route_success_response(self, route, http_status=status.HTTP_200_OK)
 
     @extend_schema(

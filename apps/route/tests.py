@@ -34,7 +34,7 @@ class RouteXmlPackagingTests(TestCase):
         self.addCleanup(self._media_override.disable)
         self.addCleanup(lambda: shutil.rmtree(self._media_root, ignore_errors=True))
 
-    def test_build_route_kmz_from_xml_should_wrap_xml_bytes_in_kmz_archive(self):
+    def test_build_route_kmz_from_xml_should_wrap_xml_bytes_in_wpml_layout(self):
         tenant = Tenant.objects.create(
             code="route_xml_pkg_tenant",
             name="Route XML 包装租户",
@@ -47,8 +47,12 @@ class RouteXmlPackagingTests(TestCase):
 
         self.assertTrue(kmz_file.name.endswith(".kmz"))
         archive = ZipFile(BytesIO(kmz_file.read()))
-        self.assertEqual(archive.namelist(), ["route.xml"])
-        self.assertEqual(archive.read("route.xml"), b"<route><node /></route>")
+        names = set(archive.namelist())
+        self.assertIn("template.kml", names)
+        self.assertIn("waylines.wpml", names)
+        self.assertIn("res/", names)
+        self.assertEqual(archive.read("template.kml"), b"<route><node /></route>")
+        self.assertEqual(archive.read("waylines.wpml"), b"<route><node /></route>")
 
 
 class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
@@ -297,6 +301,24 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(response.data["code"], "B0001")
         self.assertEqual(response.data["msg"], "当前 XML 草稿无法转换为可发布 KMZ")
+
+    def test_publish_should_return_400_when_upstream_rejects_kmz_format(self):
+        route = Route.objects.create(tenant=self.tenant, name="上游格式错误 XML")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
+        self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="format-error.xml")
+
+        upstream_error = DjiGatewayUpstreamError(
+            "DJI upstream request failed",
+            status_code=400,
+            data={"code": "E0001", "msg": "The file format is incorrect."},
+        )
+
+        with patch("apps.route.views.DjiGateway.publish_route_via_sts", side_effect=upstream_error):
+            response = self.client.post(f"/api/v1/routes/{route.id}/publish")
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["msg"], "当前 XML 草稿不符合 DJI WPML 航线格式")
 
     def test_publish_should_reject_body_parameters(self):
         route = Route.objects.create(tenant=self.tenant, name="发布 body 校验")

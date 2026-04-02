@@ -44,6 +44,11 @@ class DjiGateway:
     DEFAULT_TASK_TYPE = 0
     DEFAULT_RTH_ALTITUDE = 30
     DEFAULT_OUT_OF_CONTROL_ACTION = 0
+    DEFAULT_WAYLINE_METADATA = {
+        "drone_model_key": "0-67-0",
+        "payload_model_keys": ["1-53-0"],
+        "template_types": [0],
+    }
 
     def __init__(self, *, base_url: str | None = None, timeout: int | None = None):
         self.base_url = (base_url or getattr(settings, "DJI_UPSTREAM_BASE_URL", "")).rstrip("/")
@@ -93,16 +98,200 @@ class DjiGateway:
     def upload_route(self, *, route_name: str, file_obj):
         workspace_id = self._workspace_id()
         fields = {"name": route_name}
-        files = {"file": (getattr(file_obj, "name", f"{uuid.uuid4().hex}.kmz"), file_obj.read())}
+        content = file_obj.read()
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        files = {"file": (getattr(file_obj, "name", f"{uuid.uuid4().hex}.kmz"), content)}
         payload = self._request_multipart(
             "POST",
             f"/api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload",
             fields=fields,
             files=files,
         ).data
-        if isinstance(payload, dict) and payload.get("dji_wayline_id"):
-            return payload
+        wayline_id = self._extract_wayline_id(payload)
+        if wayline_id:
+            normalized = dict(payload) if isinstance(payload, dict) else {}
+            normalized["dji_wayline_id"] = wayline_id
+            return normalized
         raise DjiGatewayUpstreamError("上传航线后未返回 dji_wayline_id", status_code=502, data=payload)
+
+    def get_storage_sts(self):
+        workspace_id = self._workspace_id()
+        return self._request_json(
+            "POST",
+            f"/api/v1/storage/workspaces/{workspace_id}/sts",
+            data={},
+        ).data
+
+    def report_wayline_upload(self, *, name: str, object_key: str, metadata: dict | None = None):
+        workspace_id = self._workspace_id()
+        payload = {
+            "name": name,
+            "object_key": object_key,
+            "metadata": metadata or dict(self.DEFAULT_WAYLINE_METADATA),
+        }
+        return self._request_json(
+            "POST",
+            f"/api/v1/wayline/workspaces/{workspace_id}/upload-callback",
+            data=payload,
+        ).data
+
+    def list_waylines(self, *, key: str | None = None) -> list[dict]:
+        workspace_id = self._workspace_id()
+        query = {"orderBy": "create_time"}
+        if key:
+            query["key"] = key
+        try:
+            return self._request_paginated_items(
+                f"/api/v1/wayline/workspaces/{workspace_id}/waylines",
+                query=query,
+            )
+        except DjiGatewayUpstreamError as exc:
+            if not self._is_invalid_params_error(exc):
+                raise
+            fallback_query = {"orderBy.column": "create_time", "orderBy.desc": "true"}
+            if key:
+                fallback_query["key"] = key
+            return self._request_paginated_items(
+                f"/api/v1/wayline/workspaces/{workspace_id}/waylines",
+                query=fallback_query,
+            )
+
+    def resolve_wayline_id_by_name(self, *, wayline_name: str) -> str:
+        for item in self.list_waylines(key=wayline_name):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("name") or "").strip() != wayline_name:
+                continue
+            wayline_id = self._extract_wayline_id(item)
+            if wayline_id:
+                return wayline_id
+        return ""
+
+    def publish_route_via_sts(self, *, route_name: str, file_obj):
+        sts_payload = self.get_storage_sts()
+        object_key = self._build_wayline_object_key(sts_payload)
+        metadata = dict(self.DEFAULT_WAYLINE_METADATA)
+        self._upload_object_via_sts(sts_payload=sts_payload, object_key=object_key, file_obj=file_obj)
+        self.report_wayline_upload(name=route_name, object_key=object_key, metadata=metadata)
+        wayline_id = self.resolve_wayline_id_by_name(wayline_name=route_name)
+        if not wayline_id:
+            raise DjiGatewayUpstreamError(
+                "上传回调后未在 DJI 航线列表中解析到航线 ID",
+                status_code=502,
+                data={"route_name": route_name, "object_key": object_key},
+            )
+        return {"dji_wayline_id": wayline_id, "object_key": object_key}
+
+    def _build_wayline_object_key(self, sts_payload) -> str:
+        if not isinstance(sts_payload, dict):
+            raise DjiGatewayUpstreamError("DJI STS 响应格式错误", status_code=502, data=sts_payload)
+        prefix = self._string_value(sts_payload.get("object_key_prefix"))
+        key = f"{uuid.uuid4().hex}.kmz"
+        if not prefix:
+            return key
+        normalized_prefix = prefix.rstrip("/")
+        return f"{normalized_prefix}/{key}"
+
+    def _upload_object_via_sts(self, *, sts_payload, object_key: str, file_obj):
+        if not isinstance(sts_payload, dict):
+            raise DjiGatewayUpstreamError("DJI STS 响应格式错误", status_code=502, data=sts_payload)
+        provider = self._string_value(sts_payload.get("provider")).lower()
+        endpoint = self._string_value(sts_payload.get("endpoint"))
+        bucket = self._string_value(sts_payload.get("bucket"))
+        credentials = sts_payload.get("credentials")
+        if provider == "mock":
+            self._upload_object_via_mock_sts(
+                endpoint=endpoint,
+                bucket=bucket,
+                object_key=object_key,
+                file_obj=file_obj,
+            )
+            return
+        self._upload_object_via_s3_sts(
+            endpoint=endpoint,
+            bucket=bucket,
+            object_key=object_key,
+            region=self._string_value(sts_payload.get("region")),
+            credentials=credentials,
+            file_obj=file_obj,
+        )
+
+    def _upload_object_via_mock_sts(self, *, endpoint: str, bucket: str, object_key: str, file_obj):
+        if not endpoint or not bucket or not object_key:
+            raise DjiGatewayUpstreamError(
+                "DJI mock STS 响应缺少对象上传参数",
+                status_code=502,
+                data={"endpoint": endpoint, "bucket": bucket, "object_key": object_key},
+            )
+        content = file_obj.read()
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        if not isinstance(content, (bytes, bytearray)):
+            raise DjiGatewayUpstreamError("上传对象内容类型不正确", status_code=500)
+        upload_path = f"{endpoint.rstrip('/')}/{bucket}/{object_key.lstrip('/')}"
+        headers = self._headers(
+            content_type="application/octet-stream",
+            auth_token=self._ensure_authenticated().access_token,
+        )
+        self._request(
+            "PUT",
+            upload_path,
+            data=bytes(content),
+            headers=headers,
+            follow_redirects=True,
+        )
+
+    def _upload_object_via_s3_sts(self, *, endpoint: str, bucket: str, object_key: str, region: str, credentials, file_obj):
+        if not endpoint or not bucket or not object_key:
+            raise DjiGatewayUpstreamError(
+                "DJI STS 响应缺少对象上传参数",
+                status_code=502,
+                data={"endpoint": endpoint, "bucket": bucket, "object_key": object_key},
+            )
+        if not isinstance(credentials, dict):
+            raise DjiGatewayUpstreamError("DJI STS 响应缺少 credentials", status_code=502, data=credentials)
+        access_key_id = self._string_value(credentials.get("access_key_id"))
+        access_key_secret = self._string_value(credentials.get("access_key_secret"))
+        security_token = self._string_value(credentials.get("security_token"))
+        if not access_key_id or not access_key_secret or not security_token:
+            raise DjiGatewayUpstreamError("DJI STS credentials 字段缺失", status_code=502, data=credentials)
+
+        content = file_obj.read()
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        if not isinstance(content, (bytes, bytearray)):
+            raise DjiGatewayUpstreamError("上传对象内容类型不正确", status_code=500)
+
+        try:
+            import boto3
+        except ImportError as exc:
+            raise DjiGatewayConfigurationError(
+                "缺少 boto3 依赖，无法使用 STS 上传对象；请安装 boto3。",
+                status_code=500,
+            ) from exc
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=access_key_secret,
+            aws_session_token=security_token,
+            region_name=region or "us-east-1",
+        )
+        try:
+            client.put_object(
+                Bucket=bucket,
+                Key=object_key,
+                Body=bytes(content),
+                ContentType="application/vnd.google-earth.kmz",
+            )
+        except Exception as exc:
+            raise DjiGatewayUpstreamError(
+                "DJI STS 对象上传失败",
+                status_code=502,
+                data={"bucket": bucket, "object_key": object_key, "endpoint": endpoint},
+            ) from exc
 
     def get_duplicate_route_names(self, names: list[str]) -> list[str]:
         workspace_id = self._workspace_id()
@@ -406,17 +595,22 @@ class DjiGateway:
             return self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
 
     def _request(self, method: str, path: str, *, data: bytes | None, headers: dict[str, str], follow_redirects: bool) -> GatewayResponse:
-        url = f"{self.base_url}{path}"
+        if path.startswith("http://") or path.startswith("https://"):
+            url = path
+        else:
+            url = f"{self.base_url}{path}"
         request = Request(url=url, data=data, headers=headers, method=method)
         opener = None if follow_redirects else build_opener(_NoRedirectHandler())
         try:
             open_fn = urlopen if opener is None else opener.open
             with open_fn(request, timeout=self.timeout) as response:
                 raw_body = response.read()
+                payload = self._parse_body(raw_body)
+                self._raise_if_business_error(payload, status_code=response.status)
                 return GatewayResponse(
                     status_code=response.status,
                     headers=dict(response.headers.items()),
-                    data=self._parse_body(raw_body),
+                    data=self._extract_data(payload),
                 )
         except HTTPError as exc:
             payload = self._parse_body(exc.read())
@@ -432,13 +626,40 @@ class DjiGateway:
             payload = json.loads(raw_body.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             return {"raw": raw_body.decode("utf-8", errors="ignore")}
-        if isinstance(payload, dict) and "data" in payload:
-            return payload["data"]
         return payload
 
     @staticmethod
     def _is_auth_error(exc: DjiGatewayUpstreamError) -> bool:
         return exc.status_code == 401
+
+    @staticmethod
+    def _is_invalid_params_error(exc: DjiGatewayUpstreamError) -> bool:
+        payload = exc.data if isinstance(exc.data, dict) else {}
+        code = str(payload.get("code") or "").upper()
+        return code == "B0001"
+
+    def _raise_if_business_error(self, payload, *, status_code: int):
+        if not isinstance(payload, dict):
+            return
+        if "code" not in payload:
+            return
+        code = payload.get("code")
+        if self._is_success_code(code):
+            return
+        raise DjiGatewayUpstreamError("DJI upstream business error", status_code=status_code, data=payload)
+
+    @staticmethod
+    def _is_success_code(code) -> bool:
+        if isinstance(code, int):
+            return code == 0
+        code_text = str(code or "").strip()
+        return code_text in {"0", "00000"}
+
+    @staticmethod
+    def _extract_data(payload):
+        if isinstance(payload, dict) and "data" in payload:
+            return payload.get("data")
+        return payload
 
     @staticmethod
     def _token_expires_at(access_token: str):
@@ -498,6 +719,19 @@ class DjiGateway:
             except ValueError:
                 return None
         return None
+
+    @staticmethod
+    def _extract_wayline_id(payload) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        for key in ("dji_wayline_id", "wayline_id", "id", "file_id", "fileId"):
+            value = payload.get(key)
+            if value is None:
+                continue
+            string_value = str(value).strip()
+            if string_value:
+                return string_value
+        return ""
 
     @staticmethod
     def _with_query(path: str, query: dict) -> str:

@@ -116,6 +116,50 @@ class DjiGatewayPaginationTests(TestCase):
         self.assertEqual(len(requests), 2)
         self.assertIn("page=2", requests[1])
 
+    def test_upload_route_should_accept_id_field_from_upstream_payload(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        with patch.object(gateway, "_workspace_id", return_value="mock-workspace-001"):
+            with patch.object(
+                gateway,
+                "_request_multipart",
+                return_value=GatewayResponse(status_code=200, headers={}, data={"id": "wayline-id-001"}),
+            ):
+                payload = gateway.upload_route(route_name="route-a", file_obj=StringIO("kmz-bytes-placeholder"))
+
+        self.assertEqual(payload["dji_wayline_id"], "wayline-id-001")
+
+    def test_publish_route_via_sts_should_orchestrate_upload_callback_and_id_resolution(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        fake_sts = {
+            "bucket": "mock-bucket",
+            "endpoint": "http://mock-dji/upload",
+            "object_key_prefix": "wayline",
+            "provider": "mock",
+            "credentials": {
+                "access_key_id": "ak",
+                "access_key_secret": "sk",
+                "security_token": "token",
+                "expire": 3600,
+            },
+            "region": "us-east-1",
+        }
+        with patch.object(gateway, "get_storage_sts", return_value=fake_sts) as mock_sts:
+            with patch.object(gateway, "_upload_object_via_sts") as mock_upload:
+                with patch.object(gateway, "report_wayline_upload") as mock_callback:
+                    with patch.object(gateway, "resolve_wayline_id_by_name", return_value="wayline-id-001") as mock_resolve:
+                        payload = gateway.publish_route_via_sts(
+                            route_name="route-1",
+                            file_obj=StringIO("kmz-bytes-placeholder"),
+                        )
+
+        self.assertEqual(payload["dji_wayline_id"], "wayline-id-001")
+        self.assertIn("object_key", payload)
+        self.assertTrue(payload["object_key"].startswith("wayline/"))
+        mock_sts.assert_called_once()
+        mock_upload.assert_called_once()
+        mock_callback.assert_called_once()
+        mock_resolve.assert_called_once_with(wayline_name="route-1")
+
 
 @override_settings(
     DJI_UPSTREAM_USERNAME="mock-admin",

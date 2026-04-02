@@ -24,7 +24,10 @@ def build_route_kmz_from_xml(route):
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("route.xml", raw)
+        # WPML route packages are expected to contain template.kml, waylines.wpml and res/.
+        archive.writestr("template.kml", raw)
+        archive.writestr("waylines.wpml", raw)
+        archive.writestr("res/", b"")
 
     return SimpleUploadedFile(
         name=f"route-{route.id}.kmz",

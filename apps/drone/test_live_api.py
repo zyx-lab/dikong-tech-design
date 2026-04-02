@@ -48,8 +48,8 @@ class LiveDroneApiTests(LiveDjiGatewayApiTestCase):
 
         capacity_response = self.client.get(f"/api/v1/drones/{drone_id}/live/capacity")
         self.assertEqual(capacity_response.status_code, 200)
-        self.assertEqual(capacity_response.json()["data"]["device_sn"], "SN-LIVE-001")
-        self.assertEqual(capacity_response.json()["data"]["status"], "online")
+        self.assertEqual(capacity_response.json()["data"]["sn"], "SN-LIVE-001")
+        self.assertIn("cameras_list", capacity_response.json()["data"])
 
         start_response = self.client.post(
             f"/api/v1/drones/{drone_id}/live/start",
@@ -57,11 +57,9 @@ class LiveDroneApiTests(LiveDjiGatewayApiTestCase):
             format="json",
         )
         self.assertEqual(start_response.status_code, 200)
-        self.assertTrue(start_response.json()["data"]["accepted"])
-        self.assertEqual(
-            start_response.json()["data"]["payload"]["video_id"],
-            "SN-LIVE-001/88-0-0/normal-0",
-        )
+        self.assertIn("rtmp_url", start_response.json()["data"])
+        self.assertIn("whep_url", start_response.json()["data"])
+        self.assertIn("SN-LIVE-001-88-0-0", start_response.json()["data"]["url"])
 
         removed_response = self.client.post(f"/api/v1/drones/{drone_id}/enable")
         self.assertEqual(removed_response.status_code, 404)

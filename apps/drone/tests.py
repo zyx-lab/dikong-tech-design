@@ -266,11 +266,10 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.data["data"]["accepted"])
-        self.assertEqual(
-            response.data["data"]["payload"]["video_id"],
-            "SN-LIVE-001/88-0-0/normal-0",
-        )
+        self.assertIn("url", response.data["data"])
+        self.assertIn("rtmp_url", response.data["data"])
+        self.assertIn("whep_url", response.data["data"])
+        self.assertIn("SN-LIVE-001-88-0-0", response.data["data"]["url"])
 
     def test_assigned_scope_member_should_only_see_assigned_drones(self):
         pilot_user = User.objects.create_user(username="drone_pilot", password="pass1234", status=1)

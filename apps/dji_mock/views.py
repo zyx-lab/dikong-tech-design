@@ -55,6 +55,16 @@ def _load_json(request) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _query_int(request, key: str, *, default: int):
+    raw = request.GET.get(key)
+    if raw in (None, ""):
+        return default, None
+    try:
+        return int(raw), None
+    except (TypeError, ValueError):
+        return None, _error("B0001", f"{key} is invalid", status=400, data={key: ["必须是整数。"]})
+
+
 def mock_dji_view(view_func):
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
@@ -112,7 +122,13 @@ def workspace_devices(request, workspace_id: str):
         raise Http404
     if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
         return _error("C0404", "workspace not found", status=404)
-    return _success(mock_dji_state.list_devices())
+    page, page_error = _query_int(request, "page", default=1)
+    if page_error is not None:
+        return page_error
+    page_size, page_size_error = _query_int(request, "page_size", default=50)
+    if page_size_error is not None:
+        return page_size_error
+    return _success(mock_dji_state.list_devices(page=page, page_size=page_size))
 
 
 @protected_mock_dji_view
@@ -128,7 +144,13 @@ def workspace_bound_devices(request, workspace_id: str):
         domain = int(raw_domain)
     except (TypeError, ValueError):
         return _error("B0001", "domain is invalid", status=400, data={"domain": ["必须是整数。"]})
-    return _success(mock_dji_state.list_bound_devices(domain=domain))
+    page, page_error = _query_int(request, "page", default=1)
+    if page_error is not None:
+        return page_error
+    page_size, page_size_error = _query_int(request, "page_size", default=50)
+    if page_size_error is not None:
+        return page_size_error
+    return _success(mock_dji_state.list_bound_devices(domain=domain, page=page, page_size=page_size))
 
 
 @protected_mock_dji_view
@@ -138,15 +160,8 @@ def live_capacity(request):
     return _success(mock_dji_state.live_capacity_payload())
 
 
-def _live_echo(action: str, request):
-    payload = _load_json(request)
-    return _success(
-        {
-            "action": action,
-            "accepted": True,
-            "payload": payload,
-        }
-    )
+def _live_not_found():
+    return JsonResponse({"code": "D0001", "msg": "No aircraft.", "data": None}, status=200)
 
 
 @csrf_exempt
@@ -154,7 +169,11 @@ def _live_echo(action: str, request):
 def live_start(request):
     if request.method != "POST":
         raise Http404
-    return _live_echo("start", request)
+    payload = _load_json(request)
+    result = mock_dji_state.start_live(payload)
+    if result is None:
+        return _live_not_found()
+    return _success(result)
 
 
 @csrf_exempt
@@ -162,7 +181,11 @@ def live_start(request):
 def live_stop(request):
     if request.method != "POST":
         raise Http404
-    return _live_echo("stop", request)
+    payload = _load_json(request)
+    result = mock_dji_state.stop_live(payload)
+    if result is None:
+        return _live_not_found()
+    return _success(result)
 
 
 @csrf_exempt
@@ -170,7 +193,11 @@ def live_stop(request):
 def live_update(request):
     if request.method != "POST":
         raise Http404
-    return _live_echo("update", request)
+    payload = _load_json(request)
+    result = mock_dji_state.update_live(payload)
+    if result is None:
+        return _live_not_found()
+    return _success(result)
 
 
 @csrf_exempt
@@ -178,7 +205,11 @@ def live_update(request):
 def live_switch(request):
     if request.method != "POST":
         raise Http404
-    return _live_echo("switch", request)
+    payload = _load_json(request)
+    result = mock_dji_state.switch_live(payload)
+    if result is None:
+        return _live_not_found()
+    return _success(result)
 
 
 @protected_mock_dji_view
@@ -217,6 +248,53 @@ def upload_wayline(request, workspace_id: str):
             "name": created["name"],
         }
     )
+
+
+@csrf_exempt
+@protected_mock_dji_view
+def wayline_upload_callback(request, workspace_id: str):
+    if request.method != "POST":
+        raise Http404
+    if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
+        return _error("C0404", "workspace not found", status=404)
+    payload = _load_json(request)
+    name = str(payload.get("name") or "").strip()
+    object_key = str(payload.get("object_key") or "").strip()
+    sts_payload = mock_dji_state.storage_sts_payload()
+    bucket = str(sts_payload.get("bucket") or "").strip()
+    if not name:
+        return _error("B0001", "name is required", status=400, data={"name": ["该字段是必填项。"]})
+    if not object_key:
+        return _error("B0001", "object_key is required", status=400, data={"object_key": ["该字段是必填项。"]})
+    if not mock_dji_state.has_object(bucket=bucket, object_key=object_key):
+        return _error(
+            "E0001",
+            f"The file {object_key} does not exist in the bucket[{bucket}].",
+            status=200,
+            data=None,
+        )
+    mock_dji_state.create_wayline(name=name, file_name=object_key.rsplit("/", 1)[-1], object_key=object_key)
+    return _success({})
+
+
+@csrf_exempt
+@protected_mock_dji_view
+def storage_sts(request, workspace_id: str):
+    if request.method != "POST":
+        raise Http404
+    if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
+        return _error("C0404", "workspace not found", status=404)
+    return _success(mock_dji_state.storage_sts_payload())
+
+
+@csrf_exempt
+@protected_mock_dji_view
+def storage_upload_object(request, bucket: str, object_key: str):
+    if request.method != "PUT":
+        raise Http404
+    content = request.body or b""
+    mock_dji_state.store_object(bucket=bucket, object_key=object_key, content=content)
+    return HttpResponse(status=200)
 
 
 @protected_mock_dji_view
