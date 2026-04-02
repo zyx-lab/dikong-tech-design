@@ -18,3 +18,5 @@ tools/
 translation-prompt.md
 api-tester.html
 .worktrees/
+.xml
+route/
