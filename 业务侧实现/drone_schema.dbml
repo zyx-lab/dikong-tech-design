@@ -43,8 +43,8 @@ Table drones [note: '无人机台账'] {
   code varchar(64) [not null, note: 'code 业务编码（租户内唯一）']
   name varchar(128) [not null, note: 'name 无人机名称']
   model varchar(128) [not null, note: 'model 型号']
-  device_sn varchar(128) [not null, note: 'device_sn 设备序列号（租户内唯一）']
-  status varchar(16) [not null, default: 'DISABLED', note: 'status ENABLED/DISABLED']
+  device_sn varchar(128) [not null, note: 'device_sn 设备序列号（未释放记录中全局唯一）']
+  status varchar(16) [not null, default: 'DISABLED', note: 'status ENABLED/DISABLED/RELEASED']
   org_id bigint [note: 'org_id 组织ID（预留）']
   created_by_tenant_member_id bigint [note: 'created_by_tenant_member_id 创建人 TenantMember ID（审计/OWN）']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
@@ -52,7 +52,8 @@ Table drones [note: '无人机台账'] {
 
   indexes {
     (tenant_id, code) [name: 'uniq_drone_tenant_code', unique]
-    (tenant_id, device_sn) [name: 'uniq_drone_tenant_device_sn', unique]
+    (tenant_id, device_sn) [name: 'uniq_drone_tenant_device_sn']
+    (device_sn) [name: 'uniq_drone_device_sn_global']
   }
 }
 
@@ -77,11 +78,13 @@ Table drone_assignments [note: '无人机与租户成员分配关系'] {
 }
 
 // 注意：真实数据库中存在“部分唯一约束”
+// uniq_drone_tenant_device_sn: unique(tenant_id, device_sn) where status != 'RELEASED'
+// uniq_drone_device_sn_global: unique(device_sn) where status != 'RELEASED'
 // uniq_active_drone_tenant_member_assignment: unique(drone_id, tenant_member_id) where status='ACTIVE'
 // DBML 这里用注释表达，实际以 Django migration 为准。
 //
-// 当前业务接口不提供无人机删除与手工状态流转；
-// status 只保留 ENABLED / DISABLED，并由后台同步任务写入。
+// 当前业务接口提供 DELETE /api/v1/drones/{id} 解除认领（软删除）；
+// DELETE 会将 status 置为 RELEASED 并保留历史记录，ENABLED / DISABLED 由后台同步任务写入。
 //
 // 业务响应字段（非库表字段，接口契约）：
 // response envelope: code / msg / data

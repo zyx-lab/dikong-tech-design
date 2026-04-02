@@ -67,6 +67,7 @@ PostgreSQL
 |----|------|
 | ENABLED | 启用 |
 | DISABLED | 停用 |
+| RELEASED | 已释放（解除认领） |
 
 ### drone_assignments.status
 | 值 | 含义 |
@@ -81,8 +82,10 @@ PostgreSQL
 - drone_assignments.drone_id -> drones.id
 - drone_assignments.tenant_id -> tenants.id
 - drone_assignments.tenant_member_id -> tenant_members.id
+- 唯一约束：`(tenant_id, code)` 全量唯一
+- 唯一约束：`(tenant_id, device_sn)` 在 `status != RELEASED` 条件下唯一
+- 唯一约束：`device_sn` 在 `status != RELEASED` 条件下全局唯一
 - 唯一约束：同一 `(drone_id, tenant_member_id)` 在 `ACTIVE` 状态下唯一
-- 无人机业务标识改为租户内唯一：`(tenant_id, code)`、`(tenant_id, device_sn)`
 - `OWN / ASSIGNED` 授权统一按 `TenantMember.id` 命中，不再使用全局 `staff_id`
 
 ## 生命周期入口
@@ -95,6 +98,7 @@ PostgreSQL
 | 认领 | POST /api/v1/drones | 认领共享设备 |
 | 详情 | GET /api/v1/drones/{id} | 无人机详情 |
 | 更新 | PUT / PATCH /api/v1/drones/{id} | 全量或局部更新无人机 |
+| 解除认领 | DELETE /api/v1/drones/{id} | 软删除；将状态改为 RELEASED，释放设备占用 |
 | 直播能力 | GET /api/v1/drones/{id}/live/capacity | 查询设备直播能力 |
 | 启动直播 | POST /api/v1/drones/{id}/live/start | 启动直播 |
 | 停止直播 | POST /api/v1/drones/{id}/live/stop | 停止直播 |
@@ -122,6 +126,13 @@ PostgreSQL
 - 可写字段：`code`、`name`、`model`、`org_id`
 - 不可写字段：`device_sn`、`status`
 - 业务码：`00000`, `B0001`, `C0101`, `C0404`, `A0401 / A0403`
+
+### 解除认领 DELETE /api/v1/drones/{id}
+- 功能：软删除已认领无人机
+- 状态流转：`ENABLED / DISABLED -> RELEASED`
+- 衍生动作：将该无人机下所有 `ACTIVE` 分配关系软失效为 `INACTIVE`
+- 历史兼容：不物理删除；Mission/FlightRecord 等历史记录仍引用原 `drone_id`
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
 
 ### 取消分配 POST /api/v1/drone-assignments/{id}/cancel
 - 状态流转：ACTIVE -> INACTIVE

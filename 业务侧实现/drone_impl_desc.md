@@ -44,8 +44,8 @@ PostgreSQL
 | code | CharField(64) | 业务编码，唯一 |
 | name | CharField(128) | 无人机名称 |
 | model | CharField(128) | 型号 |
-| device_sn | CharField(128) | 设备序列号，租户内唯一 |
-| status | CharField(16) | 状态：ENABLED/DISABLED |
+| device_sn | CharField(128) | 设备序列号，未释放记录中全局唯一 |
+| status | CharField(16) | 状态：ENABLED/DISABLED/RELEASED |
 | org_id | BigIntegerField | 组织 ID（预留） |
 | created_by_tenant_member_id | BigIntegerField | 创建人 TenantMember ID |
 | created_at | DateTimeField | 创建时间 |
@@ -54,6 +54,7 @@ PostgreSQL
 ### DroneStatus 枚举
 - ENABLED = "ENABLED", "启用"
 - DISABLED = "DISABLED", "停用"
+- RELEASED = "RELEASED", "已释放"
 
 ### DroneAssignment 表 (drone_assignments)
 
@@ -74,10 +75,12 @@ PostgreSQL
 - INACTIVE = "INACTIVE", "已失效"
 
 ### 约束
-- `(tenant, code)`、`(tenant, device_sn)` 唯一
+- `(tenant, code)` 唯一
+- `(tenant, device_sn)` 在 `status != RELEASED` 条件下唯一
+- `device_sn` 在 `status != RELEASED` 条件下全局唯一
 - 同一 `(drone, tenant_member)` 在 `ACTIVE` 状态下唯一
 - `ASSIGNED` 范围统一按 `tenant_member_id` 命中
-- `status` 不可由业务 API 直接写入，由后台同步任务维护
+- `status` 不可由业务 API 直接写入；后台同步任务维护 `ENABLED/DISABLED`，`DELETE /api/v1/drones/{id}` 会置为 `RELEASED`
 
 ---
 
@@ -124,30 +127,38 @@ PostgreSQL
 - 权限：drone.manage_drone
 - 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
-#### 6. GET /api/v1/drones/{id}/live/capacity
+#### 6. DELETE /api/v1/drones/{id}
+- 功能：解除认领（软删除）
+- 行为：将无人机 `status` 置为 `RELEASED`，并将该无人机下所有 `ACTIVE` 分配置为 `INACTIVE`
+- 兼容性：不物理删除，无人机历史记录仍保留；后续可重新认领相同 `device_sn`，并生成新的无人机 ID
+- 权限：drone.manage_drone
+- 业务码：`00000`, `C0404`, `A0401 / A0403`
+- 审计：DRONE_DELETE
+
+#### 7. GET /api/v1/drones/{id}/live/capacity
 - 功能：查询设备直播能力
 - 权限：drone.view_drone
 - 业务码：`00000`, `C0404`, `A0401 / A0403`
 
-#### 7. POST /api/v1/drones/{id}/live/start
+#### 8. POST /api/v1/drones/{id}/live/start
 - 功能：启动直播
 - 请求体：`camera_index`、`video_index`，可选 `url_type`
 - 权限：drone.manage_drone
 - 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
-#### 8. POST /api/v1/drones/{id}/live/stop
+#### 9. POST /api/v1/drones/{id}/live/stop
 - 功能：停止直播
 - 请求体：可选 `video_id`
 - 权限：drone.manage_drone
 - 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
-#### 9. POST /api/v1/drones/{id}/live/video-quality
+#### 10. POST /api/v1/drones/{id}/live/video-quality
 - 功能：调整直播画质
 - 请求体：`quality`，可选 `video_id`
 - 权限：drone.manage_drone
 - 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
-#### 10. POST /api/v1/drones/{id}/live/video-source
+#### 11. POST /api/v1/drones/{id}/live/video-source
 - 功能：切换直播视频源
 - 请求体：`video_id`、`videoType`
 - 权限：drone.manage_drone
@@ -193,6 +204,7 @@ PostgreSQL
 ### 无人机
 - DRONE_CLAIM
 - DRONE_UPDATE
+- DRONE_DELETE
 - DRONE_LIVE_CAPACITY
 - DRONE_LIVE_START
 - DRONE_LIVE_STOP

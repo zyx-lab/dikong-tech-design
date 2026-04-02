@@ -185,7 +185,7 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 
 - `GET /api/v1/drones/available`
 - `GET/POST /api/v1/drones`
-- `GET/PUT/PATCH /api/v1/drones/{id}`
+- `GET/PUT/PATCH/DELETE /api/v1/drones/{id}`
 - `GET /api/v1/drones/{id}/live/capacity`
 - `POST /api/v1/drones/{id}/live/start`
 - `POST /api/v1/drones/{id}/live/stop`

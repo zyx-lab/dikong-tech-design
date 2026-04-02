@@ -53,8 +53,8 @@ PostgreSQL
 | code | varchar(64) | NOT NULL | - | 业务编码（租户内唯一） |
 | name | varchar(128) | NOT NULL | - | 无人机名称 |
 | model | varchar(128) | NOT NULL | - | 型号 |
-| device_sn | varchar(128) | NOT NULL | - | 设备序列号（租户内唯一） |
-| status | varchar(16) | NOT NULL | DISABLED | 状态 |
+| device_sn | varchar(128) | NOT NULL | - | 设备序列号（未释放记录中全局唯一） |
+| status | varchar(16) | NOT NULL | DISABLED | 状态（ENABLED / DISABLED / RELEASED） |
 | org_id | bigint | - | - | 组织 ID（预留） |
 | created_by_tenant_member_id | bigint | - | - | 创建人 TenantMember ID |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
@@ -66,13 +66,15 @@ PostgreSQL
 |----|------|
 | ENABLED | 启用 |
 | DISABLED | 停用 |
+| RELEASED | 已释放（解除认领） |
 
 **业务规则**：
 1. `(tenant_id, code)` 唯一。
-2. `(tenant_id, device_sn)` 唯一。
-3. `created_by_tenant_member_id` 用于 `OWN` 范围判定与审计。
-4. `status` 只保留 `ENABLED / DISABLED`，由后台同步任务按“本轮是否在线可见”写入。
-5. 当前不提供 `DELETE /api/v1/drones/{id}`，也不提供 `enable / disable / maintenance / retire` 这类状态动作接口。
+2. `(tenant_id, device_sn)` 在 `status != RELEASED` 条件下唯一。
+3. `device_sn` 在 `status != RELEASED` 条件下全局唯一（同一设备同一时刻只允许一个租户处于已认领态）。
+4. `created_by_tenant_member_id` 用于 `OWN` 范围判定与审计。
+5. `status` 的 `ENABLED / DISABLED` 由后台同步任务按“本轮是否在线可见”写入；`DELETE /api/v1/drones/{id}` 会将状态置为 `RELEASED`。
+6. `DELETE /api/v1/drones/{id}` 为软删除（解除认领），不会物理删除记录；历史任务/飞行记录仍保持原 `drone_id` 引用不变。
 
 ---
 
