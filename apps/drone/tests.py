@@ -14,8 +14,11 @@ from apps.access.test_support import (
 from apps.dji_bff.models import DjiDeviceIndex
 from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
-from apps.drone.models import Drone
+from apps.drone.models import Drone, DroneStatus
 from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
+from apps.flight_record.models import FlightRecord
+from apps.mission.models import Mission, MissionStatus
+from apps.route.models import Route
 
 User = get_user_model()
 
@@ -132,6 +135,118 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["code"], "C0101")
         self.assertIn("device_sn", response.data["data"])
+
+    def test_delete_should_release_drone_and_allow_reclaim_same_device_sn(self):
+        DjiDeviceIndex.objects.create(device_sn="SN-RELEASE-001", last_payload={"name": "可释放设备"})
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-RELEASE-001",
+            name="可释放设备",
+            model="M30",
+            device_sn="SN-RELEASE-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        delete_response = self.client.delete(f"/api/v1/drones/{drone.id}")
+
+        self.assertEqual(delete_response.status_code, 200)
+        drone.refresh_from_db()
+        self.assertEqual(drone.status, DroneStatus.RELEASED)
+
+        available_response = self.client.get("/api/v1/drones/available")
+        self.assertEqual(available_response.status_code, 200)
+        self.assertEqual(available_response.data["data"]["total"], 1)
+        self.assertEqual(available_response.data["data"]["list"][0]["device_sn"], "SN-RELEASE-001")
+
+        reclaim_response = self.client.post(
+            "/api/v1/drones",
+            {"code": "DJ-RELEASE-002", "device_sn": "SN-RELEASE-001"},
+            format="json",
+        )
+        self.assertEqual(reclaim_response.status_code, 201)
+        new_drone_id = reclaim_response.data["data"]["id"]
+        self.assertNotEqual(new_drone_id, drone.id)
+        self.assertEqual(Drone.objects.filter(device_sn="SN-RELEASE-001").count(), 2)
+        self.assertEqual(
+            Drone.objects.filter(device_sn="SN-RELEASE-001", status=DroneStatus.RELEASED).count(),
+            1,
+        )
+
+    def test_delete_should_keep_history_reference_when_flight_record_exists(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-HISTORY-001",
+            name="历史设备",
+            model="M30",
+            device_sn="SN-HISTORY-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+        flight_record = FlightRecord.objects.create(
+            tenant=self.tenant,
+            flight_no="FR-HISTORY-001",
+            drone=drone,
+        )
+
+        delete_response = self.client.delete(f"/api/v1/drones/{drone.id}")
+
+        self.assertEqual(delete_response.status_code, 200)
+        drone.refresh_from_db()
+        flight_record.refresh_from_db()
+        self.assertEqual(drone.status, DroneStatus.RELEASED)
+        self.assertEqual(flight_record.drone_id, drone.id)
+
+    def test_delete_and_reclaim_should_not_change_mission_or_flight_record_history_relations(self):
+        DjiDeviceIndex.objects.create(device_sn="SN-HISTORY-REL-001", last_payload={"name": "历史关联设备"})
+        ensure_tenant_member_position(self.member, code="pilot_operator", name="飞手")
+        route = Route.objects.create(tenant=self.tenant, name="历史关联航线")
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-HISTORY-REL-001",
+            name="历史关联设备",
+            model="M30",
+            device_sn="SN-HISTORY-REL-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="历史关联任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            drone_name=drone.name,
+            pilot=self.member,
+            pilot_name=self.member.display_name,
+            status=MissionStatus.PENDING,
+        )
+        flight_record = FlightRecord.objects.create(
+            tenant=self.tenant,
+            flight_no="FR-HISTORY-REL-001",
+            mission=mission,
+            mission_name=mission.name,
+            drone=drone,
+            drone_name=drone.name,
+            pilot=self.member,
+            pilot_name=self.member.display_name,
+        )
+
+        delete_response = self.client.delete(f"/api/v1/drones/{drone.id}")
+        self.assertEqual(delete_response.status_code, 200)
+
+        reclaim_response = self.client.post(
+            "/api/v1/drones",
+            {"code": "DJ-HISTORY-REL-002", "device_sn": "SN-HISTORY-REL-001"},
+            format="json",
+        )
+        self.assertEqual(reclaim_response.status_code, 201)
+        new_drone_id = reclaim_response.data["data"]["id"]
+        self.assertNotEqual(new_drone_id, drone.id)
+
+        mission.refresh_from_db()
+        flight_record.refresh_from_db()
+        drone.refresh_from_db()
+        self.assertEqual(drone.status, DroneStatus.RELEASED)
+        self.assertEqual(mission.drone_id, drone.id)
+        self.assertEqual(flight_record.drone_id, drone.id)
 
     def test_live_start_should_proxy_with_composed_video_id(self):
         mock_dji_state.seed_device(device_sn="SN-LIVE-001", name="直播设备", model="M30")

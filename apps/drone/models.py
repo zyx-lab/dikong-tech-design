@@ -1,9 +1,11 @@
 from django.db import models
+from django.db.models import Q
 
 
 class DroneStatus(models.TextChoices):
     ENABLED = "ENABLED", "启用"
     DISABLED = "DISABLED", "停用"
+    RELEASED = "RELEASED", "已释放"
 
 
 class Drone(models.Model):
@@ -37,8 +39,16 @@ class Drone(models.Model):
         default_permissions = ()
         constraints = [
             models.UniqueConstraint(fields=["tenant", "code"], name="uniq_drone_tenant_code"),
-            models.UniqueConstraint(fields=["tenant", "device_sn"], name="uniq_drone_tenant_device_sn"),
-            models.UniqueConstraint(fields=["device_sn"], name="uniq_drone_device_sn_global"),
+            models.UniqueConstraint(
+                fields=["tenant", "device_sn"],
+                condition=~Q(status=DroneStatus.RELEASED),
+                name="uniq_drone_tenant_device_sn",
+            ),
+            models.UniqueConstraint(
+                fields=["device_sn"],
+                condition=~Q(status=DroneStatus.RELEASED),
+                name="uniq_drone_device_sn_global",
+            ),
         ]
         permissions = [
             ("view_drone", "可查看无人机"),

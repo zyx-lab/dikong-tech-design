@@ -1,4 +1,5 @@
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ErrorDetail
@@ -15,6 +16,7 @@ from apps.api_v1.business_response import (
     validation_error_payload,
 )
 from apps.api_v1.schema import (
+    BusinessDeleteResultSerializer,
     BUSINESS_DUPLICATE_RESPONSE,
     BUSINESS_INVALID_PARAMS_RESPONSE,
     BUSINESS_INTERNAL_ERROR_RESPONSE,
@@ -27,7 +29,7 @@ from apps.api_v1.schema import (
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.dji_bff.gateway import DjiGateway
 from apps.dji_bff.models import DjiDeviceIndex
-from apps.drone.models import Drone
+from apps.drone.models import Drone, DroneStatus
 from apps.drone_assignment.models import DroneAssignmentStatus
 from apps.access.models import ScopeType
 from apps.drone.serializers import (
@@ -43,6 +45,7 @@ from apps.drone.serializers import (
 
 DRONE_LIST_RESPONSE = paginated_envelope_serializer("DroneListResponse", DroneReadSerializer)
 DRONE_DETAIL_RESPONSE = object_envelope_serializer("DroneDetailResponse", DroneReadSerializer)
+DRONE_DELETE_RESPONSE = object_envelope_serializer("DroneDeleteResponse", BusinessDeleteResultSerializer)
 AVAILABLE_DRONE_LIST_RESPONSE = paginated_envelope_serializer("AvailableDroneListResponse", AvailableDroneReadSerializer)
 
 DRONE_FILTER_PARAMETERS = [
@@ -145,6 +148,19 @@ def _drone_success_response(view, drone: Drone, *, http_status: int, include_hea
         },
         tags=["Business API - Drone"],
     ),
+    destroy=extend_schema(
+        summary="解除认领设备",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=DRONE_DELETE_RESPONSE),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Drone"],
+    ),
 )
 class DroneViewSet(
     BusinessApiResponseMixin,
@@ -155,11 +171,12 @@ class DroneViewSet(
     mixins.CreateModelMixin,
     mixins.RetrieveModelMixin,
     mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     queryset = Drone.objects.all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "put", "patch", "head", "options"]
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
 
     permission_map = {
         "list": "drone.view_drone",
@@ -169,6 +186,7 @@ class DroneViewSet(
         "create": "drone.manage_drone",
         "update": "drone.manage_drone",
         "partial_update": "drone.manage_drone",
+        "destroy": "drone.manage_drone",
         "live_start": "drone.manage_drone",
         "live_stop": "drone.manage_drone",
         "live_video_quality": "drone.manage_drone",
@@ -209,7 +227,8 @@ class DroneViewSet(
             queryset = queryset.filter(model__icontains=params["model"])
         if params.get("device_sn"):
             queryset = queryset.filter(device_sn=params["device_sn"])
-        if self.action in {"list", "retrieve", "update", "partial_update", "live_capacity", "live_start", "live_stop", "live_video_quality", "live_video_source"}:
+        if self.action in {"list", "retrieve", "update", "partial_update", "destroy", "live_capacity", "live_start", "live_stop", "live_video_quality", "live_video_source"}:
+            queryset = queryset.exclude(status=DroneStatus.RELEASED)
             return self.apply_scope(queryset)
         return queryset
 
@@ -249,7 +268,7 @@ class DroneViewSet(
         error_text = str(exc).lower()
         if self._is_device_sn_integrity_error(error_text):
             device_sn = serializer.validated_data.get("device_sn")
-            existing_drone = Drone.objects.filter(device_sn=device_sn).first()
+            existing_drone = Drone.objects.exclude(status=DroneStatus.RELEASED).filter(device_sn=device_sn).first()
             current_tenant = self.get_current_tenant()
             if existing_drone is not None and existing_drone.tenant_id == current_tenant.id:
                 errors = {"device_sn": ["当前租户下已认领该设备"]}
@@ -292,7 +311,9 @@ class DroneViewSet(
         if decision is not None and decision.scope != ScopeType.ALL:
             return Response({"list": [], "total": 0}, status=status.HTTP_200_OK)
 
-        claimed_device_sns = list(Drone.objects.values_list("device_sn", flat=True))
+        claimed_device_sns = list(
+            Drone.objects.exclude(status=DroneStatus.RELEASED).values_list("device_sn", flat=True)
+        )
         queryset = DjiDeviceIndex.objects.exclude(device_sn__in=claimed_device_sns).order_by("device_sn")
         page = self.paginate_queryset(queryset)
         serializer = AvailableDroneReadSerializer(page, many=True, context={"request": request})
@@ -361,6 +382,30 @@ class DroneViewSet(
             after_data=snapshot(drone),
         )
         return drone
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        drone = self.get_object()
+        before_data = snapshot(drone)
+        drone.status = DroneStatus.RELEASED
+        drone.save(update_fields=["status", "updated_at"])
+        now = timezone.now()
+        drone.assignments.filter(status=DroneAssignmentStatus.ACTIVE).update(
+            status=DroneAssignmentStatus.INACTIVE,
+            end_at=now,
+            updated_at=now,
+        )
+
+        deleted_payload = {"id": drone.id, "deleted": True}
+        log_action(
+            request=request,
+            action="DRONE_DELETE",
+            target_type="drone",
+            target_id=drone.id,
+            before_data=before_data,
+            after_data=deleted_payload,
+        )
+        return Response(deleted_payload, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="查询设备直播能力",
