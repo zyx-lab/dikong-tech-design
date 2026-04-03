@@ -71,7 +71,7 @@ class FlightRecordApiTests(TestCase):
             name="飞行记录测试机",
             model="M300",
             device_sn="SN-FR-001",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
         )
         self.mission = _persist_mission_fixture(
             tenant=self.tenant,
@@ -164,7 +164,7 @@ class FlightRecordApiTests(TestCase):
             name="其他租户无人机",
             model="M300",
             device_sn="FR-OTHER-MODEL-SN",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
         )
         _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
             self.pilot_user,
@@ -219,7 +219,7 @@ class FlightRecordApiTests(TestCase):
             name="其他租户无人机",
             model="M300",
             device_sn="FR-OTHER-SN-001",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
         )
         _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
             self.pilot_user,
@@ -369,7 +369,7 @@ class FlightRecordApiTests(TestCase):
             name="模型不一致无人机",
             model="M350",
             device_sn="FR-MISMATCH-SN",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
         )
 
         with self.assertRaises(ValidationError):
@@ -484,7 +484,7 @@ class FlightRecordApiTests(TestCase):
             name="其他租户无人机",
             model="M300",
             device_sn="FR-OTHER-UNIQ-SN-001",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
         )
         other_mission = _persist_mission_fixture(
             tenant=other_tenant,
@@ -1005,7 +1005,7 @@ class FlightRecordPilotScopeTests(TestCase):
             name="飞行记录范围无人机",
             model="M300",
             device_sn="FRS-SN-001",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
         )
         self.my_mission = _persist_mission_fixture(
             tenant=self.tenant,

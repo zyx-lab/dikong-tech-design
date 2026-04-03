@@ -15,6 +15,7 @@ from apps.dji_bff.models import DjiDeviceIndex
 from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
 from apps.drone.models import Drone, DroneStatus
+from apps.drone.serializers import DroneClaimSerializer
 from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
 from apps.flight_record.models import FlightRecord
 from apps.mission.models import Mission, MissionStatus
@@ -136,6 +137,33 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.data["code"], "C0101")
         self.assertIn("device_sn", response.data["data"])
 
+    def test_claim_serializer_should_raise_integrity_error_when_released_row_is_claimed_after_validate(self):
+        DjiDeviceIndex.objects.create(device_sn="SN-RACE-REL-001", last_payload={"name": "竞态回收设备"})
+        released_drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-RACE-REL-OLD",
+            name="旧释放设备",
+            model="M30",
+            device_sn="SN-RACE-REL-001",
+            status=DroneStatus.RELEASED,
+        )
+
+        class _Req:
+            user = self.user
+            tenant_context = self.tenant
+
+        serializer = DroneClaimSerializer(
+            data={"code": "DJ-RACE-REL-NEW", "device_sn": "SN-RACE-REL-001"},
+            context={"request": _Req()},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+        released_drone.status = DroneStatus.CLAIMED
+        released_drone.save(update_fields=["status", "updated_at"])
+
+        with self.assertRaises(IntegrityError):
+            serializer.save(tenant=self.tenant, created_by_tenant_member_id=self.member.id)
+
     def test_delete_should_release_drone_and_allow_reclaim_same_device_sn(self):
         DjiDeviceIndex.objects.create(device_sn="SN-RELEASE-001", last_payload={"name": "可释放设备"})
         drone = Drone.objects.create(
@@ -164,13 +192,11 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
             format="json",
         )
         self.assertEqual(reclaim_response.status_code, 201)
-        new_drone_id = reclaim_response.data["data"]["id"]
-        self.assertNotEqual(new_drone_id, drone.id)
-        self.assertEqual(Drone.objects.filter(device_sn="SN-RELEASE-001").count(), 2)
-        self.assertEqual(
-            Drone.objects.filter(device_sn="SN-RELEASE-001", status=DroneStatus.RELEASED).count(),
-            1,
-        )
+        self.assertEqual(reclaim_response.data["data"]["id"], drone.id)
+        drone.refresh_from_db()
+        self.assertEqual(drone.status, DroneStatus.CLAIMED)
+        self.assertEqual(drone.code, "DJ-RELEASE-002")
+        self.assertEqual(Drone.objects.filter(device_sn="SN-RELEASE-001").count(), 1)
 
     def test_delete_should_keep_history_reference_when_flight_record_exists(self):
         drone = Drone.objects.create(
@@ -238,15 +264,92 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
             format="json",
         )
         self.assertEqual(reclaim_response.status_code, 201)
-        new_drone_id = reclaim_response.data["data"]["id"]
-        self.assertNotEqual(new_drone_id, drone.id)
+        self.assertEqual(reclaim_response.data["data"]["id"], drone.id)
 
         mission.refresh_from_db()
         flight_record.refresh_from_db()
         drone.refresh_from_db()
-        self.assertEqual(drone.status, DroneStatus.RELEASED)
+        self.assertEqual(drone.status, DroneStatus.CLAIMED)
         self.assertEqual(mission.drone_id, drone.id)
         self.assertEqual(flight_record.drone_id, drone.id)
+
+    def test_cross_tenant_reclaim_should_not_reuse_other_tenant_released_drone_row(self):
+        DjiDeviceIndex.objects.create(device_sn="SN-CROSS-RECLAIM-001", last_payload={"name": "跨租户回收设备"})
+        ensure_tenant_member_position(self.member, code="pilot_operator", name="飞手")
+        route = Route.objects.create(tenant=self.tenant, name="跨租户历史航线")
+        old_drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-CROSS-A-001",
+            name="租户A设备",
+            model="M30",
+            device_sn="SN-CROSS-RECLAIM-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="跨租户历史任务",
+            route=route,
+            route_name=route.name,
+            drone=old_drone,
+            drone_name=old_drone.name,
+            pilot=self.member,
+            pilot_name=self.member.display_name,
+            status=MissionStatus.PENDING,
+        )
+        flight_record = FlightRecord.objects.create(
+            tenant=self.tenant,
+            flight_no="FR-CROSS-RECLAIM-001",
+            mission=mission,
+            mission_name=mission.name,
+            drone=old_drone,
+            drone_name=old_drone.name,
+            pilot=self.member,
+            pilot_name=self.member.display_name,
+        )
+
+        delete_response = self.client.delete(f"/api/v1/drones/{old_drone.id}")
+        self.assertEqual(delete_response.status_code, 200)
+        old_drone.refresh_from_db()
+        self.assertEqual(old_drone.status, DroneStatus.RELEASED)
+
+        other_user = User.objects.create_user(username="drone_other_admin", password="pass1234", status=1)
+        ensure_staff_profile(other_user, name="其他租户管理员", employment_status=EmploymentStatus.ACTIVE)
+        other_tenant, _other_member, other_role = ensure_tenant_role_binding(
+            other_user,
+            tenant_code="drone_other_claim_tenant",
+            role_code="drone_other_claim_role",
+            role_name="无人机跨租户认领角色",
+        )
+        grant_role_permissions(
+            other_role,
+            {
+                "drone.view_drone": ScopeType.ALL,
+                "drone.manage_drone": ScopeType.ALL,
+            },
+        )
+        other_client = APIClient()
+        other_client.force_authenticate(other_user)
+        other_client.credentials(HTTP_X_TENANT_CODE=other_tenant.code)
+
+        reclaim_response = other_client.post(
+            "/api/v1/drones",
+            {"code": "DJ-CROSS-B-001", "device_sn": "SN-CROSS-RECLAIM-001"},
+            format="json",
+        )
+        self.assertEqual(reclaim_response.status_code, 201)
+        self.assertNotEqual(reclaim_response.data["data"]["id"], old_drone.id)
+
+        old_drone.refresh_from_db()
+        new_drone = Drone.objects.get(id=reclaim_response.data["data"]["id"])
+        mission.refresh_from_db()
+        flight_record.refresh_from_db()
+
+        self.assertEqual(old_drone.tenant_id, self.tenant.id)
+        self.assertEqual(old_drone.status, DroneStatus.RELEASED)
+        self.assertEqual(new_drone.tenant_id, other_tenant.id)
+        self.assertEqual(new_drone.status, DroneStatus.CLAIMED)
+        self.assertEqual(mission.drone_id, old_drone.id)
+        self.assertEqual(flight_record.drone_id, old_drone.id)
 
     def test_live_start_should_proxy_with_composed_video_id(self):
         mock_dji_state.seed_device(device_sn="SN-LIVE-001", name="直播设备", model="M30")

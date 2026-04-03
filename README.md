@@ -1,8 +1,8 @@
 # 低空平台权限系统（V3）
 
-## 当前状态（对齐日期：2026-03-31）
+## 当前状态（对齐日期：2026-04-03）
 
-本仓库当前是一个 Django + DRF 的正式 API 项目，现状已经收敛为四类 HTTP 入口：
+本仓库当前是一个 Django + DRF 的正式 API 项目，现状已经收敛为五类 HTTP 入口：
 
 1. Formal IAM Plane（正式权限与身份接口）
 
@@ -135,7 +135,7 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 - 业务域：
   - `apps/drone/*` - 无人机台账
   - `apps/drone_assignment/*` - 无人机分配
-  - `apps/route/*` - 航线聚合与 `waypoints[]` 读写
+  - `apps/route/*` - 航线 XML 草稿管理与发布
   - `apps/waypoint/*` - route 内部航点存储模型
   - `apps/mission/*` - 任务
   - `apps/flight_record/*` - 飞行记录
@@ -237,6 +237,16 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 - `POST /api/v1/__internal__/dji/callbacks/wayline-upload`
 - `POST /api/v1/__internal__/dji/callbacks/media-upload`
 - `POST /api/v1/__internal__/dji/callbacks/media-group-upload`
+
+## 关键实现约束（与当前代码一致）
+
+- `DELETE /api/v1/drones/{id}` 为软删除（释放认领）：将 `Drone.status` 置为 `RELEASED`，并把该设备下 `ACTIVE` 分配批量置为 `INACTIVE`。
+- `Drone.status` 仅表达业务认领态（`CLAIMED` / `RELEASED`）；DJI 在线态通过独立字段 `dji_online` 表达，由设备同步任务维护。
+- `GET /api/v1/drones/available` 仅返回“未被非 `RELEASED` 设备记录占用”的上游设备索引；`ASSIGNED` 范围访问会返回空列表。
+- `POST /api/v1/missions` 必须满足：`route` 已发布到 DJI，且请求体提供非空 `dock_sn`。
+- `POST /api/v1/routes/{id}/publish` 当前采用 STS 流程：申请 STS -> 对象上传 -> `upload-callback` -> 查询航线列表解析 `dji_wayline_id`。
+- `DELETE /api/v1/routes/{id}` 在当前租户存在状态为 `PENDING/RUNNING/PAUSED` 的关联任务时会被拒绝。
+- `PUT/PATCH /api/v1/flight-records/{id}` 不允许直接修改 `status`，状态流转只能通过 `complete/abort` 动作接口。
 
 ## `/api/v1/*` 响应契约
 

@@ -258,14 +258,15 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
         ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手")
 
-    def test_sync_device_indexes_should_refresh_shared_pool_and_claimed_drone_status(self):
+    def test_sync_device_indexes_should_refresh_shared_pool_and_claimed_drone_online_state(self):
         visible_drone = Drone.objects.create(
             tenant=self.tenant,
             code="SYNC-DRONE-001",
             name="可见无人机",
             model="M30",
             device_sn="MOCK-DRONE-001",
-            status=DroneStatus.DISABLED,
+            status=DroneStatus.CLAIMED,
+            dji_online=False,
         )
         missing_drone = Drone.objects.create(
             tenant=self.tenant,
@@ -273,7 +274,8 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
             name="丢失无人机",
             model="M30",
             device_sn="MISSING-DRONE-001",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
+            dji_online=True,
         )
 
         summary = sync_device_indexes()
@@ -281,8 +283,10 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertGreaterEqual(summary["synced_count"], 2)
         visible_drone.refresh_from_db()
         missing_drone.refresh_from_db()
-        self.assertEqual(visible_drone.status, DroneStatus.ENABLED)
-        self.assertEqual(missing_drone.status, DroneStatus.DISABLED)
+        self.assertEqual(visible_drone.status, DroneStatus.CLAIMED)
+        self.assertEqual(missing_drone.status, DroneStatus.CLAIMED)
+        self.assertTrue(visible_drone.dji_online)
+        self.assertFalse(missing_drone.dji_online)
 
     def test_sync_mission_indexes_should_update_execution_status_and_local_status(self):
         route = Route.objects.create(tenant=self.tenant, name="同步任务航线")
@@ -325,14 +329,15 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(mission_index.execution_status, "SUCCESS")
         self.assertEqual(mission_index.sync_status, SyncStatus.SYNCED)
 
-    def test_sync_device_indexes_should_disable_all_claimed_drones_when_bound_pool_is_empty(self):
+    def test_sync_device_indexes_should_mark_all_claimed_drones_offline_when_bound_pool_is_empty(self):
         visible_drone = Drone.objects.create(
             tenant=self.tenant,
             code="SYNC-EMPTY-DRONE-001",
             name="已认领无人机",
             model="M30",
             device_sn="MOCK-DRONE-001",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
+            dji_online=True,
         )
         mock_dji_state.bound_device_sns = set()
 
@@ -340,7 +345,8 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
 
         self.assertEqual(summary["synced_count"], 0)
         visible_drone.refresh_from_db()
-        self.assertEqual(visible_drone.status, DroneStatus.DISABLED)
+        self.assertEqual(visible_drone.status, DroneStatus.CLAIMED)
+        self.assertFalse(visible_drone.dji_online)
 
     def test_sync_device_indexes_should_delete_stale_shared_device_indexes(self):
         DjiDeviceIndex.objects.create(device_sn="STALE-DRONE-001", last_payload={"name": "stale"})

@@ -139,7 +139,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             name="实时飞行记录无人机",
             model="M300",
             device_sn="FRL-SN-001",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
         )
         self.secondary_drone = Drone.objects.create(
             tenant=self.tenant,
@@ -147,7 +147,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             name="实时飞行记录无人机2",
             model="M350",
             device_sn="FRL-SN-002",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
         )
         self.mission = _persist_mission_fixture(
             tenant=self.tenant,
@@ -179,7 +179,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             name="其他租户飞行记录无人机",
             model="M350",
             device_sn="FRL-OTHER-SN-001",
-            status=DroneStatus.ENABLED,
+            status=DroneStatus.CLAIMED,
         )
         self.other_tenant_mission = _persist_mission_fixture(
             tenant=self.other_tenant,

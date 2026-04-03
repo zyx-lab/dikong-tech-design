@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
@@ -48,6 +49,7 @@ class DroneReadSerializer(serializers.ModelSerializer):
             "model",
             "device_sn",
             "status",
+            "dji_online",
             "org_id",
             "created_by_tenant_member_id",
             "last_seen_at",
@@ -108,11 +110,20 @@ class DroneClaimSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer
         code = attrs.get("code")
         device_sn = attrs.get("device_sn")
         device_index = _device_index_for_sn(device_sn)
+        released_drone = (
+            Drone.objects.filter(
+                tenant=current_tenant,
+                device_sn=device_sn,
+                status=DroneStatus.RELEASED,
+            )
+            .order_by("-id")
+            .first()
+        )
 
         if device_index is None:
             raise serializers.ValidationError({"device_sn": "已绑定设备池中不存在该 device_sn"})
 
-        if code and Drone.objects.filter(tenant=current_tenant, code=code).exists():
+        if code and Drone.objects.filter(tenant=current_tenant, code=code).exclude(pk=getattr(released_drone, "pk", None)).exists():
             raise serializers.ValidationError({"code": "当前租户下已存在相同业务编码"})
 
         claimed_drone = Drone.objects.exclude(status=DroneStatus.RELEASED).filter(device_sn=device_sn).first()
@@ -122,21 +133,44 @@ class DroneClaimSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer
             raise serializers.ValidationError({"device_sn": "该设备已被其他租户认领"})
 
         self._device_index = device_index
+        self._released_drone_id = getattr(released_drone, "id", None)
         return attrs
 
     def create(self, validated_data):
         device_index = getattr(self, "_device_index", None)
+        released_drone_id = getattr(self, "_released_drone_id", None)
         payload = device_index.last_payload if device_index is not None else {}
-        validated_data["name"] = (
+        claim_name = (
             validated_data.get("name")
             or _payload_string(payload, "name", "device_name", "nickname")
             or validated_data["code"]
         )
-        validated_data["model"] = (
+        claim_model = (
             validated_data.get("model")
             or _payload_string(payload, "model", "device_model", "product_type")
             or "unknown"
         )
+
+        if released_drone_id is not None:
+            updated_count = Drone.objects.filter(pk=released_drone_id, status=DroneStatus.RELEASED).update(
+                tenant=validated_data["tenant"],
+                code=validated_data["code"],
+                name=claim_name,
+                model=claim_model,
+                device_sn=validated_data["device_sn"],
+                org_id=validated_data.get("org_id"),
+                status=DroneStatus.CLAIMED,
+                dji_online=True,
+                created_by_tenant_member_id=validated_data.get("created_by_tenant_member_id"),
+                updated_at=timezone.now(),
+            )
+            if updated_count:
+                return Drone.objects.get(pk=released_drone_id)
+
+        validated_data["name"] = claim_name
+        validated_data["model"] = claim_model
+        validated_data["status"] = DroneStatus.CLAIMED
+        validated_data["dji_online"] = True
         return super().create(validated_data)
 
 

@@ -1,6 +1,6 @@
 # DJI 真实服务航线对接速查（Wayline）
 
-更新时间：2026-04-02  
+更新时间：2026-04-03  
 适用环境：`DJI_UPSTREAM_BASE_URL=http://8.129.135.140`
 
 ## 1. 目标
@@ -121,6 +121,13 @@ curl -sS -H "x-auth-token: $TOKEN" \
 
 - 航线发布：`apps/route/views.py` 的 `publish`
 - KMZ 打包：`apps/route/services.py` 的 `build_route_kmz_from_xml`
-- 上游网关：`apps/dji_bff/gateway.py` 的 `upload_route`
+- 上游网关：`apps/dji_bff/gateway.py` 的 `publish_route_via_sts`
 
-若要对齐真实服务标准流程，应逐步向 “STS + 对象存储上传 + upload-callback + list 取 id” 迁移，并避免把 `dji_wayline_id` 视为唯一稳定契约字段。
+当前发布链路已按 STS 标准流程实现：
+
+1. `get_storage_sts`
+2. `_upload_object_via_sts`
+3. `report_wayline_upload`
+4. `resolve_wayline_id_by_name`
+
+`upload_route` 仍保留在网关中作为兼容辅助方法，但 `Route.publish` 运行路径不再使用该旧直传接口。

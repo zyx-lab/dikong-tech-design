@@ -3,8 +3,7 @@ from django.db.models import Q
 
 
 class DroneStatus(models.TextChoices):
-    ENABLED = "ENABLED", "启用"
-    DISABLED = "DISABLED", "停用"
+    CLAIMED = "CLAIMED", "已认领"
     RELEASED = "RELEASED", "已释放"
 
 
@@ -25,8 +24,9 @@ class Drone(models.Model):
         "状态",
         max_length=16,
         choices=DroneStatus.choices,
-        default=DroneStatus.DISABLED,
+        default=DroneStatus.CLAIMED,
     )
+    dji_online = models.BooleanField("DJI 在线状态", default=False)
     org_id = models.BigIntegerField("组织 ID", null=True, blank=True)
     created_by_tenant_member_id = models.BigIntegerField("创建人 TenantMember ID", null=True, blank=True)
     created_at = models.DateTimeField("创建时间", auto_now_add=True)

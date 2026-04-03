@@ -10,7 +10,7 @@ from django.utils.dateparse import parse_datetime
 from apps.access.services import log_action
 from apps.dji_bff.gateway import DjiGateway
 from apps.dji_bff.models import DjiDeviceIndex, SyncStatus, TenantMediaIndex, TenantMissionIndex
-from apps.drone.models import Drone, DroneStatus
+from apps.drone.models import Drone
 from apps.flight_record.models import FlightRecord
 from apps.media_file.models import MediaFile, MediaType
 from apps.mission.models import MissionStatus
@@ -148,8 +148,8 @@ def sync_device_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
             summary.updated_count += 1
 
     DjiDeviceIndex.objects.exclude(device_sn__in=seen_device_sns).delete()
-    Drone.objects.filter(device_sn__in=seen_device_sns).update(status=DroneStatus.ENABLED)
-    Drone.objects.exclude(device_sn__in=seen_device_sns).update(status=DroneStatus.DISABLED)
+    Drone.objects.filter(device_sn__in=seen_device_sns).update(dji_online=True)
+    Drone.objects.exclude(device_sn__in=seen_device_sns).update(dji_online=False)
 
     log_action(action="DJI_DEVICE_SYNC", target_type="dji_device_index", after_data=summary.asdict())
     return summary.asdict()
