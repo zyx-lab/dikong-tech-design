@@ -288,6 +288,10 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
         route_index = TenantRouteIndex.objects.get(route=route)
         self.assertTrue(route_index.is_published)
         self.assertTrue(route_index.dji_wayline_id.startswith("mock-wayline-"))
+        self.assertEqual(
+            route_index.download_url,
+            f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{route_index.dji_wayline_id}/url",
+        )
         uploaded_payload = mock_dji_state.waylines[route_index.dji_wayline_id]
         self.assertTrue(uploaded_payload["file_name"].endswith(".kmz"))
 
@@ -337,6 +341,7 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
             tenant=self.tenant,
             route=route,
             dji_wayline_id=old_wayline_id,
+            download_url=f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline_id}/url",
             is_published=True,
         )
         self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="legacy.xml")
@@ -349,6 +354,10 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertNotEqual(route_index.dji_wayline_id, old_wayline_id)
         self.assertTrue(route_index.is_published)
         self.assertNotIn(old_wayline_id, mock_dji_state.waylines)
+        self.assertEqual(
+            route_index.download_url,
+            f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{route_index.dji_wayline_id}/url",
+        )
 
     def test_publish_should_cleanup_new_upload_and_keep_old_wayline_when_post_upload_step_fails(self):
         route = Route.objects.create(tenant=self.tenant, name="发布补偿 XML")

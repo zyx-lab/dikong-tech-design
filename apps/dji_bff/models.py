@@ -44,6 +44,7 @@ class TenantRouteIndex(models.Model):
     tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="dji_route_indexes")
     route = models.OneToOneField("route.Route", on_delete=models.CASCADE, related_name="dji_index")
     dji_wayline_id = models.CharField("DJI 航线 ID", max_length=128, blank=True, default="")
+    download_url = models.CharField("DJI 航线下载地址", max_length=500, blank=True, default="")
     is_published = models.BooleanField("是否已发布", default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
