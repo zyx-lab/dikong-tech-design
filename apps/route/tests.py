@@ -359,6 +359,32 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
             f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{route_index.dji_wayline_id}/url",
         )
 
+    def test_publish_should_persist_upstream_download_url(self):
+        route = Route.objects.create(tenant=self.tenant, name="发布原始下载地址")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
+        self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="sentinel.xml")
+
+        sentinel_url = "/raw/upstream/download/url/that-is-not-derived"
+        upstream_payload = {
+            "dji_wayline_id": "wayline-from-upstream",
+            "download_url": sentinel_url,
+            "object_key": "sentinel-object",
+        }
+
+        with patch(
+            "apps.route.views.DjiGateway.publish_route_via_sts",
+            return_value=upstream_payload,
+        ), patch(
+            "apps.route.views.DjiGateway.upload_route",
+            return_value=upstream_payload,
+        ):
+            response = self.client.post(f"/api/v1/routes/{route.id}/publish")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        route_index = TenantRouteIndex.objects.get(route=route)
+        self.assertEqual(route_index.dji_wayline_id, "wayline-from-upstream")
+        self.assertEqual(route_index.download_url, sentinel_url)
+
     def test_publish_should_cleanup_new_upload_and_keep_old_wayline_when_post_upload_step_fails(self):
         route = Route.objects.create(tenant=self.tenant, name="发布补偿 XML")
         old_wayline_id = mock_dji_state.create_wayline(name="legacy-upstream")["wayline_id"]
