@@ -17,7 +17,7 @@ from apps.access.test_support import (
     ensure_tenant_member_position,
     ensure_tenant_role_binding,
 )
-from apps.dji_bff.gateway import DjiGateway, GatewayResponse
+from apps.dji_bff.gateway import DjiGateway, GatewayResponse, DjiGatewayUpstreamError
 from apps.dji_bff.models import DjiDeviceIndex, DjiWorkspaceConfig, SyncStatus, TenantMediaIndex, TenantMissionIndex, TenantRouteIndex
 from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes, sync_mission_indexes
 from apps.dji_mock.state import mock_dji_state
@@ -116,17 +116,44 @@ class DjiGatewayPaginationTests(TestCase):
         self.assertEqual(len(requests), 2)
         self.assertIn("page=2", requests[1])
 
-    def test_upload_route_should_accept_id_field_from_upstream_payload(self):
+    def test_upload_route_should_return_wayline_id_and_download_url(self):
         gateway = DjiGateway(base_url="http://mock-dji")
+        upstream_payload = {
+            "name": "route-a",
+            "wayline_id": "wayline-id-001",
+            "workspace_id": "mock-workspace-001",
+            "download_url": "/api/v1/wayline/workspaces/mock-workspace-001/waylines/wayline-id-001/url",
+        }
+
         with patch.object(gateway, "_workspace_id", return_value="mock-workspace-001"):
             with patch.object(
                 gateway,
                 "_request_multipart",
-                return_value=GatewayResponse(status_code=200, headers={}, data={"id": "wayline-id-001"}),
+                return_value=GatewayResponse(status_code=200, headers={}, data=upstream_payload),
             ):
                 payload = gateway.upload_route(route_name="route-a", file_obj=StringIO("kmz-bytes-placeholder"))
 
         self.assertEqual(payload["dji_wayline_id"], "wayline-id-001")
+        self.assertEqual(
+            payload["download_url"],
+            "/api/v1/wayline/workspaces/mock-workspace-001/waylines/wayline-id-001/url",
+        )
+
+    def test_upload_route_should_raise_if_download_url_missing(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        upstream_payload = {"wayline_id": "wayline-id-001"}
+
+        with patch.object(gateway, "_workspace_id", return_value="mock-workspace-001"):
+            with patch.object(
+                gateway,
+                "_request_multipart",
+                return_value=GatewayResponse(status_code=200, headers={}, data=upstream_payload),
+            ):
+                with self.assertRaises(DjiGatewayUpstreamError) as exc_info:
+                    gateway.upload_route(route_name="route-a", file_obj=StringIO("kmz-bytes-placeholder"))
+
+        self.assertEqual(exc_info.exception.status_code, 502)
+        self.assertEqual(exc_info.exception.data, upstream_payload)
 
     def test_publish_route_via_sts_should_orchestrate_upload_callback_and_id_resolution(self):
         gateway = DjiGateway(base_url="http://mock-dji")

@@ -109,12 +109,16 @@ class DjiGateway:
             fields=fields,
             files=files,
         ).data
-        wayline_id = self._extract_wayline_id(payload)
-        if wayline_id:
-            normalized = dict(payload) if isinstance(payload, dict) else {}
-            normalized["dji_wayline_id"] = wayline_id
-            return normalized
-        raise DjiGatewayUpstreamError("上传航线后未返回 dji_wayline_id", status_code=502, data=payload)
+        normalized = dict(payload) if isinstance(payload, dict) else {}
+        wayline_id = self._extract_wayline_id(normalized)
+        if not wayline_id:
+            raise DjiGatewayUpstreamError("上传航线后未返回 dji_wayline_id", status_code=502, data=payload)
+        download_url = self._extract_download_url(normalized)
+        if not download_url:
+            raise DjiGatewayUpstreamError("上传航线后未返回 download_url", status_code=502, data=payload)
+        normalized["dji_wayline_id"] = wayline_id
+        normalized["download_url"] = download_url
+        return normalized
 
     def get_storage_sts(self):
         workspace_id = self._workspace_id()
@@ -798,6 +802,19 @@ class DjiGateway:
             string_value = str(value).strip()
             if string_value:
                 return string_value
+        return ""
+
+    @staticmethod
+    def _extract_download_url(payload) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        for key in ("download_url", "downloadUrl", "url"):
+            value = payload.get(key)
+            if not isinstance(value, str):
+                continue
+            url = value.strip()
+            if url:
+                return url
         return ""
 
     @staticmethod

@@ -244,8 +244,10 @@ def upload_wayline(request, workspace_id: str):
     created = mock_dji_state.create_wayline(name=route_name, file_name=getattr(upload, "name", ""))
     return _success(
         {
-            "dji_wayline_id": created["wayline_id"],
             "name": created["name"],
+            "wayline_id": created["wayline_id"],
+            "workspace_id": workspace_id,
+            "download_url": f"/api/v1/wayline/workspaces/{workspace_id}/waylines/{created['wayline_id']}/url",
         }
     )
 

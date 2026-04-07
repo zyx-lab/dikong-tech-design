@@ -71,7 +71,15 @@ class DjiMockServerTests(SimpleTestCase):
             HTTP_X_AUTH_TOKEN=token,
         )
         self.assertEqual(upload_response.status_code, 200)
-        dji_wayline_id = upload_response.json()["data"]["dji_wayline_id"]
+        upload_data = upload_response.json()["data"]
+        self.assertEqual(upload_data["name"], "Mock Route A")
+        self.assertEqual(upload_data["workspace_id"], "mock-workspace-001")
+        self.assertEqual(
+            upload_data["download_url"],
+            f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{upload_data['wayline_id']}/url",
+        )
+        dji_wayline_id = upload_data.get("wayline_id") or upload_data.get("dji_wayline_id")
+        self.assertEqual(upload_data["wayline_id"], dji_wayline_id)
 
         waylines_response = self.client.get(
             "/__mock-dji__/api/v1/wayline/workspaces/mock-workspace-001/waylines",
