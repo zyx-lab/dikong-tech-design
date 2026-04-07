@@ -34,6 +34,7 @@ class Mission(models.Model):
     )
     route_name = models.CharField("航线名称（冗余）", max_length=100, blank=True, default="")
     drone = models.ForeignKey("drone.Drone", on_delete=models.PROTECT, related_name="missions", verbose_name="无人机")
+    device_sn = models.CharField("设备序列号（冗余）", max_length=128, blank=True, default="")
     drone_name = models.CharField("无人机名称（冗余）", max_length=100, blank=True, default="")
     pilot = models.ForeignKey("access.TenantMember", on_delete=models.PROTECT, related_name="missions", verbose_name="飞手成员")
     pilot_name = models.CharField("飞手姓名（冗余）", max_length=50, blank=True, default="")
@@ -41,6 +42,8 @@ class Mission(models.Model):
     remark = models.CharField("任务备注", max_length=500, blank=True, default="")
     status = models.PositiveSmallIntegerField("任务状态", choices=MissionStatus.choices, default=MissionStatus.PENDING)
     dji_job_id = models.CharField("DJI 任务 ID", max_length=128, blank=True, default="")
+    is_deleted = models.BooleanField("是否已删除", default=False)
+    deleted_at = models.DateTimeField("删除时间", null=True, blank=True)
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
     updated_at = models.DateTimeField("更新时间", auto_now=True)
 
@@ -61,10 +64,20 @@ class Mission(models.Model):
         return self.pilot_id
 
     def clean(self):
+        if self.pk:
+            was_deleted = Mission.objects.filter(pk=self.pk).values_list("is_deleted", flat=True).first()
+            if was_deleted and not self.is_deleted:
+                raise ValidationError({"is_deleted": "任务软删除后不可恢复"})
+        if self.is_deleted and self.deleted_at is None:
+            raise ValidationError({"deleted_at": "逻辑删除记录必须提供 deleted_at"})
+        if not self.is_deleted and self.deleted_at is not None:
+            raise ValidationError({"deleted_at": "未删除记录不允许写入 deleted_at"})
         if self.tenant_id and self.route_id and self.route.tenant_id != self.tenant_id:
             raise ValidationError({"route": "route 必须属于当前 tenant"})
         if self.tenant_id and self.drone_id and self.drone.tenant_id != self.tenant_id:
             raise ValidationError({"drone": "drone 必须属于当前 tenant"})
+        if self.drone_id and not self.device_sn:
+            self.device_sn = self.drone.device_sn
         if self.tenant_id and self.pilot_id and self.pilot.tenant_id != self.tenant_id:
             raise ValidationError({"pilot": "pilot 必须属于当前 tenant"})
         if self.pilot_id and self.pilot.status != TenantMemberStatus.ACTIVE:

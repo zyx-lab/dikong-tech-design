@@ -1,7 +1,9 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import EmploymentStatus, ScopeType
@@ -84,6 +86,7 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 201)
         mission = Mission.objects.get(name="园区巡检任务")
         self.assertTrue(mission.dji_job_id.startswith("mock-job-"))
+        self.assertEqual(mission.device_sn, self.drone.device_sn)
         mission_index = TenantMissionIndex.objects.get(mission=mission)
         self.assertEqual(mission_index.dji_job_id, mission.dji_job_id)
         self.assertIn(mission.dji_job_id, mock_dji_state.jobs)
@@ -220,3 +223,23 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], "B0001")
+
+    def test_mission_soft_delete_should_be_irreversible(self):
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="软删不可恢复任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.PENDING,
+            is_deleted=True,
+            deleted_at=timezone.now(),
+        )
+
+        mission.is_deleted = False
+        mission.deleted_at = None
+        with self.assertRaises(ValidationError):
+            mission.save()

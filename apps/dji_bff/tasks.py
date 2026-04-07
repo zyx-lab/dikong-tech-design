@@ -236,16 +236,20 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
         flight_record = None
         if mission is not None:
             flight_record = FlightRecord.objects.filter(tenant=tenant, mission=mission).order_by("-id").first()
-        if flight_record is None and device_sn:
+        if mission is None and device_sn:
             flight_record = (
                 FlightRecord.objects.filter(tenant=tenant, drone__device_sn=device_sn)
                 .order_by("-id")
                 .first()
             )
+        if mission is None and flight_record is not None and flight_record.mission_id:
+            mission = flight_record.mission
 
         media_defaults = {
             "tenant": tenant,
             "flight_record": flight_record,
+            "mission": mission,
+            "device_sn": device_sn,
             "media_type": _media_type(payload),
             "file_name": _file_name(payload),
             "file_url": f"dji://{dji_file_id}",
@@ -254,8 +258,6 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
             "latitude": payload.get("latitude"),
             "longitude": payload.get("longitude"),
             "captured_at": _datetime_value(payload, "captured_at", "capturedAt", "create_time", "createTime"),
-            "is_deleted": False,
-            "deleted_at": None,
         }
 
         with transaction.atomic():

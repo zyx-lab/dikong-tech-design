@@ -1,9 +1,12 @@
 from django.http import HttpResponseRedirect
+from django.db.models import Q
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
+from apps.access.models import ScopeType
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
+from apps.access.services import AuthzService
 from apps.api_v1.business_response import BusinessApiResponseMixin
 from apps.api_v1.schema import (
     BUSINESS_INTERNAL_ERROR_RESPONSE,
@@ -86,14 +89,35 @@ class MediaFileViewSet(
     def assigned_scope_filter_builder(tenant_member_id: int) -> dict:
         return {"flight_record__pilot_id": tenant_member_id}
 
+    def apply_scope(self, queryset):
+        perm_code = self.get_required_permission()
+        if not perm_code:
+            return queryset.none()
+
+        decision = getattr(self.request, "_authz_decision", None)
+        if decision is None:
+            decision = AuthzService.authorize(self.request, perm_code)
+
+        if not decision.allowed:
+            return queryset.none()
+
+        if decision.scope == ScopeType.ASSIGNED:
+            tenant_member_id = decision.tenant_member_id
+            return queryset.filter(
+                Q(flight_record__pilot_id=tenant_member_id)
+                | Q(flight_record__isnull=True, mission__pilot_id=tenant_member_id)
+            ).distinct()
+
+        return super().apply_scope(queryset)
+
     def get_queryset(self):
         queryset = self.scope_queryset_to_tenant(super().get_queryset()).filter(is_deleted=False, dji_index__isnull=False)
         params = self.request.query_params
 
         for query_key, model_field in (
             ("flight_record_id", "flight_record_id"),
-            ("mission_id", "dji_index__mission_id"),
-            ("device_sn", "dji_index__device_sn"),
+            ("mission_id", "mission_id"),
+            ("device_sn", "device_sn"),
             ("media_type", "media_type"),
             ("file_name", "file_name__icontains"),
         ):

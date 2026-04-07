@@ -89,6 +89,8 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
         self.media_file = MediaFile.objects.create(
             tenant=self.tenant,
             flight_record=self.flight_record,
+            mission=self.mission,
+            device_sn="MEDIA-LIVE-SN-001",
             media_type=MediaType.PHOTO,
             file_name="MEDIA_LIVE.JPG",
             file_url="https://example.com/MEDIA_LIVE.JPG",

@@ -42,7 +42,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
 
         self.pilot_user = User.objects.create_user(username="media_pilot", password="pass1234", status=1)
         ensure_staff_profile(self.pilot_user, name="飞手", employment_status=EmploymentStatus.ACTIVE)
-        _tenant, self.pilot_member, _pilot_role = ensure_tenant_role_binding(
+        _tenant, self.pilot_member, self.pilot_role = ensure_tenant_role_binding(
             self.pilot_user,
             tenant=self.tenant,
             role_code="pilot_operator",
@@ -97,6 +97,8 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         media_file = MediaFile.objects.create(
             tenant=self.tenant,
             flight_record=self.flight_record,
+            mission=self.mission,
+            device_sn=device_sn,
             media_type=MediaType.PHOTO,
             file_name=file_name,
             file_url=f"https://example.com/{file_name}",
@@ -149,3 +151,73 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertIn(create_response.status_code, (403, 405))
         self.assertIn(update_response.status_code, (403, 405))
         self.assertIn(delete_response.status_code, (403, 405))
+
+    def test_assigned_scope_pilot_should_list_media_bound_by_mission_without_flight_record(self):
+        grant_role_permissions(self.pilot_role, {"media_file.view_media_file": ScopeType.ASSIGNED})
+        self.client.force_authenticate(self.pilot_user)
+
+        mission_only_media = MediaFile.objects.create(
+            tenant=self.tenant,
+            mission=self.mission,
+            device_sn=self.drone.device_sn,
+            media_type=MediaType.PHOTO,
+            file_name="IMG_MISSION_ONLY.JPG",
+            file_url="https://example.com/IMG_MISSION_ONLY.JPG",
+            captured_at=timezone.now(),
+        )
+        TenantMediaIndex.objects.create(
+            tenant=self.tenant,
+            media_file=mission_only_media,
+            dji_file_id="dji-IMG_MISSION_ONLY.JPG",
+            device_sn=self.drone.device_sn,
+            mission=self.mission,
+            sync_status=SyncStatus.SYNCED,
+            last_sync_at=timezone.now(),
+        )
+
+        other_pilot_user = User.objects.create_user(username="media_other_pilot", password="pass1234", status=1)
+        ensure_staff_profile(other_pilot_user, name="其他飞手", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
+            other_pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator_other_media",
+            role_name="其他飞手",
+        )
+        ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
+        other_mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="其他媒体任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=other_pilot_member,
+            pilot_name="其他飞手",
+            status=MissionStatus.RUNNING,
+            dji_job_id="media-job-other-001",
+        )
+        hidden_media = MediaFile.objects.create(
+            tenant=self.tenant,
+            mission=other_mission,
+            device_sn=self.drone.device_sn,
+            media_type=MediaType.PHOTO,
+            file_name="IMG_OTHER_MISSION.JPG",
+            file_url="https://example.com/IMG_OTHER_MISSION.JPG",
+            captured_at=timezone.now(),
+        )
+        TenantMediaIndex.objects.create(
+            tenant=self.tenant,
+            media_file=hidden_media,
+            dji_file_id="dji-IMG_OTHER_MISSION.JPG",
+            device_sn=self.drone.device_sn,
+            mission=other_mission,
+            sync_status=SyncStatus.SYNCED,
+            last_sync_at=timezone.now(),
+        )
+
+        response = self.client.get("/api/v1/media-files")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["id"], mission_only_media.id)

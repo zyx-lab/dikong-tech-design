@@ -34,10 +34,10 @@ class MediaFileReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_mission_id(self, obj) -> int | None:
-        return getattr(getattr(obj, "dji_index", None), "mission_id", None)
+        return obj.mission_id
 
     def get_device_sn(self, obj) -> str:
-        return getattr(getattr(obj, "dji_index", None), "device_sn", "")
+        return obj.device_sn
 
     def get_dji_file_id(self, obj) -> str:
         return getattr(getattr(obj, "dji_index", None), "dji_file_id", "")

@@ -30,6 +30,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
             "route",
             "route_name",
             "drone",
+            "device_sn",
             "drone_name",
             "pilot",
             "pilot_name",
@@ -92,6 +93,7 @@ class MissionCreateSerializer(RejectUnknownFieldsMixin, serializers.ModelSeriali
     def create(self, validated_data):
         validated_data.pop("dock_sn", "")
         validated_data["route_name"] = validated_data["route"].name
+        validated_data["device_sn"] = validated_data["drone"].device_sn
         validated_data["drone_name"] = validated_data["drone"].name
         validated_data["pilot_name"] = _pilot_display_name(validated_data["pilot"])
         validated_data["status"] = MissionStatus.PENDING

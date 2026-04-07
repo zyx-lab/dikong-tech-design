@@ -24,6 +24,15 @@ class MediaFile(models.Model):
         blank=True,
         verbose_name="关联飞行记录",
     )
+    mission = models.ForeignKey(
+        "mission.Mission",
+        on_delete=models.SET_NULL,
+        related_name="media_files",
+        null=True,
+        blank=True,
+        verbose_name="关联任务",
+    )
+    device_sn = models.CharField("设备序列号（冗余）", max_length=128, blank=True, default="")
     media_type = models.PositiveSmallIntegerField("媒体类型", choices=MediaType.choices)
     file_name = models.CharField("文件名", max_length=255)
     file_url = models.CharField("文件URL", max_length=500)
@@ -55,8 +64,16 @@ class MediaFile(models.Model):
         return self.flight_record.pilot_id
 
     def clean(self):
+        if self.pk:
+            was_deleted = MediaFile.objects.filter(pk=self.pk).values_list("is_deleted", flat=True).first()
+            if was_deleted and not self.is_deleted:
+                raise ValidationError({"is_deleted": "媒体软删除后不可恢复"})
         if self.tenant_id and self.flight_record_id and self.flight_record.tenant_id != self.tenant_id:
             raise ValidationError({"flight_record": "flight_record 必须属于当前 tenant"})
+        if self.tenant_id and self.mission_id and self.mission.tenant_id != self.tenant_id:
+            raise ValidationError({"mission": "mission 必须属于当前 tenant"})
+        if self.flight_record_id and self.mission_id and self.flight_record.mission_id and self.flight_record.mission_id != self.mission_id:
+            raise ValidationError({"mission": "mission 与 flight_record 绑定关系不一致"})
         if self.is_deleted and self.deleted_at is None:
             raise ValidationError({"deleted_at": "逻辑删除记录必须提供 deleted_at"})
         if not self.is_deleted and self.deleted_at is not None:

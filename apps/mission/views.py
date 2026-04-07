@@ -175,7 +175,7 @@ class MissionViewSet(
         return MissionReadSerializer
 
     def get_queryset(self):
-        queryset = self.scope_queryset_to_tenant(super().get_queryset())
+        queryset = self.scope_queryset_to_tenant(super().get_queryset()).filter(is_deleted=False)
         params = self.request.query_params
 
         for query_key, model_field in (
