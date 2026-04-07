@@ -183,7 +183,7 @@ class RouteViewSet(
         route_index, _ = TenantRouteIndex.objects.get_or_create(
             tenant=self.get_current_tenant(),
             route=route,
-            defaults={"is_published": False, "dji_wayline_id": ""},
+            defaults={"is_published": False, "dji_wayline_id": "", "download_url": ""},
         )
         route_index.is_published = False
         route_index.save(update_fields=["is_published", "updated_at"])
@@ -198,6 +198,7 @@ class RouteViewSet(
             tenant=tenant,
             route=route,
             dji_wayline_id="",
+            download_url="",
             is_published=False,
         )
         route.dji_index = route_index
@@ -265,7 +266,7 @@ class RouteViewSet(
         log_stage("kmz_built", kmz_name=getattr(kmz_file, "name", ""), kmz_size=getattr(kmz_file, "size", None))
         try:
             log_stage("upstream_publish_start")
-            payload = gateway.publish_route_via_sts(route_name=f"route-{route.id}-{uuid.uuid4().hex}", file_obj=kmz_file)
+            payload = gateway.upload_route(route_name=f"route-{route.id}-{uuid.uuid4().hex}", file_obj=kmz_file)
             return payload, ""
         except DjiGatewayUpstreamError as exc:
             upstream_data = exc.data if isinstance(exc.data, dict) else {}
@@ -290,15 +291,16 @@ class RouteViewSet(
         route_index: TenantRouteIndex,
         old_wayline_id: str,
         new_wayline_id: str,
-        object_key: str,
+        new_download_url: str,
         before_data: dict,
         gateway: DjiGateway,
         log_stage,
     ):
         try:
             route_index.dji_wayline_id = new_wayline_id
+            route_index.download_url = new_download_url
             route_index.is_published = True
-            route_index.save(update_fields=["dji_wayline_id", "is_published", "updated_at"])
+            route_index.save(update_fields=["dji_wayline_id", "download_url", "is_published", "updated_at"])
             route.dji_index = route_index
 
             if old_wayline_id and old_wayline_id != new_wayline_id:
@@ -325,7 +327,7 @@ class RouteViewSet(
             log_stage(
                 "db_persist_failed",
                 dji_wayline_id=new_wayline_id,
-                object_key=object_key,
+                download_url=new_download_url,
             )
             self._delete_upstream_wayline_if_exists(
                 gateway=gateway,
@@ -375,7 +377,7 @@ class RouteViewSet(
         route_index, _ = TenantRouteIndex.objects.get_or_create(
             tenant=tenant,
             route=route,
-            defaults={"dji_wayline_id": "", "is_published": False},
+            defaults={"dji_wayline_id": "", "download_url": "", "is_published": False},
         )
         old_wayline_id = route_index.dji_wayline_id
 
@@ -396,8 +398,8 @@ class RouteViewSet(
             )
 
         new_wayline_id = upstream_payload["dji_wayline_id"]
-        object_key = str(upstream_payload.get("object_key") or "")
-        log_stage("upstream_publish_succeeded", dji_wayline_id=new_wayline_id, object_key=object_key)
+        new_download_url = str(upstream_payload["download_url"])
+        log_stage("upstream_publish_succeeded", dji_wayline_id=new_wayline_id, download_url=new_download_url)
 
         self._persist_published_route_or_raise(
             request=request,
@@ -405,13 +407,13 @@ class RouteViewSet(
             route_index=route_index,
             old_wayline_id=old_wayline_id,
             new_wayline_id=new_wayline_id,
-            object_key=object_key,
+            new_download_url=new_download_url,
             before_data=before_data,
             gateway=gateway,
             log_stage=log_stage,
         )
 
-        log_stage("done", dji_wayline_id=new_wayline_id, object_key=object_key)
+        log_stage("done", dji_wayline_id=new_wayline_id, download_url=new_download_url)
         return _route_success_response(self, route, http_status=status.HTTP_200_OK)
 
     @extend_schema(

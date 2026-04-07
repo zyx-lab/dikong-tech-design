@@ -317,7 +317,7 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
             data={"code": "E0001", "msg": "The file format is incorrect."},
         )
 
-        with patch("apps.route.views.DjiGateway.publish_route_via_sts", side_effect=upstream_error):
+        with patch("apps.route.views.DjiGateway.upload_route", side_effect=upstream_error):
             response = self.client.post(f"/api/v1/routes/{route.id}/publish")
 
         self.assertEqual(response.status_code, 400, response.data)
@@ -368,13 +368,9 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
         upstream_payload = {
             "dji_wayline_id": "wayline-from-upstream",
             "download_url": sentinel_url,
-            "object_key": "sentinel-object",
         }
 
         with patch(
-            "apps.route.views.DjiGateway.publish_route_via_sts",
-            return_value=upstream_payload,
-        ), patch(
             "apps.route.views.DjiGateway.upload_route",
             return_value=upstream_payload,
         ):
@@ -392,6 +388,7 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
             tenant=self.tenant,
             route=route,
             dji_wayline_id=old_wayline_id,
+            download_url=f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline_id}/url",
             is_published=True,
         )
         self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="compensate.xml")
@@ -411,6 +408,10 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
 
         route_index = TenantRouteIndex.objects.get(route=route)
         self.assertEqual(route_index.dji_wayline_id, old_wayline_id)
+        self.assertEqual(
+            route_index.download_url,
+            f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline_id}/url",
+        )
         self.assertTrue(route_index.is_published)
         self.assertIn(old_wayline_id, mock_dji_state.waylines)
         self.assertEqual(set(mock_dji_state.waylines.keys()), {old_wayline_id})

@@ -240,6 +240,8 @@ def upload_wayline(request, workspace_id: str):
         return _error("C0404", "workspace not found", status=404)
 
     upload = request.FILES.get("file")
+    if upload is None or getattr(upload, "size", 0) <= 0:
+        return _error("B0001", "file is required", status=400, data={"file": ["该字段是必填项。"]})
     route_name = request.POST.get("name") or (upload.name if upload is not None else "") or "mock-route"
     created = mock_dji_state.create_wayline(name=route_name, file_name=getattr(upload, "name", ""))
     return _success(
@@ -250,55 +252,6 @@ def upload_wayline(request, workspace_id: str):
             "download_url": f"/api/v1/wayline/workspaces/{workspace_id}/waylines/{created['wayline_id']}/url",
         }
     )
-
-
-@csrf_exempt
-@protected_mock_dji_view
-def wayline_upload_callback(request, workspace_id: str):
-    if request.method != "POST":
-        raise Http404
-    if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
-        return _error("C0404", "workspace not found", status=404)
-    payload = _load_json(request)
-    name = str(payload.get("name") or "").strip()
-    object_key = str(payload.get("object_key") or "").strip()
-    sts_payload = mock_dji_state.storage_sts_payload()
-    bucket = str(sts_payload.get("bucket") or "").strip()
-    if not name:
-        return _error("B0001", "name is required", status=400, data={"name": ["该字段是必填项。"]})
-    if not object_key:
-        return _error("B0001", "object_key is required", status=400, data={"object_key": ["该字段是必填项。"]})
-    if not mock_dji_state.has_object(bucket=bucket, object_key=object_key):
-        return _error(
-            "E0001",
-            f"The file {object_key} does not exist in the bucket[{bucket}].",
-            status=200,
-            data=None,
-        )
-    mock_dji_state.create_wayline(name=name, file_name=object_key.rsplit("/", 1)[-1], object_key=object_key)
-    return _success({})
-
-
-@csrf_exempt
-@protected_mock_dji_view
-def storage_sts(request, workspace_id: str):
-    if request.method != "POST":
-        raise Http404
-    if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
-        return _error("C0404", "workspace not found", status=404)
-    return _success(mock_dji_state.storage_sts_payload())
-
-
-@csrf_exempt
-@protected_mock_dji_view
-def storage_upload_object(request, bucket: str, object_key: str):
-    if request.method != "PUT":
-        raise Http404
-    content = request.body or b""
-    mock_dji_state.store_object(bucket=bucket, object_key=object_key, content=content)
-    return HttpResponse(status=200)
-
-
 @protected_mock_dji_view
 def wayline_download_url(request, workspace_id: str, wayline_id: str):
     if request.method != "GET":

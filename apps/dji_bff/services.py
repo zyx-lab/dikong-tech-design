@@ -3,16 +3,11 @@ from __future__ import annotations
 from django.utils import timezone
 
 from apps.access.services import log_action
-from apps.dji_bff.models import SyncStatus, TenantMediaIndex, TenantRouteIndex
+from apps.dji_bff.models import SyncStatus, TenantMediaIndex
 
 
 def _counts(*, resolved_count: int, ignored_count: int) -> dict[str, int]:
     return {"resolved_count": resolved_count, "ignored_count": ignored_count}
-
-
-def _mark_route_index_published(route_index: TenantRouteIndex) -> None:
-    route_index.is_published = True
-    route_index.save(update_fields=["is_published", "updated_at"])
 
 
 def _mark_media_index_synced(media_index: TenantMediaIndex, *, now) -> None:
@@ -20,47 +15,6 @@ def _mark_media_index_synced(media_index: TenantMediaIndex, *, now) -> None:
     media_index.last_sync_at = now
     media_index.error_msg = ""
     media_index.save(update_fields=["sync_status", "last_sync_at", "error_msg", "updated_at"])
-
-
-def handle_wayline_upload_callback(payload: dict, *, request=None) -> dict[str, int]:
-    name = str(payload.get("name") or "").strip()
-    metadata = payload.get("metadata")
-    metadata = metadata if isinstance(metadata, dict) else {}
-    dji_wayline_id = str(
-        metadata.get("dji_wayline_id")
-        or metadata.get("wayline_id")
-        or metadata.get("file_id")
-        or ""
-    ).strip()
-    resolved_count = 0
-    ignored_count = 0
-
-    if dji_wayline_id:
-        route_index = TenantRouteIndex.objects.filter(dji_wayline_id=dji_wayline_id).first()
-        if route_index is not None:
-            _mark_route_index_published(route_index)
-            resolved_count = 1
-        else:
-            ignored_count = 1
-    elif name:
-        route_indexes = list(TenantRouteIndex.objects.select_related("route").filter(route__name=name))
-        if len(route_indexes) == 1:
-            route_index = route_indexes[0]
-            _mark_route_index_published(route_index)
-            resolved_count = 1
-        else:
-            ignored_count = 1
-    else:
-        ignored_count = 1
-
-    result = _counts(resolved_count=resolved_count, ignored_count=ignored_count)
-    log_action(
-        action="DJI_WAYLINE_CALLBACK",
-        target_type="tenant_route_index",
-        request=request,
-        after_data={"payload": payload, **result},
-    )
-    return result
 
 
 def handle_media_upload_callback(payload: dict, *, request=None) -> dict[str, int]:

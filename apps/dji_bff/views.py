@@ -10,7 +10,6 @@ from apps.dji_bff.gateway import DjiGatewayError
 from apps.dji_bff.services import (
     handle_media_group_upload_callback,
     handle_media_upload_callback,
-    handle_wayline_upload_callback,
 )
 from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes, sync_mission_indexes
 
@@ -105,11 +104,6 @@ def _handle_callback(request, handler):
     if precondition_error is not None:
         return precondition_error
     return _success(handler(_load_json(request), request=request))
-
-
-@csrf_exempt
-def wayline_upload_callback(request):
-    return _handle_callback(request, handle_wayline_upload_callback)
 
 
 @csrf_exempt

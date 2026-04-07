@@ -5,7 +5,6 @@ from datetime import datetime
 from threading import RLock
 from uuid import uuid4
 
-from django.conf import settings
 from django.utils import timezone
 
 
@@ -48,8 +47,6 @@ class MockDjiState:
             self.jobs: dict[str, dict] = {}
             self.media_files: dict[str, dict] = {}
             self.live_streams: dict[str, dict] = {}
-            self.storage_objects: dict[str, bytes] = {}
-
             self.seed_device(device_sn="MOCK-DRONE-001", name="Mock Drone 1", model="Matrice 30T")
             self.seed_device(device_sn="MOCK-DRONE-002", name="Mock Drone 2", model="Matrice 3D")
             self.seed_media_file(
@@ -246,7 +243,7 @@ class MockDjiState:
                 return None
             return {}
 
-    def create_wayline(self, *, name: str, file_name: str | None = None, object_key: str = "") -> dict:
+    def create_wayline(self, *, name: str, file_name: str | None = None) -> dict:
         with self._lock:
             wayline_id = f"mock-wayline-{uuid4().hex[:8]}"
             created_at = _iso()
@@ -255,38 +252,11 @@ class MockDjiState:
                 "id": wayline_id,
                 "name": name,
                 "file_name": file_name or "",
-                "object_key": object_key,
                 "created_at": created_at,
                 "updated_at": created_at,
             }
             self.waylines[wayline_id] = payload
             return deepcopy(payload)
-
-    def storage_sts_payload(self) -> dict:
-        endpoint = f"{settings.DJI_UPSTREAM_BASE_URL.rstrip('/')}/api/v1/storage/upload"
-        return {
-            "bucket": "mock-bucket",
-            "credentials": {
-                "access_key_id": "mock-access-key-id",
-                "access_key_secret": "mock-access-key-secret",
-                "expire": 3600,
-                "security_token": "mock-security-token",
-            },
-            "endpoint": endpoint,
-            "object_key_prefix": "wayline",
-            "provider": "mock",
-            "region": "us-east-1",
-        }
-
-    def store_object(self, *, bucket: str, object_key: str, content: bytes):
-        with self._lock:
-            key = f"{bucket}/{object_key.lstrip('/')}"
-            self.storage_objects[key] = bytes(content)
-
-    def has_object(self, *, bucket: str, object_key: str) -> bool:
-        with self._lock:
-            key = f"{bucket}/{object_key.lstrip('/')}"
-            return key in self.storage_objects
 
     def list_waylines(self) -> dict:
         with self._lock:

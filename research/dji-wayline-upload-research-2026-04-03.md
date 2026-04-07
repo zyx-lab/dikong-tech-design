@@ -24,18 +24,18 @@
 
 ---
 
-## 二、航线上传接口行为
+## 二、航线上传接口行为（2026-04-03 当时观察，旧结论，现已失效）
 
 ### 2.1 直接上传（`/api/v1/wayline/workspaces/{id}/waylines/files/upload`）
 
 - **请求**：multipart/form-data，字段 `name` + `file`
-- **响应**：永远只返回 `{"code": "00000", "msg": "success"}`
-- **没有返回 wayline_id**，没有 `data` 字段
-- dikong-web 前端判断成功的方式：`response.data.code === 0`，不看任何 ID
+- **当时观察到的响应**：只返回 `{"code": "00000", "msg": "success"}`
+- **当时旧结论**：未观察到 `wayline_id`，也未观察到 `data` 字段
+- **当时前端行为**：dikong-web 以 `response.data.code === 0` 判定成功，不校验任何 ID
 
 ### 2.2 STS 路径（`publish_route_via_sts`）
 
-完整流程：
+2026-04-03 当时记录的旧流程：
 1. `POST /api/v1/storage/workspaces/{id}/sts` → 获取 MinIO 凭证
 2. `PUT {endpoint}/{bucket}/{object_key}` → 直传 KMZ 到 MinIO
 3. `POST /api/v1/wayline/workspaces/{id}/upload-callback` → 上报上传结果
@@ -46,13 +46,13 @@
 
 ---
 
-## 三、获取 wayline_id 的途径
+## 三、获取 wayline_id 的途径（2026-04-03 当时判断，现已失效）
 
-wayline_id 格式为 UUID（`^[0-9a-f]{8}-[0-9a-f]{4}-...$`），来源只有一个：
+2026-04-03 当时判断 `wayline_id` 格式为 UUID（`^[0-9a-f]{8}-[0-9a-f]{4}-...$`），且来源只有一个：
 
 **`GET /api/v1/wayline/workspaces/{id}/waylines?...` 返回 `list[].id`**
 
-OpenAPI spec 定义的参数（但这个 DJI 实例有 bug，详见下文）：
+以下是当时参考的 OpenAPI 参数定义；按 2026-04-03 的实测判断，该实例在这条链路上存在实现问题，详见下文：
 ```
 orderBy.column: required, enum=["name", "update_time", "create_time"]
 orderBy.desc: boolean
@@ -68,9 +68,9 @@ action_type: string
 
 ---
 
-## 四、这个 DJI 实例的已知问题（`8.129.135.140`）
+## 四、这个 DJI 实例的已知问题（`8.129.135.140`，基于 2026-04-03 实测）
 
-### 4.1 waylines 列表 API 有 bug
+### 4.1 2026-04-03 当时观察：waylines 列表 API 有 bug
 
 **现象**：所有 `orderBy` 参数格式都报错
 
@@ -80,9 +80,9 @@ action_type: string
 | OpenAPI spec | `orderBy.column=create_time&orderBy.desc=true` | E0001: "Invalid property 'orderBy' of bean class" |
 | 不带 orderBy | — | B0001: "orderBy must not be null" |
 
-错误信息暴露了 Java 层实现问题：后端接收了 `orderBy` 参数但对应 Java Bean 没有这个属性字段。
+当时据错误信息推测，Java 层实现存在参数绑定问题：后端接收了 `orderBy` 参数但对应 Java Bean 没有这个属性字段。
 
-### 4.2 MinIO 存储满
+### 4.2 2026-04-03 当时观察：MinIO 存储满
 
 STS 路径 PUT 到 MinIO 时报错：
 ```
@@ -148,15 +148,15 @@ XMinioStorageFull: Storage backend has reached its minimum free drive threshold.
 
 ---
 
-## 七、当前 DjiGateway 实现状态
+## 七、2026-04-03 时点的 DjiGateway 实现状态（历史记录）
 
-- `publish_route_via_sts()`：已按标准 STS 流程实现，但受上述 bug 影响无法获取 wayline_id
-- `upload_route()`：保留作为兼容辅助方法
-- `list_waylines()` 中的 fallback 逻辑（`orderBy.column` 格式）在该实例上不工作
+- `publish_route_via_sts()`：当时已按标准 STS 流程实现，但按当日判断仍受上述问题影响，无法稳定获取 wayline_id
+- `upload_route()`：当时保留为兼容辅助方法
+- `list_waylines()` 中的 fallback 逻辑（`orderBy.column` 格式）在该实例上的当日实测不工作
 
 ---
 
-## 八、dikong-web 前端行为
+## 八、2026-04-03 时点的 dikong-web 前端行为
 
 - `src/api/flight/wayline.ts`：只有 `uploadKmz()` 一个方法，没有 listWaylines
 - `src/views/route/detail.vue`：`handleDispatchRoute()` 在 `uploadKmz()` 返回 `code === 0` 后即认为成功，不验证 wayline_id
@@ -164,10 +164,10 @@ XMinioStorageFull: Storage backend has reached its minimum free drive threshold.
 
 ---
 
-## 九、Docker 后续开发注意事项
+## 九、2026-04-03 当时给出的后续开发注意事项（历史记录，现不作为当前方案）
 
-1. **先确认 DJI 实例的 waylines 列表 API 是否修复**，否则无法走通完整链路
-2. 如果列表 API 持续有 bug，可以考虑：
+1. **当时建议先确认 DJI 实例的 waylines 列表 API 是否修复**，否则按当日判断无法走通完整链路
+2. 如果列表 API 在当时环境里持续有 bug，曾考虑过：
    - 让 `upload_route()` 在 `files/upload` 响应中直接返回某种可用的 wayline 标识
    - 或者用 `upload-callback` 之后直接假设成功（不验证 ID），但这样有风险
 3. **MinIO 存储满的问题需运维处理**

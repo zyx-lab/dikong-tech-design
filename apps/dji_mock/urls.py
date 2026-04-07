@@ -25,10 +25,6 @@ urlpatterns = [
         views.upload_wayline,
     ),
     path(
-        "api/v1/wayline/workspaces/<str:workspace_id>/upload-callback",
-        views.wayline_upload_callback,
-    ),
-    path(
         "api/v1/wayline/workspaces/<str:workspace_id>/waylines/<str:wayline_id>/url",
         views.wayline_download_url,
     ),
@@ -40,8 +36,6 @@ urlpatterns = [
     path("api/v1/wayline/workspaces/<str:workspace_id>/jobs", views.jobs_collection),
     path("api/v1/media/workspaces/<str:workspace_id>/files", views.list_media_files),
     path("api/v1/media/workspaces/<str:workspace_id>/files/<str:file_id>/url", views.media_download_url),
-    path("api/v1/storage/workspaces/<str:workspace_id>/sts", views.storage_sts),
-    path("api/v1/storage/upload/<str:bucket>/<path:object_key>", views.storage_upload_object),
     path("_downloads/waylines/<str:filename>", views.download_wayline_binary),
     path("_downloads/media/<path:file_id>", views.download_media_binary),
 ]

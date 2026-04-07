@@ -24,7 +24,7 @@
    `GET /api/v1/manage/workspaces/current`
 3. 通过 `POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload` 上传 KMZ，表单字段仅包含 `name` 与 `file`
 4. 直接从上传响应 `data` 中读取 `wayline_id` 与 `download_url`（响应同时会包含 `name` 与 `workspace_id`，其中 `download_url` 目前是相对路径）
-5. 创建任务/航线时把 `fileId` 设为返回的 `wayline_id`，无需额外申请 STS、上报 `upload-callback` 或按名字回查 `waylines` 列表
+5. 创建任务时把 `fileId` 设为返回的 `wayline_id`，无需额外申请 STS、上报 `upload-callback` 或按名字回查 `waylines` 列表
 6. 如需清理旧航线，调用 `DELETE /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}`，该接口保持幂等，在目标已经不存在时仍可能返回成功
 
 ## 4. 本地可复用 curl 模板

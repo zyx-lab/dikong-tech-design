@@ -18,7 +18,7 @@ from apps.access.test_support import (
     ensure_tenant_role_binding,
 )
 from apps.dji_bff.gateway import DjiGateway, GatewayResponse, DjiGatewayUpstreamError
-from apps.dji_bff.models import DjiDeviceIndex, DjiWorkspaceConfig, SyncStatus, TenantMediaIndex, TenantMissionIndex, TenantRouteIndex
+from apps.dji_bff.models import DjiDeviceIndex, DjiWorkspaceConfig, SyncStatus, TenantMediaIndex, TenantMissionIndex
 from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes, sync_mission_indexes
 from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
@@ -154,70 +154,6 @@ class DjiGatewayPaginationTests(TestCase):
 
         self.assertEqual(exc_info.exception.status_code, 502)
         self.assertEqual(exc_info.exception.data, upstream_payload)
-
-    def test_publish_route_via_sts_should_orchestrate_upload_callback_and_id_resolution(self):
-        gateway = DjiGateway(base_url="http://mock-dji")
-        fake_sts = {
-            "bucket": "mock-bucket",
-            "endpoint": "http://mock-dji/upload",
-            "object_key_prefix": "wayline",
-            "provider": "mock",
-            "credentials": {
-                "access_key_id": "ak",
-                "access_key_secret": "sk",
-                "security_token": "token",
-                "expire": 3600,
-            },
-            "region": "us-east-1",
-        }
-        with patch.object(gateway, "get_storage_sts", return_value=fake_sts) as mock_sts:
-            with patch.object(gateway, "_upload_object_via_sts") as mock_upload:
-                with patch.object(gateway, "report_wayline_upload") as mock_callback:
-                    with patch.object(gateway, "resolve_wayline_id_by_name", return_value="wayline-id-001") as mock_resolve:
-                        payload = gateway.publish_route_via_sts(
-                            route_name="route-1",
-                            file_obj=StringIO("kmz-bytes-placeholder"),
-                        )
-
-        self.assertEqual(payload["dji_wayline_id"], "wayline-id-001")
-        self.assertIn("object_key", payload)
-        self.assertTrue(payload["object_key"].startswith("wayline/"))
-        mock_sts.assert_called_once()
-        mock_upload.assert_called_once()
-        mock_callback.assert_called_once()
-        mock_resolve.assert_called_once_with(wayline_name="route-1")
-
-    def test_upload_object_via_s3_sts_should_use_gateway_request_and_build_sigv4_headers(self):
-        gateway = DjiGateway(base_url="http://mock-dji")
-        credentials = {
-            "access_key_id": "ak",
-            "access_key_secret": "sk",
-            "security_token": "token",
-        }
-        with patch.object(
-            gateway,
-            "_request",
-            return_value=GatewayResponse(status_code=200, headers={}, data={}),
-        ) as mock_request:
-            gateway._upload_object_via_s3_sts(
-                endpoint="http://storage.local",
-                bucket="bucket-a",
-                object_key="wayline/file-1.kmz",
-                region="us-east-1",
-                credentials=credentials,
-                file_obj=StringIO("kmz-bytes-placeholder"),
-            )
-
-        mock_request.assert_called_once()
-        method, upload_url = mock_request.call_args.args[:2]
-        self.assertEqual(method, "PUT")
-        self.assertEqual(upload_url, "http://storage.local/bucket-a/wayline/file-1.kmz")
-        self.assertEqual(mock_request.call_args.kwargs["follow_redirects"], True)
-        headers = mock_request.call_args.kwargs["headers"]
-        self.assertEqual(headers["Content-Type"], "application/vnd.google-earth.kmz")
-        self.assertIn("Authorization", headers)
-        self.assertIn("x-amz-date", headers)
-        self.assertIn("x-amz-content-sha256", headers)
 
 
 @override_settings(
@@ -408,15 +344,7 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["code"], "A0403")
 
-    def test_internal_sync_and_callback_endpoints_should_follow_minimal_contract(self):
-        route = Route.objects.create(tenant=self.tenant, name="回调航线")
-        route_index = TenantRouteIndex.objects.create(
-            tenant=self.tenant,
-            route=route,
-            dji_wayline_id="callback-wayline-001",
-            is_published=False,
-        )
-
+    def test_internal_sync_endpoints_should_follow_minimal_contract(self):
         sync_response = self.client.post(
             "/api/v1/__internal__/dji/sync/devices",
             HTTP_X_DJI_INTERNAL_TOKEN="internal-sync-token",
@@ -424,21 +352,6 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(sync_response.status_code, 200)
         self.assertGreaterEqual(sync_response.json()["data"]["synced_count"], 2)
 
-        callback_response = self.client.post(
-            "/api/v1/__internal__/dji/callbacks/wayline-upload",
-            data=json.dumps(
-                {
-                    "name": "回调航线",
-                    "metadata": {"dji_wayline_id": "callback-wayline-001"},
-                    "object_key": "waylines/callback-wayline-001.kmz",
-                }
-            ),
-            content_type="application/json",
-            HTTP_X_DJI_INTERNAL_TOKEN="internal-sync-token",
-        )
-        self.assertEqual(callback_response.status_code, 200)
-        route_index.refresh_from_db()
-        self.assertTrue(route_index.is_published)
 
     def test_media_callback_should_mark_existing_index_as_synced(self):
         media_file = MediaFile.objects.create(

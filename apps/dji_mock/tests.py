@@ -145,6 +145,32 @@ class DjiMockServerTests(SimpleTestCase):
         self.assertEqual(download_response.status_code, 302)
         self.assertEqual(download_response["Location"], "/__mock-dji__/_downloads/media/mock-file-001")
 
+    def test_wayline_upload_should_require_non_empty_file(self):
+        token = mock_dji_state.access_token
+
+        missing_file_response = self.client.post(
+            "/__mock-dji__/api/v1/wayline/workspaces/mock-workspace-001/waylines/files/upload",
+            data={"name": "Missing File Route"},
+            HTTP_X_AUTH_TOKEN=token,
+        )
+        self.assertEqual(missing_file_response.status_code, 400)
+        self.assertEqual(missing_file_response.json()["code"], "B0001")
+        self.assertEqual(missing_file_response.json()["data"], {"file": ["该字段是必填项。"]})
+        self.assertEqual(mock_dji_state.waylines, {})
+
+        empty_file_response = self.client.post(
+            "/__mock-dji__/api/v1/wayline/workspaces/mock-workspace-001/waylines/files/upload",
+            data={
+                "name": "Empty File Route",
+                "file": SimpleUploadedFile("empty.kmz", b"", content_type="application/octet-stream"),
+            },
+            HTTP_X_AUTH_TOKEN=token,
+        )
+        self.assertEqual(empty_file_response.status_code, 400)
+        self.assertEqual(empty_file_response.json()["code"], "B0001")
+        self.assertEqual(empty_file_response.json()["data"], {"file": ["该字段是必填项。"]})
+        self.assertEqual(mock_dji_state.waylines, {})
+
     def test_live_endpoints_should_align_with_realistic_response_shape(self):
         token = mock_dji_state.access_token
 
@@ -197,69 +223,3 @@ class DjiMockServerTests(SimpleTestCase):
         self.assertEqual(not_found_response.status_code, 200)
         self.assertEqual(not_found_response.json()["code"], "D0001")
         self.assertIsNone(not_found_response.json()["data"])
-
-    def test_sts_upload_and_wayline_callback_should_follow_minimal_contract(self):
-        token = mock_dji_state.access_token
-
-        sts_response = self.client.post(
-            "/__mock-dji__/api/v1/storage/workspaces/mock-workspace-001/sts",
-            HTTP_X_AUTH_TOKEN=token,
-        )
-        self.assertEqual(sts_response.status_code, 200)
-        sts_data = sts_response.json()["data"]
-        self.assertEqual(sts_data["provider"], "mock")
-        self.assertEqual(sts_data["bucket"], "mock-bucket")
-
-        callback_missing_object = self.client.post(
-            "/__mock-dji__/api/v1/wayline/workspaces/mock-workspace-001/upload-callback",
-            data=json.dumps(
-                {
-                    "name": "Mock Route From Callback",
-                    "object_key": "wayline/mock-route-from-callback.kmz",
-                    "metadata": {
-                        "drone_model_key": "0-67-0",
-                        "payload_model_keys": ["1-53-0"],
-                        "template_types": [0],
-                    },
-                }
-            ),
-            content_type="application/json",
-            HTTP_X_AUTH_TOKEN=token,
-        )
-        self.assertEqual(callback_missing_object.status_code, 200)
-        self.assertEqual(callback_missing_object.json()["code"], "E0001")
-
-        put_object_response = self.client.put(
-            "/__mock-dji__/api/v1/storage/upload/mock-bucket/wayline/mock-route-from-callback.kmz",
-            data=b"mock-kmz-content",
-            content_type="application/octet-stream",
-            HTTP_X_AUTH_TOKEN=token,
-        )
-        self.assertEqual(put_object_response.status_code, 200)
-
-        callback_response = self.client.post(
-            "/__mock-dji__/api/v1/wayline/workspaces/mock-workspace-001/upload-callback",
-            data=json.dumps(
-                {
-                    "name": "Mock Route From Callback",
-                    "object_key": "wayline/mock-route-from-callback.kmz",
-                    "metadata": {
-                        "drone_model_key": "0-67-0",
-                        "payload_model_keys": ["1-53-0"],
-                        "template_types": [0],
-                    },
-                }
-            ),
-            content_type="application/json",
-            HTTP_X_AUTH_TOKEN=token,
-        )
-        self.assertEqual(callback_response.status_code, 200)
-        self.assertEqual(callback_response.json()["code"], "00000")
-
-        waylines_response = self.client.get(
-            "/__mock-dji__/api/v1/wayline/workspaces/mock-workspace-001/waylines",
-            HTTP_X_AUTH_TOKEN=token,
-        )
-        self.assertEqual(waylines_response.status_code, 200)
-        names = [item["name"] for item in waylines_response.json()["data"]["list"]]
-        self.assertIn("Mock Route From Callback", names)

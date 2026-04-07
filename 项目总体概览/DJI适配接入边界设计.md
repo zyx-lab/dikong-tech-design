@@ -19,7 +19,7 @@
 3. 当前按单 user / 单 workspace 的最简单方案落地，不为未来假设场景提前引入多资源池编排、多账号路由、多 workspace 映射等抽象。
 4. tenant 隔离只依赖我方最小本地映射，不依赖 DJI 多 workspace：
    - Drone 本身即为认领绑定：`Drone(tenant_id, device_sn, code, org_id, ...)`
-   - `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, is_published)`
+   - `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, download_url, is_published)`
    - `TenantMissionIndex(tenant_id, mission_id, dji_job_id, execution_status, sync_status, last_sync_at, error_msg)`
    - `TenantMediaIndex(tenant_id, media_file_id, dji_file_id, device_sn, mission_id, sync_status, last_sync_at, error_msg)`
 5. tenant 可见性规则：
@@ -163,7 +163,7 @@ def get_available_drones(request):
 | 变更项       | 说明                                                                                             |
 | ------------ | ------------------------------------------------------------------------------------------------ |
 | 聚合边界收敛 | `Route` 作为公开聚合根；当前只保留 `xml_file` 作为本地草稿输入，`waypoints` 表仅保留为历史内部表 |
-| 新增索引表   | `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, is_published)`                            |
+| 新增索引表   | `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, download_url, is_published)`              |
 
 #### 对外 API
 
@@ -190,7 +190,7 @@ def get_available_drones(request):
 
 1. 前端调用 `POST /api/v1/routes` 创建本地 route 草稿。
 2. 请求体只接受 `multipart/form-data`，可写字段仅 `name` 与 `xml_file`，上传内容必须是可解析 XML。
-3. 系统自动创建 `TenantRouteIndex(dji_wayline_id=\"\", is_published=false)`。
+3. 系统自动创建 `TenantRouteIndex(dji_wayline_id=\"\", download_url=\"\", is_published=false)`。
 4. 之后前端可通过 `PUT /api/v1/routes/{id}` 持续替换本地草稿。
 5. 任意本地编辑后，`is_published` 都会被置回 `false`。
 6. 如需回读草稿源文件，前端调用 `GET /api/v1/routes/{id}/xml`。
@@ -200,7 +200,7 @@ def get_available_drones(request):
 1. 前端调用 `POST /api/v1/routes/{id}/publish`。
 2. 系统从当前保存的 XML 草稿生成 KMZ。
 3. 调用 DJI `POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload` 上传。
-4. 上传成功后把响应的 `dji_wayline_id` 与 `download_url` 写回 `TenantRouteIndex`，并设置 `is_published=true`。
+4. 上传成功后把响应的 `wayline_id`（对应本地 `dji_wayline_id`）与 `download_url` 写回 `TenantRouteIndex`，并设置 `is_published=true`。
 5. 若此前已有旧的已发布 DJI 航线，则在新航线上传成功后删除旧航线。
 
 #### 内部调用 DJI
@@ -614,6 +614,7 @@ def cancel(self, request, *args, **kwargs):
 | 对象                 | 字段                                                        | 说明                                                |
 | -------------------- | ----------------------------------------------------------- | --------------------------------------------------- |
 | `TenantRouteIndex`   | `dji_wayline_id`                                            | 当前已发布 DJI 航线 ID                              |
+| `TenantRouteIndex`   | `download_url`                                              | 最近一次成功发布返回的 DJI 航线下载地址             |
 | `TenantRouteIndex`   | `is_published`                                              | 当前本地 route 草稿是否已与最近一次成功发布结果一致 |
 | `TenantMissionIndex` | `sync_status / last_sync_at / error_msg / execution_status` | 任务同步摘要                                        |
 | `TenantMediaIndex`   | `sync_status / last_sync_at / error_msg`                    | 媒体同步摘要                                        |
@@ -855,7 +856,7 @@ DjiDeviceIndex
 | P1     | 媒体时间戳格式          | 统一用 captured_at 字段，ISO 8601 + UTC                                                                                                              |
 | P1     | DjiGateway workspace_id | 单 workspace，登录后获取并缓存                                                                                                                       |
 | P1     | 任务状态枚举映射表      | `DJI_JOB_STATUS_MAP`，实测补充枚举值                                                                                                                 |
-| P2     | 航线上传响应持久化      | 统一持久化 `wayline_id`、`download_url`，并在任务创建时直接复用 `fileId`                                                                             |
+| P2     | 航线上传响应持久化      | 统一持久化 `dji_wayline_id`、`download_url`，其中 `dji_wayline_id` 对应上游响应 `wayline_id`，并在任务创建时直接复用 `fileId`                         |
 | P2     | 任务创建两阶段回查      | 按 Mission.name + 时间窗口匹配 job_id                                                                                                                |
 | P2     | 同步任务调度增强        | 当前先用 Django management command `run_dji_sync_scheduler` 作为独立进程调度；需要更复杂重试、分布式调度或锁时再评估 Celery/beat                     |
 | P2     | 同步失败监控            | 记录 error_msg，可选增加告警任务                                                                                                                     |

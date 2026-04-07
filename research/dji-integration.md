@@ -15,8 +15,8 @@
 | `dji_bff.gateway` | `apps/dji_bff/gateway.py` | HTTP 客户端，封装 DJI Pilot API 认证和请求 |
 | `dji_bff.models` | `apps/dji_bff/models.py` | 本地索引/映射表（设备/航线/任务/媒体） |
 | `dji_bff.tasks` | `apps/dji_bff/tasks.py` | 同步函数（设备/任务/媒体拉取） |
-| `dji_bff.views` | `apps/dji_bff/views.py` | 内部回调端点 |
-| `dji_bff.services` | `apps/dji_bff/services.py` | 回调处理逻辑 |
+| `dji_bff.views` | `apps/dji_bff/views.py` | 内部同步与媒体回调端点 |
+| `dji_bff.services` | `apps/dji_bff/services.py` | 媒体回调处理逻辑 |
 | `dji_mock` | `apps/dji_mock/` | 测试桩模拟 DJI Pilot API |
 | 调度命令 | `apps/dji_bff/management/commands/run_dji_sync_scheduler.py` | 定时同步入口 |
 
@@ -130,6 +130,7 @@ firmware_status   # 固件状态
 tenant            # 所属租户
 route             # OneToOne → Route
 dji_wayline_id    # DJI 航线 ID
+download_url      # 最近一次成功发布返回的下载地址
 is_published      # 是否已发布
 ```
 
@@ -198,7 +199,7 @@ FAILED/ERROR        → FAILED (5)
 
 ---
 
-## 5. 内部回调端点 (`apps/dji_bff/views.py`)
+## 5. 内部同步与媒体回调端点 (`apps/dji_bff/views.py`)
 
 ### 5.1 URL 路由 (`apps/dji_bff/urls.py`)
 
@@ -206,7 +207,6 @@ FAILED/ERROR        → FAILED (5)
 POST /api/v1/__internal__/dji/sync/devices
 POST /api/v1/__internal__/dji/sync/missions
 POST /api/v1/__internal__/dji/sync/media
-POST /api/v1/__internal__/dji/callbacks/wayline-upload
 POST /api/v1/__internal__/dji/callbacks/media-upload
 POST /api/v1/__internal__/dji/callbacks/media-group-upload
 ```
@@ -219,7 +219,6 @@ POST /api/v1/__internal__/dji/callbacks/media-group-upload
 
 | 函数 | 功能 |
 |------|------|
-| `handle_wayline_upload_callback()` | 标记航线为已发布 (`is_published=True`) |
 | `handle_media_upload_callback()` | 标记媒体索引为已同步 |
 | `handle_media_group_upload_callback()` | 仅记录日志 |
 
@@ -267,9 +266,9 @@ python manage.py run_dji_sync_scheduler --interval-seconds 10 --max-cycles 5
 - **发布航线** (`/routes/{id}/publish`):
   1. `build_route_kmz_from_xml()` 将 XML 转为 KMZ
   2. `gateway.upload_route()` 上传到 DJI
-  3. 保存 `dji_wayline_id` 到 `TenantRouteIndex`
+  3. 将上游 `wayline_id` / `download_url` 写入本地 `TenantRouteIndex.dji_wayline_id` / `download_url`
 - **删除航线**: 调用 `gateway.delete_route()` 删除上游
-- **回调机制**: DJI 处理完成后回调 `wayline-upload`，标记 `is_published=True`
+- **发布完成条件**: 以 `files/upload` 的直接响应为准，不依赖额外航线上传回调
 
 ### 7.3 `Mission` 与 DJI 任务关联
 
@@ -350,7 +349,7 @@ class MyTests(MockDjiUpstreamTestMixin, TestCase):
 ### 10.2 异步同步模式
 
 - **拉取同步**: 定时任务 `run_dji_sync_scheduler` 主动拉取 DJI 数据
-- **推送回调**: DJI 处理完成后回调内部端点，触发局部更新
+- **推送回调**: 当前只保留媒体上传相关内部回调端点，用于触发局部更新
 - 两者结合确保数据最终一致
 
 ### 10.3 Mock-First 开发
