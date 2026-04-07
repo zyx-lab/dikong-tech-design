@@ -683,16 +683,16 @@ def cancel(self, request, *args, **kwargs):
 
 ---
 
-### 11.4 KMZ 上传回查机制
+### 11.4 KMZ 直传发布机制
 
-**结论**：UUID 前缀 + 等待回查
+**结论**：直接以上传响应为准，不做名称回查
 
-| 步骤 | 说明                                        |
-| ---- | ------------------------------------------- |
-| 1    | 上传前加 UUID：`{uuid}_{original_name}.kmz` |
-| 2    | 上传后等待 2s                               |
-| 3    | 按 `name LIKE '{uuid}_%'` 精确匹配          |
-| 4    | 回查失败重试 2-3 次，间隔 2s/4s             |
+| 步骤 | 说明                                                                  |
+| ---- | --------------------------------------------------------------------- |
+| 1    | 生成 KMZ 并调用 `POST /waylines/files/upload`                         |
+| 2    | 从响应 `data` 直接读取 `wayline_id` 与 `download_url`                 |
+| 3    | 将 `wayline_id` 作为后续任务创建 `fileId`，并回写本地 `TenantRouteIndex` |
+| 4    | 不引入 UUID 前缀、等待重试或按名称查询 `waylines` 列表                |
 
 ---
 
@@ -855,7 +855,7 @@ DjiDeviceIndex
 | P1     | 媒体时间戳格式          | 统一用 captured_at 字段，ISO 8601 + UTC                                                                                                              |
 | P1     | DjiGateway workspace_id | 单 workspace，登录后获取并缓存                                                                                                                       |
 | P1     | 任务状态枚举映射表      | `DJI_JOB_STATUS_MAP`，实测补充枚举值                                                                                                                 |
-| P2     | KMZ 上传 UUID 前缀      | 上传前生成 UUID 前缀，回查时精确匹配                                                                                                                 |
+| P2     | 航线上传响应持久化      | 统一持久化 `wayline_id`、`download_url`，并在任务创建时直接复用 `fileId`                                                                             |
 | P2     | 任务创建两阶段回查      | 按 Mission.name + 时间窗口匹配 job_id                                                                                                                |
 | P2     | 同步任务调度增强        | 当前先用 Django management command `run_dji_sync_scheduler` 作为独立进程调度；需要更复杂重试、分布式调度或锁时再评估 Celery/beat                     |
 | P2     | 同步失败监控            | 记录 error_msg，可选增加告警任务                                                                                                                     |
