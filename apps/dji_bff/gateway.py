@@ -394,10 +394,9 @@ class DjiGateway:
             return response.headers["Location"]
         payload = response.data
         if isinstance(payload, dict):
-            for key in ("url", "download_url", "downloadUrl"):
-                value = payload.get(key)
-                if isinstance(value, str) and value:
-                    return value
+            download_url = self._extract_download_url(payload)
+            if download_url:
+                return download_url
         raise DjiGatewayUpstreamError("未获取到航线下载地址", status_code=502, data=payload)
 
     def delete_route(self, dji_wayline_id: str):
@@ -451,10 +450,9 @@ class DjiGateway:
             return response.headers["Location"]
         payload = response.data
         if isinstance(payload, dict):
-            for key in ("url", "download_url", "downloadUrl"):
-                value = payload.get(key)
-                if isinstance(value, str) and value:
-                    return value
+            download_url = self._extract_download_url(payload)
+            if download_url:
+                return download_url
         raise DjiGatewayUpstreamError("未获取到媒体下载地址", status_code=502, data=payload)
 
     def list_media_files(self) -> list[dict]:

@@ -5,10 +5,10 @@ backend DjiGateway.
 Usage:
     cd /home/charles/dikong-tech-design
     source .venv/bin/activate
-    export DJI_UPSTREAM_BASE_URL=http://8.129.135.140
-    export DJI_UPSTREAM_USERNAME=adminPC
-    export DJI_UPSTREAM_PASSWORD=adminPC1234567890
-    export DJI_UPSTREAM_LOGIN_FLAG=1
+    export DJI_UPSTREAM_BASE_URL=<your-base-url>
+    export DJI_UPSTREAM_USERNAME=<your-username>
+    export DJI_UPSTREAM_PASSWORD=<your-password>
+    export DJI_UPSTREAM_LOGIN_FLAG=<your-login-flag>
     python scripts/test_dji_route_upload.py
 """
 import json
@@ -35,6 +35,7 @@ def main():
 
     gateway = DjiGateway()
     route_name = f"test-upload-{uuid.uuid4().hex[:8]}"
+    payload = None
 
     try:
         with open(kmz_path, "rb") as f:
@@ -49,6 +50,14 @@ def main():
     except Exception as exc:
         print(f"FAILED: {exc}")
         sys.exit(1)
+    else:
+        try:
+            gateway.delete_route(payload["dji_wayline_id"])
+            print(f"cleanup: deleted {payload['dji_wayline_id']}")
+        except DjiGatewayError as exc:
+            print(f"cleanup: delete_route failed: {exc}")
+        except Exception as exc:
+            print(f"cleanup: unexpected failure: {exc}")
 
 
 if __name__ == "__main__":
