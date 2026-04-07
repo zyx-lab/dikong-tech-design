@@ -200,7 +200,7 @@ def get_available_drones(request):
 1. 前端调用 `POST /api/v1/routes/{id}/publish`。
 2. 系统从当前保存的 XML 草稿生成 KMZ。
 3. 调用 DJI `POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload` 上传。
-4. 上传成功后把新的 `dji_wayline_id` 写回 `TenantRouteIndex`，并设置 `is_published=true`。
+4. 上传成功后把响应的 `dji_wayline_id` 与 `download_url` 写回 `TenantRouteIndex`，并设置 `is_published=true`。
 5. 若此前已有旧的已发布 DJI 航线，则在新航线上传成功后删除旧航线。
 
 #### 内部调用 DJI
@@ -208,7 +208,7 @@ def get_available_drones(request):
 - `POST /api/v1/routes`：只落本地库，不调用 DJI
 - `PUT /api/v1/routes/{id}`：只更新本地草稿，不调用 DJI
 - `GET /api/v1/routes/{id}/xml`：只回读本地 XML 文件，不调用 DJI
-- `POST /api/v1/routes/{id}/publish`：生成 KMZ → 上传 DJI → 回写 `dji_wayline_id` / `is_published` (实测，这个方案不可用)
+- `POST /api/v1/routes/{id}/publish`：生成 KMZ → 上传 DJI `files/upload` → 回写 `dji_wayline_id`、`download_url`、`is_published`
 - `DELETE /api/v1/routes/{id}`：若 route 已发布，先调用 `DELETE /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}`；随后删除本地 `Route`、`xml_file` 和残留 `waypoints` 行
 
 ### 4.4 `/api/v1/missions*`
@@ -564,14 +564,14 @@ def cancel(self, request, *args, **kwargs):
 | **切源接口** | `live/video-source` 直接接收 `video_id` 和 `videoType`                         |
 | **简化**     | 不保留其他推测格式，只按实测格式实现                                           |
 
-### 10.5 KMZ 上传回查机制
+### 10.5 KMZ 直传发布契约
 
 | 决策项       | 说明                                                                                                             |
 | ------------ | ---------------------------------------------------------------------------------------------------------------- |
-| **上传响应** | `POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload` 返回空 `data: object`，**无 wayline_id**  |
-| **结论**     | **必须回查**！无法从上传响应直接获取 wayline_id                                                                  |
-| **流程**     | 1. `duplicate-names` 校验重名 → 2. 上传 KMZ → 3. 等待 1-2s → 4. 按文件名回查 waylines 列表 → 5. 取最近创建的那条 |
-| **匹配**     | 按文件名 + 时间窗口匹配，取最近创建的那条                                                                        |
+| **上传响应** | `POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload` 当前返回 `wayline_id` 与 `download_url` |
+| **结论**     | 航线发布走直接上传正式路径；不需要 `upload-callback`，也不需要按名称回查 waylines 列表                           |
+| **流程**     | 1. 生成 KMZ → 2. 上传 `files/upload` → 3. 从响应读取 `wayline_id` / `download_url` → 4. 直接创建任务或回写索引    |
+| **落库**     | 成功发布后写入 `dji_wayline_id`、`download_url`，并将 `is_published=true`                                        |
 
 ### 10.6 媒体归属
 
