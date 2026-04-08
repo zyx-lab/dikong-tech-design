@@ -609,11 +609,11 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(patch_response.status_code, 405, patch_response.data)
         self.assertEqual(download_response.status_code, 404, getattr(download_response, "data", download_response.content))
 
-    def test_delete_should_reject_route_referenced_by_paused_mission(self):
-        route = Route.objects.create(tenant=self.tenant, name="暂停任务航线")
-        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
-        pilot_user = User.objects.create_user(username="route_pause_pilot", password="pass1234", status=1)
-        ensure_staff_profile(pilot_user, name="暂停飞手", employment_status=EmploymentStatus.ACTIVE)
+    def test_put_should_reject_when_bound_mission_uses_route(self):
+        route = Route.objects.create(tenant=self.tenant, name="被占用航线")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", download_url="", is_published=False)
+        pilot_user = User.objects.create_user(username="route_bound_pilot", password="pass1234", status=1)
+        ensure_staff_profile(pilot_user, name="绑定飞手", employment_status=EmploymentStatus.ACTIVE)
         _tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
             pilot_user,
             tenant=self.tenant,
@@ -622,28 +622,101 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
         drone = Drone.objects.create(
             tenant=self.tenant,
-            code="ROUTE-PAUSE-DRONE-001",
-            name="暂停任务无人机",
+            code="ROUTE-BOUND-DRONE-001",
+            name="已绑定任务无人机",
             model="M30",
-            device_sn="ROUTE-PAUSE-SN-001",
+            device_sn="ROUTE-BOUND-SN-001",
         )
         Mission.objects.create(
             tenant=self.tenant,
-            name="暂停中的任务",
+            name="占用航线任务",
             route=route,
             route_name=route.name,
             drone=drone,
+            device_sn=drone.device_sn,
             drone_name=drone.name,
             pilot=pilot_member,
-            pilot_name="暂停飞手",
-            status=MissionStatus.PAUSED,
-            dji_job_id="",
+            pilot_name="绑定飞手",
+            status=MissionStatus.DRONE_BOUND,
+        )
+
+        response = self.client.put(
+            f"/api/v1/routes/{route.id}",
+            {
+                "name": "尝试更新",
+                "kmz_file": SimpleUploadedFile(
+                    "route-updated.kmz",
+                    self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES),
+                    content_type=self.KMZ_CONTENT_TYPE,
+                ),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["code"], "B0001")
+
+    def test_delete_should_reject_when_bound_mission_uses_route(self):
+        route = Route.objects.create(tenant=self.tenant, name="已绑定任务航线")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
+        pilot_user = User.objects.create_user(username="route_bound_delete_pilot", password="pass1234", status=1)
+        ensure_staff_profile(pilot_user, name="绑定飞手", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="ROUTE-BOUND-DELETE-DRONE-001",
+            name="删除阻断任务无人机",
+            model="M30",
+            device_sn="ROUTE-BOUND-DELETE-SN-001",
+        )
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="已绑定任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=pilot_member,
+            pilot_name="绑定飞手",
+            status=MissionStatus.DRONE_BOUND,
         )
 
         response = self.client.delete(f"/api/v1/routes/{route.id}")
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertTrue(Route.objects.filter(id=route.id).exists())
+
+    def test_delete_should_ignore_unbound_mission_blocker(self):
+        route = Route.objects.create(tenant=self.tenant, name="未绑定任务航线")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", download_url="", is_published=False)
+        pilot_user = User.objects.create_user(username="route_unbound_pilot", password="pass1234", status=1)
+        ensure_staff_profile(pilot_user, name="未绑定飞手", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="未绑定无人机任务",
+            route=route,
+            route_name=route.name,
+            drone=None,
+            pilot=pilot_member,
+            pilot_name="未绑定飞手",
+            status=MissionStatus.DRONE_UNBOUND,
+        )
+
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 200, response.data)
 
     def test_delete_should_ignore_soft_deleted_mission_blocker(self):
         route = Route.objects.create(tenant=self.tenant, name="已删除任务航线")
@@ -665,15 +738,15 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
         Mission.objects.create(
             tenant=self.tenant,
-            name="已删除的暂停任务",
+            name="已删除的绑定任务",
             route=route,
             route_name=route.name,
             drone=drone,
+            device_sn=drone.device_sn,
             drone_name=drone.name,
             pilot=pilot_member,
             pilot_name="已删除任务飞手",
-            status=MissionStatus.PAUSED,
-            dji_job_id="",
+            status=MissionStatus.DRONE_BOUND,
             is_deleted=True,
             deleted_at=timezone.now(),
         )

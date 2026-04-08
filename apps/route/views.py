@@ -309,9 +309,26 @@ class RouteViewSet(
             )
         return route
 
+    def _has_bound_mission_blocker(self, route: Route) -> bool:
+        return Mission.objects.filter(
+            tenant=self.get_current_tenant(),
+            route=route,
+            is_deleted=False,
+            status=MissionStatus.DRONE_BOUND,
+        ).exists()
+
     def update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data)
+        route = self.get_object()
+        if self._has_bound_mission_blocker(route):
+            return Response(
+                standard_error_payload(
+                    StandardCode.INVALID_PARAMS,
+                    "航线已被已绑定无人机的任务占用，无法更新",
+                    {"route_id": route.id},
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = self.get_serializer(route, data=request.data)
         serializer.is_valid(raise_exception=True)
         route = self.perform_update(serializer)
         return _route_success_response(self, route, http_status=status.HTTP_200_OK)
@@ -371,16 +388,11 @@ class RouteViewSet(
             return error_response
 
         route = self.get_object()
-        if Mission.objects.filter(
-            tenant=self.get_current_tenant(),
-            route=route,
-            is_deleted=False,
-            status__in=[MissionStatus.PENDING, MissionStatus.RUNNING, MissionStatus.PAUSED],
-        ).exists():
+        if self._has_bound_mission_blocker(route):
             return Response(
                 standard_error_payload(
                     StandardCode.INVALID_PARAMS,
-                    "航线正在被任务使用，无法删除",
+                    "航线已被已绑定无人机的任务占用，无法删除",
                     {"route_id": route.id},
                 ),
                 status=status.HTTP_400_BAD_REQUEST,
