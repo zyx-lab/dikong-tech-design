@@ -243,3 +243,94 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
         mission.deleted_at = None
         with self.assertRaises(ValidationError):
             mission.save()
+
+    def test_delete_should_soft_delete_mission_and_hide_it_from_api(self):
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="软删任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.PENDING,
+            dji_job_id="job-delete-001",
+        )
+        TenantMissionIndex.objects.create(
+            tenant=self.tenant,
+            mission=mission,
+            dji_job_id=mission.dji_job_id,
+            sync_status=SyncStatus.SYNCED,
+        )
+
+        delete_response = self.client.delete(f"/api/v1/missions/{mission.id}")
+
+        self.assertEqual(delete_response.status_code, 200)
+        mission.refresh_from_db()
+        self.assertTrue(mission.is_deleted)
+        self.assertIsNotNone(mission.deleted_at)
+
+        list_response = self.client.get("/api/v1/missions")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.data["data"]["total"], 0)
+
+        detail_response = self.client.get(f"/api/v1/missions/{mission.id}")
+        self.assertEqual(detail_response.status_code, 404)
+        self.assertEqual(detail_response.data["code"], "C0404")
+
+    def test_delete_should_cancel_active_mission_before_soft_delete(self):
+        job = mock_dji_state.create_job({"name": "删除前运行任务", "dock_sn": "dock-delete-active"})
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="删除前运行任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.RUNNING,
+            dji_job_id=job["job_id"],
+        )
+        mission_index = TenantMissionIndex.objects.create(
+            tenant=self.tenant,
+            mission=mission,
+            dji_job_id=job["job_id"],
+            execution_status=str(MissionStatus.RUNNING),
+            sync_status=SyncStatus.SYNCED,
+        )
+
+        delete_response = self.client.delete(f"/api/v1/missions/{mission.id}")
+
+        self.assertEqual(delete_response.status_code, 200)
+        mission.refresh_from_db()
+        mission_index.refresh_from_db()
+        self.assertTrue(mission.is_deleted)
+        self.assertEqual(mission.status, MissionStatus.CANCELED)
+        self.assertEqual(mission_index.execution_status, str(MissionStatus.CANCELED))
+        self.assertEqual(mission_index.sync_status, SyncStatus.SYNCED)
+        self.assertEqual(mock_dji_state.jobs[job["job_id"]]["status"], "CANCELED")
+
+    def test_delete_should_reject_request_body(self):
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="删除请求体验证任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.PENDING,
+            dji_job_id="job-delete-body-001",
+        )
+
+        response = self.client.delete(
+            f"/api/v1/missions/{mission.id}",
+            {"unexpected": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")

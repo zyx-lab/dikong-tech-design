@@ -59,9 +59,11 @@ class MediaFile(models.Model):
 
     @property
     def assigned_tenant_member_id(self):
-        if self.flight_record_id is None or self.flight_record is None:
-            return None
-        return self.flight_record.pilot_id
+        if self.flight_record_id is not None and self.flight_record is not None:
+            return self.flight_record.pilot_id
+        if self.mission_id is not None and self.mission is not None:
+            return self.mission.pilot_id
+        return None
 
     def clean(self):
         if self.pk:

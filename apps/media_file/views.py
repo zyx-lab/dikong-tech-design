@@ -1,14 +1,19 @@
+from django.db import transaction
 from django.http import HttpResponseRedirect
 from django.db.models import Q
-from rest_framework import mixins, viewsets
+from django.utils import timezone
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.response import Response
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
 from apps.access.models import ScopeType
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
-from apps.access.services import AuthzService
-from apps.api_v1.business_response import BusinessApiResponseMixin
+from apps.access.services import AuthzService, log_action, snapshot
+from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.api_v1.schema import (
+    BusinessDeleteResultSerializer,
+    BUSINESS_INVALID_PARAMS_RESPONSE,
     BUSINESS_INTERNAL_ERROR_RESPONSE,
     BUSINESS_NOT_FOUND_RESPONSE,
     BUSINESS_PERMISSION_DENIED_RESPONSE,
@@ -23,6 +28,7 @@ from apps.media_file.serializers import MediaFileReadSerializer
 
 MEDIA_FILE_LIST_RESPONSE = paginated_envelope_serializer("MediaFileListResponse", MediaFileReadSerializer)
 MEDIA_FILE_DETAIL_RESPONSE = object_envelope_serializer("MediaFileDetailResponse", MediaFileReadSerializer)
+MEDIA_FILE_DELETE_RESPONSE = object_envelope_serializer("MediaFileDeleteResponse", BusinessDeleteResultSerializer)
 
 MEDIA_FILE_FILTER_PARAMETERS = [
     TENANT_CODE_HEADER_PARAMETER,
@@ -38,6 +44,18 @@ MEDIA_FILE_FILTER_PARAMETERS = [
     ),
     OpenApiParameter(name="file_name", type=str, location=OpenApiParameter.QUERY, description="按文件名模糊匹配。"),
 ]
+
+def _reject_request_body_if_present(request, *, message: str):
+    if request.data:
+        return Response(
+            standard_error_payload(
+                StandardCode.INVALID_PARAMS,
+                message,
+                {"body": "不支持请求体，请移除 body 后重试"},
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
 
 
 @extend_schema_view(
@@ -64,6 +82,20 @@ MEDIA_FILE_FILTER_PARAMETERS = [
         },
         tags=["Business API - Media File"],
     ),
+    destroy=extend_schema(
+        summary="软删除媒体记录",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=MEDIA_FILE_DELETE_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Media File"],
+    ),
 )
 class MediaFileViewSet(
     BusinessApiResponseMixin,
@@ -72,17 +104,19 @@ class MediaFileViewSet(
     ScopedQuerysetMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
+    mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     queryset = MediaFile.objects.select_related("flight_record", "dji_index").all().order_by("-id")
     serializer_class = MediaFileReadSerializer
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "head", "options"]
+    http_method_names = ["get", "delete", "head", "options"]
 
     permission_map = {
         "list": "media_file.view_media_file",
         "retrieve": "media_file.view_media_file",
         "download": "media_file.view_media_file",
+        "destroy": "media_file.manage_media_file",
     }
 
     @staticmethod
@@ -126,6 +160,29 @@ class MediaFileViewSet(
                 queryset = queryset.filter(**{model_field: value})
 
         return self.apply_scope(queryset)
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        error_response = _reject_request_body_if_present(request, message="DELETE 请求不支持请求体")
+        if error_response is not None:
+            return error_response
+
+        media_file = self.get_object()
+        before_data = snapshot(media_file)
+        media_file.is_deleted = True
+        media_file.deleted_at = timezone.now()
+        media_file.save(update_fields=["is_deleted", "deleted_at"])
+
+        deleted_payload = {"id": media_file.id, "deleted": True}
+        log_action(
+            request=request,
+            action="MEDIA_FILE_DELETE",
+            target_type="media_file",
+            target_id=media_file.id,
+            before_data=before_data,
+            after_data=deleted_payload,
+        )
+        return Response(deleted_payload, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="下载媒体文件",

@@ -123,6 +123,27 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
         return media_file
 
+    def _create_mission_only_media(self, *, mission: Mission, file_name: str) -> MediaFile:
+        media_file = MediaFile.objects.create(
+            tenant=self.tenant,
+            mission=mission,
+            device_sn=self.drone.device_sn,
+            media_type=MediaType.PHOTO,
+            file_name=file_name,
+            file_url=f"https://example.com/{file_name}",
+            captured_at=timezone.now(),
+        )
+        TenantMediaIndex.objects.create(
+            tenant=self.tenant,
+            media_file=media_file,
+            dji_file_id=f"dji-{file_name}",
+            device_sn=self.drone.device_sn,
+            mission=mission,
+            sync_status=SyncStatus.SYNCED,
+            last_sync_at=timezone.now(),
+        )
+        return media_file
+
     def test_list_should_filter_by_device_sn(self):
         self._create_media(file_name="IMG_A.JPG", device_sn="MEDIA-SN-001")
         self._create_media(file_name="IMG_B.JPG", device_sn="MEDIA-SN-002")
@@ -141,39 +162,52 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "/__mock-dji__/_downloads/media/dji-IMG_DL.JPG")
 
-    def test_media_api_should_be_read_only(self):
+    def test_media_api_should_reject_create_and_update(self):
         media_file = self._create_media(file_name="IMG_READONLY.JPG", device_sn="MEDIA-SN-001")
 
         create_response = self.client.post("/api/v1/media-files", {}, format="json")
         update_response = self.client.patch(f"/api/v1/media-files/{media_file.id}", {"file_name": "NEW.JPG"}, format="json")
-        delete_response = self.client.delete(f"/api/v1/media-files/{media_file.id}")
 
         self.assertIn(create_response.status_code, (403, 405))
         self.assertIn(update_response.status_code, (403, 405))
-        self.assertIn(delete_response.status_code, (403, 405))
+
+    def test_delete_should_soft_delete_media_file_and_hide_it_from_api(self):
+        grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
+        media_file = self._create_media(file_name="IMG_DELETE.JPG", device_sn="MEDIA-SN-001")
+
+        delete_response = self.client.delete(f"/api/v1/media-files/{media_file.id}")
+
+        self.assertEqual(delete_response.status_code, 200)
+        media_file.refresh_from_db()
+        self.assertTrue(media_file.is_deleted)
+        self.assertIsNotNone(media_file.deleted_at)
+
+        list_response = self.client.get("/api/v1/media-files")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.data["data"]["total"], 0)
+
+        detail_response = self.client.get(f"/api/v1/media-files/{media_file.id}")
+        self.assertEqual(detail_response.status_code, 404)
+        self.assertEqual(detail_response.data["code"], "C0404")
+
+    def test_delete_should_reject_request_body(self):
+        grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
+        media_file = self._create_media(file_name="IMG_DELETE_BODY.JPG", device_sn="MEDIA-SN-001")
+
+        response = self.client.delete(
+            f"/api/v1/media-files/{media_file.id}",
+            {"unexpected": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
 
     def test_assigned_scope_pilot_should_list_media_bound_by_mission_without_flight_record(self):
         grant_role_permissions(self.pilot_role, {"media_file.view_media_file": ScopeType.ASSIGNED})
         self.client.force_authenticate(self.pilot_user)
 
-        mission_only_media = MediaFile.objects.create(
-            tenant=self.tenant,
-            mission=self.mission,
-            device_sn=self.drone.device_sn,
-            media_type=MediaType.PHOTO,
-            file_name="IMG_MISSION_ONLY.JPG",
-            file_url="https://example.com/IMG_MISSION_ONLY.JPG",
-            captured_at=timezone.now(),
-        )
-        TenantMediaIndex.objects.create(
-            tenant=self.tenant,
-            media_file=mission_only_media,
-            dji_file_id="dji-IMG_MISSION_ONLY.JPG",
-            device_sn=self.drone.device_sn,
-            mission=self.mission,
-            sync_status=SyncStatus.SYNCED,
-            last_sync_at=timezone.now(),
-        )
+        mission_only_media = self._create_mission_only_media(mission=self.mission, file_name="IMG_MISSION_ONLY.JPG")
 
         other_pilot_user = User.objects.create_user(username="media_other_pilot", password="pass1234", status=1)
         ensure_staff_profile(other_pilot_user, name="其他飞手", employment_status=EmploymentStatus.ACTIVE)
@@ -197,27 +231,31 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
             status=MissionStatus.RUNNING,
             dji_job_id="media-job-other-001",
         )
-        hidden_media = MediaFile.objects.create(
-            tenant=self.tenant,
-            mission=other_mission,
-            device_sn=self.drone.device_sn,
-            media_type=MediaType.PHOTO,
-            file_name="IMG_OTHER_MISSION.JPG",
-            file_url="https://example.com/IMG_OTHER_MISSION.JPG",
-            captured_at=timezone.now(),
-        )
-        TenantMediaIndex.objects.create(
-            tenant=self.tenant,
-            media_file=hidden_media,
-            dji_file_id="dji-IMG_OTHER_MISSION.JPG",
-            device_sn=self.drone.device_sn,
-            mission=other_mission,
-            sync_status=SyncStatus.SYNCED,
-            last_sync_at=timezone.now(),
-        )
+        self._create_mission_only_media(mission=other_mission, file_name="IMG_OTHER_MISSION.JPG")
 
         response = self.client.get("/api/v1/media-files")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["data"]["total"], 1)
         self.assertEqual(response.data["data"]["list"][0]["id"], mission_only_media.id)
+
+    def test_assigned_scope_pilot_should_retrieve_media_bound_by_mission_without_flight_record(self):
+        grant_role_permissions(self.pilot_role, {"media_file.view_media_file": ScopeType.ASSIGNED})
+        self.client.force_authenticate(self.pilot_user)
+        mission_only_media = self._create_mission_only_media(mission=self.mission, file_name="IMG_MISSION_DETAIL.JPG")
+
+        response = self.client.get(f"/api/v1/media-files/{mission_only_media.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["id"], mission_only_media.id)
+
+    def test_assigned_scope_pilot_should_soft_delete_media_bound_by_mission_without_flight_record(self):
+        grant_role_permissions(self.pilot_role, {"media_file.manage_media_file": ScopeType.ASSIGNED})
+        self.client.force_authenticate(self.pilot_user)
+        mission_only_media = self._create_mission_only_media(mission=self.mission, file_name="IMG_MISSION_DELETE.JPG")
+
+        response = self.client.delete(f"/api/v1/media-files/{mission_only_media.id}")
+
+        self.assertEqual(response.status_code, 200)
+        mission_only_media.refresh_from_db()
+        self.assertTrue(mission_only_media.is_deleted)

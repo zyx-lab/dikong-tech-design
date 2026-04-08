@@ -32,7 +32,13 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
             role_code="media_live_role",
             role_name="实时媒体角色",
         )
-        grant_role_permissions(self.role, {"media_file.view_media_file": ScopeType.ALL})
+        grant_role_permissions(
+            self.role,
+            {
+                "media_file.view_media_file": ScopeType.ALL,
+                "media_file.manage_media_file": ScopeType.ALL,
+            },
+        )
 
         self.pilot_user = User.objects.create_user(username="media_live_pilot", password="pass1234", status=1)
         ensure_staff_profile(self.pilot_user, name="飞手", employment_status=EmploymentStatus.ACTIVE)
@@ -116,7 +122,7 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
 
         self.login(username="media_live_viewer", password="pass1234", tenant_code=self.tenant.code)
 
-    def test_list_and_download_should_follow_live_http_contract(self):
+    def test_list_download_and_delete_should_follow_live_http_contract(self):
         list_response = self.client.get("/api/v1/media-files", {"device_sn": "MEDIA-LIVE-SN-001"})
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(list_response.json()["data"]["total"], 1)
@@ -124,6 +130,13 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
         download_response = self.client.get(f"/api/v1/media-files/{self.media_file.id}/download")
         self.assertEqual(download_response.status_code, 200)
         self.assertIn("mock media binary", download_response.text)
+
+        delete_response = self.client.delete(f"/api/v1/media-files/{self.media_file.id}")
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertTrue(delete_response.json()["data"]["deleted"])
+
+        detail_response = self.client.get(f"/api/v1/media-files/{self.media_file.id}")
+        self.assertEqual(detail_response.status_code, 404)
 
         create_response = self.client.post("/api/v1/media-files", {}, format="json")
         self.assertIn(create_response.status_code, (403, 405))

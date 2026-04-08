@@ -32,6 +32,7 @@ ROLE_PERMISSION_MATRIX = {
         "flight_record.view_flight_record": ScopeType.ALL,
         "flight_record.manage_flight_record": ScopeType.ALL,
         "media_file.view_media_file": ScopeType.ALL,
+        "media_file.manage_media_file": ScopeType.ALL,
     },
     "business_admin": {
         "drone.view_drone": ScopeType.ALL,
@@ -44,6 +45,7 @@ ROLE_PERMISSION_MATRIX = {
         "flight_record.view_flight_record": ScopeType.ALL,
         "flight_record.manage_flight_record": ScopeType.ALL,
         "media_file.view_media_file": ScopeType.ALL,
+        "media_file.manage_media_file": ScopeType.ALL,
     },
     "route_planner": {
         "drone.view_drone": ScopeType.ALL,

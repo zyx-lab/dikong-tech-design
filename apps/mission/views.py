@@ -14,6 +14,7 @@ from apps.api_v1.business_response import (
     validation_error_payload,
 )
 from apps.api_v1.schema import (
+    BusinessDeleteResultSerializer,
     BUSINESS_INVALID_PARAMS_RESPONSE,
     BUSINESS_INTERNAL_ERROR_RESPONSE,
     BUSINESS_NOT_FOUND_RESPONSE,
@@ -30,6 +31,7 @@ from apps.mission.serializers import MissionCreateSerializer, MissionReadSeriali
 
 MISSION_LIST_RESPONSE = paginated_envelope_serializer("MissionListResponse", MissionReadSerializer)
 MISSION_DETAIL_RESPONSE = object_envelope_serializer("MissionDetailResponse", MissionReadSerializer)
+MISSION_DELETE_RESPONSE = object_envelope_serializer("MissionDeleteResponse", BusinessDeleteResultSerializer)
 
 MISSION_FILTER_PARAMETERS = [
     TENANT_CODE_HEADER_PARAMETER,
@@ -138,6 +140,20 @@ def _reject_request_body_if_present(request, *, message: str):
         },
         tags=["Business API - Mission"],
     ),
+    destroy=extend_schema(
+        summary="软删除任务",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=MISSION_DELETE_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Mission"],
+    ),
 )
 class MissionViewSet(
     BusinessApiResponseMixin,
@@ -148,11 +164,12 @@ class MissionViewSet(
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
     mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     queryset = Mission.objects.select_related("route", "drone", "pilot__user__staff_profile", "dji_index").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "put", "patch", "head", "options"]
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
 
     permission_map = {
         "list": "mission.view_mission",
@@ -160,6 +177,7 @@ class MissionViewSet(
         "create": "mission.manage_mission",
         "update": "mission.manage_mission",
         "partial_update": "mission.manage_mission",
+        "destroy": "mission.manage_mission",
         "cancel": "mission.manage_mission",
     }
 
@@ -188,7 +206,7 @@ class MissionViewSet(
             if value:
                 queryset = queryset.filter(**{model_field: value})
 
-        if self.action in {"list", "retrieve", "update", "partial_update", "cancel"}:
+        if self.action in {"list", "retrieve", "update", "partial_update", "destroy", "cancel"}:
             return self.apply_scope(queryset)
         return queryset
 
@@ -205,6 +223,54 @@ class MissionViewSet(
         serializer.is_valid(raise_exception=True)
         mission = self.perform_update(serializer)
         return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        error_response = _reject_request_body_if_present(request, message="DELETE 请求不支持请求体")
+        if error_response is not None:
+            return error_response
+
+        mission = self.get_object()
+        before_data = snapshot(mission)
+        deleted_at = timezone.now()
+        should_cancel_active_mission = mission.status in {
+            MissionStatus.PENDING,
+            MissionStatus.RUNNING,
+            MissionStatus.PAUSED,
+        }
+
+        if should_cancel_active_mission and mission.dji_job_id:
+            try:
+                DjiGateway().cancel_mission(mission.dji_job_id)
+            except DjiGatewayUpstreamError as exc:
+                if exc.status_code != 404:
+                    raise
+
+        update_fields = ["is_deleted", "deleted_at", "updated_at"]
+        if should_cancel_active_mission:
+            mission.status = MissionStatus.CANCELED
+            update_fields.insert(0, "status")
+        mission.is_deleted = True
+        mission.deleted_at = deleted_at
+        mission.save(update_fields=update_fields)
+
+        if should_cancel_active_mission and getattr(mission, "dji_index", None) is not None:
+            mission.dji_index.execution_status = str(MissionStatus.CANCELED)
+            mission.dji_index.sync_status = SyncStatus.SYNCED
+            mission.dji_index.last_sync_at = deleted_at
+            mission.dji_index.error_msg = ""
+            mission.dji_index.save(update_fields=["execution_status", "sync_status", "last_sync_at", "error_msg", "updated_at"])
+
+        deleted_payload = {"id": mission.id, "deleted": True}
+        log_action(
+            request=request,
+            action="MISSION_DELETE",
+            target_type="mission",
+            target_id=mission.id,
+            before_data=before_data,
+            after_data=deleted_payload,
+        )
+        return Response(deleted_payload, status=status.HTTP_200_OK)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
