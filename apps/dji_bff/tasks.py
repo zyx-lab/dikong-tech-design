@@ -10,8 +10,7 @@ from django.utils.dateparse import parse_datetime
 from apps.access.services import log_action
 from apps.dji_bff.gateway import DjiGateway
 from apps.dji_bff.models import DjiDeviceIndex, SyncStatus, TenantMediaIndex
-from apps.drone.models import Drone
-from apps.flight_record.models import FlightRecord
+from apps.drone.models import Drone, DroneStatus
 from apps.media_file.models import MediaFile, MediaType
 
 
@@ -145,34 +144,22 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
             continue
 
         device_sn = _string(payload, "device_sn", "deviceSn", "sn")
-        mission = None
-        tenant = None
-
-        if tenant is None and device_sn:
-            claimed_drone = Drone.objects.select_related("tenant").filter(device_sn=device_sn).first()
-            if claimed_drone is not None:
-                tenant = claimed_drone.tenant
-
-        if tenant is None:
+        if not device_sn:
             summary.ignored_count += 1
             continue
 
-        flight_record = None
-        if mission is not None:
-            flight_record = FlightRecord.objects.filter(tenant=tenant, mission=mission).order_by("-id").first()
-        if mission is None and device_sn:
-            flight_record = (
-                FlightRecord.objects.filter(tenant=tenant, drone__device_sn=device_sn)
-                .order_by("-id")
-                .first()
-            )
-        if mission is None and flight_record is not None and flight_record.mission_id:
-            mission = flight_record.mission
+        claimed_drone = (
+            Drone.objects.select_related("tenant")
+            .filter(device_sn=device_sn, status=DroneStatus.CLAIMED)
+            .first()
+        )
+        if claimed_drone is None:
+            summary.ignored_count += 1
+            continue
+        tenant = claimed_drone.tenant
 
-        media_defaults = {
+        media_fields = {
             "tenant": tenant,
-            "flight_record": flight_record,
-            "mission": mission,
             "device_sn": device_sn,
             "media_type": _media_type(payload),
             "file_name": _file_name(payload),
@@ -191,29 +178,45 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
                 .first()
             )
             if media_index is None:
-                media_file = MediaFile.objects.create(**media_defaults)
+                media_file = MediaFile.objects.create(
+                    **media_fields,
+                    mission=None,
+                    flight_record=None,
+                )
                 TenantMediaIndex.objects.create(
                     tenant=tenant,
                     media_file=media_file,
                     dji_file_id=dji_file_id,
                     device_sn=device_sn,
-                    mission=mission,
+                    mission=None,
                     sync_status=SyncStatus.SYNCED,
-                    last_sync_at=media_defaults["captured_at"] or now,
+                    last_sync_at=media_fields["captured_at"] or now,
                     error_msg="",
                 )
                 summary.created_count += 1
             else:
                 media_file = media_index.media_file
-                for field, value in media_defaults.items():
+                for field, value in media_fields.items():
                     setattr(media_file, field, value)
-                media_file.save()
+                media_file.save(
+                    update_fields=[
+                        "tenant",
+                        "device_sn",
+                        "media_type",
+                        "file_name",
+                        "file_url",
+                        "thumbnail_url",
+                        "file_size",
+                        "latitude",
+                        "longitude",
+                        "captured_at",
+                    ]
+                )
                 media_index.device_sn = device_sn
-                media_index.mission = mission
                 media_index.sync_status = SyncStatus.SYNCED
-                media_index.last_sync_at = media_defaults["captured_at"] or now
+                media_index.last_sync_at = media_fields["captured_at"] or now
                 media_index.error_msg = ""
-                media_index.save(update_fields=["device_sn", "mission", "sync_status", "last_sync_at", "error_msg", "updated_at"])
+                media_index.save(update_fields=["device_sn", "sync_status", "last_sync_at", "error_msg", "updated_at"])
                 summary.updated_count += 1
 
         summary.synced_count += 1

@@ -343,30 +343,146 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         media_file = MediaFile.objects.get(id=media_index.media_file_id, tenant=self.tenant)
         self.assertEqual(media_file.device_sn, "MOCK-DRONE-001")
 
-    def test_sync_media_indexes_should_not_restore_soft_deleted_media_file(self):
+    def test_sync_media_indexes_should_use_claimed_drone_when_released_and_claimed_share_device_sn(self):
+        sync_user = User.objects.create_user(username="dji_bff_sync_user", password="pass1234", status=1)
+        ensure_staff_profile(sync_user, name="同步用户", employment_status=EmploymentStatus.ACTIVE)
+        claimed_tenant, _claimed_member, _claimed_role = ensure_tenant_role_binding(
+            sync_user,
+            tenant_code="dji_sync_claimed_tenant",
+            role_code="dji_sync_claimed_role",
+            role_name="DJI 同步角色",
+        )
+
+        Drone.objects.create(
+            tenant=claimed_tenant,
+            code="MEDIA-SYNC-CLAIMED",
+            name="认领无人机",
+            model="M30",
+            device_sn="MEDIA-DUP-SN-001",
+            status=DroneStatus.CLAIMED,
+        )
+        Drone.objects.create(
+            tenant=self.tenant,
+            code="MEDIA-SYNC-RELEASED",
+            name="释放无人机",
+            model="M30",
+            device_sn="MEDIA-DUP-SN-001",
+            status=DroneStatus.RELEASED,
+        )
+        mock_dji_state.seed_media_file(
+            file_id="media-duplicate-sn-file",
+            name="MEDIA_DUPLICATE_SN.JPG",
+            device_sn="MEDIA-DUP-SN-001",
+            job_id="ignored-job-id",
+        )
+
+        summary = sync_media_indexes()
+
+        self.assertGreaterEqual(summary["created_count"], 1)
+        self.assertTrue(
+            TenantMediaIndex.objects.filter(tenant=claimed_tenant, dji_file_id="media-duplicate-sn-file").exists()
+        )
+        self.assertFalse(TenantMediaIndex.objects.filter(tenant=self.tenant, dji_file_id="media-duplicate-sn-file").exists())
+
+    def test_sync_media_indexes_should_leave_mission_and_flight_record_empty_even_when_job_id_exists(self):
+        Drone.objects.create(
+            tenant=self.tenant,
+            code="MEDIA-SYNC-DRONE-BOUND",
+            name="媒体同步无人机",
+            model="M30",
+            device_sn="MEDIA-CROSS-SN-001",
+        )
+        route = Route.objects.create(tenant=self.tenant, name="媒体同步航线")
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="不应自动匹配的任务",
+            route=route,
+            route_name=route.name,
+            drone=Drone.objects.get(device_sn="MEDIA-CROSS-SN-001"),
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.DRONE_BOUND,
+        )
+        mock_dji_state.seed_media_file(
+            file_id="media-cross-mission-file",
+            name="MEDIA_CROSS_MISSION.JPG",
+            device_sn="MEDIA-CROSS-SN-001",
+            job_id="legacy-job-id-that-should-be-ignored",
+        )
+
+        summary = sync_media_indexes()
+
+        self.assertGreaterEqual(summary["created_count"], 1)
+        media_index = TenantMediaIndex.objects.get(tenant=self.tenant, dji_file_id="media-cross-mission-file")
+        media_file = media_index.media_file
+        self.assertIsNone(media_file.mission_id)
+        self.assertIsNone(media_file.flight_record_id)
+        self.assertIsNone(media_index.mission_id)
+
+    def test_sync_media_indexes_should_preserve_existing_manual_mission_binding(self):
         drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="MEDIA-MANUAL-DRONE",
+            name="人工绑定无人机",
+            model="M30",
+            device_sn="MEDIA-MANUAL-SN-001",
+        )
+        route = Route.objects.create(tenant=self.tenant, name="人工绑定航线")
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="人工绑定任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.DRONE_BOUND,
+        )
+        media_file = MediaFile.objects.create(
+            tenant=self.tenant,
+            mission=mission,
+            device_sn=drone.device_sn,
+            media_type=1,
+            file_name="MEDIA_MANUAL.JPG",
+            file_url="dji://media-manual-file",
+        )
+        TenantMediaIndex.objects.create(
+            tenant=self.tenant,
+            media_file=media_file,
+            dji_file_id="media-manual-file",
+            device_sn=drone.device_sn,
+            mission=mission,
+            sync_status=SyncStatus.SYNCED,
+        )
+        mock_dji_state.seed_media_file(
+            file_id="media-manual-file",
+            name="MEDIA_MANUAL.JPG",
+            device_sn=drone.device_sn,
+            job_id="ignored-job-id",
+        )
+
+        summary = sync_media_indexes()
+
+        self.assertGreaterEqual(summary["updated_count"], 1)
+        media_file.refresh_from_db()
+        self.assertEqual(media_file.mission_id, mission.id)
+        self.assertEqual(media_file.dji_index.mission_id, mission.id)
+
+    def test_sync_media_indexes_should_not_restore_soft_deleted_media_file(self):
+        Drone.objects.create(
             tenant=self.tenant,
             code="MEDIA-SYNC-DRONE-DEL",
             name="媒体软删无人机",
             model="M30",
             device_sn="MOCK-DRONE-001",
         )
-        mission = Mission.objects.create(
-            tenant=self.tenant,
-            name="媒体软删任务",
-            route=Route.objects.create(tenant=self.tenant, name="媒体软删航线"),
-            route_name="媒体软删航线",
-            drone=drone,
-            drone_name=drone.name,
-            pilot=self.pilot_member,
-            pilot_name="飞手",
-            status=MissionStatus.DRONE_BOUND,
-        )
         mock_dji_state.seed_media_file(
             file_id="media-soft-delete-file",
             name="MEDIA_SOFT_DELETE.JPG",
             device_sn="MOCK-DRONE-001",
-            job_id="media-soft-delete-job",
+            job_id="ignored-job-id",
         )
         media_file = MediaFile.objects.create(
             tenant=self.tenant,
@@ -381,7 +497,6 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
             media_file=media_file,
             dji_file_id="media-soft-delete-file",
             device_sn="MOCK-DRONE-001",
-            mission=mission,
             sync_status=SyncStatus.SYNCED,
         )
 
