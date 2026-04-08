@@ -1,4 +1,4 @@
-import xml.etree.ElementTree as ET
+import zipfile
 
 from rest_framework import serializers
 
@@ -25,25 +25,44 @@ class RouteReadSerializer(serializers.ModelSerializer):
 
 
 class RouteWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
-    xml_file = serializers.FileField(required=True, allow_empty_file=False)
+    kmz_file = serializers.FileField(
+        required=True,
+        allow_empty_file=False,
+        help_text="航线 KMZ 文件。",
+        error_messages={
+            "required": "未提交文件。",
+            "empty": "提交的文件为空。",
+        },
+    )
 
     class Meta:
         model = Route
-        fields = ["name", "xml_file"]
+        fields = ["name", "kmz_file"]
         extra_kwargs = {
             "name": {"help_text": "航线名称。"},
-            "xml_file": {"help_text": "航线 XML 文件。"},
+            "kmz_file": {"help_text": "航线 KMZ 文件。"},
         }
 
-    def validate_xml_file(self, value):
+    def validate_kmz_file(self, value):
         try:
             value.seek(0)
-            ET.fromstring(value.read())
-        except (ET.ParseError, TypeError, ValueError):
-            raise serializers.ValidationError("上传文件必须是可解析 XML")
+            with zipfile.ZipFile(value, "r") as archive:
+                archive.namelist()
+        except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError):
+            raise serializers.ValidationError("上传文件必须是有效 KMZ/ZIP 文件")
         finally:
             value.seek(0)
         return value
+
+    def _strip_kmz_file(self, validated_data):
+        validated_data.pop("kmz_file", None)
+        return validated_data
+
+    def create(self, validated_data):
+        return super().create(self._strip_kmz_file(validated_data))
+
+    def update(self, instance, validated_data):
+        return super().update(instance, self._strip_kmz_file(validated_data))
 
 
 class RouteCreateSerializer(RouteWriteSerializer):

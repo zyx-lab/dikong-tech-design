@@ -7,7 +7,7 @@
 3. `Drone` 在业务上定义为“上游设备映射后的租户资源”，不是纯本地资产台账；`POST /api/v1/drones` 的语义是认领，而不是手工创建设备主记录。
 4. 前端永远只调用我方 `/api/v1/*` 业务接口，不直接调用 DJI；前端不感知上游认证、`workspace` / `user` 拓扑，但在直播子域允许复用上游参数和返回语义。
 5. 对于 DJI 已经承接的设备拓扑、航线文件、任务执行、媒体存储、直播能力，我方不重复实现；我方只做 BFF 代理、tenant 可见性过滤、权限、审计和最小映射。
-6. 对外接口继续使用业务语义：`drones`、`routes`、`missions`、`media_files`、`drone-assignments`、`health`；不对前端暴露 `integrations/dji/*`。
+6. 对外接口继续使用业务语义：`drones`、`routes`、`missions`、`media-files`、`drone-assignments`、`health`；不对前端暴露 `integrations/dji/*`。
 7. 首批最简单方案：按“单 user / 单 workspace / 单资源池”落地；设备采用“上游共享池 + 按 `device_sn` 本地认领”；航线、任务、媒体采用“我方业务 API + 上游执行/存储 + 本地最小索引”，不预埋额外多 workspace / 多 user 抽象。
 
 ---
@@ -63,7 +63,7 @@
 
 1. `GET /api/v1/`
    - 保持业务入口，不新增任何 `integrations/dji` 发现入口。
-   - 继续暴露：`drones`、`drone_assignments`、`routes`、`missions`、`media_files`、`health`。
+   - 继续暴露：`drones`、`drone-assignments`、`routes`、`missions`、`media-files`、`health`。
 2. `/api/v1/iam/*`
    - 不改接口合同。
    - 只在服务端增加 DJI 会话保活、权限校验和审计联动。
@@ -162,54 +162,43 @@ def get_available_drones(request):
 
 | 变更项       | 说明                                                                                             |
 | ------------ | ------------------------------------------------------------------------------------------------ |
-| 聚合边界收敛 | `Route` 作为公开聚合根；当前只保留 `xml_file` 作为本地草稿输入，`waypoints` 表仅保留为历史内部表 |
+| 聚合边界收敛 | `Route` 作为公开聚合根；写入链路仅接受 `kmz_file` 直传并立即同步 DJI，本地不保留 XML/KMZ 草稿文件，`waypoints` 表仅保留为历史内部表 |
 | 新增索引表   | `TenantRouteIndex(tenant_id, route_id, dji_wayline_id, download_url, is_published)`              |
 
 #### 对外 API
 
 | 接口                               | 方法   | 说明                                                  |
 | ---------------------------------- | ------ | ----------------------------------------------------- |
-| `GET /api/v1/routes`               | GET    | 查询当前 tenant 可见航线列表                          |
-| `GET /api/v1/routes/{id}`          | GET    | 查询单条航线详情                                      |
-| `POST /api/v1/routes`              | POST   | 创建本地 route 草稿，上传完整 XML                     |
-| `PUT /api/v1/routes/{id}`          | PUT    | 更新本地 route 草稿，上传完整 XML                     |
-| `GET /api/v1/routes/{id}/xml`      | GET    | 读取当前草稿的原始 XML                                |
-| `POST /api/v1/routes/{id}/publish` | POST   | 显式把当前 route 草稿发布到 DJI                       |
-| `DELETE /api/v1/routes/{id}`       | DELETE | 删除航线（同步删除 DJI、本地 XML 和残留 waypoint 行） |
+| `GET /api/v1/routes`               | GET    | 查询当前 tenant 可见航线列表                                    |
+| `GET /api/v1/routes/{id}`          | GET    | 查询单条航线详情                                                |
+| `POST /api/v1/routes`              | POST   | 上传 KMZ 并立即发布到 DJI，创建本地 route 与最新发布索引        |
+| `PUT /api/v1/routes/{id}`          | PUT    | 上传新的 KMZ 并替换当前 route 绑定的 DJI 航线                   |
+| `GET /api/v1/routes/{id}/kmz`      | GET    | 根据已保存 `download_url` 代理下载当前 KMZ                      |
+| `DELETE /api/v1/routes/{id}`       | DELETE | 删除 route，并 best-effort 删除当前 `dji_wayline_id`            |
 
 #### 现有接口改动
 
-- 保留 `routes` 的核心 CRUD 路径，但把“本地编辑”和“发布到 DJI”明确拆开
+- 保留 `routes` 的核心 CRUD 路径，并把写链路统一收敛为“上传 KMZ 并立即同步 DJI”
 - 明确删除对外 `GET /api/v1/routes/{id}/download`
 - 明确删除对外 `POST /api/v1/routes/{id}/sync`
 - 明确删除对外 `DELETE /api/v1/routes/{id}/sync`
 - 明确删除对外 `POST /api/v1/routes/{id}/favorite`
 - 明确删除对外 `DELETE /api/v1/routes/{id}/favorite`
 
-#### 当前航线草稿流程
+#### 当前航线直传流程
 
-1. 前端调用 `POST /api/v1/routes` 创建本地 route 草稿。
-2. 请求体只接受 `multipart/form-data`，可写字段仅 `name` 与 `xml_file`，上传内容必须是可解析 XML。
-3. 系统自动创建 `TenantRouteIndex(dji_wayline_id=\"\", download_url=\"\", is_published=false)`。
-4. 之后前端可通过 `PUT /api/v1/routes/{id}` 持续替换本地草稿。
-5. 任意本地编辑后，`is_published` 都会被置回 `false`。
-6. 如需回读草稿源文件，前端调用 `GET /api/v1/routes/{id}/xml`。
-
-#### 发布流程
-
-1. 前端调用 `POST /api/v1/routes/{id}/publish`。
-2. 系统从当前保存的 XML 草稿生成 KMZ。
-3. 调用 DJI `POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload` 上传。
-4. 上传成功后把响应的 `wayline_id`（对应本地 `dji_wayline_id`）与 `download_url` 写回 `TenantRouteIndex`，并设置 `is_published=true`。
-5. 若此前已有旧的已发布 DJI 航线，则在新航线上传成功后删除旧航线。
+1. 前端调用 `POST /api/v1/routes` 并提交 `kmz_file`。
+2. 服务端先创建本地 `Route` 以获得 `route.id`。
+3. 服务端以 `{route.id}-{sanitized_route_name}-{uuid8}` 作为 DJI 名称，调用 `POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload`。
+4. 上传成功后写入 `TenantRouteIndex(dji_wayline_id, download_url, is_published=true)`。
+5. 不保留本地 XML/KMZ 草稿文件，也不再暴露 `/publish` 与 `/xml`。
 
 #### 内部调用 DJI
 
-- `POST /api/v1/routes`：只落本地库，不调用 DJI
-- `PUT /api/v1/routes/{id}`：只更新本地草稿，不调用 DJI
-- `GET /api/v1/routes/{id}/xml`：只回读本地 XML 文件，不调用 DJI
-- `POST /api/v1/routes/{id}/publish`：生成 KMZ → 上传 DJI `files/upload` → 回写 `dji_wayline_id`、`download_url`、`is_published`
-- `DELETE /api/v1/routes/{id}`：若 route 已发布，先调用 `DELETE /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}`；随后删除本地 `Route`、`xml_file` 和残留 `waypoints` 行
+- `POST /api/v1/routes`：先创建本地 `Route` 获取 `route.id`，随后上传 DJI `files/upload`，成功后回写 `dji_wayline_id`、`download_url`、`is_published=true`
+- `PUT /api/v1/routes/{id}`：上传新 KMZ 到 DJI `files/upload` 并替换当前绑定航线，成功后回写最新 `dji_wayline_id`、`download_url`、`is_published=true`
+- `GET /api/v1/routes/{id}/kmz`：根据已保存 `download_url` 代理下载当前 KMZ
+- `DELETE /api/v1/routes/{id}`：best-effort 调用 `DELETE /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}` 删除当前绑定航线；随后删除本地 `Route`
 
 ### 4.4 `/api/v1/missions*`
 
@@ -223,17 +212,18 @@ def get_available_drones(request):
 
 #### 对外 API
 
-| 接口                                | 方法      | 说明                               |
-| ----------------------------------- | --------- | ---------------------------------- |
-| `GET /api/v1/missions`              | GET       | 查询任务列表                       |
-| `GET /api/v1/missions/{id}`         | GET       | 查询单条任务详情                   |
-| `POST /api/v1/missions`             | POST      | 创建任务（立即同步创建 DJI job）   |
-| `PUT/PATCH /api/v1/missions/{id}`   | PUT/PATCH | 只更新本地管理字段（名称、备注等） |
-| `POST /api/v1/missions/{id}/cancel` | POST      | 取消任务                           |
+| 接口                                | 方法      | 说明                                                        |
+| ----------------------------------- | --------- | ----------------------------------------------------------- |
+| `GET /api/v1/missions`              | GET       | 查询任务列表                                                |
+| `GET /api/v1/missions/{id}`         | GET       | 查询单条任务详情                                            |
+| `POST /api/v1/missions`             | POST      | 创建任务（立即同步创建 DJI job）                            |
+| `PUT/PATCH /api/v1/missions/{id}`   | PUT/PATCH | 只更新本地管理字段（名称、备注等）                          |
+| `DELETE /api/v1/missions/{id}`      | DELETE    | 软删除任务；若任务仍处于执行态且存在 DJI job，则先尝试取消上游任务 |
+| `POST /api/v1/missions/{id}/cancel` | POST      | 取消任务                                                    |
 
 #### 现有接口改动
 
-- 只保留 `cancel` 动作接口
+- 保留 `delete`（软删除）与 `cancel` 两个任务终止入口
 - 明确删除对外 `POST /api/v1/missions/{id}/start`
 - 明确删除对外 `POST /api/v1/missions/{id}/pause`
 - 明确删除对外 `POST /api/v1/missions/{id}/resume`
@@ -252,10 +242,14 @@ def get_available_drones(request):
 - `POST /api/v1/missions`：
   1. 创建本地 Mission（status=PENDING）
   2. 调用 `POST /api/v1/wayline/workspaces/{workspace_id}/flight-tasks`
-  3. 回查获取 job_id（GET /jobs 按 name 匹配）
+  3. 从响应直接读取 `dji_job_id`
   4. 写入 `Mission.dji_job_id` 和 `TenantMissionIndex`
   5. 同一事务，成功则全成功，失败则全回滚
 - `PUT/PATCH /api/v1/missions/{id}`：只更新本地字段，不调用 DJI
+- `DELETE /api/v1/missions/{id}`：
+  1. 若任务处于 `PENDING / RUNNING / PAUSED` 且存在 `dji_job_id`，先尝试调用 `DELETE /api/v1/wayline/workspaces/{workspace_id}/jobs?job_id=xxx`
+  2. 本地将 Mission 标记为软删除；若原任务处于执行态，则同步更新为 `CANCELED`
+  3. 若存在 `TenantMissionIndex`，同步更新其执行状态和最近同步时间
 - `POST /api/v1/missions/{id}/cancel`：
   1. 校验 `dji_job_id` 不为空
   2. 调用 `DELETE /api/v1/wayline/workspaces/{workspace_id}/jobs?job_id=xxx`
@@ -278,17 +272,17 @@ def create_mission_and_sync(request):
 
         # 2. 调 DJI 创建
         gateway = DjiGateway()
-        gateway.create_job(
+        payload = gateway.create_job(
             name=mission.name,
             file_id=request.data["file_id"],
             dock_sn=request.data["dock_sn"],
             ...
         )
 
-        # 3. 回查获取 job_id
-        job_id = gateway.get_job_id_by_name(mission.name)
+        # 3. 从创建响应直接读取 dji_job_id
+        job_id = payload["dji_job_id"]
         if not job_id:
-            # 回查失败，事务回滚
+            # 响应缺少 job_id，事务回滚
             raise ServiceError("D0001", "任务同步失败，请重试")
 
         # 4. 写入 dji_job_id
@@ -335,7 +329,7 @@ def cancel(self, request, *args, **kwargs):
 - DJI 重名错误 → 返回 400 + DJI 错误消息
 - DJI 重名成功 → 不管（DJI 允许重名）
 
-### 4.5 `/api/v1/media_files*`
+### 4.5 `/api/v1/media-files*`
 
 #### 模型变更
 
@@ -343,21 +337,21 @@ def cancel(self, request, *args, **kwargs):
 | ---------- | ---------------------------------------------------------------------------------------- |
 | 新增索引表 | `TenantMediaIndex(tenant_id, media_id, dji_file_id, device_sn, mission_id, sync_status)` |
 
-#### 对外 API（只读）
+#### 对外 API（查询 + 软删除）
 
-| 接口                                    | 方法 | 说明                         |
-| --------------------------------------- | ---- | ---------------------------- |
-| `GET /api/v1/media_files`               | GET  | 查询当前 tenant 可见媒体列表 |
-| `GET /api/v1/media_files/{id}`          | GET  | 查询单条媒体详情             |
-| `GET /api/v1/media_files/{id}/download` | GET  | 下载媒体文件                 |
+| 接口                                    | 方法   | 说明                               |
+| --------------------------------------- | ------ | ---------------------------------- |
+| `GET /api/v1/media-files`               | GET    | 查询当前 tenant 可见媒体列表       |
+| `GET /api/v1/media-files/{id}`          | GET    | 查询单条媒体详情                   |
+| `DELETE /api/v1/media-files/{id}`       | DELETE | 软删除媒体记录                     |
+| `GET /api/v1/media-files/{id}/download` | GET    | 下载媒体文件                       |
 
 #### 现有接口改动
 
-- 只保留 GET 和 download 两个读接口
-- 明确删除对外 `POST /api/v1/media_files`
-- 明确删除对外 `PUT/PATCH /api/v1/media_files/{id}`
-- 明确删除对外 `DELETE /api/v1/media_files/{id}`
-- 媒体不由前端手工驱动，由后台同步和上游存储事实驱动
+- 媒体不由前端手工创建或编辑，由后台同步和上游存储事实驱动
+- 保留 GET、download 与 DELETE（软删除媒体记录）接口
+- 明确删除对外 `POST /api/v1/media-files`
+- 明确删除对外 `PUT/PATCH /api/v1/media-files/{id}`
 
 #### 媒体归属链路
 
@@ -368,7 +362,7 @@ def cancel(self, request, *args, **kwargs):
 #### 内部调用 DJI
 
 - 后台同步任务：调用 `GET /api/v1/media/workspaces/{workspace_id}/files`，更新 TenantMediaIndex
-- `GET /api/v1/media_files/{id}/download`：
+- `GET /api/v1/media-files/{id}/download`：
   1. 获取 DJI 下载地址：`GET /api/v1/media/workspaces/{workspace_id}/files/{file_id}/url`
   2. 透传 302 重定向，让前端直接访问 DJI 地址
   3. 不做代理下载，不做 URL 缓存（DJI URL 可能有时效）
@@ -399,7 +393,7 @@ def cancel(self, request, *args, **kwargs):
 | #   | 接口                                          | 说明                                                     |
 | --- | --------------------------------------------- | -------------------------------------------------------- |
 | 1   | `GET /api/v1/drones/available`                | 获取可认领设备列表（来自 DjiDeviceIndex 未被认领的设备） |
-| 2   | `GET /api/v1/routes/{id}/download`            | 下载航线文件                                             |
+| 2   | `GET /api/v1/routes/{id}/kmz`                 | 根据已保存 `download_url` 代理下载当前 KMZ              |
 | 3   | `GET /api/v1/drones/{id}/live/capacity`       | 获取设备直播能力                                         |
 | 4   | `POST /api/v1/drones/{id}/live/start`         | 启动设备直播                                             |
 | 5   | `POST /api/v1/drones/{id}/live/stop`          | 停止设备直播                                             |
@@ -423,10 +417,9 @@ def cancel(self, request, *args, **kwargs):
 | 11  | `POST /api/v1/missions/{id}/resume`              | 已废弃                         |
 | 12  | `POST /api/v1/missions/{id}/complete`            | 已废弃                         |
 | 13  | `POST /api/v1/missions/{id}/fail`                | 已废弃                         |
-| 14  | `POST /api/v1/media_files`                       | 已废弃，媒体由后台同步创建     |
-| 15  | `PUT/PATCH /api/v1/media_files/{id}`             | 已废弃                         |
-| 16  | `DELETE /api/v1/media_files/{id}`                | 已废弃                         |
-| 17  | `POST /api/v1/drone-assignments/{id}/reactivate` | 已废弃                         |
+| 14  | `POST /api/v1/media-files`                       | 已废弃，媒体由后台同步创建     |
+| 15  | `PUT/PATCH /api/v1/media-files/{id}`             | 已废弃                         |
+| 16  | `POST /api/v1/drone-assignments/{id}/reactivate` | 已废弃                         |
 
 说明：
 
@@ -615,7 +608,7 @@ def cancel(self, request, *args, **kwargs):
 | -------------------- | ----------------------------------------------------------- | --------------------------------------------------- |
 | `TenantRouteIndex`   | `dji_wayline_id`                                            | 当前已发布 DJI 航线 ID                              |
 | `TenantRouteIndex`   | `download_url`                                              | 最近一次成功发布返回的 DJI 航线下载地址             |
-| `TenantRouteIndex`   | `is_published`                                              | 当前本地 route 草稿是否已与最近一次成功发布结果一致 |
+| `TenantRouteIndex`   | `is_published`                                              | 当前 route 是否已绑定最近一次成功上传的 DJI 航线    |
 | `TenantMissionIndex` | `sync_status / last_sync_at / error_msg / execution_status` | 任务同步摘要                                        |
 | `TenantMediaIndex`   | `sync_status / last_sync_at / error_msg`                    | 媒体同步摘要                                        |
 
@@ -697,7 +690,7 @@ def cancel(self, request, *args, **kwargs):
 
 ---
 
-### 11.5 任务创建两阶段
+### 11.5 任务创建单事务
 
 **结论**：同一事务，失败则全回滚
 
@@ -705,7 +698,7 @@ def cancel(self, request, *args, **kwargs):
 | ---- | -------------------------------------------- |
 | 1    | 创建本地 Mission（status=PENDING）           |
 | 2    | 调用 DJI 创建 job                            |
-| 3    | 回查获取 job_id（按 name + 时间窗口）        |
+| 3    | 从创建响应直接读取 `dji_job_id`              |
 | 4    | 写入 Mission.dji_job_id + TenantMissionIndex |
 | 5    | 同一事务，原子性                             |
 
@@ -840,13 +833,13 @@ DjiDeviceIndex
 
 | 优先级 | 事项                    | 说明                                                                                                                                                 |
 | ------ | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P0     | 删除废弃接口            | `enable/disable/maintenance/retire`、`start/pause/resume/complete/fail`、`route sync/favorite`、`media_files 写接口`、`drone-assignments reactivate` |
+| P0     | 删除废弃接口            | `enable/disable/maintenance/retire`、`start/pause/resume/complete/fail`、`route sync/favorite`、`media-files 写接口`、`drone-assignments reactivate` |
 | P0     | 新增同步状态表          | `DjiDeviceIndex`、`TenantRouteIndex`、`TenantMissionIndex`、`TenantMediaIndex`                                                                       |
 | P1     | dockSn 前端手动输入     | 不提供 docks 接口，前端让用户手动输入 dockSn                                                                                                         |
 | P1     | 新增 available 接口     | `GET /api/v1/drones/available` 获取可认领设备                                                                                                        |
 | P1     | 媒体归属简化            | 采用 device_sn 归属，不依赖 job_id；`MediaFile.flight_record_id` 改为 nullable                                                                       |
 | P1     | 设备状态简化            | 当前仅保留 `Drone.status=ENABLED/DISABLED` 作为在线摘要；不再保留 `MAINTENANCE/RETIRED`，也不新增 `DjiDeviceIndex.is_online`                         |
-| P1     | 媒体查询扩展            | `GET /api/v1/media_files` 增加 `device_sn` 过滤参数                                                                                                  |
+| P1     | 媒体查询扩展            | `GET /api/v1/media-files` 增加 `device_sn` 过滤参数                                                                                                  |
 | P1     | Mission.dji_job_id      | 新增字段保存 DJI job_id，用于 cancel 操作                                                                                                            |
 | P1     | 航线删除约束            | 检查 Mission.route_id 关联，存在活跃任务时禁止删除                                                                                                   |
 | P1     | 直播 url_type 默认值    | 服务端设默认值 url_type=1（RTMP）                                                                                                                    |
@@ -857,7 +850,7 @@ DjiDeviceIndex
 | P1     | DjiGateway workspace_id | 单 workspace，登录后获取并缓存                                                                                                                       |
 | P1     | 任务状态枚举映射表      | `DJI_JOB_STATUS_MAP`，实测补充枚举值                                                                                                                 |
 | P2     | 航线上传响应持久化      | 统一持久化 `dji_wayline_id`、`download_url`，其中 `dji_wayline_id` 对应上游响应 `wayline_id`，并在任务创建时直接复用 `fileId`                         |
-| P2     | 任务创建两阶段回查      | 按 Mission.name + 时间窗口匹配 job_id                                                                                                                |
+| P2     | 任务创建响应直读        | 直接读取创建响应 `dji_job_id`，不引入按 Mission.name + 时间窗口回查                                                                                   |
 | P2     | 同步任务调度增强        | 当前先用 Django management command `run_dji_sync_scheduler` 作为独立进程调度；需要更复杂重试、分布式调度或锁时再评估 Celery/beat                     |
 | P2     | 同步失败监控            | 记录 error_msg，可选增加告警任务                                                                                                                     |
 | P2     | 媒体下载 302 处理       | 透传 302 让前端直接访问 DJI 存储地址                                                                                                                 |

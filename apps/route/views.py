@@ -1,13 +1,14 @@
-import os
+import re
 import uuid
 import logging
+from io import BytesIO
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import transaction
-from django.http import FileResponse, Http404
-from rest_framework import mixins, parsers, status, viewsets
+from django.http import FileResponse
 from rest_framework.decorators import action
+from rest_framework import mixins, parsers, status, viewsets
 from rest_framework.response import Response
-from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
@@ -29,7 +30,6 @@ from apps.dji_bff.models import TenantRouteIndex
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 from apps.route.serializers import RouteCreateSerializer, RouteReadSerializer, RouteUpdateSerializer
-from apps.route.services import build_route_kmz_from_xml
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,33 @@ def _reject_request_body_if_present(request, *, message: str):
     return None
 
 
+def _route_not_found_response():
+    return Response(
+        standard_error_payload(StandardCode.NOT_FOUND, "资源不存在", None),
+        status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+def _sanitize_route_name(name: str) -> str:
+    normalized = re.sub(r"[^\w]+", "-", (name or "").strip())
+    normalized = normalized.strip("-_")
+    return normalized if normalized else "route"
+
+
+def _format_upstream_route_name(route_id: int, route_name: str) -> str:
+    sanitized = _sanitize_route_name(route_name)
+    return f"{route_id}-{sanitized}-{uuid.uuid4().hex[:8]}"
+
+
+def _clone_kmz_for_upload(file_obj) -> SimpleUploadedFile:
+    file_obj.seek(0)
+    content = file_obj.read()
+    file_obj.seek(0)
+    filename = getattr(file_obj, "name", "route.kmz")
+    content_type = getattr(file_obj, "content_type", "application/vnd.google-earth.kmz")
+    return SimpleUploadedFile(name=filename, content=content, content_type=content_type)
+
+
 @extend_schema_view(
     list=extend_schema(
         summary="查询当前租户航线",
@@ -89,7 +116,7 @@ def _reject_request_body_if_present(request, *, message: str):
         tags=["Business API - Route"],
     ),
     create=extend_schema(
-        summary="创建本地航线",
+        summary="上传航线 KMZ 并创建航线",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=RouteCreateSerializer,
         responses={
@@ -102,7 +129,7 @@ def _reject_request_body_if_present(request, *, message: str):
         tags=["Business API - Route"],
     ),
     update=extend_schema(
-        summary="全量更新本地航线 XML 草稿",
+        summary="上传新的 KMZ 并更新航线",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=RouteUpdateSerializer,
         responses={
@@ -149,10 +176,9 @@ class RouteViewSet(
     permission_map = {
         "list": "route.view_route",
         "retrieve": "route.view_route",
-        "xml": "route.view_route",
+        "kmz": "route.view_route",
         "create": "route.manage_route",
         "update": "route.manage_route",
-        "publish": "route.manage_route",
         "destroy": "route.manage_route",
     }
 
@@ -172,43 +198,53 @@ class RouteViewSet(
         queryset = self.scope_queryset_to_tenant(super().get_queryset())
         if self.request.query_params.get("name"):
             queryset = queryset.filter(name__icontains=self.request.query_params["name"])
-        if self.action in {"list", "retrieve", "update", "destroy", "publish", "xml"}:
+        if self.action in {"list", "retrieve", "kmz", "update", "destroy"}:
             return self.apply_scope(queryset)
         return queryset
 
     def _payload(self, route: Route) -> dict:
         return dict(RouteReadSerializer(route, context={"request": self.request}).data)
 
-    def _mark_route_unpublished(self, route: Route):
-        route_index, _ = TenantRouteIndex.objects.get_or_create(
-            tenant=self.get_current_tenant(),
-            route=route,
-            defaults={"is_published": False, "dji_wayline_id": "", "download_url": ""},
-        )
-        route_index.is_published = False
-        route_index.save(update_fields=["is_published", "updated_at"])
-        route.dji_index = route_index
-        return route_index
-
     @transaction.atomic
     def perform_create(self, serializer):
         tenant = self.get_current_tenant()
+        try:
+            kmz_file = serializer.validated_data["kmz_file"]
+        except KeyError:
+            raise RuntimeError("kmz_file missing")
+
         route = serializer.save(tenant=tenant)
-        route_index = TenantRouteIndex.objects.create(
-            tenant=tenant,
-            route=route,
-            dji_wayline_id="",
-            download_url="",
-            is_published=False,
-        )
-        route.dji_index = route_index
-        log_action(
-            request=self.request,
-            action="ROUTE_CREATE",
-            target_type="route",
-            target_id=route.id,
-            after_data=self._payload(route),
-        )
+        gateway = DjiGateway()
+        upload_file = _clone_kmz_for_upload(kmz_file)
+        upstream_name = _format_upstream_route_name(route.id, route.name)
+        payload = gateway.upload_route(route_name=upstream_name, file_obj=upload_file)
+        dji_wayline_id = payload["dji_wayline_id"]
+        download_url = str(payload["download_url"])
+
+        try:
+            route_index = TenantRouteIndex.objects.create(
+                tenant=tenant,
+                route=route,
+                dji_wayline_id=dji_wayline_id,
+                download_url=download_url,
+                is_published=True,
+            )
+            route.dji_index = route_index
+            log_action(
+                request=self.request,
+                action="ROUTE_CREATE",
+                target_type="route",
+                target_id=route.id,
+                after_data=self._payload(route),
+            )
+        except Exception:
+            self._delete_upstream_wayline_if_exists(
+                gateway=gateway,
+                wayline_id=dji_wayline_id,
+                best_effort=True,
+            )
+            raise
+
         return route
 
     def create(self, request, *args, **kwargs):
@@ -221,22 +257,56 @@ class RouteViewSet(
     def perform_update(self, serializer):
         route = serializer.instance
         before_data = self._payload(route)
-        old_xml_name = route.xml_file.name
-        xml_storage = route.xml_file.storage
-        route = serializer.save()
-        self._mark_route_unpublished(route)
+        tenant = self.get_current_tenant()
+        try:
+            kmz_file = serializer.validated_data["kmz_file"]
+        except KeyError:
+            raise RuntimeError("kmz_file missing")
 
-        if old_xml_name and old_xml_name != route.xml_file.name:
-            xml_storage.delete(old_xml_name)
-
-        log_action(
-            request=self.request,
-            action="ROUTE_UPDATE",
-            target_type="route",
-            target_id=route.id,
-            before_data=before_data,
-            after_data=self._payload(route),
+        gateway = DjiGateway()
+        route_index, _ = TenantRouteIndex.objects.get_or_create(
+            tenant=tenant,
+            route=route,
+            defaults={"dji_wayline_id": "", "download_url": "", "is_published": False},
         )
+        old_wayline_id = route_index.dji_wayline_id
+        new_name = serializer.validated_data.get("name", route.name)
+        upstream_name = _format_upstream_route_name(route.id, new_name)
+        upload_file = _clone_kmz_for_upload(kmz_file)
+        payload = gateway.upload_route(route_name=upstream_name, file_obj=upload_file)
+        new_wayline_id = payload["dji_wayline_id"]
+        new_download_url = str(payload["download_url"])
+
+        try:
+            route = serializer.save()
+            route_index.dji_wayline_id = new_wayline_id
+            route_index.download_url = new_download_url
+            route_index.is_published = True
+            route_index.save(update_fields=["dji_wayline_id", "download_url", "is_published", "updated_at"])
+            route.dji_index = route_index
+            log_action(
+                request=self.request,
+                action="ROUTE_UPDATE",
+                target_type="route",
+                target_id=route.id,
+                before_data=before_data,
+                after_data=self._payload(route),
+            )
+        except Exception:
+            self._delete_upstream_wayline_if_exists(
+                gateway=gateway,
+                wayline_id=new_wayline_id,
+                best_effort=True,
+            )
+            raise
+        if old_wayline_id and old_wayline_id != new_wayline_id:
+            transaction.on_commit(
+                lambda wayline_id=old_wayline_id: self._delete_upstream_wayline_if_exists(
+                    gateway=gateway,
+                    wayline_id=wayline_id,
+                    best_effort=True,
+                )
+            )
         return route
 
     def update(self, request, *args, **kwargs):
@@ -246,196 +316,53 @@ class RouteViewSet(
         route = self.perform_update(serializer)
         return _route_success_response(self, route, http_status=status.HTTP_200_OK)
 
-    def _delete_upstream_wayline_if_exists(self, *, gateway: DjiGateway, wayline_id: str, log_stage, best_effort: bool = False):
+    @extend_schema(
+        summary="下载航线 KMZ",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        responses={
+            200: OpenApiResponse(description="KMZ 二进制文件。"),
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Route"],
+    )
+    @action(detail=True, methods=["get"], url_path="kmz")
+    def kmz(self, request, *args, **kwargs):
+        route = self.get_object()
+        route_index = getattr(route, "dji_index", None)
+        download_url = getattr(route_index, "download_url", "")
+        if not isinstance(download_url, str) or not download_url.strip():
+            return _route_not_found_response()
+
+        try:
+            upstream_response = DjiGateway().download_route_file(download_url)
+        except DjiGatewayUpstreamError as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                return _route_not_found_response()
+            raise
+
+        content_type = upstream_response.headers.get("Content-Type") or "application/vnd.google-earth.kmz"
+        return FileResponse(
+            BytesIO(upstream_response.data),
+            as_attachment=True,
+            filename=f"route-{route.id}.kmz",
+            content_type=content_type,
+        )
+
+    def _delete_upstream_wayline_if_exists(self, *, gateway: DjiGateway, wayline_id: str, best_effort: bool = False):
         if not wayline_id:
             return
         try:
             gateway.delete_route(wayline_id)
-            log_stage("upstream_wayline_deleted", dji_wayline_id=wayline_id, best_effort=best_effort)
         except DjiGatewayUpstreamError as exc:
-            if exc.status_code != 404 and not best_effort:
+            if not best_effort and exc.status_code != 404:
                 raise
-
-    def _publish_route_to_upstream(self, *, gateway: DjiGateway, route: Route, log_stage):
-        try:
-            kmz_file = build_route_kmz_from_xml(route)
-        except ValueError:
-            log_stage("kmz_build_failed")
-            return None, "当前 XML 草稿无法转换为可发布 KMZ"
-
-        log_stage("kmz_built", kmz_name=getattr(kmz_file, "name", ""), kmz_size=getattr(kmz_file, "size", None))
-        try:
-            log_stage("upstream_publish_start")
-            payload = gateway.upload_route(route_name=f"route-{route.id}-{uuid.uuid4().hex}", file_obj=kmz_file)
-            return payload, ""
-        except DjiGatewayUpstreamError as exc:
-            upstream_data = exc.data if isinstance(exc.data, dict) else {}
-            upstream_code = str(upstream_data.get("code") or "").strip().upper()
-            upstream_msg_raw = str(upstream_data.get("msg") or "")
-            upstream_msg = upstream_msg_raw.lower()
-            log_stage(
-                "upstream_publish_failed",
-                status_code=exc.status_code,
-                upstream_code=upstream_code,
-                upstream_msg=upstream_msg_raw,
+            logger.debug(
+                "upstream delete best effort",
+                extra={"wayline_id": wayline_id, "status_code": exc.status_code, "best_effort": best_effort},
             )
-            if upstream_code == "E0001" and "file format is incorrect" in upstream_msg:
-                return None, "当前 XML 草稿不符合 DJI WPML 航线格式"
-            raise
-
-    def _persist_published_route_or_raise(
-        self,
-        *,
-        request,
-        route: Route,
-        route_index: TenantRouteIndex,
-        old_wayline_id: str,
-        new_wayline_id: str,
-        new_download_url: str,
-        before_data: dict,
-        gateway: DjiGateway,
-        log_stage,
-    ):
-        try:
-            route_index.dji_wayline_id = new_wayline_id
-            route_index.download_url = new_download_url
-            route_index.is_published = True
-            route_index.save(update_fields=["dji_wayline_id", "download_url", "is_published", "updated_at"])
-            route.dji_index = route_index
-
-            if old_wayline_id and old_wayline_id != new_wayline_id:
-                transaction.on_commit(
-                    lambda wayline_id=old_wayline_id: self._delete_upstream_wayline_if_exists(
-                        gateway=gateway,
-                        wayline_id=wayline_id,
-                        log_stage=log_stage,
-                        best_effort=True,
-                    )
-                )
-                log_stage("upstream_old_wayline_cleanup_scheduled", old_wayline_id=old_wayline_id)
-
-            log_action(
-                request=request,
-                action="ROUTE_PUBLISH",
-                target_type="route",
-                target_id=route.id,
-                before_data=before_data,
-                after_data=self._payload(route),
-            )
-            log_stage("audit_log_written")
-        except Exception:
-            log_stage(
-                "db_persist_failed",
-                dji_wayline_id=new_wayline_id,
-                download_url=new_download_url,
-            )
-            self._delete_upstream_wayline_if_exists(
-                gateway=gateway,
-                wayline_id=new_wayline_id,
-                log_stage=log_stage,
-            )
-            raise
-
-    @extend_schema(
-        summary="发布航线",
-        parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=None,
-        responses={
-            200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE),
-            400: BUSINESS_INVALID_PARAMS_RESPONSE,
-            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
-            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
-            404: BUSINESS_NOT_FOUND_RESPONSE,
-            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
-        },
-        tags=["Business API - Route"],
-    )
-    @transaction.atomic
-    @action(detail=True, methods=["post"])
-    def publish(self, request, *args, **kwargs):
-        error_response = _reject_request_body_if_present(request, message="publish 请求不支持提交 body 参数")
-        if error_response is not None:
-            return error_response
-
-        route = self.get_object()
-        tenant = self.get_current_tenant()
-        before_data = self._payload(route)
-        publish_trace_id = uuid.uuid4().hex
-
-        def log_stage(stage: str, **extra):
-            payload = {
-                "stage": stage,
-                "publish_trace_id": publish_trace_id,
-                "request_id": getattr(request, "request_id", ""),
-                "tenant_code": getattr(tenant, "code", ""),
-                "route_id": route.id,
-            }
-            payload.update(extra)
-            logger.info("route_publish_stage %s", payload)
-
-        log_stage("start")
-        route_index, _ = TenantRouteIndex.objects.get_or_create(
-            tenant=tenant,
-            route=route,
-            defaults={"dji_wayline_id": "", "download_url": "", "is_published": False},
-        )
-        old_wayline_id = route_index.dji_wayline_id
-
-        gateway = DjiGateway()
-        upstream_payload, invalid_message = self._publish_route_to_upstream(
-            gateway=gateway,
-            route=route,
-            log_stage=log_stage,
-        )
-        if invalid_message:
-            return Response(
-                standard_error_payload(
-                    StandardCode.INVALID_PARAMS,
-                    invalid_message,
-                    {"route_id": route.id},
-                ),
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        new_wayline_id = upstream_payload["dji_wayline_id"]
-        new_download_url = str(upstream_payload["download_url"])
-        log_stage("upstream_publish_succeeded", dji_wayline_id=new_wayline_id, download_url=new_download_url)
-
-        self._persist_published_route_or_raise(
-            request=request,
-            route=route,
-            route_index=route_index,
-            old_wayline_id=old_wayline_id,
-            new_wayline_id=new_wayline_id,
-            new_download_url=new_download_url,
-            before_data=before_data,
-            gateway=gateway,
-            log_stage=log_stage,
-        )
-
-        log_stage("done", dji_wayline_id=new_wayline_id, download_url=new_download_url)
-        return _route_success_response(self, route, http_status=status.HTTP_200_OK)
-
-    @extend_schema(
-        summary="读取航线 XML 草稿",
-        parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=None,
-        responses={
-            200: OpenApiResponse(response=OpenApiTypes.BINARY),
-            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
-            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
-            404: BUSINESS_NOT_FOUND_RESPONSE,
-            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
-        },
-        tags=["Business API - Route"],
-    )
-    @action(detail=True, methods=["get"])
-    def xml(self, request, *args, **kwargs):
-        route = self.get_object()
-        if not route.xml_file or not route.xml_file.name or not route.xml_file.storage.exists(route.xml_file.name):
-            raise Http404("航线 XML 不存在")
-        filename = os.path.basename(route.xml_file.name) or "route.xml"
-        return FileResponse(route.xml_file.open("rb"), content_type="application/xml", filename=filename)
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
@@ -447,6 +374,7 @@ class RouteViewSet(
         if Mission.objects.filter(
             tenant=self.get_current_tenant(),
             route=route,
+            is_deleted=False,
             status__in=[MissionStatus.PENDING, MissionStatus.RUNNING, MissionStatus.PAUSED],
         ).exists():
             return Response(
@@ -460,28 +388,31 @@ class RouteViewSet(
 
         before_data = self._payload(route)
         route_index = getattr(route, "dji_index", None)
-        if route_index is not None and route_index.dji_wayline_id:
-            try:
-                DjiGateway().delete_route(route_index.dji_wayline_id)
-            except DjiGatewayUpstreamError as exc:
-                if exc.status_code != 404:
-                    raise
-
+        gateway = DjiGateway()
         route_id = route.id
-        xml_name = route.xml_file.name
-        xml_storage = route.xml_file.storage
+        wayline_id = route_index.dji_wayline_id if route_index is not None else ""
         # `waypoints` 仅保留为历史内部表；删除 route 时一并清理残留行。
         route.waypoint_rows.all().delete()
         route.delete()
-        if xml_name:
-            xml_storage.delete(xml_name)
 
-        log_action(
-            request=request,
-            action="ROUTE_DELETE",
-            target_type="route",
-            target_id=route_id,
-            before_data=before_data,
-            after_data={"id": route_id, "deleted": True},
+        if wayline_id:
+            transaction.on_commit(
+                lambda current_wayline_id=wayline_id: self._delete_upstream_wayline_if_exists(
+                    gateway=gateway,
+                    wayline_id=current_wayline_id,
+                    best_effort=True,
+                ),
+                robust=True,
+            )
+        transaction.on_commit(
+            lambda: log_action(
+                request=request,
+                action="ROUTE_DELETE",
+                target_type="route",
+                target_id=route_id,
+                before_data=before_data,
+                after_data={"id": route_id, "deleted": True},
+            ),
+            robust=True,
         )
         return Response({"id": route_id, "deleted": True}, status=status.HTTP_200_OK)

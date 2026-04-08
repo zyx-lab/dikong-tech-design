@@ -1,72 +1,35 @@
-import shutil
-import tempfile
+import re
 from io import BytesIO
 from unittest.mock import patch
 from zipfile import ZipFile
 
 from django.contrib.auth import get_user_model
-from django.core.files.base import ContentFile
-from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.access.models import EmploymentStatus, ScopeType, Tenant, TenantStatus
+from apps.access.models import EmploymentStatus, ScopeType
 from apps.access.test_support import ensure_staff_profile, ensure_tenant_role_binding, grant_role_permissions
-from apps.dji_bff.gateway import DjiGatewayUpstreamError
+from apps.dji_bff.gateway import DjiGatewayUpstreamError, GatewayResponse
 from apps.dji_bff.models import TenantRouteIndex
 from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
 from apps.drone.models import Drone
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
-from apps.route.services import build_route_kmz_from_xml
 from apps.waypoint.models import Waypoint
 
 User = get_user_model()
 
 
-class RouteXmlPackagingTests(TestCase):
-    def setUp(self):
-        self._media_root = tempfile.mkdtemp(prefix="route-xml-packaging-tests-")
-        self._media_override = override_settings(MEDIA_ROOT=self._media_root)
-        self._media_override.enable()
-        self.addCleanup(self._media_override.disable)
-        self.addCleanup(lambda: shutil.rmtree(self._media_root, ignore_errors=True))
 
-    def test_build_route_kmz_from_xml_should_wrap_xml_bytes_in_wpml_layout(self):
-        tenant = Tenant.objects.create(
-            code="route_xml_pkg_tenant",
-            name="Route XML 包装租户",
-            status=TenantStatus.ACTIVE,
-        )
-        route = Route.objects.create(tenant=tenant, name="包装航线")
-        route.xml_file.save("pack.xml", ContentFile(b"<route><node /></route>"), save=True)
-
-        kmz_file = build_route_kmz_from_xml(route)
-
-        self.assertTrue(kmz_file.name.endswith(".kmz"))
-        archive = ZipFile(BytesIO(kmz_file.read()))
-        names = set(archive.namelist())
-        self.assertIn("template.kml", names)
-        self.assertIn("waylines.wpml", names)
-        self.assertIn("res/", names)
-        self.assertEqual(archive.read("template.kml"), b"<route><node /></route>")
-        self.assertEqual(archive.read("waylines.wpml"), b"<route><node /></route>")
-
-
-class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
-    VALID_XML_BYTES = b'<?xml version="1.0" encoding="UTF-8"?><kml><Document><name>route</name></Document></kml>'
-    UPDATED_XML_BYTES = (
-        b'<?xml version="1.0" encoding="UTF-8"?><kml><Document><name>route-updated</name></Document></kml>'
-    )
+class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
+    VALID_TEMPLATE_BYTES = b'<?xml version="1.0" encoding="UTF-8"?><kml><Document><name>route</name></Document></kml>'
+    UPDATED_TEMPLATE_BYTES = b'<?xml version="1.0" encoding="UTF-8"?><kml><Document><name>route-updated</name></Document></kml>'
+    KMZ_CONTENT_TYPE = "application/vnd.google-earth.kmz"
 
     def setUp(self):
-        self._media_root = tempfile.mkdtemp(prefix="route-xml-tests-")
-        self._media_override = override_settings(MEDIA_ROOT=self._media_root)
-        self._media_override.enable()
-        self.addCleanup(self._media_override.disable)
-        self.addCleanup(lambda: shutil.rmtree(self._media_root, ignore_errors=True))
         super().setUp()
         self.client = APIClient()
         self.user = User.objects.create_user(username="route_admin", password="pass1234", status=1)
@@ -87,52 +50,259 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.client.force_authenticate(self.user)
         self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
-    def _upload_xml_route(self, *, name="XML 航线", xml_bytes=None):
+    @staticmethod
+    def _build_test_kmz(*, template_bytes: bytes = VALID_TEMPLATE_BYTES, wpml_bytes: bytes = None) -> bytes:
+        if wpml_bytes is None:
+            wpml_bytes = template_bytes
+        buffer = BytesIO()
+        with ZipFile(buffer, "w") as archive:
+            archive.writestr("template.kml", template_bytes)
+            archive.writestr("waylines.wpml", wpml_bytes)
+        return buffer.getvalue()
+
+    def _upload_kmz_route(self, *, name="KMZ 航线", kmz_bytes=None):
         return self.client.post(
             "/api/v1/routes",
             {
                 "name": name,
-                "xml_file": SimpleUploadedFile(
-                    "route.xml",
-                    xml_bytes if xml_bytes is not None else self.VALID_XML_BYTES,
-                    content_type="application/xml",
+                "kmz_file": SimpleUploadedFile(
+                    "route.kmz",
+                    kmz_bytes if kmz_bytes is not None else self._build_test_kmz(),
+                    content_type=self.KMZ_CONTENT_TYPE,
                 ),
             },
             format="multipart",
         )
 
-    def _attach_xml_draft_or_fail(self, route: Route, *, xml_bytes: bytes, filename: str):
-        self.assertTrue(
-            hasattr(route, "xml_file"),
-            "Route model must expose xml_file local draft storage.",
-        )
-        route.xml_file.save(filename, ContentFile(xml_bytes), save=True)
-        route.refresh_from_db()
-        return route
-
     def _response_body(self, response):
         return b"".join(response.streaming_content)
 
-    def test_create_should_accept_multipart_xml_and_mark_route_unpublished(self):
-        response = self._upload_xml_route(name="城市巡检 XML")
+    def test_create_should_upload_kmz_and_persist_route_index(self):
+        sentinel_wayline_id = "mock-wayline-kmz-create"
+        sentinel_download_url = "https://upstream/download/create.kmz"
+        kmz_bytes = self._build_test_kmz()
+
+        with patch(
+            "apps.route.views.DjiGateway.upload_route",
+            return_value={"dji_wayline_id": sentinel_wayline_id, "download_url": sentinel_download_url},
+        ) as upload_mock:
+            response = self._upload_kmz_route(name="城市巡检 KMZ", kmz_bytes=kmz_bytes)
 
         self.assertEqual(response.status_code, 201, response.data)
         data = response.data["data"]
-        self.assertEqual(data["name"], "城市巡检 XML")
-        self.assertFalse(data["is_published"])
+        self.assertEqual(data["name"], "城市巡检 KMZ")
+        self.assertTrue(data["is_published"])
         route = Route.objects.get(id=data["id"])
-        self.assertTrue(hasattr(route, "xml_file"), "Route model must expose xml_file local draft storage.")
-        self.assertTrue(bool(route.xml_file.name))
-        self.assertTrue(default_storage.exists(route.xml_file.name))
         route_index = TenantRouteIndex.objects.get(route=route)
-        self.assertFalse(route_index.is_published)
+        self.assertTrue(route_index.is_published)
+        self.assertEqual(route_index.dji_wayline_id, sentinel_wayline_id)
+        self.assertEqual(route_index.download_url, sentinel_download_url)
+        upload_mock.assert_called_once()
+        uploaded_file = upload_mock.call_args.kwargs["file_obj"]
+        self.assertEqual(getattr(uploaded_file, "name", ""), "route.kmz")
+        uploaded_file.seek(0)
+        self.assertEqual(uploaded_file.read(), kmz_bytes)
+        self.assertRegex(
+            upload_mock.call_args.kwargs["route_name"],
+            rf"^{route.id}-城市巡检-KMZ-[0-9a-f]{{8}}$",
+        )
+
+    def test_create_should_use_mock_upload_shape_and_traceable_upstream_name(self):
+        response = self._upload_kmz_route(name="城市巡检 KMZ")
+
+        self.assertEqual(response.status_code, 201, response.data)
+        route = Route.objects.get(id=response.data["data"]["id"])
+        route_index = TenantRouteIndex.objects.get(route=route)
+        self.assertRegex(
+            route_index.download_url,
+            rf"^/api/v1/wayline/workspaces/mock-workspace-001/waylines/{re.escape(route_index.dji_wayline_id)}/url$",
+        )
+
+        created_wayline = mock_dji_state.waylines[route_index.dji_wayline_id]
+        self.assertRegex(created_wayline["name"], rf"^{route.id}-城市巡检-KMZ-[0-9a-f]{{8}}$")
+
+    def test_create_should_reject_non_zip_kmz_payload(self):
+        response = self._upload_kmz_route(name="坏 KMZ", kmz_bytes=b"not-a-zip")
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["data"], {"kmz_file": ["上传文件必须是有效 KMZ/ZIP 文件"]})
+
+    def test_create_should_require_kmz_file(self):
+        response = self.client.post(
+            "/api/v1/routes",
+            {"name": "缺少 KMZ"},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data.get("data"), {"kmz_file": ["未提交文件。"]})
+
+    def test_put_should_replace_upstream_wayline_and_schedule_old_cleanup(self):
+        route = Route.objects.create(tenant=self.tenant, name="更新前 KMZ")
+        old_wayline_id = mock_dji_state.create_wayline(name="legacy-wayline")["wayline_id"]
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id=old_wayline_id,
+            download_url=f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline_id}/url",
+            is_published=True,
+        )
+        new_wayline_id = "mock-wayline-kmz-update"
+        new_download_url = "https://upstream/download/update.kmz"
+        update_kmz_bytes = self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES)
+
+        with patch(
+            "apps.route.views.DjiGateway.upload_route",
+            return_value={"dji_wayline_id": new_wayline_id, "download_url": new_download_url},
+        ) as upload_mock:
+            with self.captureOnCommitCallbacks(execute=False) as callbacks:
+                response = self.client.put(
+                    f"/api/v1/routes/{route.id}",
+                    {
+                        "name": "更新后 KMZ",
+                        "kmz_file": SimpleUploadedFile(
+                            "route-updated.kmz",
+                            update_kmz_bytes,
+                            content_type=self.KMZ_CONTENT_TYPE,
+                        ),
+                    },
+                    format="multipart",
+                )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["data"]["is_published"])
+        route.refresh_from_db()
+        route_index = TenantRouteIndex.objects.get(route=route)
+        self.assertEqual(route_index.dji_wayline_id, new_wayline_id)
+        self.assertEqual(route_index.download_url, new_download_url)
+        self.assertTrue(route_index.is_published)
+        upload_mock.assert_called_once()
+        uploaded_file = upload_mock.call_args.kwargs["file_obj"]
+        self.assertEqual(getattr(uploaded_file, "name", ""), "route-updated.kmz")
+        uploaded_file.seek(0)
+        self.assertEqual(uploaded_file.read(), update_kmz_bytes)
+
+        self.assertEqual(len(callbacks), 1)
+        self.assertIn(old_wayline_id, mock_dji_state.waylines)
+        for callback in callbacks:
+            callback()
+        self.assertNotIn(old_wayline_id, mock_dji_state.waylines)
+
+    def test_put_should_reject_empty_kmz_file(self):
+        route = Route.objects.create(tenant=self.tenant, name="空 KMZ")
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id="",
+            download_url="",
+            is_published=False,
+        )
+
+        response = self.client.put(
+            f"/api/v1/routes/{route.id}",
+            {
+                "name": "空 KMZ 更新",
+                "kmz_file": SimpleUploadedFile(
+                    "empty.kmz",
+                    b"",
+                    content_type=self.KMZ_CONTENT_TYPE,
+                ),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data.get("data"), {"kmz_file": ["提交的文件为空。"]})
+
+    def test_kmz_download_should_proxy_saved_download_url(self):
+        route = Route.objects.create(tenant=self.tenant, name="下载 KMZ")
+        download_url = "https://upstream.example/downloads/downloadable.kmz"
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id="mock-wayline-download",
+            download_url=download_url,
+            is_published=True,
+        )
+
+        with patch(
+            "apps.route.views.DjiGateway.download_route_file",
+            return_value=GatewayResponse(
+                status_code=200,
+                headers={"Content-Type": self.KMZ_CONTENT_TYPE},
+                data=b"mock-kmz-binary",
+            ),
+        ) as download_mock:
+            response = self.client.get(f"/api/v1/routes/{route.id}/kmz")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(self.KMZ_CONTENT_TYPE, response["Content-Type"])
+        self.assertIn(f"route-{route.id}.kmz", response["Content-Disposition"])
+        self.assertEqual(self._response_body(response), b"mock-kmz-binary")
+        download_mock.assert_called_once_with(download_url)
+
+    def test_kmz_download_should_return_404_when_download_url_missing(self):
+        route = Route.objects.create(tenant=self.tenant, name="缺少下载地址")
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id="mock-wayline-download-missing",
+            download_url="",
+            is_published=True,
+        )
+
+        response = self.client.get(f"/api/v1/routes/{route.id}/kmz")
+
+        self.assertEqual(response.status_code, 404, response.data)
+        self.assertEqual(response.data["code"], "C0404")
+
+    def test_kmz_download_should_return_404_when_upstream_returns_404(self):
+        route = Route.objects.create(tenant=self.tenant, name="上游丢失 KMZ")
+        download_url = "https://upstream.example/downloads/missing.kmz"
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id="mock-wayline-download-missing-upstream",
+            download_url=download_url,
+            is_published=True,
+        )
+
+        with patch(
+            "apps.route.views.DjiGateway.download_route_file",
+            side_effect=DjiGatewayUpstreamError("missing", status_code=404),
+        ):
+            response = self.client.get(f"/api/v1/routes/{route.id}/kmz")
+
+        self.assertEqual(response.status_code, 404, response.data)
+        self.assertEqual(response.data["code"], "C0404")
+
+    def test_removed_publish_and_xml_endpoints_should_return_404(self):
+        route = Route.objects.create(tenant=self.tenant, name="移除接口检查")
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id="",
+            download_url="",
+            is_published=False,
+        )
+
+        publish_response = self.client.post(f"/api/v1/routes/{route.id}/publish")
+        xml_response = self.client.get(f"/api/v1/routes/{route.id}/xml")
+
+        self.assertEqual(publish_response.status_code, 404, getattr(publish_response, "data", publish_response.content))
+        self.assertEqual(xml_response.status_code, 404, getattr(xml_response, "data", xml_response.content))
 
     def test_create_should_reject_legacy_waypoints_json_write_contract(self):
         response = self.client.post(
             "/api/v1/routes",
             {
                 "name": "旧写入契约",
-                "xml_file": SimpleUploadedFile("legacy-create.xml", self.VALID_XML_BYTES, content_type="application/xml"),
+                "kmz_file": SimpleUploadedFile(
+                    "legacy-create.kmz",
+                    self._build_test_kmz(),
+                    content_type=self.KMZ_CONTENT_TYPE,
+                ),
                 "route_type": 0,
                 "drone_type_id": 2,
                 "total_distance": "123.45",
@@ -143,91 +313,16 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
 
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn("waypoints", response.data["data"], response.data)
-        self.assertIn("route_type", response.data["data"], response.data)
-        self.assertIn("total_distance", response.data["data"], response.data)
-        self.assertIn("estimated_duration", response.data["data"], response.data)
-        self.assertIn("drone_type_id", response.data["data"], response.data)
+        self.assertIn("waypoints", response.data["data"])
+        self.assertIn("route_type", response.data["data"])
+        self.assertIn("total_distance", response.data["data"])
+        self.assertIn("estimated_duration", response.data["data"])
+        self.assertIn("drone_type_id", response.data["data"])
         self.assertEqual(response.data["data"]["waypoints"], ["该字段在此接口不可写"])
         self.assertEqual(response.data["data"]["route_type"], ["该字段在此接口不可写"])
         self.assertEqual(response.data["data"]["total_distance"], ["该字段在此接口不可写"])
         self.assertEqual(response.data["data"]["estimated_duration"], ["该字段在此接口不可写"])
         self.assertEqual(response.data["data"]["drone_type_id"], ["该字段在此接口不可写"])
-
-    def test_create_should_reject_unparseable_xml(self):
-        response = self._upload_xml_route(name="坏 XML", xml_bytes=b"<kml><Document>")
-
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["data"], {"xml_file": ["上传文件必须是可解析 XML"]})
-
-    def test_detail_should_hide_waypoints_and_xml_endpoint_should_return_raw_xml(self):
-        route = Route.objects.create(tenant=self.tenant, name="详情 XML")
-        TenantRouteIndex.objects.create(
-            tenant=self.tenant,
-            route=route,
-            dji_wayline_id="",
-            is_published=False,
-        )
-        self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="detail.xml")
-
-        detail_response = self.client.get(f"/api/v1/routes/{route.id}")
-        self.assertEqual(detail_response.status_code, 200, detail_response.data)
-        detail_data = detail_response.data["data"]
-        self.assertNotIn("waypoints", detail_data)
-
-        xml_response = self.client.get(f"/api/v1/routes/{route.id}/xml")
-        self.assertEqual(xml_response.status_code, 200)
-        self.assertIn("application/xml", xml_response["Content-Type"])
-        self.assertEqual(self._response_body(xml_response), self.VALID_XML_BYTES)
-
-    def test_put_should_replace_xml_reset_publish_flag_and_delete_old_local_xml_file(self):
-        route = Route.objects.create(tenant=self.tenant, name="更新前 XML")
-        TenantRouteIndex.objects.create(
-            tenant=self.tenant,
-            route=route,
-            dji_wayline_id="mock-wayline-existing",
-            is_published=True,
-        )
-        route = self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="before-put.xml")
-
-        old_xml_name = route.xml_file.name
-        self.assertTrue(default_storage.exists(old_xml_name))
-
-        update_response = self.client.put(
-            f"/api/v1/routes/{route.id}",
-            {
-                "name": "更新后 XML",
-                "xml_file": SimpleUploadedFile("route-updated.xml", self.UPDATED_XML_BYTES, content_type="application/xml"),
-            },
-            format="multipart",
-        )
-
-        self.assertEqual(update_response.status_code, 200, update_response.data)
-        self.assertFalse(update_response.data["data"]["is_published"])
-
-        route.refresh_from_db()
-        self.assertNotEqual(route.xml_file.name, old_xml_name)
-        self.assertFalse(default_storage.exists(old_xml_name))
-        self.assertFalse(TenantRouteIndex.objects.get(route=route).is_published)
-        xml_response = self.client.get(f"/api/v1/routes/{route.id}/xml")
-        self.assertEqual(xml_response.status_code, 200)
-        self.assertEqual(self._response_body(xml_response), self.UPDATED_XML_BYTES)
-
-    def test_xml_should_return_404_when_backing_file_is_missing(self):
-        route = Route.objects.create(tenant=self.tenant, name="缺失 XML")
-        TenantRouteIndex.objects.create(
-            tenant=self.tenant,
-            route=route,
-            dji_wayline_id="",
-            is_published=False,
-        )
-        route = self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="missing.xml")
-        default_storage.delete(route.xml_file.name)
-
-        response = self.client.get(f"/api/v1/routes/{route.id}/xml")
-
-        self.assertEqual(response.status_code, 404, getattr(response, "data", None))
 
     def test_put_should_reject_legacy_waypoints_json_write_contract(self):
         route = Route.objects.create(tenant=self.tenant, name="旧 PUT 契约")
@@ -235,6 +330,7 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
             tenant=self.tenant,
             route=route,
             dji_wayline_id="",
+            download_url="",
             is_published=False,
         )
 
@@ -242,7 +338,11 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
             f"/api/v1/routes/{route.id}",
             {
                 "name": "旧 PUT 契约更新",
-                "xml_file": SimpleUploadedFile("legacy-put.xml", self.UPDATED_XML_BYTES, content_type="application/xml"),
+                "kmz_file": SimpleUploadedFile(
+                    "legacy-put.kmz",
+                    self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES),
+                    content_type=self.KMZ_CONTENT_TYPE,
+                ),
                 "route_type": 0,
                 "total_distance": "222.20",
                 "estimated_duration": 120,
@@ -252,14 +352,247 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
 
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn("waypoints", response.data["data"], response.data)
-        self.assertIn("route_type", response.data["data"], response.data)
-        self.assertIn("total_distance", response.data["data"], response.data)
-        self.assertIn("estimated_duration", response.data["data"], response.data)
+        self.assertIn("waypoints", response.data["data"])
+        self.assertIn("route_type", response.data["data"])
+        self.assertIn("total_distance", response.data["data"])
+        self.assertIn("estimated_duration", response.data["data"])
         self.assertEqual(response.data["data"]["waypoints"], ["该字段在此接口不可写"])
         self.assertEqual(response.data["data"]["route_type"], ["该字段在此接口不可写"])
         self.assertEqual(response.data["data"]["total_distance"], ["该字段在此接口不可写"])
         self.assertEqual(response.data["data"]["estimated_duration"], ["该字段在此接口不可写"])
+
+    def test_create_should_delete_new_upstream_wayline_when_local_persist_fails(self):
+        with patch("apps.route.views.TenantRouteIndex.objects.create", side_effect=RuntimeError("db boom")):
+            response = self._upload_kmz_route(name="补偿删除 KMZ")
+
+        self.assertEqual(response.status_code, 500, response.data)
+        self.assertEqual(mock_dji_state.waylines, {})
+        self.assertFalse(
+            Route.objects.filter(tenant=self.tenant, name="补偿删除 KMZ").exists(),
+            "Route should not persist when TenantRouteIndex creation fails",
+        )
+
+    def test_create_should_not_persist_route_when_upload_fails(self):
+        kmz_bytes = self._build_test_kmz()
+        with patch(
+            "apps.route.views.DjiGateway.upload_route",
+            side_effect=DjiGatewayUpstreamError("upload failed", status_code=502, data={"code": "E5000"}),
+        ):
+            response = self._upload_kmz_route(name="上传失败 KMZ", kmz_bytes=kmz_bytes)
+
+        self.assertEqual(response.status_code, 500, response.data)
+        self.assertFalse(
+            Route.objects.filter(tenant=self.tenant, name="上传失败 KMZ").exists(),
+            "Route should not remain when upstream upload fails",
+        )
+
+    def test_create_should_cleanup_upstream_and_not_persist_when_log_action_fails(self):
+        kmz_bytes = self._build_test_kmz()
+
+        with patch(
+            "apps.route.views.log_action",
+            side_effect=RuntimeError("log failure"),
+        ):
+            response = self._upload_kmz_route(name="日志失败 KMZ", kmz_bytes=kmz_bytes)
+
+        self.assertEqual(response.status_code, 500, response.data)
+        self.assertEqual(mock_dji_state.waylines, {})
+        self.assertFalse(
+            Route.objects.filter(tenant=self.tenant, name="日志失败 KMZ").exists(),
+            "Route should not persist when log_action fails after upload",
+        )
+
+    def test_put_should_keep_old_index_when_new_upload_fails(self):
+        route = Route.objects.create(tenant=self.tenant, name="旧上游 KMZ")
+        old_wayline = mock_dji_state.create_wayline(name="legacy-wayline")
+        old_download_url = f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline['wayline_id']}/url"
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id=old_wayline["wayline_id"],
+            download_url=old_download_url,
+            is_published=True,
+        )
+        update_kmz_bytes = self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES)
+
+        with patch(
+            "apps.route.views.DjiGateway.upload_route",
+            side_effect=DjiGatewayUpstreamError("upload failed", status_code=502, data={"code": "E5000"}),
+        ) as upload_mock:
+            response = self.client.put(
+                f"/api/v1/routes/{route.id}",
+                {
+                    "name": "上传失败保留",
+                    "kmz_file": SimpleUploadedFile(
+                        "route-updated.kmz",
+                        update_kmz_bytes,
+                        content_type=self.KMZ_CONTENT_TYPE,
+                    ),
+                },
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, 500, response.data)
+        upload_mock.assert_called_once()
+        route_index = TenantRouteIndex.objects.get(route=route)
+        self.assertEqual(route_index.dji_wayline_id, old_wayline["wayline_id"])
+        self.assertEqual(route_index.download_url, old_download_url)
+        self.assertTrue(route_index.is_published)
+        self.assertIn(old_wayline["wayline_id"], mock_dji_state.waylines)
+
+    def test_put_should_delete_new_upstream_wayline_when_index_persist_fails(self):
+        route = Route.objects.create(tenant=self.tenant, name="局部失败 KMZ")
+        old_wayline = mock_dji_state.create_wayline(name="legacy-wayline")
+        old_download_url = f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline['wayline_id']}/url"
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id=old_wayline["wayline_id"],
+            download_url=old_download_url,
+            is_published=True,
+        )
+        new_kmz_bytes = self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES)
+
+        upload_state: dict[str, str] = {}
+
+        def _mock_upload(*, route_name, file_obj):
+            wayline = mock_dji_state.create_wayline(name=route_name, file_name=getattr(file_obj, "name", "route.kmz"))
+            download_url = f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{wayline['wayline_id']}/url"
+            upload_state["wayline_id"] = wayline["wayline_id"]
+            upload_state["download_url"] = download_url
+            return {"dji_wayline_id": wayline["wayline_id"], "download_url": download_url}
+
+        with patch("apps.route.views.DjiGateway.upload_route", side_effect=_mock_upload) as upload_mock:
+            with patch("apps.route.views.TenantRouteIndex.save", side_effect=RuntimeError("db boom")):
+                response = self.client.put(
+                    f"/api/v1/routes/{route.id}",
+                    {
+                        "name": "持久化失败",
+                        "kmz_file": SimpleUploadedFile(
+                            "route-updated.kmz",
+                            new_kmz_bytes,
+                            content_type=self.KMZ_CONTENT_TYPE,
+                        ),
+                    },
+                    format="multipart",
+                )
+
+        self.assertEqual(response.status_code, 500, response.data)
+        self.assertEqual(upload_mock.call_count, 1)
+        self.assertNotIn(upload_state.get("wayline_id"), mock_dji_state.waylines)
+        route_index = TenantRouteIndex.objects.get(route=route)
+        self.assertEqual(route_index.dji_wayline_id, old_wayline["wayline_id"])
+        self.assertEqual(route_index.download_url, old_download_url)
+        self.assertTrue(route_index.is_published)
+
+    def test_put_should_cleanup_upload_and_keep_old_index_when_log_action_fails(self):
+        route = Route.objects.create(tenant=self.tenant, name="旧上游 KMZ")
+        old_wayline = mock_dji_state.create_wayline(name="legacy-wayline")
+        old_download_url = f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline['wayline_id']}/url"
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id=old_wayline["wayline_id"],
+            download_url=old_download_url,
+            is_published=True,
+        )
+        kmz_bytes = self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES)
+
+        upload_state: dict[str, str] = {}
+
+        def _mock_upload(*, route_name, file_obj):
+            wayline = mock_dji_state.create_wayline(name=route_name, file_name=getattr(file_obj, "name", "route.kmz"))
+            download_url = f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{wayline['wayline_id']}/url"
+            upload_state["wayline_id"] = wayline["wayline_id"]
+            upload_state["download_url"] = download_url
+            return {"dji_wayline_id": wayline["wayline_id"], "download_url": download_url}
+
+        with patch("apps.route.views.DjiGateway.upload_route", side_effect=_mock_upload):
+            with patch("apps.route.views.log_action", side_effect=RuntimeError("log failure")):
+                response = self.client.put(
+                    f"/api/v1/routes/{route.id}",
+                    {
+                        "name": "日志失败更新",
+                        "kmz_file": SimpleUploadedFile(
+                            "route-updated.kmz",
+                            kmz_bytes,
+                            content_type=self.KMZ_CONTENT_TYPE,
+                        ),
+                    },
+                    format="multipart",
+                )
+
+        self.assertEqual(response.status_code, 500, response.data)
+        self.assertIn("wayline_id", upload_state)
+        self.assertNotIn(upload_state["wayline_id"], mock_dji_state.waylines)
+        route.refresh_from_db()
+        route_index = TenantRouteIndex.objects.get(route=route)
+        self.assertEqual(route_index.dji_wayline_id, old_wayline["wayline_id"])
+        self.assertEqual(route_index.download_url, old_download_url)
+        self.assertTrue(route_index.is_published)
+        self.assertIn(old_wayline["wayline_id"], mock_dji_state.waylines)
+
+    def test_delete_should_best_effort_remove_current_upstream_wayline(self):
+        route = Route.objects.create(tenant=self.tenant, name="删除 KMZ")
+        wayline = mock_dji_state.create_wayline(name="delete-me")
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id=wayline["wayline_id"],
+            download_url=f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{wayline['wayline_id']}/url",
+            is_published=True,
+        )
+
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(callbacks), 2)
+        self.assertFalse(Route.objects.filter(id=route.id).exists())
+        self.assertIn(wayline["wayline_id"], mock_dji_state.waylines)
+        for callback in callbacks:
+            callback()
+        self.assertNotIn(wayline["wayline_id"], mock_dji_state.waylines)
+
+    def test_delete_should_ignore_upstream_delete_error_and_still_remove_route(self):
+        route = Route.objects.create(tenant=self.tenant, name="忽略删除失败")
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id="mock-wayline-existing",
+            download_url="/api/v1/wayline/workspaces/mock-workspace-001/waylines/mock-wayline-existing/url",
+            is_published=True,
+        )
+
+        with patch(
+            "apps.route.views.DjiGateway.delete_route",
+            side_effect=DjiGatewayUpstreamError("delete failed", status_code=502, data={"code": "E5000"}),
+        ) as delete_mock:
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(Route.objects.filter(id=route.id).exists())
+        delete_mock.assert_called_once_with("mock-wayline-existing")
+
+    def test_delete_should_ignore_log_action_failure_and_still_remove_route(self):
+        route = Route.objects.create(tenant=self.tenant, name="删除日志失败")
+        wayline = mock_dji_state.create_wayline(name="delete-log-fail")
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id=wayline["wayline_id"],
+            download_url=f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{wayline['wayline_id']}/url",
+            is_published=True,
+        )
+
+        with patch("apps.route.views.log_action", side_effect=RuntimeError("log failure")):
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(Route.objects.filter(id=route.id).exists())
+        self.assertNotIn(wayline["wayline_id"], mock_dji_state.waylines)
 
     def test_patch_and_download_endpoints_should_be_removed(self):
         route = Route.objects.create(tenant=self.tenant, name="移除接口检查")
@@ -275,182 +608,6 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
 
         self.assertEqual(patch_response.status_code, 405, patch_response.data)
         self.assertEqual(download_response.status_code, 404, getattr(download_response, "data", download_response.content))
-
-    def test_publish_should_convert_stored_xml_to_kmz_and_mark_published(self):
-        route = Route.objects.create(tenant=self.tenant, name="发布 XML")
-        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
-        self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="publish.xml")
-
-        publish_response = self.client.post(f"/api/v1/routes/{route.id}/publish")
-
-        self.assertEqual(publish_response.status_code, 200, publish_response.data)
-        self.assertTrue(publish_response.data["data"]["is_published"])
-        route_index = TenantRouteIndex.objects.get(route=route)
-        self.assertTrue(route_index.is_published)
-        self.assertTrue(route_index.dji_wayline_id.startswith("mock-wayline-"))
-        self.assertEqual(
-            route_index.download_url,
-            f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{route_index.dji_wayline_id}/url",
-        )
-        uploaded_payload = mock_dji_state.waylines[route_index.dji_wayline_id]
-        self.assertTrue(uploaded_payload["file_name"].endswith(".kmz"))
-
-    def test_publish_should_return_400_when_stored_xml_is_invalid(self):
-        route = Route.objects.create(tenant=self.tenant, name="坏草稿 XML")
-        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
-        self._attach_xml_draft_or_fail(route, xml_bytes=b"<kml><Document>", filename="broken.xml")
-
-        response = self.client.post(f"/api/v1/routes/{route.id}/publish")
-
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["msg"], "当前 XML 草稿无法转换为可发布 KMZ")
-
-    def test_publish_should_return_400_when_upstream_rejects_kmz_format(self):
-        route = Route.objects.create(tenant=self.tenant, name="上游格式错误 XML")
-        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
-        self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="format-error.xml")
-
-        upstream_error = DjiGatewayUpstreamError(
-            "DJI upstream request failed",
-            status_code=400,
-            data={"code": "E0001", "msg": "The file format is incorrect."},
-        )
-
-        with patch("apps.route.views.DjiGateway.upload_route", side_effect=upstream_error):
-            response = self.client.post(f"/api/v1/routes/{route.id}/publish")
-
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["msg"], "当前 XML 草稿不符合 DJI WPML 航线格式")
-
-    def test_publish_should_reject_body_parameters(self):
-        route = Route.objects.create(tenant=self.tenant, name="发布 body 校验")
-        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
-        self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="body-check.xml")
-
-        response = self.client.post(f"/api/v1/routes/{route.id}/publish", {"unexpected": True}, format="json")
-
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertEqual(response.data["code"], "B0001")
-
-    def test_publish_should_replace_old_upstream_wayline_after_success(self):
-        route = Route.objects.create(tenant=self.tenant, name="替换上游 XML")
-        old_wayline_id = mock_dji_state.create_wayline(name="legacy-upstream")["wayline_id"]
-        TenantRouteIndex.objects.create(
-            tenant=self.tenant,
-            route=route,
-            dji_wayline_id=old_wayline_id,
-            download_url=f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline_id}/url",
-            is_published=True,
-        )
-        self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="legacy.xml")
-
-        with self.captureOnCommitCallbacks(execute=True):
-            response = self.client.post(f"/api/v1/routes/{route.id}/publish")
-
-        self.assertEqual(response.status_code, 200, response.data)
-        route_index = TenantRouteIndex.objects.get(route=route)
-        self.assertNotEqual(route_index.dji_wayline_id, old_wayline_id)
-        self.assertTrue(route_index.is_published)
-        self.assertNotIn(old_wayline_id, mock_dji_state.waylines)
-        self.assertEqual(
-            route_index.download_url,
-            f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{route_index.dji_wayline_id}/url",
-        )
-
-    def test_publish_should_persist_upstream_download_url(self):
-        route = Route.objects.create(tenant=self.tenant, name="发布原始下载地址")
-        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
-        self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="sentinel.xml")
-
-        sentinel_url = "/raw/upstream/download/url/that-is-not-derived"
-        upstream_payload = {
-            "dji_wayline_id": "wayline-from-upstream",
-            "download_url": sentinel_url,
-        }
-
-        with patch(
-            "apps.route.views.DjiGateway.upload_route",
-            return_value=upstream_payload,
-        ):
-            response = self.client.post(f"/api/v1/routes/{route.id}/publish")
-
-        self.assertEqual(response.status_code, 200, response.data)
-        route_index = TenantRouteIndex.objects.get(route=route)
-        self.assertEqual(route_index.dji_wayline_id, "wayline-from-upstream")
-        self.assertEqual(route_index.download_url, sentinel_url)
-
-    def test_publish_should_cleanup_new_upload_and_keep_old_wayline_when_post_upload_step_fails(self):
-        route = Route.objects.create(tenant=self.tenant, name="发布补偿 XML")
-        old_wayline_id = mock_dji_state.create_wayline(name="legacy-upstream")["wayline_id"]
-        TenantRouteIndex.objects.create(
-            tenant=self.tenant,
-            route=route,
-            dji_wayline_id=old_wayline_id,
-            download_url=f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline_id}/url",
-            is_published=True,
-        )
-        self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="compensate.xml")
-        observed_wayline_ids = {}
-
-        def _raise_after_upload(*args, **kwargs):
-            observed_wayline_ids["during_log_action"] = set(mock_dji_state.waylines.keys())
-            raise RuntimeError("log failed after upload")
-
-        with patch("apps.route.views.log_action", side_effect=_raise_after_upload):
-            response = self.client.post(f"/api/v1/routes/{route.id}/publish")
-
-        self.assertEqual(response.status_code, 500, response.data)
-        self.assertIn("during_log_action", observed_wayline_ids)
-        self.assertIn(old_wayline_id, observed_wayline_ids["during_log_action"])
-        self.assertEqual(len(observed_wayline_ids["during_log_action"]), 2)
-
-        route_index = TenantRouteIndex.objects.get(route=route)
-        self.assertEqual(route_index.dji_wayline_id, old_wayline_id)
-        self.assertEqual(
-            route_index.download_url,
-            f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline_id}/url",
-        )
-        self.assertTrue(route_index.is_published)
-        self.assertIn(old_wayline_id, mock_dji_state.waylines)
-        self.assertEqual(set(mock_dji_state.waylines.keys()), {old_wayline_id})
-
-    def test_publish_should_succeed_when_old_wayline_cleanup_fails_after_commit(self):
-        route = Route.objects.create(tenant=self.tenant, name="发布清理失败 XML")
-        old_wayline_id = mock_dji_state.create_wayline(name="legacy-upstream")["wayline_id"]
-        TenantRouteIndex.objects.create(
-            tenant=self.tenant,
-            route=route,
-            dji_wayline_id=old_wayline_id,
-            is_published=True,
-        )
-        self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="cleanup-failure.xml")
-
-        def _raise_delete_failure(*args, **kwargs):
-            raise DjiGatewayUpstreamError("delete failed", status_code=500)
-
-        with patch("apps.route.views.DjiGateway.delete_route", side_effect=_raise_delete_failure):
-            with self.captureOnCommitCallbacks(execute=True):
-                response = self.client.post(f"/api/v1/routes/{route.id}/publish")
-
-        self.assertEqual(response.status_code, 200, response.data)
-        route_index = TenantRouteIndex.objects.get(route=route)
-        self.assertNotEqual(route_index.dji_wayline_id, old_wayline_id)
-        self.assertTrue(route_index.is_published)
-        self.assertIn(route_index.dji_wayline_id, mock_dji_state.waylines)
-        self.assertIn(old_wayline_id, mock_dji_state.waylines)
-
-    def test_delete_should_remove_local_xml_file(self):
-        route = Route.objects.create(tenant=self.tenant, name="删除 XML 航线")
-        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
-        route = self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="delete.xml")
-        xml_name = route.xml_file.name
-
-        response = self.client.delete(f"/api/v1/routes/{route.id}")
-
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertFalse(default_storage.exists(xml_name))
 
     def test_delete_should_reject_route_referenced_by_paused_mission(self):
         route = Route.objects.create(tenant=self.tenant, name="暂停任务航线")
@@ -488,10 +645,47 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertTrue(Route.objects.filter(id=route.id).exists())
 
+    def test_delete_should_ignore_soft_deleted_mission_blocker(self):
+        route = Route.objects.create(tenant=self.tenant, name="已删除任务航线")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
+        pilot_user = User.objects.create_user(username="route_deleted_pilot", password="pass1234", status=1)
+        ensure_staff_profile(pilot_user, name="已删除任务飞手", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="ROUTE-DELETED-DRONE-001",
+            name="已删除任务无人机",
+            model="M30",
+            device_sn="ROUTE-DELETED-SN-001",
+        )
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="已删除的暂停任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            drone_name=drone.name,
+            pilot=pilot_member,
+            pilot_name="已删除任务飞手",
+            status=MissionStatus.PAUSED,
+            dji_job_id="",
+            is_deleted=True,
+            deleted_at=timezone.now(),
+        )
+
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(Route.objects.filter(id=route.id).exists())
+
     def test_delete_should_cleanup_legacy_waypoint_rows(self):
         route = Route.objects.create(tenant=self.tenant, name="历史航点航线")
         TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
-        route = self._attach_xml_draft_or_fail(route, xml_bytes=self.VALID_XML_BYTES, filename="legacy-waypoint.xml")
         Waypoint.objects.create(
             route=route,
             sequence=1,
@@ -505,8 +699,6 @@ class RouteXmlSourceApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(Route.objects.filter(id=route.id).exists())
         self.assertFalse(Waypoint.objects.filter(route_id=route.id).exists())
-
-
 class RouteScopeTests(TestCase):
     def setUp(self):
         self.client = APIClient()

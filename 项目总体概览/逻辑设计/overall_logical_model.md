@@ -323,13 +323,12 @@ PostgreSQL
 | id | bigserial | PK | 航线 ID |
 | tenant_id | bigint | NOT NULL, FK -> tenants.id | 所属租户 |
 | name | varchar(100) | NOT NULL | 航线名称 |
-| xml_file | varchar(100) | NOT NULL, DEFAULT '' | 本地 XML 草稿路径（`FileField`） |
 | created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
 | updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
 
 说明：
 1. 当前设计不再使用 `Route.status`。
-2. `Route` 是公开聚合根，当前唯一编辑输入是 `xml_file`。
+2. `Route` 是公开聚合根，写入链路只接受 `kmz_file` 直传并立即同步 DJI。
 3. `waypoints` 表仅保留为历史内部表，不参与当前正常的 route 创建/更新写链路。
 
 ---
@@ -377,7 +376,7 @@ PostgreSQL
 
 说明：
 1. 飞手字段不是独立 `pilot` 表，而是 `tenant_members` 中拥有 `pilot_operator` 角色的成员。
-2. 创建 mission 时要求 route 已发布到 DJI；本地 `start / pause / resume / complete / fail` 动作接口已删除。
+2. 创建 mission 时要求 route 已绑定最近一次成功上传的 DJI 航线；不再要求 `drone` 处于 `ENABLED`；本地 `start / pause / resume / complete / fail` 动作接口已删除。
 
 ---
 
@@ -474,7 +473,8 @@ PostgreSQL
 | tenant_id | bigint | NOT NULL, FK -> tenants.id | 所属租户 |
 | route_id | bigint | NOT NULL, UNIQUE, FK -> routes.id | 业务航线 |
 | dji_wayline_id | varchar(128) | NOT NULL, DEFAULT '' | DJI 航线 ID |
-| is_published | boolean | NOT NULL, DEFAULT false | 当前本地草稿是否已发布 |
+| download_url | varchar(500) | NOT NULL, DEFAULT '' | 最近一次成功上传返回的 DJI 航线下载地址 |
+| is_published | boolean | NOT NULL, DEFAULT false | 当前 route 是否已绑定最近一次成功上传的 DJI 航线 |
 | created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
 | updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
 

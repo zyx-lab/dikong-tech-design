@@ -171,6 +171,17 @@ class DjiGateway:
                 return download_url
         raise DjiGatewayUpstreamError("未获取到航线下载地址", status_code=502, data=payload)
 
+    def download_route_file(self, download_url: str) -> GatewayResponse:
+        normalized_url = self._string_value(download_url)
+        if not normalized_url:
+            raise DjiGatewayUpstreamError("download_url 不能为空", status_code=400)
+        is_absolute = normalized_url.startswith("http://") or normalized_url.startswith("https://")
+        return self._request_binary(
+            "GET",
+            self._absolute_url(normalized_url),
+            authenticate=not is_absolute,
+        )
+
     def delete_route(self, dji_wayline_id: str):
         workspace_id = self._workspace_id()
         return self._request_json(
@@ -341,11 +352,19 @@ class DjiGateway:
         except (TypeError, ValueError) as exc:
             raise DjiGatewayConfigurationError("DJI_UPSTREAM_LOGIN_FLAG 配置无效", status_code=500) from exc
 
-    def _headers(self, *, content_type: str | None = None, auth_token: str | None = None) -> dict[str, str]:
+    def _headers(
+        self,
+        *,
+        content_type: str | None = None,
+        auth_token: str | None = None,
+        accept: str | None = "application/json",
+    ) -> dict[str, str]:
         if not self.base_url:
             raise DjiGatewayConfigurationError("DJI_UPSTREAM_BASE_URL 未配置", status_code=500)
 
-        headers = {"Accept": "application/json"}
+        headers: dict[str, str] = {}
+        if accept:
+            headers["Accept"] = accept
         if auth_token:
             headers["x-auth-token"] = auth_token
         if content_type:
@@ -403,6 +422,27 @@ class DjiGateway:
 
         return items
 
+    def _request_binary(
+        self,
+        method: str,
+        path: str,
+        *,
+        data: bytes | None = None,
+        follow_redirects: bool = True,
+        authenticate: bool = True,
+    ) -> GatewayResponse:
+        auth_token = None
+        if authenticate:
+            auth_token = self._ensure_authenticated().access_token
+        headers = self._headers(auth_token=auth_token, accept="*/*")
+        try:
+            return self._request_raw(method, path, data=data, headers=headers, follow_redirects=follow_redirects)
+        except DjiGatewayUpstreamError as exc:
+            if not authenticate or not self._is_auth_error(exc):
+                raise
+            headers = self._headers(auth_token=self._reauthenticate().access_token, accept="*/*")
+            return self._request_raw(method, path, data=data, headers=headers, follow_redirects=follow_redirects)
+
     def _request_multipart(self, method: str, path: str, *, fields: dict[str, str], files: dict[str, tuple[str, bytes]]) -> GatewayResponse:
         boundary = f"----DjiBoundary{uuid.uuid4().hex}"
         body = bytearray()
@@ -436,10 +476,7 @@ class DjiGateway:
             return self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
 
     def _request(self, method: str, path: str, *, data: bytes | None, headers: dict[str, str], follow_redirects: bool) -> GatewayResponse:
-        if path.startswith("http://") or path.startswith("https://"):
-            url = path
-        else:
-            url = f"{self.base_url}{path}"
+        url = self._absolute_url(path)
         request = Request(url=url, data=data, headers=headers, method=method)
         opener = None if follow_redirects else build_opener(_NoRedirectHandler())
         try:
@@ -452,6 +489,23 @@ class DjiGateway:
                     status_code=response.status,
                     headers=dict(response.headers.items()),
                     data=self._extract_data(payload),
+                )
+        except HTTPError as exc:
+            payload = self._parse_body(exc.read())
+            raise DjiGatewayUpstreamError("DJI upstream request failed", status_code=exc.code, data=payload) from exc
+        except URLError as exc:
+            raise DjiGatewayUpstreamError("DJI upstream unreachable", status_code=502) from exc
+
+    def _request_raw(self, method: str, path: str, *, data: bytes | None, headers: dict[str, str], follow_redirects: bool) -> GatewayResponse:
+        request = Request(url=self._absolute_url(path), data=data, headers=headers, method=method)
+        opener = None if follow_redirects else build_opener(_NoRedirectHandler())
+        try:
+            open_fn = urlopen if opener is None else opener.open
+            with open_fn(request, timeout=self.timeout) as response:
+                return GatewayResponse(
+                    status_code=response.status,
+                    headers=dict(response.headers.items()),
+                    data=response.read(),
                 )
         except HTTPError as exc:
             payload = self._parse_body(exc.read())
@@ -586,6 +640,11 @@ class DjiGateway:
             if url:
                 return url
         return ""
+
+    def _absolute_url(self, path: str) -> str:
+        if path.startswith("http://") or path.startswith("https://"):
+            return path
+        return f"{self.base_url}/{path.lstrip('/')}"
 
     @staticmethod
     def _with_query(path: str, query: dict) -> str:

@@ -268,7 +268,6 @@ Table routes [note: '租户内航线台账'] {
   id bigserial [pk, note: 'id 航线ID']
   tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
   name varchar(100) [not null, note: 'name 航线名称']
-  xml_file varchar(100) [not null, default: '', note: 'xml_file 本地 XML 草稿路径']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 }
@@ -400,7 +399,8 @@ Table tenant_route_indexes [note: 'route 与 DJI 航线的最小发布映射'] {
   tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
   route_id bigint [not null, unique, ref: > routes.id, note: 'route_id 业务航线']
   dji_wayline_id varchar(128) [not null, default: '', note: 'dji_wayline_id DJI 航线 ID']
-  is_published boolean [not null, default: false, note: 'is_published 当前本地草稿是否已发布']
+  download_url varchar(500) [not null, default: '', note: 'download_url 最近一次成功上传返回的 DJI 航线下载地址']
+  is_published boolean [not null, default: false, note: 'is_published 当前 route 是否已绑定最近一次成功上传的 DJI 航线']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
   updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
 

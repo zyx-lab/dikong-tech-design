@@ -2556,7 +2556,33 @@ MediaMTX 轮询观测：
 | ---- | ------ | ---- | ------------------------------------- |
 | code | string | 否   | Business code, use 00000 for success. |
 | msg  | string | 否   | The response message.                 |
-| data | object | 否   | The response data.                    |
+| data | object | 否   | 上传成功后的航线信息。                |
+
+`data` 字段结构（线上实测）：
+
+| 字段         | 类型   | 必填 | 说明                                                          |
+| ------------ | ------ | ---- | ------------------------------------------------------------- |
+| name         | string | 否   | 航线名称                                                      |
+| wayline_id   | string | 否   | DJI 航线 ID                                                   |
+| workspace_id | string | 否   | 所属 DJI workspace ID                                         |
+| download_url | string | 否   | 航线下载地址，通常为相对路径，需拼接 DJI 服务域名后访问       |
+
+业务侧会持久化 `download_url`，并通过 `/api/v1/routes/{id}/kmz` 代理当前航线下载。
+
+线上真实返回示例：
+
+```json
+{
+  "code": "00000",
+  "msg": "success",
+  "data": {
+    "name": "test_test",
+    "wayline_id": "647eb40f-2ad2-48e1-bb24-5cf175e41f88",
+    "workspace_id": "e3dea0f5-37f2-4d79-ae58-490af3228069",
+    "download_url": "/api/v1/wayline/workspaces/e3dea0f5-37f2-4d79-ae58-490af3228069/waylines/647eb40f-2ad2-48e1-bb24-5cf175e41f88/url"
+  }
+}
+```
 
 #### 收藏航线（批量）
 

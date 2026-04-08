@@ -2,16 +2,27 @@
 
 import json
 import uuid
+from io import BytesIO
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from zipfile import ZipFile
 
 from apps.access.models import EmploymentStatus, ScopeType
 from apps.access.test_live_base import LiveDjiGatewayApiTestCase, User
 from apps.access.test_support import ensure_staff_profile, ensure_tenant_role_binding, grant_role_permissions
 
 
-class LiveRouteXmlSourceApiTests(LiveDjiGatewayApiTestCase):
-    VALID_XML_BYTES = b'<?xml version="1.0" encoding="UTF-8"?><kml><Document><name>live-route</name></Document></kml>'
+def build_test_kmz(*, template_bytes: bytes = b"<kml/>", wpml_bytes: bytes = None) -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("template.kml", template_bytes)
+        archive.writestr("waylines.wpml", wpml_bytes if wpml_bytes is not None else template_bytes)
+    return buffer.getvalue()
+
+
+class LiveRouteKmzApiTests(LiveDjiGatewayApiTestCase):
+    VALID_KMZ_BYTES = build_test_kmz()
+    KMZ_CONTENT_TYPE = "application/vnd.google-earth.kmz"
 
     def setUp(self):
         super().setUp()
@@ -68,16 +79,30 @@ class LiveRouteXmlSourceApiTests(LiveDjiGatewayApiTestCase):
         except HTTPError as exc:
             return exc.code, dict(exc.headers.items()) if exc.headers else {}, exc.read()
 
-    def test_route_xml_upload_and_readback_should_follow_http_contract(self):
+    @staticmethod
+    def _response_body(response):
+        if hasattr(response, "streaming_content"):
+            return b"".join(response.streaming_content)
+        if hasattr(response, "_body"):
+            return response._body
+        return response.content
+
+    def test_route_kmz_upload_and_download_should_follow_http_contract(self):
         create_status, _, create_raw = self._post_multipart(
             "/api/v1/routes",
             fields={"name": "实时 XML 航线"},
-            files={"xml_file": ("live-route.xml", self.VALID_XML_BYTES, "application/xml")},
+            files={
+                "kmz_file": (
+                    "live-route.kmz",
+                    self.VALID_KMZ_BYTES,
+                    self.KMZ_CONTENT_TYPE,
+                )
+            },
         )
 
         self.assertEqual(create_status, 201, create_raw.decode("utf-8", errors="ignore"))
         create_data = json.loads(create_raw.decode("utf-8"))["data"]
-        self.assertFalse(create_data["is_published"])
+        self.assertTrue(create_data["is_published"])
         route_id = create_data["id"]
 
         detail_response = self.client.get(f"/api/v1/routes/{route_id}")
@@ -86,15 +111,24 @@ class LiveRouteXmlSourceApiTests(LiveDjiGatewayApiTestCase):
         self.assertNotIn("waypoints", detail_data)
 
         xml_response = self.client.get(f"/api/v1/routes/{route_id}/xml")
-        self.assertEqual(xml_response.status_code, 200)
-        self.assertIn("application/xml", xml_response.headers.get("Content-Type", ""))
-        self.assertEqual(xml_response.text.encode("utf-8"), self.VALID_XML_BYTES)
+        self.assertEqual(xml_response.status_code, 404)
 
-    def test_route_publish_should_follow_http_contract(self):
+        kmz_response = self.client.get(f"/api/v1/routes/{route_id}/kmz")
+        self.assertEqual(kmz_response.status_code, 200)
+        self.assertIn("application/vnd.google-earth.kmz", kmz_response.headers.get("Content-Type", ""))
+        self.assertEqual(self._response_body(kmz_response), b"mock-kmz-binary")
+
+    def test_route_publish_endpoint_should_be_unmounted(self):
         create_status, _, create_raw = self._post_multipart(
             "/api/v1/routes",
             fields={"name": "实时发布航线"},
-            files={"xml_file": ("live-publish.xml", self.VALID_XML_BYTES, "application/xml")},
+            files={
+                "kmz_file": (
+                    "live-publish.kmz",
+                    self.VALID_KMZ_BYTES,
+                    self.KMZ_CONTENT_TYPE,
+                )
+            },
         )
 
         self.assertEqual(create_status, 201, create_raw.decode("utf-8", errors="ignore"))
@@ -102,5 +136,4 @@ class LiveRouteXmlSourceApiTests(LiveDjiGatewayApiTestCase):
 
         publish_response = self.client.post(f"/api/v1/routes/{route_id}/publish")
 
-        self.assertEqual(publish_response.status_code, 200, publish_response.text)
-        self.assertTrue(publish_response.json()["data"]["is_published"])
+        self.assertEqual(publish_response.status_code, 404, publish_response.text)

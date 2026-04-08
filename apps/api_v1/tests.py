@@ -91,7 +91,7 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("/api/v1/drones/available", paths)
         self.assertIn("/api/v1/drones/{id}/live/capacity", paths)
         self.assertIn("/api/v1/drones/{id}/live/start", paths)
-        self.assertIn("/api/v1/routes/{id}/xml", paths)
+        self.assertIn("/api/v1/routes/{id}/kmz", paths)
         self.assertIn("/api/v1/missions/{id}/cancel", paths)
         self.assertIn("/api/v1/media-files/{id}/download", paths)
         self.assertIn("/api/v1/drone-assignments/{id}/cancel", paths)
@@ -108,6 +108,8 @@ class OpenApiDocsTests(TestCase):
         self.assertNotIn("/api/v1/routes/{id}/enable", paths)
         self.assertNotIn("/api/v1/routes/{id}/disable", paths)
         self.assertNotIn("/api/v1/routes/{id}/download", paths)
+        self.assertNotIn("/api/v1/routes/{id}/publish", paths)
+        self.assertNotIn("/api/v1/routes/{id}/xml", paths)
         self.assertNotIn("/api/v1/missions/{id}/start", paths)
         self.assertNotIn("/api/v1/missions/{id}/pause", paths)
         self.assertNotIn("/api/v1/missions/{id}/resume", paths)
@@ -118,15 +120,16 @@ class OpenApiDocsTests(TestCase):
         self.assertNotIn("post", paths["/api/v1/media-files"])
         self.assertNotIn("put", paths["/api/v1/media-files/{id}"])
         self.assertNotIn("patch", paths["/api/v1/media-files/{id}"])
-        self.assertNotIn("delete", paths["/api/v1/media-files/{id}"])
 
-    def test_business_schema_should_lock_route_xml_only_write_contract(self):
+    def test_business_schema_should_lock_route_kmz_only_write_contract(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)
         schema = response.json()
-        self.assertIn("/api/v1/routes/{id}/xml", schema["paths"])
+        self.assertIn("/api/v1/routes/{id}/kmz", schema["paths"])
         self.assertNotIn("/api/v1/routes/{id}/download", schema["paths"])
         self.assertNotIn("patch", schema["paths"]["/api/v1/routes/{id}"])
+        self.assertNotIn("/api/v1/routes/{id}/publish", schema["paths"])
+        self.assertNotIn("/api/v1/routes/{id}/xml", schema["paths"])
         create_schema_name, create_schema = self._resolve_route_write_schema(
             schema,
             path="/api/v1/routes",
@@ -140,8 +143,8 @@ class OpenApiDocsTests(TestCase):
 
         self.assertEqual(create_schema_name, "RouteCreate")
         self.assertEqual(update_schema_name, "RouteUpdate")
-        self.assertEqual(set(create_schema.get("properties", {}).keys()), {"name", "xml_file"})
-        self.assertEqual(set(update_schema.get("properties", {}).keys()), {"name", "xml_file"})
+        self.assertEqual(set(create_schema.get("properties", {}).keys()), {"name", "kmz_file"})
+        self.assertEqual(set(update_schema.get("properties", {}).keys()), {"name", "kmz_file"})
         self.assertNotIn("PatchedRouteUpdate", schema["components"]["schemas"])
         for removed_field in ("waypoints", "description", "flight_height", "speed", "start_point"):
             self.assertNotIn(removed_field, create_schema.get("properties", {}))
@@ -172,13 +175,13 @@ class OpenApiDocsTests(TestCase):
             "/api/v1/routes": {"get", "post"},
             "/api/v1/routes/{id}": {"get", "put", "delete"},
             "/api/v1/missions": {"get", "post"},
-            "/api/v1/missions/{id}": {"get", "put", "patch"},
+            "/api/v1/missions/{id}": {"get", "put", "patch", "delete"},
             "/api/v1/flight-records": {"get", "post"},
             "/api/v1/flight-records/{id}": {"get", "put", "patch"},
             "/api/v1/drone-assignments": {"get", "post"},
             "/api/v1/drone-assignments/{id}": {"get"},
             "/api/v1/media-files": {"get"},
-            "/api/v1/media-files/{id}": {"get"},
+            "/api/v1/media-files/{id}": {"get", "delete"},
         }
         for path, methods in expected_methods.items():
             self.assertEqual(set(schema["paths"][path].keys()), methods)
@@ -186,12 +189,13 @@ class OpenApiDocsTests(TestCase):
         for path, method in (
             ("/api/v1/drones/{id}", "delete"),
             ("/api/v1/routes/{id}", "delete"),
-            ("/api/v1/routes/{id}/publish", "post"),
-            ("/api/v1/routes/{id}/xml", "get"),
+            ("/api/v1/routes/{id}/kmz", "get"),
+            ("/api/v1/missions/{id}", "delete"),
             ("/api/v1/missions/{id}/cancel", "post"),
             ("/api/v1/flight-records/{id}/complete", "post"),
             ("/api/v1/flight-records/{id}/abort", "post"),
             ("/api/v1/drone-assignments/{id}/cancel", "post"),
+            ("/api/v1/media-files/{id}", "delete"),
             ("/api/v1/media-files/{id}/download", "get"),
         ):
             self.assertNotIn("requestBody", self._operation(schema, path=path, method=method))
@@ -218,13 +222,13 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/routes/{id}", "get"): {"200", "401", "403", "404", "500"},
             ("/api/v1/routes/{id}", "put"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/routes/{id}", "delete"): {"200", "400", "401", "403", "404", "500"},
-            ("/api/v1/routes/{id}/publish", "post"): {"200", "400", "401", "403", "404", "500"},
-            ("/api/v1/routes/{id}/xml", "get"): {"200", "401", "403", "404", "500"},
+            ("/api/v1/routes/{id}/kmz", "get"): {"200", "401", "403", "404", "500"},
             ("/api/v1/missions", "get"): {"200", "401", "403", "500"},
             ("/api/v1/missions", "post"): {"201", "400", "401", "403", "500"},
             ("/api/v1/missions/{id}", "get"): {"200", "401", "403", "404", "500"},
             ("/api/v1/missions/{id}", "put"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/missions/{id}", "patch"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/missions/{id}", "delete"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/missions/{id}/cancel", "post"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/drone-assignments", "get"): {"200", "401", "403", "500"},
             ("/api/v1/drone-assignments", "post"): {"201", "400", "401", "403", "409", "500"},
@@ -232,6 +236,7 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/drone-assignments/{id}/cancel", "post"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/media-files", "get"): {"200", "401", "403", "500"},
             ("/api/v1/media-files/{id}", "get"): {"200", "401", "403", "404", "500"},
+            ("/api/v1/media-files/{id}", "delete"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/media-files/{id}/download", "get"): {"302", "401", "403", "404", "500"},
         }
 

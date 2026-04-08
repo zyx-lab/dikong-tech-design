@@ -351,21 +351,20 @@ PostgreSQL
 
 ## 15. routes（航线表）
 
-**说明**：租户内 route 草稿主表
+**说明**：租户内 route 主表
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 航线 ID |
 | tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
 | name | varchar(100) | NOT NULL | - | 航线名称 |
-| xml_file | varchar(100) | NOT NULL | '' | 本地 XML 草稿路径 |
 | created_at | timestamp | - | now() | 创建时间 |
 | updated_at | timestamp | - | now() | 更新时间 |
 
 **业务规则**：
 1. 当前设计不再使用 `Route.status`。
-2. `Route` 是公开聚合根，当前唯一编辑输入是 `xml_file`。
-3. 删除航线时，若存在 `PENDING / RUNNING / PAUSED` 任务引用，则拒绝删除；否则删除 route、XML 文件和残留 waypoint 行。
+2. `Route` 是公开聚合根，写入链路只接受 `kmz_file` 直传并立即同步 DJI。
+3. 删除航线时，若存在 `PENDING / RUNNING / PAUSED` 任务引用，则拒绝删除；否则删除 route 和残留 waypoint 行。
 
 ---
 
@@ -430,7 +429,7 @@ PostgreSQL
 
 **业务规则**：
 1. 创建任务时 `route`、`drone`、`pilot` 必须属于当前租户。
-2. 创建任务时 `route` 必须已发布到 DJI；`drone` 必须为 `ENABLED`。
+2. 创建任务时 `route` 必须已绑定最近一次成功上传的 DJI 航线；不再要求 `drone` 处于 `ENABLED`。
 3. `pilot` 必须是当前租户下的 `ACTIVE TenantMember`，其账号需存在在职 `staff_profile`，且成员已绑定 `pilot_operator`。
 4. `status` 不可通过 PATCH 直接修改；本地 `start / pause / resume / complete / fail` 动作接口已删除。
 
@@ -548,7 +547,8 @@ PostgreSQL
 | tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
 | route_id | bigint | FK, NOT NULL, UNIQUE | - | 对应 route |
 | dji_wayline_id | varchar(128) | NOT NULL | '' | DJI 航线 ID |
-| is_published | boolean | NOT NULL | false | 当前本地草稿是否已发布 |
+| download_url | varchar(500) | NOT NULL | '' | 最近一次成功上传返回的 DJI 航线下载地址 |
+| is_published | boolean | NOT NULL | false | 当前 route 是否已绑定最近一次成功上传的 DJI 航线 |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 

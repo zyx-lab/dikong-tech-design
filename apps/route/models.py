@@ -11,7 +11,6 @@ class Route(models.Model):
         verbose_name="租户",
     )
     name = models.CharField("航线名称", max_length=100)
-    xml_file = models.FileField("航线 XML 文件", upload_to="routes/xml", blank=True, default="")
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
     updated_at = models.DateTimeField("更新时间", auto_now=True)
 

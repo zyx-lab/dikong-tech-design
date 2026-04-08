@@ -351,8 +351,8 @@ def download_wayline_binary(request, filename: str):
     if request.method != "GET":
         raise Http404
     return HttpResponse(
-        f"mock wayline binary for {filename}\n",
-        content_type="application/octet-stream",
+        b"mock-kmz-binary",
+        content_type="application/vnd.google-earth.kmz",
     )
 
 

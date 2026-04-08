@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from io import StringIO
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
@@ -155,6 +156,50 @@ class DjiGatewayPaginationTests(TestCase):
 
         self.assertEqual(exc_info.exception.status_code, 502)
         self.assertEqual(exc_info.exception.data, upstream_payload)
+
+    def test_download_route_file_should_expand_relative_download_url(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        upstream_response = GatewayResponse(
+            status_code=200,
+            headers={"Content-Type": "application/vnd.google-earth.kmz"},
+            data=b"mock-kmz-binary",
+        )
+
+        with patch.object(gateway, "_ensure_authenticated", return_value=SimpleNamespace(access_token="mock-token")):
+            with patch.object(gateway, "_request_raw", return_value=upstream_response) as request_mock:
+                response = gateway.download_route_file("/downloads/route-001.kmz")
+
+        self.assertEqual(response, upstream_response)
+        self.assertEqual(request_mock.call_args.args[1], "http://mock-dji/downloads/route-001.kmz")
+        self.assertEqual(request_mock.call_args.kwargs["data"], None)
+        self.assertTrue(request_mock.call_args.kwargs["follow_redirects"])
+        self.assertEqual(request_mock.call_args.kwargs["headers"]["x-auth-token"], "mock-token")
+        self.assertEqual(request_mock.call_args.kwargs["headers"]["Accept"], "*/*")
+
+    def test_download_route_file_should_not_authenticate_absolute_download_url(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        upstream_response = GatewayResponse(
+            status_code=200,
+            headers={"Content-Type": "application/vnd.google-earth.kmz"},
+            data=b"mock-kmz-binary",
+        )
+
+        with patch.object(gateway, "_ensure_authenticated") as auth_mock:
+            with patch.object(gateway, "_request_raw", return_value=upstream_response) as request_mock:
+                response = gateway.download_route_file("https://download.example/route-001.kmz")
+
+        self.assertEqual(response, upstream_response)
+        auth_mock.assert_not_called()
+        self.assertEqual(request_mock.call_args.args[1], "https://download.example/route-001.kmz")
+        self.assertEqual(request_mock.call_args.kwargs["headers"], {"Accept": "*/*"})
+
+    def test_download_route_file_should_reject_blank_url(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+
+        with self.assertRaises(DjiGatewayUpstreamError) as exc_info:
+            gateway.download_route_file("   ")
+
+        self.assertEqual(exc_info.exception.status_code, 400)
 
 @override_settings(
     DJI_UPSTREAM_USERNAME="mock-admin",
