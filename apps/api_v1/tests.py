@@ -92,7 +92,7 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("/api/v1/drones/{id}/live/capacity", paths)
         self.assertIn("/api/v1/drones/{id}/live/start", paths)
         self.assertIn("/api/v1/routes/{id}/kmz", paths)
-        self.assertIn("/api/v1/missions/{id}/cancel", paths)
+        self.assertNotIn("/api/v1/missions/{id}/cancel", paths)
         self.assertIn("/api/v1/media-files/{id}/download", paths)
         self.assertIn("/api/v1/drone-assignments/{id}/cancel", paths)
 
@@ -191,7 +191,6 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/routes/{id}", "delete"),
             ("/api/v1/routes/{id}/kmz", "get"),
             ("/api/v1/missions/{id}", "delete"),
-            ("/api/v1/missions/{id}/cancel", "post"),
             ("/api/v1/flight-records/{id}/complete", "post"),
             ("/api/v1/flight-records/{id}/abort", "post"),
             ("/api/v1/drone-assignments/{id}/cancel", "post"),
@@ -229,7 +228,6 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/missions/{id}", "put"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/missions/{id}", "patch"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/missions/{id}", "delete"): {"200", "400", "401", "403", "404", "500"},
-            ("/api/v1/missions/{id}/cancel", "post"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/drone-assignments", "get"): {"200", "401", "403", "500"},
             ("/api/v1/drone-assignments", "post"): {"201", "400", "401", "403", "409", "500"},
             ("/api/v1/drone-assignments/{id}", "get"): {"200", "401", "403", "404", "500"},

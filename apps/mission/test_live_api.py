@@ -9,7 +9,6 @@ from apps.access.test_support import (
     grant_role_permissions,
 )
 from apps.dji_bff.models import TenantRouteIndex
-from apps.dji_mock.state import mock_dji_state
 from apps.drone.models import Drone
 from apps.route.models import Route
 
@@ -60,7 +59,7 @@ class LiveMissionApiTests(LiveDjiGatewayApiTestCase):
 
         self.login(username="mission_live_dispatcher", password="pass1234", tenant_code=self.tenant.code)
 
-    def test_create_and_cancel_should_follow_live_http_contract(self):
+    def test_create_and_delete_should_follow_live_http_contract(self):
         create_response = self.client.post(
             "/api/v1/missions",
             {
@@ -68,19 +67,16 @@ class LiveMissionApiTests(LiveDjiGatewayApiTestCase):
                 "route": self.route.id,
                 "drone": self.drone.id,
                 "pilot": self.pilot_member.id,
-                "dock_sn": "dock-live-001",
             },
             format="json",
         )
         self.assertEqual(create_response.status_code, 201)
         mission_id = create_response.json()["data"]["id"]
-        dji_job_id = create_response.json()["data"]["dji_job_id"]
-        self.assertEqual(mock_dji_state.jobs[dji_job_id]["file_id"], "mission-wayline")
+        self.assertEqual(create_response.json()["data"]["status"], 1)
 
         cancel_response = self.client.post(f"/api/v1/missions/{mission_id}/cancel")
-        self.assertEqual(cancel_response.status_code, 200)
-        self.assertEqual(cancel_response.json()["data"]["status"], 4)
-        self.assertEqual(mock_dji_state.jobs[dji_job_id]["status"], "CANCELED")
+        self.assertEqual(cancel_response.status_code, 404)
 
-        removed_start_response = self.client.post(f"/api/v1/missions/{mission_id}/start")
-        self.assertEqual(removed_start_response.status_code, 404)
+        delete_response = self.client.delete(f"/api/v1/missions/{mission_id}")
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertTrue(delete_response.json()["data"]["deleted"])

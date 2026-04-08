@@ -3,7 +3,7 @@ import time
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
-from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes, sync_mission_indexes
+from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes
 
 
 class Command(BaseCommand):
@@ -13,7 +13,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--once",
             action="store_true",
-            help="只执行一轮设备/任务/媒体同步，然后退出。",
+            help="只执行一轮设备/媒体同步，然后退出。",
         )
         parser.add_argument(
             "--interval-seconds",
@@ -58,7 +58,7 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.SUCCESS(
                     f"[cycle {cycle}] done at {finished_at.isoformat()} "
-                    f"devices={summary['devices']} missions={summary['missions']} media={summary['media']}"
+                    f"devices={summary['devices']} media={summary['media']}"
                 )
             )
 
@@ -71,6 +71,5 @@ class Command(BaseCommand):
     def run_sync_cycle():
         return {
             "devices": sync_device_indexes(),
-            "missions": sync_mission_indexes(),
             "media": sync_media_indexes(),
         }

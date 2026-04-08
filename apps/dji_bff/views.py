@@ -11,7 +11,7 @@ from apps.dji_bff.services import (
     handle_media_group_upload_callback,
     handle_media_upload_callback,
 )
-from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes, sync_mission_indexes
+from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes
 
 
 def _success(data=None, *, status: int = 200):
@@ -87,11 +87,6 @@ def _run_sync(request, sync_func):
 @csrf_exempt
 def sync_devices(request):
     return _run_sync(request, sync_device_indexes)
-
-
-@csrf_exempt
-def sync_missions(request):
-    return _run_sync(request, sync_mission_indexes)
 
 
 @csrf_exempt

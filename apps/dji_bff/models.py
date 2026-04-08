@@ -61,23 +61,6 @@ class TenantRouteIndex(models.Model):
         ]
 
 
-class TenantMissionIndex(models.Model):
-    tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="dji_mission_indexes")
-    mission = models.OneToOneField("mission.Mission", on_delete=models.CASCADE, related_name="dji_index")
-    dji_job_id = models.CharField("DJI 任务 ID", max_length=128)
-    execution_status = models.CharField("执行状态", max_length=64, blank=True, default="")
-    sync_status = models.CharField("同步状态", max_length=32, choices=SyncStatus.choices, default=SyncStatus.PENDING)
-    last_sync_at = models.DateTimeField("最近同步时间", null=True, blank=True)
-    error_msg = models.CharField("同步错误", max_length=255, blank=True, default="")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "tenant_mission_indexes"
-        ordering = ["-id"]
-        constraints = [models.UniqueConstraint(fields=["tenant", "dji_job_id"], name="uniq_tenant_dji_job_id")]
-
-
 class TenantMediaIndex(models.Model):
     tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="dji_media_indexes")
     media_file = models.OneToOneField("media_file.MediaFile", on_delete=models.CASCADE, related_name="dji_index")

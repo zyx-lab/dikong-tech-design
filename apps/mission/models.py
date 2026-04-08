@@ -2,16 +2,11 @@ from django.core.exceptions import ValidationError
 from django.db import models
 
 from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
-from apps.drone.models import DroneStatus
 
 
 class MissionStatus(models.IntegerChoices):
-    PENDING = 0, "待执行"
-    RUNNING = 1, "执行中"
-    PAUSED = 2, "已暂停"
-    COMPLETED = 3, "已完成"
-    CANCELED = 4, "已取消"
-    FAILED = 5, "执行失败"
+    DRONE_UNBOUND = 0, "未绑定无人机"
+    DRONE_BOUND = 1, "已绑定无人机"
 
 
 class Mission(models.Model):
@@ -33,15 +28,21 @@ class Mission(models.Model):
         blank=True,
     )
     route_name = models.CharField("航线名称（冗余）", max_length=100, blank=True, default="")
-    drone = models.ForeignKey("drone.Drone", on_delete=models.PROTECT, related_name="missions", verbose_name="无人机")
+    drone = models.ForeignKey(
+        "drone.Drone",
+        on_delete=models.PROTECT,
+        related_name="missions",
+        verbose_name="无人机",
+        null=True,
+        blank=True,
+    )
     device_sn = models.CharField("设备序列号（冗余）", max_length=128, blank=True, default="")
     drone_name = models.CharField("无人机名称（冗余）", max_length=100, blank=True, default="")
     pilot = models.ForeignKey("access.TenantMember", on_delete=models.PROTECT, related_name="missions", verbose_name="飞手成员")
     pilot_name = models.CharField("飞手姓名（冗余）", max_length=50, blank=True, default="")
     scheduled_at = models.DateTimeField("计划执行时间", null=True, blank=True)
     remark = models.CharField("任务备注", max_length=500, blank=True, default="")
-    status = models.PositiveSmallIntegerField("任务状态", choices=MissionStatus.choices, default=MissionStatus.PENDING)
-    dji_job_id = models.CharField("DJI 任务 ID", max_length=128, blank=True, default="")
+    status = models.PositiveSmallIntegerField("任务状态", choices=MissionStatus.choices, default=MissionStatus.DRONE_UNBOUND)
     is_deleted = models.BooleanField("是否已删除", default=False)
     deleted_at = models.DateTimeField("删除时间", null=True, blank=True)
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
@@ -76,8 +77,14 @@ class Mission(models.Model):
             raise ValidationError({"route": "route 必须属于当前 tenant"})
         if self.tenant_id and self.drone_id and self.drone.tenant_id != self.tenant_id:
             raise ValidationError({"drone": "drone 必须属于当前 tenant"})
-        if self.drone_id and not self.device_sn:
+        if self.drone_id:
+            self.status = MissionStatus.DRONE_BOUND
             self.device_sn = self.drone.device_sn
+            self.drone_name = self.drone.name
+        else:
+            self.status = MissionStatus.DRONE_UNBOUND
+            self.device_sn = ""
+            self.drone_name = ""
         if self.tenant_id and self.pilot_id and self.pilot.tenant_id != self.tenant_id:
             raise ValidationError({"pilot": "pilot 必须属于当前 tenant"})
         if self.pilot_id and self.pilot.status != TenantMemberStatus.ACTIVE:

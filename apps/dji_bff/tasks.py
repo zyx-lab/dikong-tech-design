@@ -9,32 +9,10 @@ from django.utils.dateparse import parse_datetime
 
 from apps.access.services import log_action
 from apps.dji_bff.gateway import DjiGateway
-from apps.dji_bff.models import DjiDeviceIndex, SyncStatus, TenantMediaIndex, TenantMissionIndex
+from apps.dji_bff.models import DjiDeviceIndex, SyncStatus, TenantMediaIndex
 from apps.drone.models import Drone
 from apps.flight_record.models import FlightRecord
 from apps.media_file.models import MediaFile, MediaType
-from apps.mission.models import MissionStatus
-
-
-DJI_JOB_STATUS_MAP = {
-    "READY": MissionStatus.PENDING,
-    "PENDING": MissionStatus.PENDING,
-    "QUEUED": MissionStatus.PENDING,
-    "RUNNING": MissionStatus.RUNNING,
-    "IN_PROGRESS": MissionStatus.RUNNING,
-    "EXECUTING": MissionStatus.RUNNING,
-    "PAUSED": MissionStatus.PAUSED,
-    "FINISHED": MissionStatus.COMPLETED,
-    "COMPLETED": MissionStatus.COMPLETED,
-    "SUCCESS": MissionStatus.COMPLETED,
-    "DONE": MissionStatus.COMPLETED,
-    "CANCELED": MissionStatus.CANCELED,
-    "CANCELLED": MissionStatus.CANCELED,
-    "STOPPED": MissionStatus.CANCELED,
-    "ABORTED": MissionStatus.CANCELED,
-    "FAILED": MissionStatus.FAILED,
-    "ERROR": MissionStatus.FAILED,
-}
 
 
 @dataclass
@@ -108,10 +86,6 @@ def _media_type(payload: dict) -> int:
     return MediaType.PHOTO
 
 
-def _mission_status(raw_status: str):
-    return DJI_JOB_STATUS_MAP.get(raw_status.strip().upper()) if raw_status else None
-
-
 def sync_device_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
     gateway = gateway or DjiGateway()
     summary = SyncSummary()
@@ -155,57 +129,10 @@ def sync_device_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
     return summary.asdict()
 
 
-def sync_mission_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
-    gateway = gateway or DjiGateway()
-    summary = SyncSummary()
-    now = timezone.now()
-    jobs_by_id: dict[str, dict] = {}
-
-    for payload in gateway.list_jobs():
-        if not isinstance(payload, dict):
-            continue
-        job_id = _string(payload, "job_id", "jobId", "id")
-        if job_id:
-            jobs_by_id[job_id] = payload
-
-    for mission_index in TenantMissionIndex.objects.select_related("mission").order_by("id"):
-        payload = jobs_by_id.get(mission_index.dji_job_id)
-        if payload is None:
-            mission_index.sync_status = SyncStatus.ERROR
-            mission_index.error_msg = "上游任务不存在"
-            mission_index.last_sync_at = now
-            mission_index.save(update_fields=["sync_status", "error_msg", "last_sync_at", "updated_at"])
-            summary.error_count += 1
-            continue
-
-        execution_status = _string(payload, "status", "execution_status", "executionStatus")
-        mission_index.execution_status = execution_status
-        mission_index.sync_status = SyncStatus.SYNCED
-        mission_index.error_msg = ""
-        mission_index.last_sync_at = _datetime_value(payload, "updated_at", "updatedAt", "created_at", "createdAt") or now
-        mission_index.save(update_fields=["execution_status", "sync_status", "error_msg", "last_sync_at", "updated_at"])
-
-        local_status = _mission_status(execution_status)
-        if local_status is not None and mission_index.mission.status != local_status:
-            mission_index.mission.status = local_status
-            mission_index.mission.save(update_fields=["status", "updated_at"])
-
-        summary.synced_count += 1
-        summary.updated_count += 1
-
-    log_action(action="DJI_MISSION_SYNC", target_type="tenant_mission_index", after_data=summary.asdict())
-    return summary.asdict()
-
-
 def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
     gateway = gateway or DjiGateway()
     summary = SyncSummary()
     now = timezone.now()
-    mission_indexes_by_job_id = {
-        index.dji_job_id: index
-        for index in TenantMissionIndex.objects.select_related("tenant", "mission").all()
-        if index.dji_job_id
-    }
 
     for payload in gateway.list_media_files():
         if not isinstance(payload, dict):
@@ -218,11 +145,8 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
             continue
 
         device_sn = _string(payload, "device_sn", "deviceSn", "sn")
-        job_id = _string(payload, "job_id", "jobId")
-
-        mission_index = mission_indexes_by_job_id.get(job_id) if job_id else None
-        mission = mission_index.mission if mission_index is not None else None
-        tenant = mission_index.tenant if mission_index is not None else None
+        mission = None
+        tenant = None
 
         if tenant is None and device_sn:
             claimed_drone = Drone.objects.select_related("tenant").filter(device_sn=device_sn).first()

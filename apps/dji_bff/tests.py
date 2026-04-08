@@ -19,12 +19,11 @@ from apps.access.test_support import (
     ensure_tenant_role_binding,
 )
 from apps.dji_bff.gateway import DjiGateway, GatewayResponse, DjiGatewayUpstreamError
-from apps.dji_bff.models import DjiDeviceIndex, DjiWorkspaceConfig, SyncStatus, TenantMediaIndex, TenantMissionIndex
-from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes, sync_mission_indexes
+from apps.dji_bff.models import DjiDeviceIndex, DjiWorkspaceConfig, SyncStatus, TenantMediaIndex
+from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes
 from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
 from apps.drone.models import Drone, DroneStatus
-from apps.flight_record.models import FlightRecord, FlightRecordStatus
 from apps.media_file.models import MediaFile
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
@@ -296,47 +295,6 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertTrue(visible_drone.dji_online)
         self.assertFalse(missing_drone.dji_online)
 
-    def test_sync_mission_indexes_should_update_execution_status_and_local_status(self):
-        route = Route.objects.create(tenant=self.tenant, name="同步任务航线")
-        drone = Drone.objects.create(
-            tenant=self.tenant,
-            code="MISSION-SYNC-DRONE",
-            name="任务同步无人机",
-            model="M30",
-            device_sn="MISSION-SYNC-SN",
-        )
-        job = mock_dji_state.create_job({"name": "同步任务", "dock_sn": "DOCK-001"})
-        mock_dji_state.jobs[job["job_id"]]["status"] = "SUCCESS"
-
-        mission = Mission.objects.create(
-            tenant=self.tenant,
-            name="同步任务",
-            route=route,
-            route_name=route.name,
-            drone=drone,
-            drone_name=drone.name,
-            pilot=self.pilot_member,
-            pilot_name="飞手",
-            status=MissionStatus.PENDING,
-            dji_job_id=job["job_id"],
-        )
-        mission_index = TenantMissionIndex.objects.create(
-            tenant=self.tenant,
-            mission=mission,
-            dji_job_id=job["job_id"],
-            execution_status="READY",
-            sync_status=SyncStatus.PENDING,
-        )
-
-        summary = sync_mission_indexes()
-
-        self.assertEqual(summary["synced_count"], 1)
-        mission.refresh_from_db()
-        mission_index.refresh_from_db()
-        self.assertEqual(mission.status, MissionStatus.COMPLETED)
-        self.assertEqual(mission_index.execution_status, "SUCCESS")
-        self.assertEqual(mission_index.sync_status, SyncStatus.SYNCED)
-
     def test_sync_device_indexes_should_mark_all_claimed_drones_offline_when_bound_pool_is_empty(self):
         visible_drone = Drone.objects.create(
             tenant=self.tenant,
@@ -402,14 +360,7 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.PENDING,
-            dji_job_id="media-soft-delete-job",
-        )
-        TenantMissionIndex.objects.create(
-            tenant=self.tenant,
-            mission=mission,
-            dji_job_id="media-soft-delete-job",
-            sync_status=SyncStatus.SYNCED,
+            status=MissionStatus.DRONE_BOUND,
         )
         mock_dji_state.seed_media_file(
             file_id="media-soft-delete-file",
@@ -441,76 +392,6 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertTrue(media_file.is_deleted)
         self.assertIsNotNone(media_file.deleted_at)
 
-    def test_sync_media_indexes_should_not_bind_other_mission_flight_record_when_job_id_is_known(self):
-        route = Route.objects.create(tenant=self.tenant, name="跨任务媒体航线")
-        drone = Drone.objects.create(
-            tenant=self.tenant,
-            code="MEDIA-CROSS-MISSION-DRONE",
-            name="跨任务媒体无人机",
-            model="M30",
-            device_sn="MEDIA-CROSS-SN-001",
-        )
-        old_mission = Mission.objects.create(
-            tenant=self.tenant,
-            name="历史任务",
-            route=route,
-            route_name=route.name,
-            drone=drone,
-            drone_name=drone.name,
-            pilot=self.pilot_member,
-            pilot_name="飞手",
-            status=MissionStatus.COMPLETED,
-            dji_job_id="media-cross-old-job",
-        )
-        FlightRecord.objects.create(
-            tenant=self.tenant,
-            flight_no="MEDIA-CROSS-FR-001",
-            mission=old_mission,
-            mission_name=old_mission.name,
-            route_name=route.name,
-            airport_name="机场",
-            drone=drone,
-            drone_name=drone.name,
-            pilot=self.pilot_member,
-            pilot_name="飞手",
-            start_time=timezone.now() - timedelta(minutes=5),
-            end_time=timezone.now(),
-            flight_duration=300,
-            status=FlightRecordStatus.COMPLETED,
-        )
-        new_mission = Mission.objects.create(
-            tenant=self.tenant,
-            name="新任务",
-            route=route,
-            route_name=route.name,
-            drone=drone,
-            drone_name=drone.name,
-            pilot=self.pilot_member,
-            pilot_name="飞手",
-            status=MissionStatus.RUNNING,
-            dji_job_id="media-cross-new-job",
-        )
-        TenantMissionIndex.objects.create(
-            tenant=self.tenant,
-            mission=new_mission,
-            dji_job_id="media-cross-new-job",
-            sync_status=SyncStatus.SYNCED,
-        )
-        mock_dji_state.seed_media_file(
-            file_id="media-cross-mission-file",
-            name="MEDIA_CROSS_MISSION.JPG",
-            device_sn="MEDIA-CROSS-SN-001",
-            job_id="media-cross-new-job",
-        )
-
-        summary = sync_media_indexes()
-
-        self.assertGreaterEqual(summary["created_count"], 1)
-        media_index = TenantMediaIndex.objects.get(tenant=self.tenant, dji_file_id="media-cross-mission-file")
-        media_file = media_index.media_file
-        self.assertEqual(media_file.mission_id, new_mission.id)
-        self.assertIsNone(media_file.flight_record_id)
-
     def test_internal_sync_endpoint_should_require_system_token(self):
         response = self.client.post("/api/v1/__internal__/dji/sync/devices")
         self.assertEqual(response.status_code, 403)
@@ -523,6 +404,14 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
         self.assertEqual(sync_response.status_code, 200)
         self.assertGreaterEqual(sync_response.json()["data"]["synced_count"], 2)
+
+    def test_internal_sync_missions_endpoint_should_be_removed(self):
+        response = self.client.post(
+            "/api/v1/__internal__/dji/sync/missions",
+            HTTP_X_DJI_INTERNAL_TOKEN="internal-sync-token",
+        )
+
+        self.assertEqual(response.status_code, 404)
 
     def test_media_callback_should_mark_existing_index_as_synced(self):
         media_file = MediaFile.objects.create(
@@ -576,3 +465,13 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         output = stdout.getvalue()
         self.assertIn("[cycle 1] start", output)
         self.assertIn("[cycle 2] done", output)
+
+    def test_scheduler_command_should_only_report_devices_and_media(self):
+        stdout = StringIO()
+
+        call_command("run_dji_sync_scheduler", "--once", stdout=stdout)
+
+        output = stdout.getvalue()
+        self.assertIn("devices=", output)
+        self.assertIn("media=", output)
+        self.assertNotIn("missions=", output)

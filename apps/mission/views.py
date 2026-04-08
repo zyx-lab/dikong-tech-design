@@ -1,7 +1,6 @@
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
-from rest_framework.decorators import action
 from rest_framework.response import Response
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
@@ -24,9 +23,7 @@ from apps.api_v1.schema import (
     paginated_envelope_serializer,
 )
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
-from apps.dji_bff.gateway import DjiGateway, DjiGatewayUpstreamError
-from apps.dji_bff.models import SyncStatus, TenantMissionIndex
-from apps.mission.models import Mission, MissionStatus
+from apps.mission.models import Mission
 from apps.mission.serializers import MissionCreateSerializer, MissionReadSerializer, MissionUpdateSerializer
 
 MISSION_LIST_RESPONSE = paginated_envelope_serializer("MissionListResponse", MissionReadSerializer)
@@ -100,7 +97,7 @@ def _reject_request_body_if_present(request, *, message: str):
         tags=["Business API - Mission"],
     ),
     create=extend_schema(
-        summary="创建任务并同步 DJI job",
+        summary="创建任务",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=MissionCreateSerializer,
         responses={
@@ -167,7 +164,7 @@ class MissionViewSet(
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
-    queryset = Mission.objects.select_related("route", "drone", "pilot__user__staff_profile", "dji_index").all().order_by("-id")
+    queryset = Mission.objects.select_related("route", "drone", "pilot__user__staff_profile").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
 
@@ -178,7 +175,6 @@ class MissionViewSet(
         "update": "mission.manage_mission",
         "partial_update": "mission.manage_mission",
         "destroy": "mission.manage_mission",
-        "cancel": "mission.manage_mission",
     }
 
     @staticmethod
@@ -206,7 +202,7 @@ class MissionViewSet(
             if value:
                 queryset = queryset.filter(**{model_field: value})
 
-        if self.action in {"list", "retrieve", "update", "partial_update", "destroy", "cancel"}:
+        if self.action in {"list", "retrieve", "update", "partial_update", "destroy"}:
             return self.apply_scope(queryset)
         return queryset
 
@@ -233,33 +229,10 @@ class MissionViewSet(
         mission = self.get_object()
         before_data = snapshot(mission)
         deleted_at = timezone.now()
-        should_cancel_active_mission = mission.status in {
-            MissionStatus.PENDING,
-            MissionStatus.RUNNING,
-            MissionStatus.PAUSED,
-        }
-
-        if should_cancel_active_mission and mission.dji_job_id:
-            try:
-                DjiGateway().cancel_mission(mission.dji_job_id)
-            except DjiGatewayUpstreamError as exc:
-                if exc.status_code != 404:
-                    raise
-
         update_fields = ["is_deleted", "deleted_at", "updated_at"]
-        if should_cancel_active_mission:
-            mission.status = MissionStatus.CANCELED
-            update_fields.insert(0, "status")
         mission.is_deleted = True
         mission.deleted_at = deleted_at
         mission.save(update_fields=update_fields)
-
-        if should_cancel_active_mission and getattr(mission, "dji_index", None) is not None:
-            mission.dji_index.execution_status = str(MissionStatus.CANCELED)
-            mission.dji_index.sync_status = SyncStatus.SYNCED
-            mission.dji_index.last_sync_at = deleted_at
-            mission.dji_index.error_msg = ""
-            mission.dji_index.save(update_fields=["execution_status", "sync_status", "last_sync_at", "error_msg", "updated_at"])
 
         deleted_payload = {"id": mission.id, "deleted": True}
         log_action(
@@ -278,52 +251,20 @@ class MissionViewSet(
         if serializer.errors:
             return Response(validation_error_payload(serializer.errors), status=status.HTTP_400_BAD_REQUEST)
 
-        route = serializer.validated_data.get("route")
-        if route is None:
-            return Response(validation_error_payload({"route": ["该字段是必填项。"]}), status=status.HTTP_400_BAD_REQUEST)
-        route_index = getattr(route, "dji_index", None)
-        if route_index is None or not route_index.is_published or not route_index.dji_wayline_id:
-            return Response(validation_error_payload({"route": ["航线尚未发布到 DJI"]}), status=status.HTTP_400_BAD_REQUEST)
-
         mission = self.perform_create(serializer)
         return _mission_success_response(self, mission, http_status=status.HTTP_201_CREATED, include_headers=True)
 
     @transaction.atomic
     def perform_create(self, serializer):
         tenant = self.get_current_tenant()
-        dock_sn = serializer.validated_data.get("dock_sn", "")
         mission = serializer.save(tenant=tenant)
-        gateway = DjiGateway()
-        upstream_payload = gateway.create_mission(
-            mission_name=mission.name,
-            file_id=mission.route.dji_index.dji_wayline_id,
-            dock_sn=dock_sn,
+        log_action(
+            request=self.request,
+            action="MISSION_CREATE",
+            target_type="mission",
+            target_id=mission.id,
+            after_data=self._payload(mission),
         )
-        dji_job_id = upstream_payload["dji_job_id"]
-        try:
-            mission.dji_job_id = dji_job_id
-            mission.save(update_fields=["dji_job_id", "updated_at"])
-            TenantMissionIndex.objects.create(
-                tenant=tenant,
-                mission=mission,
-                dji_job_id=mission.dji_job_id,
-                execution_status=str(mission.status),
-                sync_status=SyncStatus.SYNCED,
-                last_sync_at=timezone.now(),
-            )
-            log_action(
-                request=self.request,
-                action="MISSION_CREATE",
-                target_type="mission",
-                target_id=mission.id,
-                after_data=self._payload(mission),
-            )
-        except Exception:
-            try:
-                gateway.cancel_mission(dji_job_id)
-            except DjiGatewayUpstreamError:
-                pass
-            raise
         return mission
 
     def update(self, request, *args, **kwargs):
@@ -346,61 +287,3 @@ class MissionViewSet(
             after_data=snapshot(mission),
         )
         return mission
-
-    @extend_schema(
-        summary="取消任务",
-        parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=None,
-        responses={
-            200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE),
-            400: BUSINESS_INVALID_PARAMS_RESPONSE,
-            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
-            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
-            404: BUSINESS_NOT_FOUND_RESPONSE,
-            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
-        },
-        tags=["Business API - Mission"],
-    )
-    @action(detail=True, methods=["post"])
-    @transaction.atomic
-    def cancel(self, request, *args, **kwargs):
-        error_response = _reject_request_body_if_present(request, message="cancel 请求不支持提交 body 参数")
-        if error_response is not None:
-            return error_response
-
-        mission = self.get_object()
-        if not mission.dji_job_id:
-            return Response(
-                standard_error_payload(
-                    StandardCode.INVALID_PARAMS,
-                    "任务尚未同步",
-                    {"mission_id": mission.id},
-                ),
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        before_data = snapshot(mission)
-        try:
-            DjiGateway().cancel_mission(mission.dji_job_id)
-        except DjiGatewayUpstreamError as exc:
-            if exc.status_code != 404:
-                raise
-
-        mission.status = MissionStatus.CANCELED
-        mission.save(update_fields=["status", "updated_at"])
-        if getattr(mission, "dji_index", None) is not None:
-            mission.dji_index.execution_status = str(MissionStatus.CANCELED)
-            mission.dji_index.sync_status = SyncStatus.SYNCED
-            mission.dji_index.last_sync_at = timezone.now()
-            mission.dji_index.error_msg = ""
-            mission.dji_index.save(update_fields=["execution_status", "sync_status", "last_sync_at", "error_msg", "updated_at"])
-
-        log_action(
-            request=request,
-            action="MISSION_CANCEL",
-            target_type="mission",
-            target_id=mission.id,
-            before_data=before_data,
-            after_data=snapshot(mission),
-        )
-        return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)

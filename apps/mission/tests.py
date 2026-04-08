@@ -3,6 +3,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.test.utils import override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -13,9 +14,6 @@ from apps.access.test_support import (
     ensure_tenant_role_binding,
     grant_role_permissions,
 )
-from apps.dji_bff.models import SyncStatus, TenantMissionIndex, TenantRouteIndex
-from apps.dji_mock.state import mock_dji_state
-from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
 from apps.drone.models import Drone
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
@@ -23,9 +21,13 @@ from apps.route.models import Route
 User = get_user_model()
 
 
-class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
+@override_settings(ROOT_URLCONF="apps.mission.urls")
+class MissionApiTests(TestCase):
+    @staticmethod
+    def _payload(data: dict) -> dict:
+        return data.get("data", data)
+
     def setUp(self):
-        super().setUp()
         self.client = APIClient()
         self.user = User.objects.create_user(username="mission_dispatcher", password="pass1234", status=1)
         ensure_staff_profile(self.user, name="任务调度员", employment_status=EmploymentStatus.ACTIVE)
@@ -56,12 +58,6 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
         ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手")
 
         self.route = Route.objects.create(tenant=self.tenant, name="任务航线")
-        self.route_index = TenantRouteIndex.objects.create(
-            tenant=self.tenant,
-            route=self.route,
-            dji_wayline_id="wayline-001",
-            is_published=True,
-        )
         self.drone = Drone.objects.create(
             tenant=self.tenant,
             code="MISSION-DRONE-001",
@@ -70,58 +66,59 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
             device_sn="MISSION-SN-001",
         )
 
-    def test_create_should_sync_job_and_persist_index(self):
+    def test_create_should_allow_missing_drone_and_mark_unbound(self):
         response = self.client.post(
-            "/api/v1/missions",
+            "/missions",
             {
-                "name": "园区巡检任务",
+                "name": "未绑定无人机任务",
                 "route": self.route.id,
-                "drone": self.drone.id,
                 "pilot": self.pilot_member.id,
-                "dock_sn": "dock-001",
             },
             format="json",
         )
 
-        self.assertEqual(response.status_code, 201)
-        mission = Mission.objects.get(name="园区巡检任务")
-        self.assertTrue(mission.dji_job_id.startswith("mock-job-"))
+        self.assertEqual(response.status_code, 201, response.data)
+        payload = self._payload(response.data)
+        self.assertNotIn("dji_job_id", payload)
+        self.assertNotIn("sync_status", payload)
+        self.assertNotIn("execution_status", payload)
+        self.assertNotIn("last_sync_at", payload)
+        mission = Mission.objects.get(name="未绑定无人机任务")
+        self.assertIsNone(mission.drone_id)
+        self.assertEqual(mission.status, MissionStatus.DRONE_UNBOUND)
+        self.assertEqual(mission.device_sn, "")
+        self.assertEqual(mission.drone_name, "")
+
+    def test_create_should_mark_bound_when_drone_is_present_without_creating_dji_job(self):
+        response = self.client.post(
+            "/missions",
+            {
+                "name": "已绑定无人机任务",
+                "route": self.route.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_member.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        payload = self._payload(response.data)
+        self.assertNotIn("dji_job_id", payload)
+        self.assertNotIn("sync_status", payload)
+        self.assertNotIn("execution_status", payload)
+        self.assertNotIn("last_sync_at", payload)
+        mission = Mission.objects.get(name="已绑定无人机任务")
+        self.assertEqual(mission.status, MissionStatus.DRONE_BOUND)
         self.assertEqual(mission.device_sn, self.drone.device_sn)
-        mission_index = TenantMissionIndex.objects.get(mission=mission)
-        self.assertEqual(mission_index.dji_job_id, mission.dji_job_id)
-        self.assertIn(mission.dji_job_id, mock_dji_state.jobs)
-        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["dock_sn"], "dock-001")
-        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["file_id"], "wayline-001")
-        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["wayline_type"], 0)
-        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["task_type"], 0)
-        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["rth_altitude"], 30)
-        self.assertEqual(mock_dji_state.jobs[mission.dji_job_id]["out_of_control_action"], 0)
-
-    def test_create_should_require_dock_sn(self):
-        response = self.client.post(
-            "/api/v1/missions",
-            {
-                "name": "缺少机库任务",
-                "route": self.route.id,
-                "drone": self.drone.id,
-                "pilot": self.pilot_member.id,
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["data"], {"dock_sn": ["该字段是必填项。"]})
-        self.assertEqual(mock_dji_state.jobs, {})
+        self.assertEqual(mission.drone_name, self.drone.name)
 
     def test_create_should_require_route(self):
         response = self.client.post(
-            "/api/v1/missions",
+            "/missions",
             {
                 "name": "缺少航线任务",
                 "drone": self.drone.id,
                 "pilot": self.pilot_member.id,
-                "dock_sn": "dock-missing-route",
             },
             format="json",
         )
@@ -129,100 +126,47 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], "B0001")
         self.assertEqual(response.data["data"], {"route": ["该字段是必填项。"]})
-        self.assertEqual(mock_dji_state.jobs, {})
 
-    def test_create_should_reject_unpublished_route(self):
-        self.route_index.is_published = False
-        self.route_index.save(update_fields=["is_published", "updated_at"])
-
+    def test_create_should_allow_unpublished_route_because_mission_is_now_local_only(self):
         response = self.client.post(
-            "/api/v1/missions",
+            "/missions",
             {
-                "name": "未发布航线任务",
+                "name": "本地任务不再要求已发布航线",
                 "route": self.route.id,
-                "drone": self.drone.id,
                 "pilot": self.pilot_member.id,
-                "dock_sn": "dock-unpublished-route",
             },
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("route", response.data["data"])
-        self.assertEqual(mock_dji_state.jobs, {})
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(Mission.objects.filter(name="本地任务不再要求已发布航线").exists())
 
-    def test_create_should_cancel_upstream_job_when_local_finalize_fails(self):
-        with patch("apps.mission.views.log_action", side_effect=RuntimeError("log failed after create")):
-            response = self.client.post(
-                "/api/v1/missions",
-                {
-                    "name": "补偿失败任务",
-                    "route": self.route.id,
-                    "drone": self.drone.id,
-                    "pilot": self.pilot_member.id,
-                    "dock_sn": "dock-compensate",
-                },
-                format="json",
-            )
-
-        self.assertEqual(response.status_code, 500)
-        self.assertFalse(Mission.objects.filter(name="补偿失败任务").exists())
-        self.assertEqual(TenantMissionIndex.objects.count(), 0)
-        self.assertEqual(len(mock_dji_state.jobs), 1)
-        self.assertEqual(next(iter(mock_dji_state.jobs.values()))["status"], "CANCELED")
-
-    def test_cancel_should_call_gateway_and_mark_mission_canceled(self):
-        job = mock_dji_state.create_job({"name": "待取消任务", "dock_sn": "dock-cancel"})
+    def test_patch_should_unbind_drone_and_reset_status_snapshot_fields(self):
         mission = Mission.objects.create(
             tenant=self.tenant,
-            name="待取消任务",
+            name="待解绑任务",
             route=self.route,
             route_name=self.route.name,
             drone=self.drone,
+            device_sn=self.drone.device_sn,
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.PENDING,
-            dji_job_id=job["job_id"],
-        )
-        mission_index = TenantMissionIndex.objects.create(
-            tenant=self.tenant,
-            mission=mission,
-            dji_job_id=job["job_id"],
-            sync_status=SyncStatus.SYNCED,
+            status=MissionStatus.DRONE_BOUND,
         )
 
-        response = self.client.post(f"/api/v1/missions/{mission.id}/cancel")
-
-        self.assertEqual(response.status_code, 200)
-        mission.refresh_from_db()
-        mission_index.refresh_from_db()
-        self.assertEqual(mission.status, MissionStatus.CANCELED)
-        self.assertEqual(mission_index.execution_status, str(MissionStatus.CANCELED))
-        self.assertEqual(mock_dji_state.jobs[job["job_id"]]["status"], "CANCELED")
-
-    def test_cancel_should_reject_request_body(self):
-        mission = Mission.objects.create(
-            tenant=self.tenant,
-            name="取消请求体验证任务",
-            route=self.route,
-            route_name=self.route.name,
-            drone=self.drone,
-            drone_name=self.drone.name,
-            pilot=self.pilot_member,
-            pilot_name="飞手",
-            status=MissionStatus.PENDING,
-            dji_job_id="job-cancel-002",
-        )
-
-        response = self.client.post(
-            f"/api/v1/missions/{mission.id}/cancel",
-            {"unexpected": True},
+        response = self.client.patch(
+            f"/missions/{mission.id}",
+            {"drone": None},
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.status_code, 200, response.data)
+        mission.refresh_from_db()
+        self.assertIsNone(mission.drone_id)
+        self.assertEqual(mission.status, MissionStatus.DRONE_UNBOUND)
+        self.assertEqual(mission.device_sn, "")
+        self.assertEqual(mission.drone_name, "")
 
     def test_mission_soft_delete_should_be_irreversible(self):
         mission = Mission.objects.create(
@@ -234,7 +178,6 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.PENDING,
             is_deleted=True,
             deleted_at=timezone.now(),
         )
@@ -254,63 +197,22 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.PENDING,
-            dji_job_id="job-delete-001",
-        )
-        TenantMissionIndex.objects.create(
-            tenant=self.tenant,
-            mission=mission,
-            dji_job_id=mission.dji_job_id,
-            sync_status=SyncStatus.SYNCED,
         )
 
-        delete_response = self.client.delete(f"/api/v1/missions/{mission.id}")
+        delete_response = self.client.delete(f"/missions/{mission.id}")
 
         self.assertEqual(delete_response.status_code, 200)
         mission.refresh_from_db()
         self.assertTrue(mission.is_deleted)
         self.assertIsNotNone(mission.deleted_at)
 
-        list_response = self.client.get("/api/v1/missions")
+        list_response = self.client.get("/missions")
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(list_response.data["data"]["total"], 0)
 
-        detail_response = self.client.get(f"/api/v1/missions/{mission.id}")
+        detail_response = self.client.get(f"/missions/{mission.id}")
         self.assertEqual(detail_response.status_code, 404)
         self.assertEqual(detail_response.data["code"], "C0404")
-
-    def test_delete_should_cancel_active_mission_before_soft_delete(self):
-        job = mock_dji_state.create_job({"name": "删除前运行任务", "dock_sn": "dock-delete-active"})
-        mission = Mission.objects.create(
-            tenant=self.tenant,
-            name="删除前运行任务",
-            route=self.route,
-            route_name=self.route.name,
-            drone=self.drone,
-            drone_name=self.drone.name,
-            pilot=self.pilot_member,
-            pilot_name="飞手",
-            status=MissionStatus.RUNNING,
-            dji_job_id=job["job_id"],
-        )
-        mission_index = TenantMissionIndex.objects.create(
-            tenant=self.tenant,
-            mission=mission,
-            dji_job_id=job["job_id"],
-            execution_status=str(MissionStatus.RUNNING),
-            sync_status=SyncStatus.SYNCED,
-        )
-
-        delete_response = self.client.delete(f"/api/v1/missions/{mission.id}")
-
-        self.assertEqual(delete_response.status_code, 200)
-        mission.refresh_from_db()
-        mission_index.refresh_from_db()
-        self.assertTrue(mission.is_deleted)
-        self.assertEqual(mission.status, MissionStatus.CANCELED)
-        self.assertEqual(mission_index.execution_status, str(MissionStatus.CANCELED))
-        self.assertEqual(mission_index.sync_status, SyncStatus.SYNCED)
-        self.assertEqual(mock_dji_state.jobs[job["job_id"]]["status"], "CANCELED")
 
     def test_delete_should_reject_request_body(self):
         mission = Mission.objects.create(
@@ -322,15 +224,28 @@ class MissionApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.PENDING,
-            dji_job_id="job-delete-body-001",
         )
 
         response = self.client.delete(
-            f"/api/v1/missions/{mission.id}",
+            f"/missions/{mission.id}",
             {"unexpected": True},
             format="json",
         )
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], "B0001")
+
+    def test_create_should_rollback_when_log_action_fails(self):
+        with patch("apps.mission.views.log_action", side_effect=RuntimeError("log failed")):
+            response = self.client.post(
+                "/missions",
+                {
+                    "name": "创建回滚任务",
+                    "route": self.route.id,
+                    "pilot": self.pilot_member.id,
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertFalse(Mission.objects.filter(name="创建回滚任务").exists())
