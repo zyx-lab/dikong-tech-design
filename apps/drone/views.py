@@ -304,6 +304,9 @@ class DroneViewSet(
             payload = payload_transform(drone, payload)
         gateway_method = getattr(DjiGateway(), gateway_method_name)
         result = gateway_method(drone.device_sn, **payload)
+        if isinstance(result, dict) and "video_id" not in result and payload.get("video_id"):
+            result = dict(result)
+            result["video_id"] = payload["video_id"]
         log_action(
             request=request,
             action=action_name,
@@ -437,6 +440,15 @@ class DroneViewSet(
     def live_capacity(self, request, *args, **kwargs):
         drone = self.get_object()
         payload = DjiGateway().get_live_capacity(drone.device_sn)
+        if not payload:
+            return Response(
+                standard_error_payload(
+                    StandardCode.NOT_FOUND,
+                    "未找到设备直播能力",
+                    {"device_sn": drone.device_sn},
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
         log_action(
             request=request,
             action="DRONE_LIVE_CAPACITY",
@@ -493,7 +505,6 @@ class DroneViewSet(
             drone=drone,
             action_name="DRONE_LIVE_STOP",
             gateway_method_name="stop_live",
-            allow_empty_body=True,
         )
 
     @extend_schema(

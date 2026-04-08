@@ -236,12 +236,12 @@ class DroneLiveStartSerializer(serializers.Serializer):
 
 
 class DroneLiveStopSerializer(serializers.Serializer):
-    video_id = serializers.CharField(required=False, allow_blank=True, help_text="要停止的 video_id，可为空。")
+    video_id = serializers.CharField(help_text="要停止的 video_id，格式 {device_sn}/{camera.index}/{video.index}。")
 
 
 class DroneLiveVideoQualitySerializer(serializers.Serializer):
-    video_id = serializers.CharField(required=False, allow_blank=True, help_text="要调整的 video_id，可为空。")
-    quality = serializers.CharField(help_text="目标画质，例如 720p、1080p。")
+    video_id = serializers.CharField(help_text="要调整的 video_id，格式 {device_sn}/{camera.index}/{video.index}。")
+    video_quality = serializers.IntegerField(help_text="DJI 画质枚举：0=AUTO，1=SMOOTH，2=STANDARD_DEFINITION，3=HIGH_DEFINITION，4=ULTRA_HD。")
 
 
 class DroneLiveVideoSourceSerializer(serializers.Serializer):

@@ -369,10 +369,97 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["video_id"], "SN-LIVE-001/88-0-0/normal-0")
         self.assertIn("url", response.data["data"])
         self.assertIn("rtmp_url", response.data["data"])
         self.assertIn("whep_url", response.data["data"])
         self.assertIn("SN-LIVE-001-88-0-0", response.data["data"]["url"])
+
+    def test_live_capacity_should_return_404_when_upstream_capacity_missing(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-LIVE-404",
+            name="无直播能力设备",
+            model="M30",
+            device_sn="SN-LIVE-404",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        response = self.client.get(f"/api/v1/drones/{drone.id}/live/capacity")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["code"], "C0404")
+        self.assertIn("device_sn", response.data["data"])
+
+    def test_live_stop_should_require_video_id(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-LIVE-STOP-001",
+            name="直播停止设备",
+            model="M30",
+            device_sn="SN-LIVE-STOP-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        response = self.client.post(f"/api/v1/drones/{drone.id}/live/stop", {}, format="json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("video_id", response.data["data"])
+
+    def test_live_video_quality_should_proxy_dji_field_names(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-LIVE-QUALITY-001",
+            name="直播画质设备",
+            model="M30",
+            device_sn="SN-LIVE-QUALITY-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        with patch(
+            "apps.drone.views.DjiGateway.set_live_video_quality",
+            return_value={"updated": True},
+        ) as quality_mock:
+            response = self.client.post(
+                f"/api/v1/drones/{drone.id}/live/video-quality",
+                {"video_id": "SN-LIVE-QUALITY-001/88-0-0/normal-0", "video_quality": 3},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        quality_mock.assert_called_once_with(
+            "SN-LIVE-QUALITY-001",
+            video_id="SN-LIVE-QUALITY-001/88-0-0/normal-0",
+            video_quality=3,
+        )
+
+    def test_live_video_source_should_proxy_expected_dji_fields(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-LIVE-SOURCE-001",
+            name="直播视频源设备",
+            model="M30",
+            device_sn="SN-LIVE-SOURCE-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        with patch(
+            "apps.drone.views.DjiGateway.set_live_video_source",
+            return_value={"switched": True},
+        ) as source_mock:
+            response = self.client.post(
+                f"/api/v1/drones/{drone.id}/live/video-source",
+                {"video_id": "SN-LIVE-SOURCE-001/88-0-0/normal-0", "videoType": "wide"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        source_mock.assert_called_once_with(
+            "SN-LIVE-SOURCE-001",
+            video_id="SN-LIVE-SOURCE-001/88-0-0/normal-0",
+            videoType="wide",
+        )
 
     def test_assigned_scope_member_should_only_see_assigned_drones(self):
         pilot_user = User.objects.create_user(username="drone_pilot", password="pass1234", status=1)

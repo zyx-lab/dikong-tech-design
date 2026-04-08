@@ -1402,6 +1402,7 @@
 | hls_url    | string | MediaMTX HLS 播放地址。                  |
 | username   | string | 仅特定协议场景可能返回。                 |
 | password   | string | 仅特定协议场景可能返回。                 |
+| video_id   | string | Django 业务接口会把本次实际使用的 `video_id` 一并回填到响应中，便于后续 stop / update / switch 直接复用。 |
 
 实测请求：
 
@@ -1420,6 +1421,7 @@
   "code": "00000",
   "msg": "success",
   "data": {
+    "video_id": "1581F7FVC252A00CJ5TT/88-0-0/normal-0",
     "url": "rtmp://192.168.3.33:1935/live/1581F7FVC252A00CJ5TT-88-0-0",
     "rtmp_url": "rtmp://192.168.3.33:1935/live/1581F7FVC252A00CJ5TT-88-0-0",
     "webrtc_url": "http://192.168.3.33:8889/live/1581F7FVC252A00CJ5TT-88-0-0",
@@ -1435,6 +1437,7 @@
 - 后端于 `2026-03-26 17:14:08` 下发 MQTT 服务 `live_start_push`。
 - 遥控器于同一轮实测中先回报 `status=false`，随后在 `2026-03-26 17:14:08` 回报 `status=true`。
 - 后端在 `services_reply` 中收到 `{"method":"live_start_push","data":{"result":0}}`，本轮接口返回与设备实际动作一致。
+- Django 业务接口会把请求中实际使用的 `video_id` 回填到成功响应，前端应直接缓存该字段，供 `live/stop`、`live/video-quality`、`live/video-source` 后续调用复用。
 - MediaMTX 路径：`live/1581F7FVC252A00CJ5TT-88-0-0`
 - MediaMTX 源类型：`rtmpConn`
 - MediaMTX 轨道：`H264`
