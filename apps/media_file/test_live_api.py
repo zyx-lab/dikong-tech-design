@@ -70,11 +70,11 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
             route=self.route,
             route_name=self.route.name,
             drone=self.drone,
+            device_sn=self.drone.device_sn,
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.RUNNING,
-            dji_job_id="media-live-job",
+            status=MissionStatus.DRONE_BOUND,
         )
         self.flight_record = FlightRecord.objects.create(
             tenant=self.tenant,
@@ -117,7 +117,7 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
             file_id="media-live-file",
             name="MEDIA_LIVE.JPG",
             device_sn="MEDIA-LIVE-SN-001",
-            job_id="media-live-job",
+            job_id="",
         )
 
         self.login(username="media_live_viewer", password="pass1234", tenant_code=self.tenant.code)
@@ -140,3 +140,12 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
 
         create_response = self.client.post("/api/v1/media-files", {}, format="json")
         self.assertIn(create_response.status_code, (403, 405))
+
+    def test_bind_mission_should_follow_live_http_contract(self):
+        bind_response = self.client.post(
+            "/api/v1/media-files/bind-mission",
+            {"mission_id": self.mission.id, "media_file_ids": [self.media_file.id]},
+            format="json",
+        )
+        self.assertEqual(bind_response.status_code, 200)
+        self.assertEqual(bind_response.json()["data"]["updated_count"], 1)

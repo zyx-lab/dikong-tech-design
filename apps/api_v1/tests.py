@@ -94,6 +94,8 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("/api/v1/routes/{id}/kmz", paths)
         self.assertNotIn("/api/v1/missions/{id}/cancel", paths)
         self.assertIn("/api/v1/media-files/{id}/download", paths)
+        self.assertIn("/api/v1/media-files/bind-mission", paths)
+        self.assertEqual(schema["paths"]["/api/v1/media-files/bind-mission"].keys(), {"post"})
         self.assertIn("/api/v1/drone-assignments/{id}/cancel", paths)
 
     def test_business_schema_should_not_expose_removed_paths(self):
@@ -182,6 +184,7 @@ class OpenApiDocsTests(TestCase):
             "/api/v1/drone-assignments/{id}": {"get"},
             "/api/v1/media-files": {"get"},
             "/api/v1/media-files/{id}": {"get", "delete"},
+            "/api/v1/media-files/bind-mission": {"post"},
         }
         for path, methods in expected_methods.items():
             self.assertEqual(set(schema["paths"][path].keys()), methods)
@@ -236,6 +239,7 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/media-files/{id}", "get"): {"200", "401", "403", "404", "500"},
             ("/api/v1/media-files/{id}", "delete"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/media-files/{id}/download", "get"): {"302", "401", "403", "404", "500"},
+            ("/api/v1/media-files/bind-mission", "post"): {"200", "400", "401", "403", "500"},
         }
 
         for (path, method), statuses in expected_responses.items():

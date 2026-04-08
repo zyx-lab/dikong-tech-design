@@ -70,11 +70,11 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
             route=self.route,
             route_name=self.route.name,
             drone=self.drone,
+            device_sn=self.drone.device_sn,
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.RUNNING,
-            dji_job_id="media-job-001",
+            status=MissionStatus.DRONE_BOUND,
         )
         self.flight_record = FlightRecord.objects.create(
             tenant=self.tenant,
@@ -119,7 +119,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
             file_id=f"dji-{file_name}",
             name=file_name,
             device_sn=device_sn,
-            job_id=self.mission.dji_job_id,
+            job_id="",
         )
         return media_file
 
@@ -228,8 +228,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=self.drone.name,
             pilot=other_pilot_member,
             pilot_name="其他飞手",
-            status=MissionStatus.RUNNING,
-            dji_job_id="media-job-other-001",
+            status=MissionStatus.DRONE_BOUND,
         )
         self._create_mission_only_media(mission=other_mission, file_name="IMG_OTHER_MISSION.JPG")
 
@@ -259,3 +258,196 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         mission_only_media.refresh_from_db()
         self.assertTrue(mission_only_media.is_deleted)
+
+    def test_bind_mission_should_assign_multiple_media_to_bound_mission(self):
+        grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
+        media_a = self._create_mission_only_media(mission=self.mission, file_name="IMG_BIND_A.JPG")
+        media_b = self._create_mission_only_media(mission=self.mission, file_name="IMG_BIND_B.JPG")
+        media_a.mission = None
+        media_a.save(update_fields=["mission"])
+        media_a.dji_index.mission = None
+        media_a.dji_index.save(update_fields=["mission", "updated_at"])
+        media_b.mission = None
+        media_b.save(update_fields=["mission"])
+        media_b.dji_index.mission = None
+        media_b.dji_index.save(update_fields=["mission", "updated_at"])
+
+        response = self.client.post(
+            "/api/v1/media-files/bind-mission",
+            {"mission_id": self.mission.id, "media_file_ids": [media_a.id, media_b.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        media_a.refresh_from_db()
+        media_b.refresh_from_db()
+        self.assertEqual(media_a.mission_id, self.mission.id)
+        self.assertEqual(media_b.mission_id, self.mission.id)
+        self.assertEqual(media_a.dji_index.mission_id, self.mission.id)
+        self.assertEqual(media_b.dji_index.mission_id, self.mission.id)
+
+    def test_bind_mission_should_reject_unbound_mission(self):
+        grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
+        self.mission.drone = None
+        self.mission.status = MissionStatus.DRONE_UNBOUND
+        self.mission.device_sn = ""
+        self.mission.drone_name = ""
+        self.mission.save(update_fields=["drone", "status", "device_sn", "drone_name", "updated_at"])
+        media_file = self._create_mission_only_media(mission=self.mission, file_name="IMG_UNBOUND.JPG")
+        media_file.mission = None
+        media_file.save(update_fields=["mission"])
+        media_file.dji_index.mission = None
+        media_file.dji_index.save(update_fields=["mission", "updated_at"])
+
+        response = self.client.post(
+            "/api/v1/media-files/bind-mission",
+            {"mission_id": self.mission.id, "media_file_ids": [media_file.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("mission_id", response.data["data"])
+
+    def test_bind_mission_should_reject_device_sn_mismatch(self):
+        grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
+        media_file = self._create_media(file_name="IMG_MISMATCH.JPG", device_sn="OTHER-SN-001")
+
+        response = self.client.post(
+            "/api/v1/media-files/bind-mission",
+            {"mission_id": self.mission.id, "media_file_ids": [media_file.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("media_file_ids", response.data["data"])
+
+    def test_bind_mission_should_reject_cross_tenant_mission(self):
+        grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
+        other_user = User.objects.create_user(username="media_bind_other_tenant", password="pass1234", status=1)
+        ensure_staff_profile(other_user, name="其他租户用户", employment_status=EmploymentStatus.ACTIVE)
+        other_tenant, other_member, _other_role = ensure_tenant_role_binding(
+            other_user,
+            tenant_code="media_bind_other_tenant",
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(other_member, code="pilot_operator", name="飞手")
+        other_route = Route.objects.create(tenant=other_tenant, name="跨租户航线")
+        other_drone = Drone.objects.create(
+            tenant=other_tenant,
+            code="OTHER-TENANT-DRONE-001",
+            name="跨租户无人机",
+            model="M30",
+            device_sn="OTHER-TENANT-SN-001",
+        )
+        other_mission = Mission.objects.create(
+            tenant=other_tenant,
+            name="跨租户任务",
+            route=other_route,
+            route_name=other_route.name,
+            drone=other_drone,
+            device_sn=other_drone.device_sn,
+            drone_name=other_drone.name,
+            pilot=other_member,
+            pilot_name="其他租户飞手",
+            status=MissionStatus.DRONE_BOUND,
+        )
+        media_file = self._create_media(file_name="IMG_CROSS_TENANT.JPG", device_sn=self.drone.device_sn)
+
+        response = self.client.post(
+            "/api/v1/media-files/bind-mission",
+            {"mission_id": other_mission.id, "media_file_ids": [media_file.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("mission_id", response.data["data"])
+
+    def test_bind_mission_should_overwrite_existing_mission_binding(self):
+        grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
+        other_mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="同机改绑任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.DRONE_BOUND,
+        )
+        media_file = self._create_mission_only_media(mission=self.mission, file_name="IMG_OVERWRITE.JPG")
+
+        response = self.client.post(
+            "/api/v1/media-files/bind-mission",
+            {"mission_id": other_mission.id, "media_file_ids": [media_file.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        media_file.refresh_from_db()
+        self.assertEqual(media_file.mission_id, other_mission.id)
+        self.assertEqual(media_file.dji_index.mission_id, other_mission.id)
+
+    def test_bind_mission_should_reject_assigned_scope_targeting_other_pilot_mission(self):
+        grant_role_permissions(self.pilot_role, {"media_file.manage_media_file": ScopeType.ASSIGNED})
+        self.client.force_authenticate(self.pilot_user)
+        media_file = self._create_mission_only_media(mission=self.mission, file_name="IMG_ASSIGNED_SCOPE.JPG")
+
+        other_pilot_user = User.objects.create_user(username="media_bind_other_pilot", password="pass1234", status=1)
+        ensure_staff_profile(other_pilot_user, name="其他飞手", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
+            other_pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator_other_bind",
+            role_name="其他飞手",
+        )
+        ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
+        other_mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="其他飞手任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=other_pilot_member,
+            pilot_name="其他飞手",
+            status=MissionStatus.DRONE_BOUND,
+        )
+
+        response = self.client.post(
+            "/api/v1/media-files/bind-mission",
+            {"mission_id": other_mission.id, "media_file_ids": [media_file.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("mission_id", response.data["data"])
+
+    def test_bind_mission_should_reject_media_without_dji_index_visibility(self):
+        grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
+        media_file = MediaFile.objects.create(
+            tenant=self.tenant,
+            mission=None,
+            device_sn=self.drone.device_sn,
+            media_type=MediaType.PHOTO,
+            file_name="IMG_NO_INDEX.JPG",
+            file_url="https://example.com/IMG_NO_INDEX.JPG",
+            captured_at=timezone.now(),
+        )
+
+        response = self.client.post(
+            "/api/v1/media-files/bind-mission",
+            {"mission_id": self.mission.id, "media_file_ids": [media_file.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertIn("media_file_ids", response.data["data"])

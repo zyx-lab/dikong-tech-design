@@ -34,8 +34,7 @@ PostgreSQL
 | 20 | dji_workspace_configs | DJI 工作空间配置表 | 系统托管的 DJI workspace / user 会话 |
 | 21 | dji_device_indexes | DJI 设备索引表 | 共享设备池快照 |
 | 22 | tenant_route_indexes | 航线发布索引表 | route 与 DJI 航线映射 |
-| 23 | tenant_mission_indexes | 任务同步索引表 | mission 与 DJI job 映射 |
-| 24 | tenant_media_indexes | 媒体同步索引表 | media_file 与 DJI 文件映射 |
+| 23 | tenant_media_indexes | 媒体同步索引表 | media_file 与 DJI 文件映射 |
 
 补充说明：
 1. 当前实现不存在独立 `drone_types` 表。
@@ -284,7 +283,8 @@ PostgreSQL
 | name | varchar(128) | NOT NULL | 无人机名称 |
 | model | varchar(128) | NOT NULL | 型号 |
 | device_sn | varchar(128) | NOT NULL | 设备序列号 |
-| status | varchar(16) | NOT NULL, DEFAULT 'DISABLED' | 状态：`ENABLED / DISABLED` |
+| status | varchar(16) | NOT NULL, DEFAULT 'CLAIMED' | 认领状态：`CLAIMED / RELEASED` |
+| dji_online | boolean | NOT NULL, DEFAULT false | DJI 在线状态快照 |
 | org_id | bigint |  | 组织 ID |
 | created_by_tenant_member_id | bigint |  | 创建人 TenantMember ID |
 | created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
@@ -292,8 +292,12 @@ PostgreSQL
 
 约束：
 1. 唯一约束：`(tenant_id, code)`。
-2. 唯一约束：`(tenant_id, device_sn)`。
-3. `status` 仅作为当前同步周期下的在线摘要，由后台同步任务写入。
+2. 条件唯一约束：`(tenant_id, device_sn)` 仅在 `status != RELEASED` 时生效。
+3. 条件唯一约束：`(device_sn)` 仅在 `status != RELEASED` 时生效（全局非释放唯一）。
+
+说明：
+1. `status` 表示认领状态，不表示在线状态；删除接口执行软释放，将状态改为 `RELEASED`。
+2. 认领时优先复用同租户、同 `device_sn` 的 `RELEASED` 行，并恢复为 `CLAIMED`。
 
 ---
 
@@ -361,22 +365,26 @@ PostgreSQL
 | id | bigserial | PK | 任务 ID |
 | tenant_id | bigint | NOT NULL, FK -> tenants.id | 所属租户 |
 | name | varchar(100) | NOT NULL | 任务名称 |
-| route_id | bigint | FK -> routes.id | 任务航线；route 删除后可为空 |
+| route_id | bigint | FK -> routes.id, NULLABLE | 任务航线 |
 | route_name | varchar(100) | NOT NULL, DEFAULT '' | 航线名称冗余 |
-| drone_id | bigint | NOT NULL, FK -> drones.id | 执行无人机 |
+| drone_id | bigint | FK -> drones.id, NULLABLE | 绑定无人机；为空表示未绑定 |
+| device_sn | varchar(128) | NOT NULL, DEFAULT '' | 无人机 SN 冗余，用于追溯 |
 | drone_name | varchar(100) | NOT NULL, DEFAULT '' | 无人机名称冗余 |
 | pilot_id | bigint | NOT NULL, FK -> tenant_members.id | 执行飞手成员 |
 | pilot_name | varchar(50) | NOT NULL, DEFAULT '' | 飞手姓名冗余 |
 | scheduled_at | timestamp |  | 计划执行时间 |
 | remark | varchar(500) | NOT NULL, DEFAULT '' | 任务备注 |
-| status | smallint | NOT NULL, DEFAULT 0 | 状态：`PENDING / RUNNING / PAUSED / COMPLETED / CANCELED / FAILED` |
-| dji_job_id | varchar(128) | NOT NULL, DEFAULT '' | DJI 任务 ID |
+| status | smallint | NOT NULL, DEFAULT 0 | 仅表示无人机绑定状态：0=DRONE_UNBOUND, 1=DRONE_BOUND |
+| is_deleted | boolean | NOT NULL, DEFAULT false | 软删除标记 |
+| deleted_at | timestamp | NULLABLE | 删除时间 |
 | created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
 | updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
 
 说明：
-1. 飞手字段不是独立 `pilot` 表，而是 `tenant_members` 中拥有 `pilot_operator` 角色的成员。
-2. 创建 mission 时要求 route 已绑定最近一次成功上传的 DJI 航线；不再要求 `drone` 处于 `ENABLED`；本地 `start / pause / resume / complete / fail` 动作接口已删除。
+1. Mission 只表示 Django 本地任务单，不再映射 DJI job。
+2. Mission 软删除不可恢复，不提供恢复 API。
+3. `drone_id` 为空时，`status` 必须为 `DRONE_UNBOUND`。
+4. `drone_id` 非空时，`status` 必须为 `DRONE_BOUND`。
 
 ---
 
@@ -415,6 +423,8 @@ PostgreSQL
 | id | bigserial | PK | 媒体 ID |
 | tenant_id | bigint | NOT NULL, FK -> tenants.id | 所属租户 |
 | flight_record_id | bigint | FK -> flight_records.id | 关联飞行记录 |
+| mission_id | bigint | FK -> missions.id | 关联任务 |
+| device_sn | varchar(128) | NOT NULL, DEFAULT '' | 设备序列号冗余 |
 | media_type | smallint | NOT NULL | 媒体类型：1-照片, 2-视频 |
 | file_name | varchar(255) | NOT NULL | 文件名 |
 | file_url | varchar(500) | NOT NULL | 文件 URL |
@@ -482,26 +492,7 @@ PostgreSQL
 
 ---
 
-### 2.23 tenant_mission_indexes（任务同步索引表）
-
-| 字段名 | 类型 | 约束 | 说明 |
-| ------ | ---- | ---- | ---- |
-| id | bigserial | PK | 主键 |
-| tenant_id | bigint | NOT NULL, FK -> tenants.id | 所属租户 |
-| mission_id | bigint | NOT NULL, UNIQUE, FK -> missions.id | 业务任务 |
-| dji_job_id | varchar(128) | NOT NULL | DJI 任务 ID |
-| execution_status | varchar(64) | NOT NULL, DEFAULT '' | 最近一次同步到的 DJI 状态原文 |
-| sync_status | varchar(32) | NOT NULL, DEFAULT 'PENDING' | 同步状态 |
-| last_sync_at | timestamp |  | 最近同步时间 |
-| error_msg | varchar(255) | NOT NULL, DEFAULT '' | 同步错误 |
-| created_at | timestamp | NOT NULL, DEFAULT now() | 创建时间 |
-| updated_at | timestamp | NOT NULL, DEFAULT now() | 更新时间 |
-
-唯一约束：`(tenant_id, dji_job_id)`
-
----
-
-### 2.24 tenant_media_indexes（媒体同步索引表）
+### 2.23 tenant_media_indexes（媒体同步索引表）
 
 | 字段名 | 类型 | 约束 | 说明 |
 | ------ | ---- | ---- | ---- |
@@ -548,8 +539,6 @@ erDiagram
     routes ||--o{ missions : "1:N"
     drones ||--o{ missions : "1:N"
     tenant_members ||--o{ missions : "1:N"
-    tenants ||--o{ tenant_mission_indexes : "1:N"
-    missions ||--|| tenant_mission_indexes : "1:1"
     tenants ||--o{ flight_records : "1:N"
     missions ||--o{ flight_records : "1:N"
     drones ||--o{ flight_records : "1:N"
@@ -571,4 +560,4 @@ erDiagram
 4. 所有业务表均显式带 `tenant_id`，用于多租户数据隔离。
 5. 当前不存在独立 `pilots` 表，飞手由 `tenant_members` 承载；任务、分配、飞行记录都直接外键到 `tenant_members`。
 6. 当前不存在独立 `drone_types` 表；`routes.drone_type_id` 为预留扩展字段，当前没有外键约束。
-7. DJI 适配层当前已引入 `dji_workspace_configs`、`dji_device_indexes`、`tenant_route_indexes`、`tenant_mission_indexes`、`tenant_media_indexes` 五张核心表。
+7. DJI 适配层当前已引入 `dji_workspace_configs`、`dji_device_indexes`、`tenant_route_indexes`、`tenant_media_indexes` 四张核心表。

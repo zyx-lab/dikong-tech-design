@@ -242,7 +242,7 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=drone.name,
             pilot=self.member,
             pilot_name=self.member.display_name,
-            status=MissionStatus.PENDING,
+            status=MissionStatus.DRONE_BOUND,
         )
         flight_record = FlightRecord.objects.create(
             tenant=self.tenant,
@@ -294,7 +294,7 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=old_drone.name,
             pilot=self.member,
             pilot_name=self.member.display_name,
-            status=MissionStatus.PENDING,
+            status=MissionStatus.DRONE_BOUND,
         )
         flight_record = FlightRecord.objects.create(
             tenant=self.tenant,

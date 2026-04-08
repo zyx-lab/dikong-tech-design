@@ -158,7 +158,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name=self.pilot_staff.name,
-            status=MissionStatus.RUNNING,
+            status=MissionStatus.DRONE_BOUND,
         )
         self.other_mission = _persist_mission_fixture(
             tenant=self.tenant,
@@ -169,7 +169,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             drone_name=self.drone.name,
             pilot=self.other_pilot_member,
             pilot_name=self.other_pilot_staff.name,
-            status=MissionStatus.RUNNING,
+            status=MissionStatus.DRONE_BOUND,
         )
 
         self.other_route = Route.objects.create(tenant=self.other_tenant, name="其他租户飞行记录航线")
@@ -190,7 +190,7 @@ class LiveFlightRecordApiTestCase(LiveIamApiTestCase):
             drone_name=self.other_drone.name,
             pilot=self.other_tenant_pilot_member,
             pilot_name=self.other_tenant_pilot_staff.name,
-            status=MissionStatus.RUNNING,
+            status=MissionStatus.DRONE_BOUND,
         )
 
         self.login(username="flight_record_live_admin", password="pass1234", tenant_code=self.tenant.code)

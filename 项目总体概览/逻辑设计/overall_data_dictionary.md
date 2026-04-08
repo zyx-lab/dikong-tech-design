@@ -310,7 +310,8 @@ PostgreSQL
 | name | varchar(128) | NOT NULL | - | 无人机名称 |
 | model | varchar(128) | NOT NULL | - | 型号 |
 | device_sn | varchar(128) | NOT NULL | - | 设备序列号 |
-| status | varchar(16) | NOT NULL | DISABLED | 状态 |
+| status | varchar(16) | NOT NULL | CLAIMED | 认领状态 |
+| dji_online | boolean | NOT NULL | false | DJI 在线状态快照 |
 | org_id | bigint | - | - | 组织 ID |
 | created_by_tenant_member_id | bigint | - | - | 创建人 TenantMember ID |
 | created_at | timestamp | - | now() | 创建时间 |
@@ -319,8 +320,14 @@ PostgreSQL
 **status 状态值**：
 | 值 | 含义 |
 |----|------|
-| ENABLED | 启用 |
-| DISABLED | 停用 |
+| CLAIMED | 已认领 |
+| RELEASED | 已释放 |
+
+**约束与行为**：
+1. 唯一约束：`(tenant_id, code)`。
+2. 条件唯一约束：`(tenant_id, device_sn)` 仅在 `status != RELEASED` 时生效。
+3. 条件唯一约束：`(device_sn)` 仅在 `status != RELEASED` 时生效。
+4. 删除无人机执行软释放（`status=RELEASED`）；同租户再次认领相同 `device_sn` 时优先复用该释放行并恢复为 `CLAIMED`。
 
 ---
 
@@ -364,7 +371,7 @@ PostgreSQL
 **业务规则**：
 1. 当前设计不再使用 `Route.status`。
 2. `Route` 是公开聚合根，写入链路只接受 `kmz_file` 直传并立即同步 DJI。
-3. 删除航线时，若存在 `PENDING / RUNNING / PAUSED` 任务引用，则拒绝删除；否则删除 route 和残留 waypoint 行。
+3. 删除或更新航线时，仅当存在引用该航线的非删除 `DRONE_BOUND` mission 才拒绝；`DRONE_UNBOUND` 与软删除 mission 不阻塞。
 
 ---
 
@@ -406,32 +413,29 @@ PostgreSQL
 | name | varchar(100) | NOT NULL | - | 任务名称 |
 | route_id | bigint | FK | - | 任务航线；route 删除后可为空 |
 | route_name | varchar(100) | NOT NULL | '' | 航线名称（冗余） |
-| drone_id | bigint | FK, NOT NULL | - | 执行无人机 |
+| drone_id | bigint | FK | - | 执行无人机；可空表示未绑定 |
+| device_sn | varchar(128) | NOT NULL | '' | 无人机 SN（冗余） |
 | drone_name | varchar(100) | NOT NULL | '' | 无人机名称（冗余） |
 | pilot_id | bigint | FK, NOT NULL | - | 执行飞手成员 |
 | pilot_name | varchar(50) | NOT NULL | '' | 飞手姓名（冗余） |
 | scheduled_at | timestamp | - | - | 计划执行时间 |
 | remark | varchar(500) | NOT NULL | '' | 任务备注 |
-| status | smallint | NOT NULL | 0 | 任务状态 |
-| dji_job_id | varchar(128) | NOT NULL | '' | DJI 任务 ID |
+| status | smallint | NOT NULL | 0 | 无人机绑定状态：0=DRONE_UNBOUND,1=DRONE_BOUND |
+| is_deleted | boolean | NOT NULL | false | 软删除标记 |
+| deleted_at | timestamp | - | - | 删除时间 |
 | created_at | timestamp | - | now() | 创建时间 |
 | updated_at | timestamp | - | now() | 更新时间 |
 
 **status 状态值**：
 | 值 | 含义 |
 |----|------|
-| 0 | 待执行 |
-| 1 | 执行中 |
-| 2 | 已暂停 |
-| 3 | 已完成 |
-| 4 | 已取消 |
-| 5 | 执行失败 |
+| 0 | DRONE_UNBOUND（未绑定无人机） |
+| 1 | DRONE_BOUND（已绑定无人机） |
 
 **业务规则**：
-1. 创建任务时 `route`、`drone`、`pilot` 必须属于当前租户。
-2. 创建任务时 `route` 必须已绑定最近一次成功上传的 DJI 航线；不再要求 `drone` 处于 `ENABLED`。
-3. `pilot` 必须是当前租户下的 `ACTIVE TenantMember`，其账号需存在在职 `staff_profile`，且成员已绑定 `pilot_operator`。
-4. `status` 不可通过 PATCH 直接修改；本地 `start / pause / resume / complete / fail` 动作接口已删除。
+1. Mission 只表示 Django 本地任务单，不再映射 DJI job。
+2. `drone_id` 为空时，`status` 必须为 `DRONE_UNBOUND`；`drone_id` 非空时必须为 `DRONE_BOUND`。
+3. Mission 软删除不可恢复，不提供恢复 API。
 
 ---
 
@@ -479,6 +483,8 @@ PostgreSQL
 | id | bigserial | PK | 自增 | 媒体 ID |
 | tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
 | flight_record_id | bigint | FK | - | 关联飞行记录 |
+| mission_id | bigint | FK | - | 关联任务 |
+| device_sn | varchar(128) | NOT NULL | '' | 设备序列号（冗余） |
 | media_type | smallint | NOT NULL | - | 媒体类型 |
 | file_name | varchar(255) | NOT NULL | - | 文件名 |
 | file_url | varchar(500) | NOT NULL | - | 文件 URL |
@@ -554,26 +560,7 @@ PostgreSQL
 
 ---
 
-## 23. tenant_mission_indexes（任务同步索引表）
-
-**说明**：mission 与 DJI job 的一对一映射。
-
-| 字段名 | 类型 | 约束 | 默认值 | 说明 |
-| ------ | ---- | ---- | ------ | ---- |
-| id | bigserial | PK | 自增 | 主键 |
-| tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
-| mission_id | bigint | FK, NOT NULL, UNIQUE | - | 对应任务 |
-| dji_job_id | varchar(128) | NOT NULL | - | DJI 任务 ID |
-| execution_status | varchar(64) | NOT NULL | '' | 最近一次同步到的 DJI 执行状态原文 |
-| sync_status | varchar(32) | NOT NULL | PENDING | 同步状态 |
-| last_sync_at | timestamp | - | - | 最近同步时间 |
-| error_msg | varchar(255) | NOT NULL | '' | 同步错误 |
-| created_at | timestamp | NOT NULL | now() | 创建时间 |
-| updated_at | timestamp | NOT NULL | now() | 更新时间 |
-
----
-
-## 24. tenant_media_indexes（媒体同步索引表）
+## 23. tenant_media_indexes（媒体同步索引表）
 
 **说明**：media_file 与 DJI 文件的一对一映射。
 
@@ -590,3 +577,8 @@ PostgreSQL
 | error_msg | varchar(255) | NOT NULL | '' | 同步错误 |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
+
+**说明补充**：
+1. media 同步链路只按 `device_sn -> tenant` 做可靠落库，不再按 `job_id` 自动关联 mission。
+2. `media_files.mission_id` 为可空外键，仅通过业务 API 显式绑定。
+3. Mission 与 Media 的软删除均不可恢复。

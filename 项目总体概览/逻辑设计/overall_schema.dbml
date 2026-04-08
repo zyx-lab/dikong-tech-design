@@ -233,7 +233,8 @@ Table drones [note: '租户内无人机台账'] {
   name varchar(128) [not null, note: 'name 无人机名称']
   model varchar(128) [not null, note: 'model 型号']
   device_sn varchar(128) [not null, note: 'device_sn 设备序列号']
-  status varchar(16) [not null, default: 'DISABLED', note: 'status ENABLED / DISABLED']
+  status varchar(16) [not null, default: 'CLAIMED', note: 'status CLAIMED / RELEASED']
+  dji_online boolean [not null, default: false, note: 'dji_online DJI 在线状态快照']
   org_id bigint [note: 'org_id 组织ID']
   created_by_tenant_member_id bigint [note: 'created_by_tenant_member_id 创建人 TenantMember ID']
   created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
@@ -241,7 +242,9 @@ Table drones [note: '租户内无人机台账'] {
 
   indexes {
     (tenant_id, code) [unique, name: 'uniq_drone_tenant_code']
-    (tenant_id, device_sn) [unique, name: 'uniq_drone_tenant_device_sn']
+    // Runtime uses partial unique constraints (status != 'RELEASED'); names preserved here for traceability.
+    (tenant_id, device_sn) [name: 'uniq_drone_tenant_device_sn']
+    (device_sn) [name: 'uniq_drone_device_sn_global']
   }
 }
 
@@ -289,25 +292,24 @@ Table waypoints [note: '历史航线数据遗留的内部航点表'] {
   }
 }
 
-// ============================================================
-// 17. missions 任务表
-// ============================================================
-Table missions [note: '巡检任务主记录'] {
-  id bigserial [pk, note: 'id 任务ID']
-  tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
-  name varchar(100) [not null, note: 'name 任务名称']
-  route_id bigint [ref: > routes.id, note: 'route_id 任务航线；route 删除后可为空']
-  route_name varchar(100) [not null, default: '', note: 'route_name 航线名称（冗余）']
-  drone_id bigint [not null, ref: > drones.id, note: 'drone_id 执行无人机']
-  drone_name varchar(100) [not null, default: '', note: 'drone_name 无人机名称（冗余）']
-  pilot_id bigint [not null, ref: > tenant_members.id, note: 'pilot_id 执行飞手成员']
-  pilot_name varchar(50) [not null, default: '', note: 'pilot_name 飞手姓名（冗余）']
-  scheduled_at timestamp [note: 'scheduled_at 计划执行时间']
-  remark varchar(500) [not null, default: '', note: 'remark 任务备注']
-  status smallint [not null, default: 0, note: 'status PENDING / RUNNING / PAUSED / COMPLETED / CANCELED / FAILED']
-  dji_job_id varchar(128) [not null, default: '', note: 'dji_job_id DJI 任务 ID']
-  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+Table missions {
+  id bigint [pk, increment]
+  tenant_id bigint [not null, ref: > tenants.id]
+  name varchar(100) [not null]
+  route_id bigint [ref: > routes.id]
+  route_name varchar(100) [not null, default: '']
+  drone_id bigint [ref: > drones.id]
+  device_sn varchar(128) [not null, default: '']
+  drone_name varchar(100) [not null, default: '']
+  pilot_id bigint [not null, ref: > tenant_members.id]
+  pilot_name varchar(50) [not null, default: '']
+  scheduled_at timestamp
+  remark varchar(500) [not null, default: '']
+  status smallint [not null, default: 0, note: '0=DRONE_UNBOUND,1=DRONE_BOUND']
+  is_deleted boolean [not null, default: false]
+  deleted_at timestamp
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
 }
 
 // ============================================================
@@ -346,6 +348,8 @@ Table media_files [note: '飞行过程产生的图片与视频'] {
   id bigserial [pk, note: 'id 媒体ID']
   tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
   flight_record_id bigint [ref: > flight_records.id, note: 'flight_record_id 关联飞行记录']
+  mission_id bigint [ref: > missions.id, note: 'mission_id 关联任务']
+  device_sn varchar(128) [not null, default: '', note: 'device_sn 设备序列号（冗余）']
   media_type smallint [not null, note: 'media_type 1-照片, 2-视频']
   file_name varchar(255) [not null, note: 'file_name 文件名']
   file_url varchar(500) [not null, note: 'file_url 文件URL']
@@ -409,41 +413,18 @@ Table tenant_route_indexes [note: 'route 与 DJI 航线的最小发布映射'] {
   }
 }
 
-// ============================================================
-// 23. tenant_mission_indexes 任务同步索引表
-// ============================================================
-Table tenant_mission_indexes [note: 'mission 与 DJI job 的一对一映射'] {
-  id bigserial [pk, note: 'id 主键']
-  tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
-  mission_id bigint [not null, unique, ref: > missions.id, note: 'mission_id 业务任务']
-  dji_job_id varchar(128) [not null, note: 'dji_job_id DJI 任务 ID']
-  execution_status varchar(64) [not null, default: '', note: 'execution_status 最近一次同步到的 DJI 状态原文']
-  sync_status varchar(32) [not null, default: 'PENDING', note: 'sync_status 同步状态']
-  last_sync_at timestamp [note: 'last_sync_at 最近同步时间']
-  error_msg varchar(255) [not null, default: '', note: 'error_msg 同步错误']
-  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
-
-  indexes {
-    (tenant_id, dji_job_id) [unique, name: 'uniq_tenant_dji_job_id']
-  }
-}
-
-// ============================================================
-// 24. tenant_media_indexes 媒体同步索引表
-// ============================================================
-Table tenant_media_indexes [note: 'media_file 与 DJI 文件的一对一映射'] {
-  id bigserial [pk, note: 'id 主键']
-  tenant_id bigint [not null, ref: > tenants.id, note: 'tenant_id 所属租户']
-  media_file_id bigint [not null, unique, ref: > media_files.id, note: 'media_file_id 业务媒体']
-  dji_file_id varchar(128) [not null, note: 'dji_file_id DJI 文件 ID']
-  device_sn varchar(128) [not null, default: '', note: 'device_sn 设备序列号']
-  mission_id bigint [ref: > missions.id, note: 'mission_id 关联任务']
-  sync_status varchar(32) [not null, default: 'PENDING', note: 'sync_status 同步状态']
-  last_sync_at timestamp [note: 'last_sync_at 最近同步时间']
-  error_msg varchar(255) [not null, default: '', note: 'error_msg 同步错误']
-  created_at timestamp [not null, default: `now()`, note: 'created_at 创建时间']
-  updated_at timestamp [not null, default: `now()`, note: 'updated_at 更新时间']
+Table tenant_media_indexes {
+  id bigint [pk, increment]
+  tenant_id bigint [not null, ref: > tenants.id]
+  media_file_id bigint [not null, unique, ref: > media_files.id]
+  dji_file_id varchar(128) [not null]
+  device_sn varchar(128) [not null, default: '']
+  mission_id bigint [ref: > missions.id]
+  sync_status varchar(32) [not null, default: 'PENDING']
+  last_sync_at timestamp
+  error_msg varchar(255) [not null, default: '']
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
 
   indexes {
     (tenant_id, dji_file_id) [unique, name: 'uniq_tenant_dji_file_id']

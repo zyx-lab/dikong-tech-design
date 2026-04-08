@@ -10,7 +10,12 @@ from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_sche
 from apps.access.models import ScopeType
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.services import AuthzService, log_action, snapshot
-from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
+from apps.api_v1.business_response import (
+    BusinessApiResponseMixin,
+    StandardCode,
+    standard_error_payload,
+    validation_error_payload,
+)
 from apps.api_v1.schema import (
     BusinessDeleteResultSerializer,
     BUSINESS_INVALID_PARAMS_RESPONSE,
@@ -24,11 +29,19 @@ from apps.api_v1.schema import (
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.dji_bff.gateway import DjiGateway
 from apps.media_file.models import MediaFile, MediaType
-from apps.media_file.serializers import MediaFileReadSerializer
+from apps.media_file.serializers import (
+    MediaFileBindMissionResultSerializer,
+    MediaFileBindMissionSerializer,
+    MediaFileReadSerializer,
+)
 
 MEDIA_FILE_LIST_RESPONSE = paginated_envelope_serializer("MediaFileListResponse", MediaFileReadSerializer)
 MEDIA_FILE_DETAIL_RESPONSE = object_envelope_serializer("MediaFileDetailResponse", MediaFileReadSerializer)
 MEDIA_FILE_DELETE_RESPONSE = object_envelope_serializer("MediaFileDeleteResponse", BusinessDeleteResultSerializer)
+MEDIA_FILE_BIND_MISSION_RESPONSE = object_envelope_serializer(
+    "MediaFileBindMissionResponse",
+    MediaFileBindMissionResultSerializer,
+)
 
 MEDIA_FILE_FILTER_PARAMETERS = [
     TENANT_CODE_HEADER_PARAMETER,
@@ -110,14 +123,20 @@ class MediaFileViewSet(
     queryset = MediaFile.objects.select_related("flight_record", "dji_index").all().order_by("-id")
     serializer_class = MediaFileReadSerializer
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "delete", "head", "options"]
+    http_method_names = ["get", "post", "delete", "head", "options"]
 
     permission_map = {
         "list": "media_file.view_media_file",
         "retrieve": "media_file.view_media_file",
         "download": "media_file.view_media_file",
         "destroy": "media_file.manage_media_file",
+        "bind_mission": "media_file.manage_media_file",
     }
+
+    def get_serializer_class(self):
+        if self.action == "bind_mission":
+            return MediaFileBindMissionSerializer
+        return MediaFileReadSerializer
 
     @staticmethod
     def assigned_scope_filter_builder(tenant_member_id: int) -> dict:
@@ -201,3 +220,82 @@ class MediaFileViewSet(
         media_file = self.get_object()
         download_url = DjiGateway().get_media_url(media_file.dji_index.dji_file_id)
         return HttpResponseRedirect(download_url)
+
+    @extend_schema(
+        summary="批量绑定媒体到任务",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=MediaFileBindMissionSerializer,
+        responses={
+            200: OpenApiResponse(response=MEDIA_FILE_BIND_MISSION_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Media File"],
+    )
+    @action(detail=False, methods=["post"], url_path="bind-mission")
+    @transaction.atomic
+    def bind_mission(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        mission = serializer.validated_data["mission"]
+        media_ids = serializer.validated_data["media_file_ids"]
+
+        queryset = self.apply_scope(
+            self.scope_queryset_to_tenant(
+                MediaFile.objects.select_related("mission", "flight_record", "dji_index")
+            ).filter(is_deleted=False, dji_index__isnull=False, id__in=media_ids)
+        )
+        media_files = list(queryset.select_for_update().order_by("id"))
+        if len(media_files) != len(media_ids):
+            return Response(
+                validation_error_payload({"media_file_ids": ["存在不存在、已删除或无权限的媒体记录"]}),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mismatched_ids = [item.id for item in media_files if item.device_sn != mission.device_sn]
+        if mismatched_ids:
+            return Response(
+                validation_error_payload({"media_file_ids": [f"以下媒体 device_sn 不匹配: {mismatched_ids}"]}),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        conflicting_ids = [
+            item.id
+            for item in media_files
+            if item.flight_record_id
+            and item.flight_record
+            and item.flight_record.mission_id
+            and item.flight_record.mission_id != mission.id
+        ]
+        if conflicting_ids:
+            return Response(
+                validation_error_payload(
+                    {"media_file_ids": [f"以下媒体已被 flight_record 锁定到其他任务: {conflicting_ids}"]}
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        updated_ids = []
+        for media_file in media_files:
+            media_file.mission = mission
+            media_file.save(update_fields=["mission"])
+            if getattr(media_file, "dji_index", None) is not None:
+                media_file.dji_index.mission = mission
+                media_file.dji_index.save(update_fields=["mission", "updated_at"])
+            updated_ids.append(media_file.id)
+
+        payload = {
+            "mission_id": mission.id,
+            "media_file_ids": updated_ids,
+            "updated_count": len(updated_ids),
+        }
+        log_action(
+            request=request,
+            action="MEDIA_FILE_BIND_MISSION",
+            target_type="mission",
+            target_id=mission.id,
+            after_data=payload,
+        )
+        return Response(payload, status=status.HTTP_200_OK)
