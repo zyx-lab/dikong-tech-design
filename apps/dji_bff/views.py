@@ -74,38 +74,38 @@ def _load_json(request) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def _run_sync(request, sync_func):
+def _run_internal_post(request, handler, *, parse_json: bool = False, catch_gateway_error: bool = False):
     precondition_error = _require_internal_post(request)
     if precondition_error is not None:
         return precondition_error
     try:
-        return _success(sync_func())
+        if parse_json:
+            payload = _load_json(request)
+            result = handler(payload, request=request)
+        else:
+            result = handler()
     except DjiGatewayError as exc:
-        return _gateway_sync_error(exc)
+        if catch_gateway_error:
+            return _gateway_sync_error(exc)
+        raise
+    return _success(result)
 
 
 @csrf_exempt
 def sync_devices(request):
-    return _run_sync(request, sync_device_indexes)
+    return _run_internal_post(request, sync_device_indexes, catch_gateway_error=True)
 
 
 @csrf_exempt
 def sync_media(request):
-    return _run_sync(request, sync_media_indexes)
-
-
-def _handle_callback(request, handler):
-    precondition_error = _require_internal_post(request)
-    if precondition_error is not None:
-        return precondition_error
-    return _success(handler(_load_json(request), request=request))
+    return _run_internal_post(request, sync_media_indexes, catch_gateway_error=True)
 
 
 @csrf_exempt
 def media_upload_callback(request):
-    return _handle_callback(request, handle_media_upload_callback)
+    return _run_internal_post(request, handle_media_upload_callback, parse_json=True)
 
 
 @csrf_exempt
 def media_group_upload_callback(request):
-    return _handle_callback(request, handle_media_group_upload_callback)
+    return _run_internal_post(request, handle_media_group_upload_callback, parse_json=True)

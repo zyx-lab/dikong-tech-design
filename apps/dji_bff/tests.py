@@ -512,6 +512,14 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["code"], "A0403")
 
+    def test_media_callback_should_reject_non_post(self):
+        response = self.client.get(
+            "/api/v1/__internal__/dji/callbacks/media-upload",
+            HTTP_X_DJI_INTERNAL_TOKEN="internal-sync-token",
+        )
+
+        self.assertEqual(response.status_code, 404)
+
     def test_internal_sync_endpoints_should_follow_minimal_contract(self):
         sync_response = self.client.post(
             "/api/v1/__internal__/dji/sync/devices",

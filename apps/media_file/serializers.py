@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from rest_framework import serializers
 
 from apps.access.models import ScopeType
@@ -10,8 +8,8 @@ from apps.mission.models import Mission, MissionStatus
 
 
 class MediaFileReadSerializer(serializers.ModelSerializer):
-    mission_id = serializers.SerializerMethodField()
-    device_sn = serializers.SerializerMethodField()
+    mission_id = serializers.IntegerField(read_only=True, allow_null=True)
+    device_sn = serializers.CharField(read_only=True)
     dji_file_id = serializers.SerializerMethodField()
     sync_status = serializers.SerializerMethodField()
     last_sync_at = serializers.SerializerMethodField()
@@ -37,19 +35,13 @@ class MediaFileReadSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_mission_id(self, obj) -> int | None:
-        return obj.mission_id
-
-    def get_device_sn(self, obj) -> str:
-        return obj.device_sn
-
-    def get_dji_file_id(self, obj) -> str:
+    def get_dji_file_id(self, obj):
         return getattr(getattr(obj, "dji_index", None), "dji_file_id", "")
 
-    def get_sync_status(self, obj) -> str:
+    def get_sync_status(self, obj):
         return getattr(getattr(obj, "dji_index", None), "sync_status", "")
 
-    def get_last_sync_at(self, obj) -> datetime | None:
+    def get_last_sync_at(self, obj):
         return getattr(getattr(obj, "dji_index", None), "last_sync_at", None)
 
 

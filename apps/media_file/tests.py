@@ -18,6 +18,7 @@ from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
 from apps.drone.models import Drone
 from apps.flight_record.models import FlightRecord, FlightRecordStatus
 from apps.media_file.models import MediaFile, MediaType
+from apps.media_file.serializers import MediaFileReadSerializer
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 
@@ -153,6 +154,40 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["data"]["total"], 1)
         self.assertEqual(response.data["data"]["list"][0]["device_sn"], "MEDIA-SN-001")
+
+    def test_list_should_expose_media_read_model_fields(self):
+        media_file = self._create_media(file_name="IMG_FIELDS.JPG", device_sn="MEDIA-SN-001")
+
+        response = self.client.get("/api/v1/media-files")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.data["data"]["list"][0]
+        self.assertEqual(payload["id"], media_file.id)
+        self.assertEqual(payload["mission_id"], self.mission.id)
+        self.assertEqual(payload["device_sn"], "MEDIA-SN-001")
+        self.assertEqual(payload["dji_file_id"], "dji-IMG_FIELDS.JPG")
+        self.assertEqual(payload["sync_status"], SyncStatus.SYNCED)
+        self.assertIsNotNone(payload["last_sync_at"])
+
+    def test_read_serializer_should_expose_empty_sync_fields_when_dji_index_missing(self):
+        media_file = MediaFile.objects.create(
+            tenant=self.tenant,
+            flight_record=self.flight_record,
+            mission=self.mission,
+            device_sn="MEDIA-SN-001",
+            media_type=MediaType.PHOTO,
+            file_name="IMG_NO_INDEX.JPG",
+            file_url="https://example.com/IMG_NO_INDEX.JPG",
+            captured_at=timezone.now(),
+        )
+
+        payload = MediaFileReadSerializer(media_file).data
+
+        self.assertEqual(payload["mission_id"], self.mission.id)
+        self.assertEqual(payload["device_sn"], "MEDIA-SN-001")
+        self.assertEqual(payload["dji_file_id"], "")
+        self.assertEqual(payload["sync_status"], "")
+        self.assertIsNone(payload["last_sync_at"])
 
     def test_download_should_redirect_to_dji_url(self):
         media_file = self._create_media(file_name="IMG_DL.JPG", device_sn="MEDIA-SN-001")

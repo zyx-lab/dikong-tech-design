@@ -91,6 +91,38 @@ def _clone_kmz_for_upload(file_obj) -> SimpleUploadedFile:
     return SimpleUploadedFile(name=filename, content=content, content_type=content_type)
 
 
+def _require_kmz_file(serializer) -> SimpleUploadedFile:
+    kmz_file = serializer.validated_data.get("kmz_file")
+    if kmz_file is None:
+        raise RuntimeError("kmz_file missing")
+    return kmz_file
+
+
+def _upload_route_to_upstream(*, gateway: DjiGateway, route_id: int, route_name: str, kmz_file) -> tuple[str, str]:
+    upload_file = _clone_kmz_for_upload(kmz_file)
+    upstream_name = _format_upstream_route_name(route_id, route_name)
+    payload = gateway.upload_route(route_name=upstream_name, file_obj=upload_file)
+    return payload["dji_wayline_id"], str(payload["download_url"])
+
+
+def _sync_route_index(*, tenant, route: Route, dji_wayline_id: str, download_url: str, route_index: TenantRouteIndex | None = None):
+    if route_index is None:
+        route_index = TenantRouteIndex.objects.create(
+            tenant=tenant,
+            route=route,
+            dji_wayline_id=dji_wayline_id,
+            download_url=download_url,
+            is_published=True,
+        )
+    else:
+        route_index.dji_wayline_id = dji_wayline_id
+        route_index.download_url = download_url
+        route_index.is_published = True
+        route_index.save(update_fields=["dji_wayline_id", "download_url", "is_published", "updated_at"])
+    route.dji_index = route_index
+    return route_index
+
+
 @extend_schema_view(
     list=extend_schema(
         summary="查询当前租户航线",
@@ -208,28 +240,24 @@ class RouteViewSet(
     @transaction.atomic
     def perform_create(self, serializer):
         tenant = self.get_current_tenant()
-        try:
-            kmz_file = serializer.validated_data["kmz_file"]
-        except KeyError:
-            raise RuntimeError("kmz_file missing")
+        kmz_file = _require_kmz_file(serializer)
 
         route = serializer.save(tenant=tenant)
         gateway = DjiGateway()
-        upload_file = _clone_kmz_for_upload(kmz_file)
-        upstream_name = _format_upstream_route_name(route.id, route.name)
-        payload = gateway.upload_route(route_name=upstream_name, file_obj=upload_file)
-        dji_wayline_id = payload["dji_wayline_id"]
-        download_url = str(payload["download_url"])
+        dji_wayline_id, download_url = _upload_route_to_upstream(
+            gateway=gateway,
+            route_id=route.id,
+            route_name=route.name,
+            kmz_file=kmz_file,
+        )
 
         try:
-            route_index = TenantRouteIndex.objects.create(
+            _sync_route_index(
                 tenant=tenant,
                 route=route,
                 dji_wayline_id=dji_wayline_id,
                 download_url=download_url,
-                is_published=True,
             )
-            route.dji_index = route_index
             log_action(
                 request=self.request,
                 action="ROUTE_CREATE",
@@ -258,10 +286,7 @@ class RouteViewSet(
         route = serializer.instance
         before_data = self._payload(route)
         tenant = self.get_current_tenant()
-        try:
-            kmz_file = serializer.validated_data["kmz_file"]
-        except KeyError:
-            raise RuntimeError("kmz_file missing")
+        kmz_file = _require_kmz_file(serializer)
 
         gateway = DjiGateway()
         route_index, _ = TenantRouteIndex.objects.get_or_create(
@@ -271,19 +296,22 @@ class RouteViewSet(
         )
         old_wayline_id = route_index.dji_wayline_id
         new_name = serializer.validated_data.get("name", route.name)
-        upstream_name = _format_upstream_route_name(route.id, new_name)
-        upload_file = _clone_kmz_for_upload(kmz_file)
-        payload = gateway.upload_route(route_name=upstream_name, file_obj=upload_file)
-        new_wayline_id = payload["dji_wayline_id"]
-        new_download_url = str(payload["download_url"])
+        new_wayline_id, new_download_url = _upload_route_to_upstream(
+            gateway=gateway,
+            route_id=route.id,
+            route_name=new_name,
+            kmz_file=kmz_file,
+        )
 
         try:
             route = serializer.save()
-            route_index.dji_wayline_id = new_wayline_id
-            route_index.download_url = new_download_url
-            route_index.is_published = True
-            route_index.save(update_fields=["dji_wayline_id", "download_url", "is_published", "updated_at"])
-            route.dji_index = route_index
+            _sync_route_index(
+                tenant=tenant,
+                route=route,
+                dji_wayline_id=new_wayline_id,
+                download_url=new_download_url,
+                route_index=route_index,
+            )
             log_action(
                 request=self.request,
                 action="ROUTE_UPDATE",
