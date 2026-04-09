@@ -1,6 +1,11 @@
 from rest_framework import serializers
 
-from apps.access.models import DirectoryStatus, EmploymentStatus, ScopeType, TenantMemberRoleStatus, TenantMemberStatus
+from apps.access.models import ScopeType
+from apps.access.validation import (
+    TenantMemberValidationMessages,
+    validate_relation_belongs_to_tenant,
+    validate_tenant_member_as_pilot,
+)
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.api_v1.tenant_scope import require_request_tenant
 from apps.flight_record.models import FlightRecord
@@ -80,26 +85,33 @@ class FlightRecordWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSer
         if start_time and end_time and end_time < start_time:
             raise serializers.ValidationError({"end_time": "结束时间不能早于开始时间"})
 
-        if mission is not None and mission.tenant_id != current_tenant.id:
-            raise serializers.ValidationError({"mission": "仅允许绑定当前租户下的任务"})
-        if drone is not None and drone.tenant_id != current_tenant.id:
-            raise serializers.ValidationError({"drone": "仅允许绑定当前租户下的无人机"})
-        if pilot is not None and pilot.tenant_id != current_tenant.id:
-            raise serializers.ValidationError({"pilot": "仅允许绑定当前租户下的成员"})
-        if pilot is not None and pilot.status != TenantMemberStatus.ACTIVE:
-            raise serializers.ValidationError({"pilot": "仅允许绑定 ACTIVE 成员"})
-        if pilot is not None:
-            staff = getattr(pilot.user, "staff_profile", None)
-            if staff is None:
-                raise serializers.ValidationError({"pilot": "pilot 对应账号必须存在 staff_profile"})
-            if staff.employment_status != EmploymentStatus.ACTIVE:
-                raise serializers.ValidationError({"pilot": "仅允许绑定在职飞手"})
-            if not pilot.role_bindings.filter(
-                system_role__code="pilot_operator",
-                system_role__status=DirectoryStatus.ACTIVE,
-                status=TenantMemberRoleStatus.GRANTED,
-            ).exists():
-                raise serializers.ValidationError({"pilot": "仅允许绑定当前租户下的飞手类型（pilot_operator）"})
+        validate_relation_belongs_to_tenant(
+            related_obj=mission,
+            tenant_id=current_tenant.id,
+            field_name="mission",
+            mismatch_message="仅允许绑定当前租户下的任务",
+            error_cls=serializers.ValidationError,
+        )
+        validate_relation_belongs_to_tenant(
+            related_obj=drone,
+            tenant_id=current_tenant.id,
+            field_name="drone",
+            mismatch_message="仅允许绑定当前租户下的无人机",
+            error_cls=serializers.ValidationError,
+        )
+        validate_tenant_member_as_pilot(
+            tenant_member=pilot,
+            tenant_id=current_tenant.id,
+            field_name="pilot",
+            messages=TenantMemberValidationMessages(
+                tenant_mismatch="仅允许绑定当前租户下的成员",
+                inactive_member="仅允许绑定 ACTIVE 成员",
+                missing_staff_profile="pilot 对应账号必须存在 staff_profile",
+                inactive_employment="仅允许绑定在职飞手",
+                missing_role="仅允许绑定当前租户下的飞手类型（pilot_operator）",
+            ),
+            error_cls=serializers.ValidationError,
+        )
 
         if mission and drone and mission.drone_id and mission.drone_id != drone.id:
             raise serializers.ValidationError({"drone": "drone 与 mission 绑定关系不一致"})

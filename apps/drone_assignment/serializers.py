@@ -1,7 +1,11 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
 
-from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMember, TenantMemberRoleStatus, TenantMemberStatus
+from apps.access.validation import (
+    TenantMemberValidationMessages,
+    validate_relation_belongs_to_tenant,
+    validate_tenant_member_as_pilot,
+)
 from apps.api_v1.tenant_scope import require_request_tenant
 from apps.drone_assignment.models import DroneAssignment, DroneAssignmentStatus
 
@@ -45,25 +49,26 @@ class DroneAssignmentCreateSerializer(serializers.ModelSerializer):
         tenant_member = attrs["tenant_member"]
         current_tenant = require_request_tenant(self.context)
 
-        if drone.tenant_id != current_tenant.id:
-            raise serializers.ValidationError({"drone": "仅允许绑定当前租户下的无人机"})
-
-        if tenant_member.tenant_id != current_tenant.id:
-            raise serializers.ValidationError({"tenant_member": "仅允许绑定当前租户下的成员"})
-        if tenant_member.status != TenantMemberStatus.ACTIVE:
-            raise serializers.ValidationError({"tenant_member": "仅允许绑定 ACTIVE 成员"})
-
-        staff = getattr(tenant_member.user, "staff_profile", None)
-        if staff is None:
-            raise serializers.ValidationError({"tenant_member": "tenant_member 对应账号必须存在 staff_profile"})
-        if staff.employment_status != EmploymentStatus.ACTIVE:
-            raise serializers.ValidationError({"tenant_member": "仅允许分配给在职人员"})
-        if not tenant_member.role_bindings.filter(
-            system_role__code="pilot_operator",
-            system_role__status=DirectoryStatus.ACTIVE,
-            status=TenantMemberRoleStatus.GRANTED,
-        ).exists():
-            raise serializers.ValidationError({"tenant_member": "仅允许分配给飞手类型（pilot_operator）"})
+        validate_relation_belongs_to_tenant(
+            related_obj=drone,
+            tenant_id=current_tenant.id,
+            field_name="drone",
+            mismatch_message="仅允许绑定当前租户下的无人机",
+            error_cls=serializers.ValidationError,
+        )
+        validate_tenant_member_as_pilot(
+            tenant_member=tenant_member,
+            tenant_id=current_tenant.id,
+            field_name="tenant_member",
+            messages=TenantMemberValidationMessages(
+                tenant_mismatch="仅允许绑定当前租户下的成员",
+                inactive_member="仅允许绑定 ACTIVE 成员",
+                missing_staff_profile="tenant_member 对应账号必须存在 staff_profile",
+                inactive_employment="仅允许分配给在职人员",
+                missing_role="仅允许分配给飞手类型（pilot_operator）",
+            ),
+            error_cls=serializers.ValidationError,
+        )
 
         if DroneAssignment.objects.filter(
             tenant=current_tenant,

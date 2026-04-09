@@ -1,7 +1,11 @@
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
+from apps.access.validation import (
+    TenantMemberValidationMessages,
+    validate_relation_belongs_to_tenant,
+    validate_tenant_member_as_pilot,
+)
 
 
 class FlightRecordStatus(models.IntegerChoices):
@@ -88,28 +92,35 @@ class FlightRecord(models.Model):
             if current_status is not None and self.status != current_status and self.status not in allowed_transitions.get(current_status, set()):
                 raise ValidationError({"status": "当前飞行记录状态不允许执行该变更"})
 
-        if self.tenant_id and self.mission_id and self.mission.tenant_id != self.tenant_id:
-            raise ValidationError({"mission": "mission 必须属于当前 tenant"})
-        if self.tenant_id and self.drone_id and self.drone.tenant_id != self.tenant_id:
-            raise ValidationError({"drone": "drone 必须属于当前 tenant"})
+        validate_relation_belongs_to_tenant(
+            related_obj=self.mission if self.mission_id else None,
+            tenant_id=self.tenant_id,
+            field_name="mission",
+            mismatch_message="mission 必须属于当前 tenant",
+            error_cls=ValidationError,
+        )
+        validate_relation_belongs_to_tenant(
+            related_obj=self.drone if self.drone_id else None,
+            tenant_id=self.tenant_id,
+            field_name="drone",
+            mismatch_message="drone 必须属于当前 tenant",
+            error_cls=ValidationError,
+        )
         if self.start_time and self.end_time and self.end_time < self.start_time:
             raise ValidationError({"end_time": "结束时间不能早于开始时间"})
-        if self.tenant_id and self.pilot_id and self.pilot.tenant_id != self.tenant_id:
-            raise ValidationError({"pilot": "pilot 必须属于当前 tenant"})
-        if self.pilot_id and self.pilot.status != TenantMemberStatus.ACTIVE:
-            raise ValidationError({"pilot": "仅允许绑定 ACTIVE 成员"})
-        if self.pilot_id:
-            staff = getattr(self.pilot.user, "staff_profile", None)
-            if staff is None:
-                raise ValidationError({"pilot": "pilot 对应账号必须存在 staff_profile"})
-            if staff.employment_status != EmploymentStatus.ACTIVE:
-                raise ValidationError({"pilot": "仅允许绑定在职飞手"})
-            if not self.pilot.role_bindings.filter(
-                system_role__code="pilot_operator",
-                system_role__status=DirectoryStatus.ACTIVE,
-                status=TenantMemberRoleStatus.GRANTED,
-            ).exists():
-                raise ValidationError({"pilot": "仅允许绑定当前租户下的飞手类型（pilot_operator）"})
+        validate_tenant_member_as_pilot(
+            tenant_member=self.pilot if self.pilot_id else None,
+            tenant_id=self.tenant_id,
+            field_name="pilot",
+            messages=TenantMemberValidationMessages(
+                tenant_mismatch="pilot 必须属于当前 tenant",
+                inactive_member="仅允许绑定 ACTIVE 成员",
+                missing_staff_profile="pilot 对应账号必须存在 staff_profile",
+                inactive_employment="仅允许绑定在职飞手",
+                missing_role="仅允许绑定当前租户下的飞手类型（pilot_operator）",
+            ),
+            error_cls=ValidationError,
+        )
         if self.mission_id and self.drone_id and self.mission.drone_id and self.mission.drone_id != self.drone_id:
             raise ValidationError({"drone": "drone 与 mission 绑定关系不一致"})
         if self.mission_id and self.pilot_id and self.mission.pilot_id and self.mission.pilot_id != self.pilot_id:

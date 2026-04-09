@@ -1,7 +1,11 @@
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
+from apps.access.validation import (
+    TenantMemberValidationMessages,
+    validate_relation_belongs_to_tenant,
+    validate_tenant_member_as_pilot,
+)
 
 
 class MissionStatus(models.IntegerChoices):
@@ -73,10 +77,20 @@ class Mission(models.Model):
             raise ValidationError({"deleted_at": "逻辑删除记录必须提供 deleted_at"})
         if not self.is_deleted and self.deleted_at is not None:
             raise ValidationError({"deleted_at": "未删除记录不允许写入 deleted_at"})
-        if self.tenant_id and self.route_id and self.route.tenant_id != self.tenant_id:
-            raise ValidationError({"route": "route 必须属于当前 tenant"})
-        if self.tenant_id and self.drone_id and self.drone.tenant_id != self.tenant_id:
-            raise ValidationError({"drone": "drone 必须属于当前 tenant"})
+        validate_relation_belongs_to_tenant(
+            related_obj=self.route if self.route_id else None,
+            tenant_id=self.tenant_id,
+            field_name="route",
+            mismatch_message="route 必须属于当前 tenant",
+            error_cls=ValidationError,
+        )
+        validate_relation_belongs_to_tenant(
+            related_obj=self.drone if self.drone_id else None,
+            tenant_id=self.tenant_id,
+            field_name="drone",
+            mismatch_message="drone 必须属于当前 tenant",
+            error_cls=ValidationError,
+        )
         if self.drone_id:
             self.status = MissionStatus.DRONE_BOUND
             self.device_sn = self.drone.device_sn
@@ -85,22 +99,19 @@ class Mission(models.Model):
             self.status = MissionStatus.DRONE_UNBOUND
             self.device_sn = ""
             self.drone_name = ""
-        if self.tenant_id and self.pilot_id and self.pilot.tenant_id != self.tenant_id:
-            raise ValidationError({"pilot": "pilot 必须属于当前 tenant"})
-        if self.pilot_id and self.pilot.status != TenantMemberStatus.ACTIVE:
-            raise ValidationError({"pilot": "仅允许分配给 ACTIVE 成员"})
-        if self.pilot_id:
-            staff = getattr(self.pilot.user, "staff_profile", None)
-            if staff is None:
-                raise ValidationError({"pilot": "pilot 对应账号必须存在 staff_profile"})
-            if staff.employment_status != EmploymentStatus.ACTIVE:
-                raise ValidationError({"pilot": "仅允许分配给在职飞手"})
-            if not self.pilot.role_bindings.filter(
-                system_role__code="pilot_operator",
-                system_role__status=DirectoryStatus.ACTIVE,
-                status=TenantMemberRoleStatus.GRANTED,
-            ).exists():
-                raise ValidationError({"pilot": "仅允许分配给飞手类型（pilot_operator）"})
+        validate_tenant_member_as_pilot(
+            tenant_member=self.pilot if self.pilot_id else None,
+            tenant_id=self.tenant_id,
+            field_name="pilot",
+            messages=TenantMemberValidationMessages(
+                tenant_mismatch="pilot 必须属于当前 tenant",
+                inactive_member="仅允许分配给 ACTIVE 成员",
+                missing_staff_profile="pilot 对应账号必须存在 staff_profile",
+                inactive_employment="仅允许分配给在职飞手",
+                missing_role="仅允许分配给飞手类型（pilot_operator）",
+            ),
+            error_cls=ValidationError,
+        )
 
     def save(self, *args, **kwargs):
         self.full_clean()

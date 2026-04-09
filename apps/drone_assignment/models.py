@@ -2,7 +2,13 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 
-from apps.access.models import DirectoryStatus, EmploymentStatus, TenantMemberRoleStatus, TenantMemberStatus
+from apps.access.validation import (
+    TenantMemberValidationMessages,
+    validate_relation_belongs_to_tenant,
+    validate_tenant_member_as_pilot,
+)
+
+
 class DroneAssignmentStatus(models.TextChoices):
     ACTIVE = "ACTIVE", "生效中"
     INACTIVE = "INACTIVE", "已失效"
@@ -55,24 +61,26 @@ class DroneAssignment(models.Model):
         return f"drone={self.drone_id}, tenant_member={self.tenant_member_id}, status={self.status}"
 
     def clean(self):
-        if self.tenant_id and self.drone_id and self.drone.tenant_id != self.tenant_id:
-            raise ValidationError({"drone": "drone 必须属于当前 tenant"})
-        if self.tenant_id and self.tenant_member_id and self.tenant_member.tenant_id != self.tenant_id:
-            raise ValidationError({"tenant_member": "tenant_member 必须属于当前 tenant"})
-        if self.tenant_member_id and self.tenant_member.status != TenantMemberStatus.ACTIVE:
-            raise ValidationError({"tenant_member": "仅允许分配给 ACTIVE 成员"})
-        if self.tenant_member_id:
-            staff = getattr(self.tenant_member.user, "staff_profile", None)
-            if staff is None:
-                raise ValidationError({"tenant_member": "tenant_member 对应账号必须存在 staff_profile"})
-            if staff.employment_status != EmploymentStatus.ACTIVE:
-                raise ValidationError({"tenant_member": "仅允许分配给在职人员"})
-            if not self.tenant_member.role_bindings.filter(
-                system_role__code="pilot_operator",
-                system_role__status=DirectoryStatus.ACTIVE,
-                status=TenantMemberRoleStatus.GRANTED,
-            ).exists():
-                raise ValidationError({"tenant_member": "仅允许分配给飞手类型（pilot_operator）"})
+        validate_relation_belongs_to_tenant(
+            related_obj=self.drone if self.drone_id else None,
+            tenant_id=self.tenant_id,
+            field_name="drone",
+            mismatch_message="drone 必须属于当前 tenant",
+            error_cls=ValidationError,
+        )
+        validate_tenant_member_as_pilot(
+            tenant_member=self.tenant_member if self.tenant_member_id else None,
+            tenant_id=self.tenant_id,
+            field_name="tenant_member",
+            messages=TenantMemberValidationMessages(
+                tenant_mismatch="tenant_member 必须属于当前 tenant",
+                inactive_member="仅允许分配给 ACTIVE 成员",
+                missing_staff_profile="tenant_member 对应账号必须存在 staff_profile",
+                inactive_employment="仅允许分配给在职人员",
+                missing_role="仅允许分配给飞手类型（pilot_operator）",
+            ),
+            error_cls=ValidationError,
+        )
         if self.tenant_id and self.created_by_tenant_member_id is not None:
             from apps.access.models import TenantMember
 
