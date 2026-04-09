@@ -1,6 +1,10 @@
+from contextlib import redirect_stderr
+from io import StringIO
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import path
+from drf_spectacular.drainage import reset_generator_stats
 from rest_framework.permissions import AllowAny
 from rest_framework.test import APIClient
 from rest_framework.views import APIView
@@ -201,6 +205,24 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/media-files/{id}/download", "get"),
         ):
             self.assertNotIn("requestBody", self._operation(schema, path=path, method=method))
+
+    def test_business_schema_should_describe_media_sync_fields_without_type_hint_warnings(self):
+        reset_generator_stats()
+        stderr = StringIO()
+        with redirect_stderr(stderr):
+            response = self.client.get("/api/v1/docs/schema/")
+
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+        media_file_read = schema["components"]["schemas"]["MediaFileRead"]
+        properties = media_file_read["properties"]
+
+        self.assertEqual(properties["dji_file_id"]["type"], "string")
+        self.assertEqual(properties["sync_status"]["type"], "string")
+        self.assertEqual(properties["last_sync_at"]["type"], "string")
+        self.assertEqual(properties["last_sync_at"]["format"], "date-time")
+        self.assertTrue(properties["last_sync_at"]["nullable"])
+        self.assertNotIn("unable to resolve type hint", stderr.getvalue())
 
     def test_business_schema_should_describe_current_business_error_responses(self):
         response = self.client.get("/api/v1/docs/schema/")
