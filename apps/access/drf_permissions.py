@@ -15,6 +15,12 @@ class PermissionMapMixin:
     permission_map = {}
     method_permission_map = {}
 
+    def check_permissions(self, request):
+        action_map = getattr(self, "action_map", None)
+        if action_map is not None and request.method.lower() not in action_map:
+            return
+        return super().check_permissions(request)
+
     def get_required_permission(self):
         action = getattr(self, "action", None)
         if action and action in self.permission_map:

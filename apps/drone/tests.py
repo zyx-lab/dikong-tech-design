@@ -106,6 +106,24 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(drone.model, "M30")
         self.assertEqual(drone.org_id, 10)
 
+    def test_patch_should_return_method_not_allowed(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-PATCH-001",
+            name="禁止PATCH设备",
+            model="M30",
+            device_sn="SN-PATCH-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/drones/{drone.id}",
+            {"name": "不应成功"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 405, response.data)
+
     def test_claim_should_reject_device_claimed_by_other_tenant(self):
         other_tenant = Tenant.objects.create(code="drone_other_tenant", name="其他租户", status=TenantStatus.ACTIVE)
         DjiDeviceIndex.objects.create(device_sn="SN-CONFLICT-001", last_payload={})

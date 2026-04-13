@@ -168,6 +168,24 @@ class MissionApiTests(TestCase):
         self.assertEqual(mission.device_sn, "")
         self.assertEqual(mission.drone_name, "")
 
+    def test_patch_should_return_method_not_allowed(self):
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="禁止PATCH任务",
+            route=self.route,
+            route_name=self.route.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+        )
+
+        response = self.client.patch(
+            f"/missions/{mission.id}",
+            {"remark": "不应成功"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 405, response.data)
+
     def test_mission_soft_delete_should_be_irreversible(self):
         mission = Mission.objects.create(
             tenant=self.tenant,
