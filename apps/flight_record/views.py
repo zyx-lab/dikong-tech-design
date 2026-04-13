@@ -106,11 +106,11 @@ FLIGHT_RECORD_INVALID_PARAMS_RESPONSE = business_error_response(
             data={"flight_no": ["当前租户下已存在相同架次编号"]},
         ),
         business_error_example(
-            "PATCH 直接改状态",
+            "更新接口直接改状态",
             code="B0001",
             msg="参数校验失败",
             status_codes=["400"],
-            data={"status": ["status 不可通过 PATCH 直接修改，请使用状态动作接口"]},
+            data={"status": ["status 不可通过更新接口直接修改，请使用状态动作接口"]},
         ),
         business_error_example(
             "动作接口提交 body",
@@ -233,28 +233,13 @@ def _flight_record_transition_schema(*, summary, description):
         tags=["Business API - Flight Record"],
     ),
     update=extend_schema(
-        summary="全量更新飞行记录",
-        description="按飞行记录 ID 全量更新执行结果元数据；不允许在该接口直接修改状态。",
-        parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=FlightRecordWriteSerializer,
-        responses={
-            200: OpenApiResponse(response=FLIGHT_RECORD_DETAIL_RESPONSE, description="更新成功。"),
-            400: FLIGHT_RECORD_INVALID_PARAMS_RESPONSE,
-            401: FLIGHT_RECORD_PERMISSION_DENIED_RESPONSE,
-            403: FLIGHT_RECORD_PERMISSION_DENIED_RESPONSE,
-            404: FLIGHT_RECORD_NOT_FOUND_RESPONSE,
-            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
-        },
-        tags=["Business API - Flight Record"],
-    ),
-    partial_update=extend_schema(
-        summary="局部更新飞行记录",
-        description="按飞行记录 ID 局部更新执行结果元数据；不允许在该接口直接修改状态。",
+        summary="更新飞行记录",
+        description="按飞行记录 ID 更新执行结果元数据；不允许在该接口直接修改状态。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=FlightRecordWriteSerializer,
         examples=[
             OpenApiExample(
-                "PATCH 飞行记录请求",
+                "PUT 飞行记录请求",
                 request_only=True,
                 value={"airport_name": "珠海金湾机场 T2", "photo_count": 22, "video_count": 5},
             )
@@ -278,21 +263,19 @@ class FlightRecordViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
-    mixins.UpdateModelMixin,
     viewsets.GenericViewSet,
 ):
     """飞行记录业务接口（V1）。"""
 
     queryset = FlightRecord.objects.select_related("mission", "drone", "pilot__user__staff_profile").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "put", "patch", "head", "options"]
+    http_method_names = ["get", "post", "put", "head", "options"]
 
     permission_map = {
         "list": "flight_record.view_flight_record",
         "retrieve": "flight_record.view_flight_record",
         "create": "flight_record.manage_flight_record",
         "update": "flight_record.manage_flight_record",
-        "partial_update": "flight_record.manage_flight_record",
         "complete": "flight_record.manage_flight_record",
         "abort": "flight_record.manage_flight_record",
     }
@@ -302,7 +285,7 @@ class FlightRecordViewSet(
         return {"pilot_id": tenant_member_id}
 
     def get_serializer_class(self):
-        if self.action in {"create", "update", "partial_update"}:
+        if self.action in {"create", "update"}:
             return FlightRecordWriteSerializer
         return FlightRecordReadSerializer
 
@@ -320,9 +303,9 @@ class FlightRecordViewSet(
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    def _empty_patch_response(self):
+    def _empty_update_response(self):
         return self._invalid_params_response(
-            "PATCH 请求至少包含一个可写字段",
+            "更新请求至少包含一个可写字段",
             {"body": "请至少提交一个可写字段"},
         )
 
@@ -374,12 +357,12 @@ class FlightRecordViewSet(
         )
         return Response(after_payload, status=status.HTTP_200_OK)
 
-    def _update_record(self, request, *, partial: bool):
-        if partial and not request.data:
-            return self._empty_patch_response()
+    def _update_record(self, request):
+        if not request.data:
+            return self._empty_update_response()
 
         instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         record = self.perform_update(serializer)
         if getattr(instance, "_prefetched_objects_cache", None):
@@ -401,7 +384,7 @@ class FlightRecordViewSet(
             if value:
                 queryset = queryset.filter(**{lookup: value})
 
-        if self.action in {"list", "retrieve", "update", "partial_update", "complete", "abort"}:
+        if self.action in {"list", "retrieve", "update", "complete", "abort"}:
             return self.apply_scope(queryset)
 
         return queryset
@@ -425,11 +408,8 @@ class FlightRecordViewSet(
     def perform_create(self, serializer):
         return serializer.save(tenant=self.get_current_tenant())
 
-    def partial_update(self, request, *args, **kwargs):
-        return self._update_record(request, partial=True)
-
     def update(self, request, *args, **kwargs):
-        return self._update_record(request, partial=False)
+        return self._update_record(request)
 
     @_flight_record_transition_schema(
         summary="完成飞行记录",

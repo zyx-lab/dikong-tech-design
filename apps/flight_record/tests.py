@@ -644,13 +644,13 @@ class FlightRecordApiTests(TestCase):
         self.assertIn(response.data["code"], {"A0401", "A0403"})
         self.assertEqual(response.data["code"], "A0403")
 
-    def test_patch_flight_record_should_return_success(self):
+    def test_put_flight_record_should_return_success_with_partial_payload(self):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
         record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
         new_end_time = record.end_time + timedelta(minutes=5)
 
-        response = self.client.patch(
+        response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
             {
                 "airport_name": "深圳宝安机场",
@@ -678,12 +678,12 @@ class FlightRecordApiTests(TestCase):
             ).exists()
         )
 
-    def test_patch_flight_record_with_status_should_return_invalid_params(self):
+    def test_put_flight_record_with_status_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
         record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
 
-        response = self.client.patch(
+        response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
             {"status": FlightRecordStatus.COMPLETED},
             format="json",
@@ -696,12 +696,12 @@ class FlightRecordApiTests(TestCase):
         record.refresh_from_db()
         self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
 
-    def test_patch_flight_record_empty_body_should_return_invalid_params(self):
+    def test_put_flight_record_empty_body_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
         record = self._create_flight_record()
 
-        response = self.client.patch(
+        response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
             {},
             format="json",
@@ -711,12 +711,12 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(response.data["code"], "B0001")
         self.assertEqual(response.data["code"], "B0001")
 
-    def test_patch_flight_record_invalid_params_should_return_invalid_params(self):
+    def test_put_flight_record_invalid_params_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
         record = self._create_flight_record()
 
-        response = self.client.patch(
+        response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
             {"end_time": "2026-03-08T07:00:00+08:00"},
             format="json",
@@ -727,11 +727,11 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(response.data["code"], "B0001")
         self.assertIn("end_time", response.data["data"])
 
-    def test_patch_flight_record_not_found_should_return_resource_not_found(self):
+    def test_put_flight_record_not_found_should_return_resource_not_found(self):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
 
-        response = self.client.patch(
+        response = self.client.put(
             "/api/v1/flight-records/999999",
             {"airport_name": "不存在"},
             format="json",
@@ -741,10 +741,10 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(response.data["code"], "C0404")
         self.assertEqual(response.data["code"], "C0404")
 
-    def test_patch_flight_record_without_auth_should_return_permission_denied(self):
+    def test_put_flight_record_without_auth_should_return_permission_denied(self):
         record = self._create_flight_record()
 
-        response = self.client.patch(
+        response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
             {"airport_name": "无权限修改"},
             format="json",
@@ -754,11 +754,11 @@ class FlightRecordApiTests(TestCase):
         self.assertIn(response.data["code"], {"A0401", "A0403"})
         self.assertEqual(response.data["code"], "A0401")
 
-    def test_patch_flight_record_without_permission_should_return_permission_denied(self):
+    def test_put_flight_record_without_permission_should_return_permission_denied(self):
         record = self._create_flight_record()
         self.client.force_authenticate(self.viewer_user)
 
-        response = self.client.patch(
+        response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
             {"airport_name": "无权限修改"},
             format="json",

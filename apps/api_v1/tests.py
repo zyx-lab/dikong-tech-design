@@ -183,7 +183,7 @@ class OpenApiDocsTests(TestCase):
             "/api/v1/missions": {"get", "post"},
             "/api/v1/missions/{id}": {"get", "put", "delete"},
             "/api/v1/flight-records": {"get", "post"},
-            "/api/v1/flight-records/{id}": {"get", "put", "patch"},
+            "/api/v1/flight-records/{id}": {"get", "put"},
             "/api/v1/drone-assignments": {"get", "post"},
             "/api/v1/drone-assignments/{id}": {"get"},
             "/api/v1/media-files": {"get"},

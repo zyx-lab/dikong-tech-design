@@ -298,7 +298,7 @@ class LiveFlightRecordApiTests(LiveFlightRecordApiTestCase):
         self.assertEqual(retrieve_response.status_code, 200)
         self.assertEqual(retrieve_response.json()["data"]["flight_no"], "FRL202603210900")
 
-        patch_response = self.client.patch(
+        put_response = self.client.put(
             f"/api/v1/flight-records/{record_id}",
             {
                 "airport_name": "深圳宝安机场",
@@ -308,13 +308,13 @@ class LiveFlightRecordApiTests(LiveFlightRecordApiTestCase):
             },
             format="json",
         )
-        self.assertEqual(patch_response.status_code, 200)
-        self.assertEqual(patch_response.json()["code"], "00000")
-        self.assertEqual(patch_response.json()["data"]["airport_name"], "深圳宝安机场")
-        self.assertEqual(patch_response.json()["data"]["photo_count"], 22)
-        self.assertEqual(patch_response.json()["data"]["video_count"], 5)
-        self.assertEqual(patch_response.json()["data"]["flight_duration"], 1500)
-        self.assertEqual(patch_response.json()["data"]["status"], FlightRecordStatus.IN_PROGRESS)
+        self.assertEqual(put_response.status_code, 200)
+        self.assertEqual(put_response.json()["code"], "00000")
+        self.assertEqual(put_response.json()["data"]["airport_name"], "深圳宝安机场")
+        self.assertEqual(put_response.json()["data"]["photo_count"], 22)
+        self.assertEqual(put_response.json()["data"]["video_count"], 5)
+        self.assertEqual(put_response.json()["data"]["flight_duration"], 1500)
+        self.assertEqual(put_response.json()["data"]["status"], FlightRecordStatus.IN_PROGRESS)
 
         complete_response = self.client.post(f"/api/v1/flight-records/{record_id}/complete")
         self.assertEqual(complete_response.status_code, 200)
@@ -391,25 +391,25 @@ class LiveFlightRecordApiTests(LiveFlightRecordApiTestCase):
         self.assertEqual(duplicate_response.json()["code"], "C0101")
         self.assertIn("flight_no", duplicate_response.json()["data"])
 
-        patch_status_response = self.client.patch(
+        put_status_response = self.client.put(
             f"/api/v1/flight-records/{existing.id}",
             {"status": FlightRecordStatus.COMPLETED},
             format="json",
         )
-        self.assertEqual(patch_status_response.status_code, 400)
-        self.assertEqual(patch_status_response.json()["code"], "B0001")
-        self.assertIn("status", patch_status_response.json()["data"])
+        self.assertEqual(put_status_response.status_code, 400)
+        self.assertEqual(put_status_response.json()["code"], "B0001")
+        self.assertIn("status", put_status_response.json()["data"])
 
-        empty_patch_response = self.client.patch(
+        empty_put_response = self.client.put(
             f"/api/v1/flight-records/{existing.id}",
             {},
             format="json",
         )
-        self.assertEqual(empty_patch_response.status_code, 400)
-        self.assertEqual(empty_patch_response.json()["code"], "B0001")
-        self.assertIn("body", empty_patch_response.json()["data"])
+        self.assertEqual(empty_put_response.status_code, 400)
+        self.assertEqual(empty_put_response.json()["code"], "B0001")
+        self.assertIn("body", empty_put_response.json()["data"])
 
-        invalid_time_response = self.client.patch(
+        invalid_time_response = self.client.put(
             f"/api/v1/flight-records/{existing.id}",
             {"end_time": "2026-03-21T07:00:00+08:00"},
             format="json",
@@ -481,13 +481,13 @@ class LiveFlightRecordApiTests(LiveFlightRecordApiTestCase):
         self.assertEqual(retrieve_response.status_code, 404)
         self.assertEqual(retrieve_response.json()["code"], "C0404")
 
-        patch_response = self.client.patch(
+        put_response = self.client.put(
             f"/api/v1/flight-records/{foreign_record.id}",
             {"airport_name": "越权修改"},
             format="json",
         )
-        self.assertEqual(patch_response.status_code, 404)
-        self.assertEqual(patch_response.json()["code"], "C0404")
+        self.assertEqual(put_response.status_code, 404)
+        self.assertEqual(put_response.json()["code"], "C0404")
 
         complete_response = self.client.post(f"/api/v1/flight-records/{foreign_record.id}/complete")
         self.assertEqual(complete_response.status_code, 404)
@@ -719,13 +719,13 @@ class LiveFlightRecordPilotScopeTests(LiveFlightRecordApiTestCase):
         self.assertIn("pilot", response.json()["data"])
 
     def test_assigned_scope_pilot_should_not_mutate_other_flight_records(self):
-        patch_response = self.pilot_client.patch(
+        partial_put_response = self.pilot_client.put(
             f"/api/v1/flight-records/{self.other_record.id}",
             {"airport_name": "越权修改"},
             format="json",
         )
-        self.assertEqual(patch_response.status_code, 404)
-        self.assertEqual(patch_response.json()["code"], "C0404")
+        self.assertEqual(partial_put_response.status_code, 404)
+        self.assertEqual(partial_put_response.json()["code"], "C0404")
 
         put_response = self.pilot_client.put(
             f"/api/v1/flight-records/{self.other_record.id}",

@@ -67,7 +67,7 @@ class FlightRecordWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSer
         current_tenant = require_request_tenant(self.context)
         instance = getattr(self, "instance", None)
         if instance is not None and "status" in self.initial_data:
-            raise serializers.ValidationError({"status": "status 不可通过 PATCH 直接修改，请使用状态动作接口"})
+            raise serializers.ValidationError({"status": "status 不可通过更新接口直接修改，请使用状态动作接口"})
 
         flight_no = attrs.get("flight_no", instance.flight_no if instance is not None else None)
         start_time = attrs.get("start_time", instance.start_time if instance is not None else None)
@@ -202,6 +202,6 @@ class FlightRecordWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSer
             "flight_duration": {"help_text": "飞行时长，单位秒；若同时提供开始和结束时间，可由系统自动回填。"},
             "photo_count": {"help_text": "本次飞行拍摄照片数量，默认 0。"},
             "video_count": {"help_text": "本次飞行录制视频数量，默认 0。"},
-            "status": {"help_text": "飞行记录状态；创建时可显式指定，PATCH 不允许直接修改，请使用状态动作接口。"},
+            "status": {"help_text": "飞行记录状态；创建时可显式指定，更新接口不允许直接修改，请使用状态动作接口。"},
             "airport_name": {"help_text": "执行机场名称，可为空。"},
         }
