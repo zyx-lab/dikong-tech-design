@@ -99,7 +99,9 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(route_index.download_url, sentinel_download_url)
         upload_mock.assert_called_once()
         uploaded_file = upload_mock.call_args.kwargs["file_obj"]
-        self.assertEqual(getattr(uploaded_file, "name", ""), "route.kmz")
+        uploaded_name = getattr(uploaded_file, "name", "")
+        self.assertRegex(uploaded_name, rf"^{route.id}-城市巡检-KMZ-[0-9a-f]{{8}}\.kmz$")
+        self.assertNotEqual(uploaded_name, "route.kmz")
         uploaded_file.seek(0)
         self.assertEqual(uploaded_file.read(), kmz_bytes)
         self.assertRegex(
@@ -179,7 +181,9 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertTrue(route_index.is_published)
         upload_mock.assert_called_once()
         uploaded_file = upload_mock.call_args.kwargs["file_obj"]
-        self.assertEqual(getattr(uploaded_file, "name", ""), "route-updated.kmz")
+        uploaded_name = getattr(uploaded_file, "name", "")
+        self.assertRegex(uploaded_name, rf"^{route.id}-更新后-KMZ-[0-9a-f]{{8}}\.kmz$")
+        self.assertNotEqual(uploaded_name, "route-updated.kmz")
         uploaded_file.seek(0)
         self.assertEqual(uploaded_file.read(), update_kmz_bytes)
 

@@ -82,13 +82,12 @@ def _format_upstream_route_name(route_id: int, route_name: str) -> str:
     return f"{route_id}-{sanitized}-{uuid.uuid4().hex[:8]}"
 
 
-def _clone_kmz_for_upload(file_obj) -> SimpleUploadedFile:
+def _clone_kmz_for_upload(file_obj, *, upload_name: str) -> SimpleUploadedFile:
     file_obj.seek(0)
     content = file_obj.read()
     file_obj.seek(0)
-    filename = getattr(file_obj, "name", "route.kmz")
     content_type = getattr(file_obj, "content_type", "application/vnd.google-earth.kmz")
-    return SimpleUploadedFile(name=filename, content=content, content_type=content_type)
+    return SimpleUploadedFile(name=f"{upload_name}.kmz", content=content, content_type=content_type)
 
 
 def _require_kmz_file(serializer) -> SimpleUploadedFile:
@@ -99,8 +98,8 @@ def _require_kmz_file(serializer) -> SimpleUploadedFile:
 
 
 def _upload_route_to_upstream(*, gateway: DjiGateway, route_id: int, route_name: str, kmz_file) -> tuple[str, str]:
-    upload_file = _clone_kmz_for_upload(kmz_file)
     upstream_name = _format_upstream_route_name(route_id, route_name)
+    upload_file = _clone_kmz_for_upload(kmz_file, upload_name=upstream_name)
     payload = gateway.upload_route(route_name=upstream_name, file_obj=upload_file)
     return payload["dji_wayline_id"], str(payload["download_url"])
 
