@@ -46,12 +46,12 @@ def _mission_success_response(view, mission: Mission, *, http_status: int, inclu
     return Response(payload, status=http_status)
 
 
-def _reject_empty_patch_request(request):
+def _reject_empty_update_request(request):
     if not request.data:
         return Response(
             standard_error_payload(
                 StandardCode.INVALID_PARAMS,
-                "PATCH 请求至少包含一个可写字段",
+                "更新请求至少包含一个可写字段",
                 {"body": "请至少提交一个可写字段"},
             ),
             status=status.HTTP_400_BAD_REQUEST,
@@ -123,20 +123,6 @@ def _reject_request_body_if_present(request, *, message: str):
         },
         tags=["Business API - Mission"],
     ),
-    partial_update=extend_schema(
-        summary="局部更新本地任务字段",
-        parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=MissionUpdateSerializer,
-        responses={
-            200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE),
-            400: BUSINESS_INVALID_PARAMS_RESPONSE,
-            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
-            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
-            404: BUSINESS_NOT_FOUND_RESPONSE,
-            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
-        },
-        tags=["Business API - Mission"],
-    ),
     destroy=extend_schema(
         summary="软删除任务",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
@@ -160,20 +146,18 @@ class MissionViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
-    mixins.UpdateModelMixin,
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     queryset = Mission.objects.select_related("route", "drone", "pilot__user__staff_profile").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+    http_method_names = ["get", "post", "put", "delete", "head", "options"]
 
     permission_map = {
         "list": "mission.view_mission",
         "retrieve": "mission.view_mission",
         "create": "mission.manage_mission",
         "update": "mission.manage_mission",
-        "partial_update": "mission.manage_mission",
         "destroy": "mission.manage_mission",
     }
 
@@ -184,7 +168,7 @@ class MissionViewSet(
     def get_serializer_class(self):
         if self.action == "create":
             return MissionCreateSerializer
-        if self.action in {"update", "partial_update"}:
+        if self.action == "update":
             return MissionUpdateSerializer
         return MissionReadSerializer
 
@@ -202,20 +186,19 @@ class MissionViewSet(
             if value:
                 queryset = queryset.filter(**{model_field: value})
 
-        if self.action in {"list", "retrieve", "update", "partial_update", "destroy"}:
+        if self.action in {"list", "retrieve", "update", "destroy"}:
             return self.apply_scope(queryset)
         return queryset
 
     def _payload(self, mission: Mission) -> dict:
         return dict(MissionReadSerializer(mission, context={"request": self.request}).data)
 
-    def _update_mission(self, request, *, partial: bool):
-        if partial:
-            error_response = _reject_empty_patch_request(request)
-            if error_response is not None:
-                return error_response
+    def _update_mission(self, request):
+        error_response = _reject_empty_update_request(request)
+        if error_response is not None:
+            return error_response
 
-        serializer = self.get_serializer(self.get_object(), data=request.data, partial=partial)
+        serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         mission = self.perform_update(serializer)
         return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
@@ -268,10 +251,7 @@ class MissionViewSet(
         return mission
 
     def update(self, request, *args, **kwargs):
-        return self._update_mission(request, partial=False)
-
-    def partial_update(self, request, *args, **kwargs):
-        return self._update_mission(request, partial=True)
+        return self._update_mission(request)
 
     @transaction.atomic
     def perform_update(self, serializer):

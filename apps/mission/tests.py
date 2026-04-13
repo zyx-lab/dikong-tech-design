@@ -141,7 +141,7 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertTrue(Mission.objects.filter(name="本地任务不再要求已发布航线").exists())
 
-    def test_patch_should_unbind_drone_and_reset_status_snapshot_fields(self):
+    def test_put_should_unbind_drone_and_reset_status_snapshot_fields(self):
         mission = Mission.objects.create(
             tenant=self.tenant,
             name="待解绑任务",
@@ -155,7 +155,7 @@ class MissionApiTests(TestCase):
             status=MissionStatus.DRONE_BOUND,
         )
 
-        response = self.client.patch(
+        response = self.client.put(
             f"/missions/{mission.id}",
             {"drone": None},
             format="json",
