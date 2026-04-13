@@ -41,6 +41,15 @@ class LiveDroneApiTests(LiveDjiGatewayApiTestCase):
         self.assertEqual(create_response.status_code, 201)
         drone_id = create_response.json()["data"]["id"]
 
+        update_response = self.client.put(
+            f"/api/v1/drones/{drone_id}",
+            {"name": "实时设备1-更新"},
+            format="json",
+        )
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.json()["data"]["name"], "实时设备1-更新")
+        self.assertEqual(update_response.json()["data"]["code"], "DJ-LIVE-001")
+
         available_response = self.client.get("/api/v1/drones/available")
         self.assertEqual(available_response.status_code, 200)
         self.assertEqual(available_response.json()["data"]["total"], 1)

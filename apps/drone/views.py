@@ -119,22 +119,7 @@ def _drone_success_response(view, drone: Drone, *, http_status: int, include_hea
         tags=["Business API - Drone"],
     ),
     update=extend_schema(
-        summary="全量更新本地管理字段",
-        parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=DroneUpdateSerializer,
-        responses={
-            200: OpenApiResponse(response=DRONE_DETAIL_RESPONSE),
-            400: BUSINESS_INVALID_PARAMS_RESPONSE,
-            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
-            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
-            404: BUSINESS_NOT_FOUND_RESPONSE,
-            409: BUSINESS_DUPLICATE_RESPONSE,
-            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
-        },
-        tags=["Business API - Drone"],
-    ),
-    partial_update=extend_schema(
-        summary="局部更新本地管理字段",
+        summary="更新本地管理字段",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneUpdateSerializer,
         responses={
@@ -170,13 +155,12 @@ class DroneViewSet(
     mixins.ListModelMixin,
     mixins.CreateModelMixin,
     mixins.RetrieveModelMixin,
-    mixins.UpdateModelMixin,
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     queryset = Drone.objects.all().order_by("-id")
     permission_classes = [ScopedActionPermission]
-    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+    http_method_names = ["get", "post", "put", "delete", "head", "options"]
 
     permission_map = {
         "list": "drone.view_drone",
@@ -185,7 +169,6 @@ class DroneViewSet(
         "live_capacity": "drone.view_drone",
         "create": "drone.manage_drone",
         "update": "drone.manage_drone",
-        "partial_update": "drone.manage_drone",
         "destroy": "drone.manage_drone",
         "live_start": "drone.manage_drone",
         "live_stop": "drone.manage_drone",
@@ -204,7 +187,6 @@ class DroneViewSet(
         serializer_map = {
             "create": DroneClaimSerializer,
             "update": DroneUpdateSerializer,
-            "partial_update": DroneUpdateSerializer,
             "live_start": DroneLiveStartSerializer,
             "live_stop": DroneLiveStopSerializer,
             "live_video_quality": DroneLiveVideoQualitySerializer,
@@ -225,7 +207,7 @@ class DroneViewSet(
             value = params.get(param)
             if value:
                 queryset = queryset.filter(**{lookup: value})
-        if self.action in {"list", "retrieve", "update", "partial_update", "destroy", "live_capacity", "live_start", "live_stop", "live_video_quality", "live_video_source"}:
+        if self.action in {"list", "retrieve", "update", "destroy", "live_capacity", "live_start", "live_stop", "live_video_quality", "live_video_source"}:
             queryset = queryset.exclude(status=DroneStatus.RELEASED)
             return self.apply_scope(queryset)
         return queryset
@@ -371,14 +353,11 @@ class DroneViewSet(
         return drone
 
     def update(self, request, *args, **kwargs):
-        return self._update_with_serializer(request, partial=False)
+        return self._update_with_serializer(request)
 
-    def partial_update(self, request, *args, **kwargs):
-        return self._update_with_serializer(request, partial=True)
-
-    def _update_with_serializer(self, request, *, partial: bool):
+    def _update_with_serializer(self, request):
         instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
         error_response = _drone_validate_or_respond(self, serializer)
         if error_response is not None:
             return error_response

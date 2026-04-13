@@ -177,7 +177,7 @@ class OpenApiDocsTests(TestCase):
 
         expected_methods = {
             "/api/v1/drones": {"get", "post"},
-            "/api/v1/drones/{id}": {"get", "put", "patch", "delete"},
+            "/api/v1/drones/{id}": {"get", "put", "delete"},
             "/api/v1/routes": {"get", "post"},
             "/api/v1/routes/{id}": {"get", "put", "delete"},
             "/api/v1/missions": {"get", "post"},
@@ -234,7 +234,6 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/drones", "post"): {"201", "400", "401", "403", "409", "500"},
             ("/api/v1/drones/{id}", "get"): {"200", "401", "403", "404", "500"},
             ("/api/v1/drones/{id}", "put"): {"200", "400", "401", "403", "404", "409", "500"},
-            ("/api/v1/drones/{id}", "patch"): {"200", "400", "401", "403", "404", "409", "500"},
             ("/api/v1/drones/{id}", "delete"): {"200", "401", "403", "404", "500"},
             ("/api/v1/drones/{id}/live/capacity", "get"): {"200", "401", "403", "404", "500"},
             ("/api/v1/drones/{id}/live/start", "post"): {"200", "400", "401", "403", "404", "500"},

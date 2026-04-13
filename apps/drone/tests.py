@@ -82,6 +82,30 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(drone.model, "Matrice 30")
         self.assertEqual(drone.created_by_tenant_member_id, self.member.id)
 
+    def test_put_should_update_partial_local_fields(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-UPD-001",
+            name="原名称",
+            model="M30",
+            device_sn="SN-UPD-001",
+            org_id=10,
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        response = self.client.put(
+            f"/api/v1/drones/{drone.id}",
+            {"name": "更新后名称"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        drone.refresh_from_db()
+        self.assertEqual(drone.name, "更新后名称")
+        self.assertEqual(drone.code, "DJ-UPD-001")
+        self.assertEqual(drone.model, "M30")
+        self.assertEqual(drone.org_id, 10)
+
     def test_claim_should_reject_device_claimed_by_other_tenant(self):
         other_tenant = Tenant.objects.create(code="drone_other_tenant", name="其他租户", status=TenantStatus.ACTIVE)
         DjiDeviceIndex.objects.create(device_sn="SN-CONFLICT-001", last_payload={})
