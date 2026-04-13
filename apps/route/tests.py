@@ -5,6 +5,7 @@ from zipfile import ZipFile
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import OperationalError, connection, transaction
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -406,6 +407,35 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             "Route should not persist when log_action fails after upload",
         )
 
+    def test_create_should_cleanup_upload_after_transaction_rollback_error(self):
+        def _broken_sync(*args, **kwargs):
+            transaction.set_rollback(True)
+            raise OperationalError("database is locked")
+
+        with patch("apps.route.views._sync_route_index", side_effect=_broken_sync):
+            response = self._upload_kmz_route(name="回滚失败清理 KMZ")
+
+        self.assertEqual(response.status_code, 500, response.data)
+        self.assertEqual(mock_dji_state.waylines, {})
+        self.assertFalse(
+            Route.objects.filter(tenant=self.tenant, name="回滚失败清理 KMZ").exists(),
+            "Route should not persist when database rollback is required after upload",
+        )
+
+    def test_create_should_upload_outside_database_transaction(self):
+        baseline_atomic_depth = len(connection.atomic_blocks)
+        seen_atomic_state: dict[str, int] = {}
+
+        def _mock_upload(*, gateway, route_id, route_name, kmz_file):
+            seen_atomic_state["atomic_depth"] = len(connection.atomic_blocks)
+            return ("mock-wayline-id", "https://upstream/download/create.kmz")
+
+        with patch("apps.route.views._upload_route_to_upstream", side_effect=_mock_upload):
+            response = self._upload_kmz_route(name="事务外创建 KMZ")
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(seen_atomic_state["atomic_depth"], baseline_atomic_depth)
+
     def test_put_should_keep_old_index_when_new_upload_fails(self):
         route = Route.objects.create(tenant=self.tenant, name="旧上游 KMZ")
         old_wayline = mock_dji_state.create_wayline(name="legacy-wayline")
@@ -535,6 +565,82 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(route_index.download_url, old_download_url)
         self.assertTrue(route_index.is_published)
         self.assertIn(old_wayline["wayline_id"], mock_dji_state.waylines)
+
+    def test_put_should_cleanup_upload_after_transaction_rollback_error(self):
+        route = Route.objects.create(tenant=self.tenant, name="旧上游 KMZ")
+        old_wayline = mock_dji_state.create_wayline(name="legacy-wayline")
+        old_download_url = f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline['wayline_id']}/url"
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id=old_wayline["wayline_id"],
+            download_url=old_download_url,
+            is_published=True,
+        )
+        new_kmz_bytes = self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES)
+
+        upload_state: dict[str, str] = {}
+
+        def _mock_upload(*, route_name, file_obj):
+            wayline = mock_dji_state.create_wayline(name=route_name, file_name=getattr(file_obj, "name", "route.kmz"))
+            download_url = f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{wayline['wayline_id']}/url"
+            upload_state["wayline_id"] = wayline["wayline_id"]
+            upload_state["download_url"] = download_url
+            return {"dji_wayline_id": wayline["wayline_id"], "download_url": download_url}
+
+        def _broken_update(*args, **kwargs):
+            transaction.set_rollback(True)
+            raise OperationalError("database is locked")
+
+        with patch("apps.route.views.DjiGateway.upload_route", side_effect=_mock_upload) as upload_mock:
+            with patch("apps.route.serializers.RouteWriteSerializer.update", side_effect=_broken_update):
+                response = self.client.put(
+                    f"/api/v1/routes/{route.id}",
+                    {
+                        "name": "回滚失败更新",
+                        "kmz_file": SimpleUploadedFile(
+                            "route-updated.kmz",
+                            new_kmz_bytes,
+                            content_type=self.KMZ_CONTENT_TYPE,
+                        ),
+                    },
+                    format="multipart",
+                )
+
+        self.assertEqual(response.status_code, 500, response.data)
+        self.assertEqual(upload_mock.call_count, 1)
+        self.assertNotIn(upload_state.get("wayline_id"), mock_dji_state.waylines)
+        route_index = TenantRouteIndex.objects.get(route=route)
+        self.assertEqual(route_index.dji_wayline_id, old_wayline["wayline_id"])
+        self.assertEqual(route_index.download_url, old_download_url)
+        self.assertTrue(route_index.is_published)
+
+    def test_put_should_upload_outside_database_transaction(self):
+        route = Route.objects.create(tenant=self.tenant, name="旧上游 KMZ")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", download_url="", is_published=False)
+        baseline_atomic_depth = len(connection.atomic_blocks)
+        seen_atomic_state: dict[str, int] = {}
+
+        def _mock_upload(*, gateway, route_id, route_name, kmz_file):
+            seen_atomic_state["atomic_depth"] = len(connection.atomic_blocks)
+            return ("mock-wayline-id", "https://upstream/download/update.kmz")
+
+        with patch("apps.route.views._upload_route_to_upstream", side_effect=_mock_upload):
+            response = self.client.put(
+                f"/api/v1/routes/{route.id}",
+                {
+                    "name": "事务外更新 KMZ",
+                    "kmz_file": SimpleUploadedFile(
+                        "route-updated.kmz",
+                        self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES),
+                        content_type=self.KMZ_CONTENT_TYPE,
+                    ),
+                },
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(seen_atomic_state["atomic_depth"], baseline_atomic_depth)
 
     def test_delete_should_best_effort_remove_current_upstream_wayline(self):
         route = Route.objects.create(tenant=self.tenant, name="删除 KMZ")

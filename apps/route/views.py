@@ -236,96 +236,107 @@ class RouteViewSet(
     def _payload(self, route: Route) -> dict:
         return dict(RouteReadSerializer(route, context={"request": self.request}).data)
 
+    def _cleanup_created_route_after_failure(self, *, route_id: int | None):
+        if not route_id:
+            return
+        try:
+            Route.objects.filter(id=route_id).delete()
+        except Exception:
+            logger.exception("route cleanup failed after rollback", extra={"route_id": route_id})
+
+    def _cleanup_uploaded_wayline_after_failure(self, *, gateway: DjiGateway, wayline_id: str):
+        if not wayline_id:
+            return
+        try:
+            self._delete_upstream_wayline_if_exists(gateway=gateway, wayline_id=wayline_id, best_effort=True)
+        except Exception:
+            logger.exception("route upload cleanup failed after rollback", extra={"wayline_id": wayline_id})
+
     @transaction.atomic
-    def perform_create(self, serializer):
+    def _finalize_create(self, *, route: Route, tenant, dji_wayline_id: str, download_url: str):
+        _sync_route_index(
+            tenant=tenant,
+            route=route,
+            dji_wayline_id=dji_wayline_id,
+            download_url=download_url,
+        )
+        log_action(
+            request=self.request,
+            action="ROUTE_CREATE",
+            target_type="route",
+            target_id=route.id,
+            after_data=self._payload(route),
+        )
+        return route
+
+    def perform_create(self, serializer, *, gateway: DjiGateway, cleanup_state: dict[str, object]):
         tenant = self.get_current_tenant()
         kmz_file = _require_kmz_file(serializer)
 
         route = serializer.save(tenant=tenant)
-        gateway = DjiGateway()
+        cleanup_state["route_id"] = route.id
         dji_wayline_id, download_url = _upload_route_to_upstream(
             gateway=gateway,
             route_id=route.id,
             route_name=route.name,
             kmz_file=kmz_file,
         )
+        cleanup_state["wayline_id"] = dji_wayline_id
 
-        try:
-            _sync_route_index(
-                tenant=tenant,
-                route=route,
-                dji_wayline_id=dji_wayline_id,
-                download_url=download_url,
-            )
-            log_action(
-                request=self.request,
-                action="ROUTE_CREATE",
-                target_type="route",
-                target_id=route.id,
-                after_data=self._payload(route),
-            )
-        except Exception:
-            self._delete_upstream_wayline_if_exists(
-                gateway=gateway,
-                wayline_id=dji_wayline_id,
-                best_effort=True,
-            )
-            raise
+        route = self._finalize_create(
+            route=route,
+            tenant=tenant,
+            dji_wayline_id=dji_wayline_id,
+            download_url=download_url,
+        )
+        cleanup_state["wayline_id"] = ""
+        cleanup_state["route_id"] = None
 
         return route
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        route = self.perform_create(serializer)
+        gateway = DjiGateway()
+        cleanup_state: dict[str, object] = {"wayline_id": "", "route_id": None}
+        try:
+            route = self.perform_create(serializer, gateway=gateway, cleanup_state=cleanup_state)
+        except Exception:
+            self._cleanup_uploaded_wayline_after_failure(gateway=gateway, wayline_id=cleanup_state["wayline_id"])
+            self._cleanup_created_route_after_failure(route_id=cleanup_state["route_id"])
+            raise
         return _route_success_response(self, route, http_status=status.HTTP_201_CREATED, include_headers=True)
 
     @transaction.atomic
-    def perform_update(self, serializer):
-        route = serializer.instance
-        before_data = self._payload(route)
-        tenant = self.get_current_tenant()
-        kmz_file = _require_kmz_file(serializer)
-
-        gateway = DjiGateway()
-        route_index, _ = TenantRouteIndex.objects.get_or_create(
+    def _finalize_update(
+        self,
+        *,
+        serializer,
+        tenant,
+        route: Route,
+        route_index: TenantRouteIndex | None,
+        before_data: dict,
+        new_wayline_id: str,
+        new_download_url: str,
+        old_wayline_id: str,
+        gateway: DjiGateway,
+    ):
+        route = serializer.save()
+        _sync_route_index(
             tenant=tenant,
             route=route,
-            defaults={"dji_wayline_id": "", "download_url": "", "is_published": False},
+            dji_wayline_id=new_wayline_id,
+            download_url=new_download_url,
+            route_index=route_index,
         )
-        old_wayline_id = route_index.dji_wayline_id
-        new_name = serializer.validated_data.get("name", route.name)
-        new_wayline_id, new_download_url = _upload_route_to_upstream(
-            gateway=gateway,
-            route_id=route.id,
-            route_name=new_name,
-            kmz_file=kmz_file,
+        log_action(
+            request=self.request,
+            action="ROUTE_UPDATE",
+            target_type="route",
+            target_id=route.id,
+            before_data=before_data,
+            after_data=self._payload(route),
         )
-
-        try:
-            route = serializer.save()
-            _sync_route_index(
-                tenant=tenant,
-                route=route,
-                dji_wayline_id=new_wayline_id,
-                download_url=new_download_url,
-                route_index=route_index,
-            )
-            log_action(
-                request=self.request,
-                action="ROUTE_UPDATE",
-                target_type="route",
-                target_id=route.id,
-                before_data=before_data,
-                after_data=self._payload(route),
-            )
-        except Exception:
-            self._delete_upstream_wayline_if_exists(
-                gateway=gateway,
-                wayline_id=new_wayline_id,
-                best_effort=True,
-            )
-            raise
         if old_wayline_id and old_wayline_id != new_wayline_id:
             transaction.on_commit(
                 lambda wayline_id=old_wayline_id: self._delete_upstream_wayline_if_exists(
@@ -334,6 +345,37 @@ class RouteViewSet(
                     best_effort=True,
                 )
             )
+        return route
+
+    def perform_update(self, serializer, *, gateway: DjiGateway, cleanup_state: dict[str, str]):
+        route = serializer.instance
+        before_data = self._payload(route)
+        tenant = self.get_current_tenant()
+        kmz_file = _require_kmz_file(serializer)
+
+        route_index = getattr(route, "dji_index", None)
+        old_wayline_id = getattr(route_index, "dji_wayline_id", "")
+        new_name = serializer.validated_data.get("name", route.name)
+        new_wayline_id, new_download_url = _upload_route_to_upstream(
+            gateway=gateway,
+            route_id=route.id,
+            route_name=new_name,
+            kmz_file=kmz_file,
+        )
+        cleanup_state["wayline_id"] = new_wayline_id
+
+        route = self._finalize_update(
+            serializer=serializer,
+            tenant=tenant,
+            route=route,
+            route_index=route_index,
+            before_data=before_data,
+            new_wayline_id=new_wayline_id,
+            new_download_url=new_download_url,
+            old_wayline_id=old_wayline_id,
+            gateway=gateway,
+        )
+        cleanup_state["wayline_id"] = ""
         return route
 
     def _has_bound_mission_blocker(self, route: Route) -> bool:
@@ -357,7 +399,13 @@ class RouteViewSet(
             )
         serializer = self.get_serializer(route, data=request.data)
         serializer.is_valid(raise_exception=True)
-        route = self.perform_update(serializer)
+        gateway = DjiGateway()
+        cleanup_state = {"wayline_id": ""}
+        try:
+            route = self.perform_update(serializer, gateway=gateway, cleanup_state=cleanup_state)
+        except Exception:
+            self._cleanup_uploaded_wayline_after_failure(gateway=gateway, wayline_id=cleanup_state["wayline_id"])
+            raise
         return _route_success_response(self, route, http_status=status.HTTP_200_OK)
 
     @extend_schema(
