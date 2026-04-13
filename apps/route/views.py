@@ -424,16 +424,39 @@ class RouteViewSet(
     def kmz(self, request, *args, **kwargs):
         route = self.get_object()
         route_index = getattr(route, "dji_index", None)
-        download_url = getattr(route_index, "download_url", "")
-        if not isinstance(download_url, str) or not download_url.strip():
+        gateway = DjiGateway()
+        download_url = str(getattr(route_index, "download_url", "") or "").strip()
+        if not download_url:
+            try:
+                download_url = self._refresh_route_download_url(gateway=gateway, route_index=route_index)
+            except DjiGatewayUpstreamError as exc:
+                if exc.status_code == status.HTTP_404_NOT_FOUND:
+                    return _route_not_found_response()
+                raise
+        if not download_url:
             return _route_not_found_response()
 
         try:
-            upstream_response = DjiGateway().download_route_file(download_url)
+            upstream_response = gateway.download_route_file(download_url)
         except DjiGatewayUpstreamError as exc:
-            if exc.status_code == status.HTTP_404_NOT_FOUND:
+            if exc.status_code != status.HTTP_404_NOT_FOUND:
+                raise
+            try:
+                refreshed_download_url = self._refresh_route_download_url(gateway=gateway, route_index=route_index)
+            except DjiGatewayUpstreamError as refresh_exc:
+                if refresh_exc.status_code == status.HTTP_404_NOT_FOUND:
+                    return _route_not_found_response()
+                raise
+            if not refreshed_download_url:
                 return _route_not_found_response()
-            raise
+            try:
+                upstream_response = gateway.download_route_file(refreshed_download_url)
+            except DjiGatewayUpstreamError as retry_exc:
+                if retry_exc.status_code == status.HTTP_404_NOT_FOUND:
+                    return _route_not_found_response()
+                raise
+        else:
+            refreshed_download_url = download_url
 
         content_type = upstream_response.headers.get("Content-Type") or "application/vnd.google-earth.kmz"
         return FileResponse(
@@ -455,6 +478,18 @@ class RouteViewSet(
                 "upstream delete best effort",
                 extra={"wayline_id": wayline_id, "status_code": exc.status_code, "best_effort": best_effort},
             )
+
+    def _refresh_route_download_url(self, *, gateway: DjiGateway, route_index: TenantRouteIndex | None) -> str:
+        wayline_id = str(getattr(route_index, "dji_wayline_id", "") or "").strip()
+        if not wayline_id:
+            return ""
+        download_url = str(gateway.get_route_download_url(wayline_id) or "").strip()
+        if not download_url:
+            return ""
+        if route_index is not None and route_index.download_url != download_url:
+            route_index.download_url = download_url
+            route_index.save(update_fields=["download_url", "updated_at"])
+        return download_url
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):

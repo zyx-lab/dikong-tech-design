@@ -247,8 +247,9 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(self._response_body(response), b"mock-kmz-binary")
         download_mock.assert_called_once_with(download_url)
 
-    def test_kmz_download_should_return_404_when_download_url_missing(self):
+    def test_kmz_download_should_resolve_download_url_when_missing(self):
         route = Route.objects.create(tenant=self.tenant, name="缺少下载地址")
+        resolved_download_url = "https://upstream.example/downloads/resolved.kmz"
         TenantRouteIndex.objects.create(
             tenant=self.tenant,
             route=route,
@@ -257,14 +258,26 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             is_published=True,
         )
 
-        response = self.client.get(f"/api/v1/routes/{route.id}/kmz")
+        with patch("apps.route.views.DjiGateway.get_route_download_url", return_value=resolved_download_url) as resolve_mock:
+            with patch(
+                "apps.route.views.DjiGateway.download_route_file",
+                return_value=GatewayResponse(
+                    status_code=200,
+                    headers={"Content-Type": self.KMZ_CONTENT_TYPE},
+                    data=b"resolved-kmz-binary",
+                ),
+            ) as download_mock:
+                response = self.client.get(f"/api/v1/routes/{route.id}/kmz")
 
-        self.assertEqual(response.status_code, 404, response.data)
-        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._response_body(response), b"resolved-kmz-binary")
+        resolve_mock.assert_called_once_with("mock-wayline-download-missing")
+        download_mock.assert_called_once_with(resolved_download_url)
 
-    def test_kmz_download_should_return_404_when_upstream_returns_404(self):
+    def test_kmz_download_should_retry_with_resolved_download_url_after_upstream_404(self):
         route = Route.objects.create(tenant=self.tenant, name="上游丢失 KMZ")
-        download_url = "https://upstream.example/downloads/missing.kmz"
+        download_url = "https://upstream.example/downloads/stale.kmz"
+        resolved_download_url = "https://upstream.example/downloads/fresh.kmz"
         TenantRouteIndex.objects.create(
             tenant=self.tenant,
             route=route,
@@ -275,12 +288,24 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
 
         with patch(
             "apps.route.views.DjiGateway.download_route_file",
-            side_effect=DjiGatewayUpstreamError("missing", status_code=404),
-        ):
-            response = self.client.get(f"/api/v1/routes/{route.id}/kmz")
+            side_effect=[
+                DjiGatewayUpstreamError("missing", status_code=404),
+                GatewayResponse(
+                    status_code=200,
+                    headers={"Content-Type": self.KMZ_CONTENT_TYPE},
+                    data=b"fresh-kmz-binary",
+                ),
+            ],
+        ) as download_mock:
+            with patch("apps.route.views.DjiGateway.get_route_download_url", return_value=resolved_download_url) as resolve_mock:
+                response = self.client.get(f"/api/v1/routes/{route.id}/kmz")
 
-        self.assertEqual(response.status_code, 404, response.data)
-        self.assertEqual(response.data["code"], "C0404")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._response_body(response), b"fresh-kmz-binary")
+        resolve_mock.assert_called_once_with("mock-wayline-download-missing-upstream")
+        self.assertEqual(download_mock.call_count, 2)
+        self.assertEqual(download_mock.call_args_list[0].args, (download_url,))
+        self.assertEqual(download_mock.call_args_list[1].args, (resolved_download_url,))
 
     def test_removed_publish_and_xml_endpoints_should_return_404(self):
         route = Route.objects.create(tenant=self.tenant, name="移除接口检查")
