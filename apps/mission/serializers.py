@@ -1,4 +1,6 @@
 from rest_framework import serializers
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 
 from apps.access.validation import (
     TenantMemberValidationMessages,
@@ -7,6 +9,7 @@ from apps.access.validation import (
 )
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.api_v1.tenant_scope import require_request_tenant
+from apps.mission.flight_state import resolve_mission_display_status
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 
@@ -21,10 +24,12 @@ def _pilot_display_name(pilot_member) -> str:
 
 
 class MissionReadSerializer(serializers.ModelSerializer):
-    status = serializers.ChoiceField(
-        read_only=True,
-        choices=MissionStatus.choices,
-        help_text="任务当前状态。通过任务列表返回项或任务详情的 `status` 字段读取：0=待执行，1=执行中，2=执行完成。",
+    status = serializers.SerializerMethodField(
+        help_text=(
+            "任务当前状态。通过任务列表返回项或任务详情的 `status` 字段读取："
+            "0=待执行，1=执行中，2=执行完成，3=飞行中。"
+            "其中 `3=飞行中` 为实时派生状态，不写入数据库。"
+        ),
     )
     started_at = serializers.DateTimeField(
         read_only=True,
@@ -58,6 +63,10 @@ class MissionReadSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = fields
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_status(self, obj) -> int:
+        return resolve_mission_display_status(obj)
 
 
 class MissionCreateSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
