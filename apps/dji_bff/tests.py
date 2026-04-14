@@ -242,6 +242,95 @@ class DjiGatewayAutoAuthTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(self.dji_workspace_config.access_token, mock_dji_state.access_token)
 
 
+class DjiMqttWatcherTests(TestCase):
+    def setUp(self):
+        super().setUp()
+        self.user = User.objects.create_user(username="dji_mqtt_dispatcher", password="pass1234", status=1)
+        ensure_staff_profile(self.user, name="MQTT 调度员", employment_status=EmploymentStatus.ACTIVE)
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            tenant_code="dji_mqtt_tenant",
+            role_code="dji_mqtt_role",
+            role_name="DJI MQTT 角色",
+        )
+        self.pilot_user = User.objects.create_user(username="dji_mqtt_pilot", password="pass1234", status=1)
+        ensure_staff_profile(self.pilot_user, name="飞手", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, self.pilot_member, _pilot_role = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        ensure_tenant_member_position(self.pilot_member, code="pilot_operator", name="飞手")
+        self.route = Route.objects.create(tenant=self.tenant, name="MQTT 航线")
+        self.drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="MQTT-DRONE-001",
+            name="MQTT 无人机",
+            model="M30",
+            device_sn="MQTT-SN-001",
+        )
+
+    def test_watcher_should_collect_running_mission_device_sns_only(self):
+        from apps.dji_bff.mqtt_watcher import DjiMqttWatcher
+
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="执行中任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.RUNNING,
+            started_at=timezone.now() - timedelta(minutes=1),
+        )
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="已完成任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn="MQTT-DONE-SN",
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.COMPLETED,
+            started_at=timezone.now() - timedelta(minutes=5),
+            finished_at=timezone.now() - timedelta(minutes=1),
+        )
+
+        watcher = DjiMqttWatcher()
+
+        self.assertEqual(watcher._target_device_sns(), {self.drone.device_sn})
+
+    def test_watcher_should_update_registry_from_osd_mode_code(self):
+        from apps.dji_bff.mqtt_watcher import DjiMqttWatcher
+        from apps.mission.flight_state import flight_state_registry
+
+        flight_state_registry.clear()
+        watcher = DjiMqttWatcher()
+
+        watcher._handle_osd_message(
+            topic=f"thing/product/{self.drone.device_sn}/osd",
+            payload={"data": {"mode_code": 5}},
+        )
+
+        snapshot = flight_state_registry.get(self.drone.device_sn)
+        self.assertIsNotNone(snapshot)
+        self.assertTrue(snapshot.is_airborne)
+        self.assertEqual(snapshot.mode_code, 5)
+
+    @override_settings(DJI_MQTT_WATCHER_ENABLED=True)
+    def test_should_start_in_process_watcher_should_reject_test_command(self):
+        from apps.dji_bff.mqtt_watcher import should_start_in_process_watcher
+
+        with patch("apps.dji_bff.mqtt_watcher.sys.argv", ["manage.py", "test"]):
+            self.assertFalse(should_start_in_process_watcher())
+
+
 @override_settings(DJI_INTERNAL_API_TOKEN="internal-sync-token")
 class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
     def setUp(self):
