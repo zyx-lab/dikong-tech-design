@@ -22,15 +22,15 @@
   - 无人机台账（drone）：认领共享设备、读取/编辑本地管理字段、直播控制
   - 无人机分配（drone_assignment）：查询、创建、取消
   - 航线（route）：XML 草稿 CRUD（只写 `name` + `xml_file`，`multipart/form-data` 提交），通过 `GET /api/v1/routes/{id}/xml` 读取源 XML，并通过 `POST /api/v1/routes/{id}/publish` 发布到 DJI；`waypoints` 表只能做内部/历史持久化，前端不再写入 `waypoints[]`
-  - 任务（mission）：查询、创建、更新、取消；创建时同步 DJI job
+  - 任务（mission）：查询、创建、更新、推进执行状态；本地维护执行时间窗
   - 飞行记录（flight_record）：CRUD + 状态流转（完成/异常终止）
-  - 媒体文件（media_file）：只读查询 + 下载；数据由 DJI 同步沉淀
+  - 媒体文件（media_file）：只读查询 + 下载；数据由 DJI 同步沉淀，并按 `device_sn + captured_at` 自动回填 mission
 
 3. Internal DJI Bridge（系统内部 DJI 桥接）
 
 - 前缀：`/api/v1/__internal__/dji/*`
 - 用途：
-  - 受控触发设备 / 任务 / 媒体同步
+  - 受控触发设备 / 媒体同步
   - 接收 DJI 侧上传回调
 - 认证：
   - 不走 Bearer Token
@@ -103,7 +103,7 @@ python manage.py run_dji_sync_scheduler --interval-seconds 60
 说明：
 
 - 通用格式：`python manage.py run_dji_sync_scheduler [options]`
-- 该命令默认循环执行设备、任务、媒体同步
+- 该命令默认循环执行设备、媒体同步
 - `--once` 只跑一轮，适合人工触发或排障
 - `--max-cycles N` 适合受控运行和测试
 - 循环模式下单轮失败不会退出进程，下一轮会继续重试
@@ -213,8 +213,8 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 8. Business API - 任务（mission）
 
 - `GET/POST /api/v1/missions`
-- `GET/PUT/PATCH /api/v1/missions/{id}`
-- `POST /api/v1/missions/{id}/cancel`
+- `GET/PUT/DELETE /api/v1/missions/{id}`
+- `POST /api/v1/missions/{id}/advance`
 
 9. Business API - 飞行记录（flight_record）
 
@@ -228,13 +228,12 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 - `GET /api/v1/media-files`
 - `GET /api/v1/media-files/{id}`
 - `GET /api/v1/media-files/{id}/download`
+- `POST /api/v1/media-files/bind-mission`
 
 11. Internal DJI Bridge
 
 - `POST /api/v1/__internal__/dji/sync/devices`
-- `POST /api/v1/__internal__/dji/sync/missions`
 - `POST /api/v1/__internal__/dji/sync/media`
-- `POST /api/v1/__internal__/dji/callbacks/wayline-upload`
 - `POST /api/v1/__internal__/dji/callbacks/media-upload`
 - `POST /api/v1/__internal__/dji/callbacks/media-group-upload`
 
@@ -243,7 +242,11 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 - `DELETE /api/v1/drones/{id}` 为软删除（释放认领）：将 `Drone.status` 置为 `RELEASED`，并把该设备下 `ACTIVE` 分配批量置为 `INACTIVE`。
 - `Drone.status` 仅表达业务认领态（`CLAIMED` / `RELEASED`）；DJI 在线态通过独立字段 `dji_online` 表达，由设备同步任务维护。
 - `GET /api/v1/drones/available` 仅返回“未被非 `RELEASED` 设备记录占用”的上游设备索引；`ASSIGNED` 范围访问会返回空列表。
-- `POST /api/v1/missions` 必须满足：`route` 已发布到 DJI，且请求体提供非空 `dock_sn`。
+- `POST /api/v1/missions` 必须同时绑定 `route`、`drone`、`pilot`，创建后初始状态为 `待执行`。
+- `POST /api/v1/missions/{id}/advance` 按 `待执行 -> 执行中 -> 执行完成` 推进，并分别写入 `started_at`、`finished_at`。
+- 同一无人机同一时刻只允许一个 mission 进入 `执行中`。
+- 任务只有在 `待执行` 时允许修改绑定字段；进入 `执行中 / 执行完成` 后不允许再改绑定关系。
+- DJI 媒体同步当前不依赖 `flight_record` 或 `jobId`；系统按 `device_sn + captured_at` 命中唯一 mission 时间窗时自动回填 `mission_id`，若已人工绑定则保留人工结果。
 - `POST /api/v1/routes/{id}/publish` 当前采用 STS 流程：申请 STS -> 对象上传 -> `upload-callback` -> 查询航线列表解析 `dji_wayline_id`。
 - `DELETE /api/v1/routes/{id}` 在当前租户存在状态为 `PENDING/RUNNING/PAUSED` 的关联任务时会被拒绝。
 - `PUT/PATCH /api/v1/flight-records/{id}` 不允许直接修改 `status`，状态流转只能通过 `complete/abort` 动作接口。
