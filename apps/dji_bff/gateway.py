@@ -242,6 +242,9 @@ class DjiGateway:
         workspace_id = self._workspace_id()
         return self._request_paginated_items(f"/api/v1/media/workspaces/{workspace_id}/files")
 
+    def get_workspace_config(self) -> DjiWorkspaceConfig:
+        return self._ensure_authenticated()
+
     def _workspace_id(self) -> str:
         config = self._ensure_authenticated()
         if not config.workspace_id:
