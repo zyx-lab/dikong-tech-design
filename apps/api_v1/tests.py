@@ -97,6 +97,7 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("/api/v1/drones/{id}/live/start", paths)
         self.assertIn("/api/v1/routes/{id}/kmz", paths)
         self.assertNotIn("/api/v1/missions/{id}/cancel", paths)
+        self.assertIn("/api/v1/missions/{id}/advance", paths)
         self.assertIn("/api/v1/media-files/{id}/download", paths)
         self.assertIn("/api/v1/media-files/bind-mission", paths)
         self.assertEqual(schema["paths"]["/api/v1/media-files/bind-mission"].keys(), {"post"})
@@ -182,6 +183,7 @@ class OpenApiDocsTests(TestCase):
             "/api/v1/routes/{id}": {"get", "put", "delete"},
             "/api/v1/missions": {"get", "post"},
             "/api/v1/missions/{id}": {"get", "put", "delete"},
+            "/api/v1/missions/{id}/advance": {"post"},
             "/api/v1/flight-records": {"get", "post"},
             "/api/v1/flight-records/{id}": {"get", "put"},
             "/api/v1/drone-assignments": {"get", "post"},
@@ -198,6 +200,7 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/routes/{id}", "delete"),
             ("/api/v1/routes/{id}/kmz", "get"),
             ("/api/v1/missions/{id}", "delete"),
+            ("/api/v1/missions/{id}/advance", "post"),
             ("/api/v1/flight-records/{id}/complete", "post"),
             ("/api/v1/flight-records/{id}/abort", "post"),
             ("/api/v1/drone-assignments/{id}/cancel", "post"),

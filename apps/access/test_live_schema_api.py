@@ -42,6 +42,7 @@ class LiveIamSchemaTests(LiveIamApiTestCase):
         self.assertIn("/api/v1/drones/{id}/live/start", paths)
         self.assertIn("/api/v1/routes/{id}/kmz", paths)
         self.assertNotIn("/api/v1/missions/{id}/cancel", paths)
+        self.assertIn("/api/v1/missions/{id}/advance", paths)
         self.assertIn("/api/v1/media-files/{id}/download", paths)
         self.assertNotIn("/api/v1/drones/{id}/enable", paths)
         self.assertNotIn("/api/v1/routes/{id}/enable", paths)

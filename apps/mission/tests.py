@@ -186,6 +186,7 @@ class MissionApiTests(TestCase):
             pilot=self.pilot_member,
             pilot_name="飞手",
             status=1,
+            started_at=timezone.now() - timedelta(minutes=5),
         )
 
         response = self.client.put(
@@ -232,6 +233,7 @@ class MissionApiTests(TestCase):
             pilot=self.pilot_member,
             pilot_name="飞手",
             status=1,
+            started_at=started_at,
         )
 
         response = self.client.post(f"/missions/{mission.id}/advance")
@@ -243,6 +245,7 @@ class MissionApiTests(TestCase):
         self.assertIsNotNone(mission.finished_at)
 
     def test_advance_should_reject_completed_mission(self):
+        started_at = timezone.now() - timedelta(minutes=10)
         mission = _persist_mission_fixture(
             tenant=self.tenant,
             name="已完成任务",
@@ -254,6 +257,8 @@ class MissionApiTests(TestCase):
             pilot=self.pilot_member,
             pilot_name="飞手",
             status=2,
+            started_at=started_at,
+            finished_at=started_at + timedelta(minutes=5),
         )
 
         response = self.client.post(f"/missions/{mission.id}/advance")
@@ -273,6 +278,7 @@ class MissionApiTests(TestCase):
             pilot=self.pilot_member,
             pilot_name="飞手",
             status=1,
+            started_at=timezone.now() - timedelta(minutes=5),
         )
         waiting = _persist_mission_fixture(
             tenant=self.tenant,
