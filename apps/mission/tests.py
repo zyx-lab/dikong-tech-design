@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -15,8 +16,14 @@ from apps.access.test_support import (
     grant_role_permissions,
 )
 from apps.drone.models import Drone
-from apps.mission.models import Mission, MissionStatus
+from apps.mission.models import Mission
 from apps.route.models import Route
+
+
+def _persist_mission_fixture(**kwargs) -> Mission:
+    mission = Mission(**kwargs)
+    Mission.objects.bulk_create([mission])
+    return Mission.objects.get(pk=mission.pk)
 
 User = get_user_model()
 
@@ -66,52 +73,6 @@ class MissionApiTests(TestCase):
             device_sn="MISSION-SN-001",
         )
 
-    def test_create_should_allow_missing_drone_and_mark_unbound(self):
-        response = self.client.post(
-            "/missions",
-            {
-                "name": "未绑定无人机任务",
-                "route": self.route.id,
-                "pilot": self.pilot_member.id,
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 201, response.data)
-        payload = self._payload(response.data)
-        self.assertNotIn("dji_job_id", payload)
-        self.assertNotIn("sync_status", payload)
-        self.assertNotIn("execution_status", payload)
-        self.assertNotIn("last_sync_at", payload)
-        mission = Mission.objects.get(name="未绑定无人机任务")
-        self.assertIsNone(mission.drone_id)
-        self.assertEqual(mission.status, MissionStatus.DRONE_UNBOUND)
-        self.assertEqual(mission.device_sn, "")
-        self.assertEqual(mission.drone_name, "")
-
-    def test_create_should_mark_bound_when_drone_is_present_without_creating_dji_job(self):
-        response = self.client.post(
-            "/missions",
-            {
-                "name": "已绑定无人机任务",
-                "route": self.route.id,
-                "drone": self.drone.id,
-                "pilot": self.pilot_member.id,
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 201, response.data)
-        payload = self._payload(response.data)
-        self.assertNotIn("dji_job_id", payload)
-        self.assertNotIn("sync_status", payload)
-        self.assertNotIn("execution_status", payload)
-        self.assertNotIn("last_sync_at", payload)
-        mission = Mission.objects.get(name="已绑定无人机任务")
-        self.assertEqual(mission.status, MissionStatus.DRONE_BOUND)
-        self.assertEqual(mission.device_sn, self.drone.device_sn)
-        self.assertEqual(mission.drone_name, self.drone.name)
-
     def test_create_should_require_route(self):
         response = self.client.post(
             "/missions",
@@ -127,12 +88,48 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.data["code"], "B0001")
         self.assertEqual(response.data["data"], {"route": ["该字段是必填项。"]})
 
+    def test_create_should_require_drone(self):
+        response = self.client.post(
+            "/missions",
+            {
+                "name": "缺少无人机任务",
+                "route": self.route.id,
+                "pilot": self.pilot_member.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["data"], {"drone": ["该字段是必填项。"]})
+
+    def test_create_should_initialize_execution_window_fields(self):
+        response = self.client.post(
+            "/missions",
+            {
+                "name": "待执行任务",
+                "route": self.route.id,
+                "drone": self.drone.id,
+                "pilot": self.pilot_member.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        payload = self._payload(response.data)
+        self.assertIn("started_at", payload)
+        self.assertIn("finished_at", payload)
+        self.assertEqual(payload["status"], 0)
+        self.assertIsNone(payload["started_at"])
+        self.assertIsNone(payload["finished_at"])
+
     def test_create_should_allow_unpublished_route_because_mission_is_now_local_only(self):
         response = self.client.post(
             "/missions",
             {
                 "name": "本地任务不再要求已发布航线",
                 "route": self.route.id,
+                "drone": self.drone.id,
                 "pilot": self.pilot_member.id,
             },
             format="json",
@@ -141,10 +138,18 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertTrue(Mission.objects.filter(name="本地任务不再要求已发布航线").exists())
 
-    def test_put_should_unbind_drone_and_reset_status_snapshot_fields(self):
+    def test_put_should_allow_route_and_drone_change_only_when_pending(self):
+        other_route = Route.objects.create(tenant=self.tenant, name="改绑航线")
+        other_drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="MISSION-DRONE-002",
+            name="改绑无人机",
+            model="M30",
+            device_sn="MISSION-SN-002",
+        )
         mission = Mission.objects.create(
             tenant=self.tenant,
-            name="待解绑任务",
+            name="待执行任务",
             route=self.route,
             route_name=self.route.name,
             drone=self.drone,
@@ -152,21 +157,140 @@ class MissionApiTests(TestCase):
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.DRONE_BOUND,
+            status=0,
         )
 
         response = self.client.put(
             f"/missions/{mission.id}",
-            {"drone": None},
+            {"route": other_route.id, "drone": other_drone.id},
             format="json",
         )
 
-        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         mission.refresh_from_db()
-        self.assertIsNone(mission.drone_id)
-        self.assertEqual(mission.status, MissionStatus.DRONE_UNBOUND)
-        self.assertEqual(mission.device_sn, "")
-        self.assertEqual(mission.drone_name, "")
+        self.assertEqual(mission.route_id, other_route.id)
+        self.assertEqual(mission.route_name, other_route.name)
+        self.assertEqual(mission.drone_id, other_drone.id)
+        self.assertEqual(mission.device_sn, other_drone.device_sn)
+        self.assertEqual(mission.drone_name, other_drone.name)
+
+    def test_put_should_reject_any_update_when_status_is_running(self):
+        mission = _persist_mission_fixture(
+            tenant=self.tenant,
+            name="执行中任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=1,
+        )
+
+        response = self.client.put(
+            f"/missions/{mission.id}",
+            {"remark": "不允许修改"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], "C0201")
+
+    def test_advance_should_move_pending_to_running_and_write_started_at(self):
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="状态推进任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=0,
+        )
+
+        response = self.client.post(f"/missions/{mission.id}/advance")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        mission.refresh_from_db()
+        self.assertEqual(mission.status, 1)
+        self.assertIsNotNone(mission.started_at)
+        self.assertIsNone(mission.finished_at)
+
+    def test_advance_should_move_running_to_completed_and_write_finished_at(self):
+        started_at = timezone.now() - timedelta(minutes=10)
+        mission = _persist_mission_fixture(
+            tenant=self.tenant,
+            name="状态完成任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=1,
+        )
+
+        response = self.client.post(f"/missions/{mission.id}/advance")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        mission.refresh_from_db()
+        self.assertEqual(mission.status, 2)
+        self.assertIsNotNone(mission.started_at)
+        self.assertIsNotNone(mission.finished_at)
+
+    def test_advance_should_reject_completed_mission(self):
+        mission = _persist_mission_fixture(
+            tenant=self.tenant,
+            name="已完成任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=2,
+        )
+
+        response = self.client.post(f"/missions/{mission.id}/advance")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], "C0201")
+
+    def test_advance_should_reject_second_running_mission_for_same_drone(self):
+        _persist_mission_fixture(
+            tenant=self.tenant,
+            name="占用无人机任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=1,
+        )
+        waiting = _persist_mission_fixture(
+            tenant=self.tenant,
+            name="等待执行任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=0,
+        )
+
+        response = self.client.post(f"/missions/{waiting.id}/advance")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], "C0201")
 
     def test_patch_should_return_method_not_allowed(self):
         mission = Mission.objects.create(
@@ -174,8 +298,12 @@ class MissionApiTests(TestCase):
             name="禁止PATCH任务",
             route=self.route,
             route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
+            status=0,
         )
 
         response = self.client.patch(
@@ -260,6 +388,7 @@ class MissionApiTests(TestCase):
                 {
                     "name": "创建回滚任务",
                     "route": self.route.id,
+                    "drone": self.drone.id,
                     "pilot": self.pilot_member.id,
                 },
                 format="json",

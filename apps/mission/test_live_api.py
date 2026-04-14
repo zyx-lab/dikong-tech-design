@@ -59,7 +59,7 @@ class LiveMissionApiTests(LiveDjiGatewayApiTestCase):
 
         self.login(username="mission_live_dispatcher", password="pass1234", tenant_code=self.tenant.code)
 
-    def test_create_and_delete_should_follow_live_http_contract(self):
+    def test_create_advance_and_delete_should_follow_live_http_contract(self):
         create_response = self.client.post(
             "/api/v1/missions",
             {
@@ -71,11 +71,27 @@ class LiveMissionApiTests(LiveDjiGatewayApiTestCase):
             format="json",
         )
         self.assertEqual(create_response.status_code, 201)
-        mission_id = create_response.json()["data"]["id"]
-        self.assertEqual(create_response.json()["data"]["status"], 1)
+        create_data = create_response.json()["data"]
+        mission_id = create_data["id"]
+        self.assertEqual(create_data["status"], 0)
+        self.assertIn("started_at", create_data)
+        self.assertIn("finished_at", create_data)
+        self.assertIsNone(create_data["started_at"])
+        self.assertIsNone(create_data["finished_at"])
 
-        cancel_response = self.client.post(f"/api/v1/missions/{mission_id}/cancel")
-        self.assertEqual(cancel_response.status_code, 404)
+        advance_response = self.client.post(f"/api/v1/missions/{mission_id}/advance")
+        self.assertEqual(advance_response.status_code, 200)
+        advance_data = advance_response.json()["data"]
+        self.assertEqual(advance_data["status"], 1)
+        self.assertIsNotNone(advance_data["started_at"])
+        self.assertIsNone(advance_data["finished_at"])
+
+        finish_response = self.client.post(f"/api/v1/missions/{mission_id}/advance")
+        self.assertEqual(finish_response.status_code, 200)
+        finish_data = finish_response.json()["data"]
+        self.assertEqual(finish_data["status"], 2)
+        self.assertIsNotNone(finish_data["started_at"])
+        self.assertIsNotNone(finish_data["finished_at"])
 
         delete_response = self.client.delete(f"/api/v1/missions/{mission_id}")
         self.assertEqual(delete_response.status_code, 200)
