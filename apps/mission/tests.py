@@ -292,6 +292,46 @@ class MissionApiTests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["code"], "C0201")
 
+    def test_model_should_require_started_at_when_status_is_running(self):
+        mission = _persist_mission_fixture(
+            tenant=self.tenant,
+            name="缺少开始时间任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=0,
+        )
+
+        Mission.objects.filter(pk=mission.pk).update(status=1)
+        mission.refresh_from_db()
+
+        with self.assertRaises(ValidationError):
+            mission.save()
+
+    def test_model_should_require_finished_at_when_status_is_completed(self):
+        mission = _persist_mission_fixture(
+            tenant=self.tenant,
+            name="缺少结束时间任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=0,
+        )
+
+        Mission.objects.filter(pk=mission.pk).update(status=2)
+        mission.refresh_from_db()
+
+        with self.assertRaises(ValidationError):
+            mission.save()
+
     def test_patch_should_return_method_not_allowed(self):
         mission = Mission.objects.create(
             tenant=self.tenant,

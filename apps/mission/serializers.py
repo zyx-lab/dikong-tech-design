@@ -7,7 +7,8 @@ from apps.access.validation import (
 )
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.api_v1.tenant_scope import require_request_tenant
-from apps.mission.models import Mission
+from apps.mission.models import Mission, MissionStatus
+from apps.route.models import Route
 
 
 def _pilot_display_name(pilot_member) -> str:
@@ -33,6 +34,8 @@ class MissionReadSerializer(serializers.ModelSerializer):
             "pilot",
             "pilot_name",
             "scheduled_at",
+            "started_at",
+            "finished_at",
             "remark",
             "status",
             "created_at",
@@ -98,7 +101,7 @@ class MissionCreateSerializer(RejectUnknownFieldsMixin, serializers.ModelSeriali
         extra_kwargs = {
             "name": {"help_text": "任务名称，用于调度展示和日志定位。"},
             "route": {"help_text": "任务绑定的航线 ID；必须属于当前租户。", "required": True, "allow_null": False},
-            "drone": {"help_text": "任务绑定的无人机 ID；必须属于当前租户。", "required": False, "allow_null": True},
+            "drone": {"help_text": "任务绑定的无人机 ID；必须属于当前租户。", "required": True, "allow_null": False},
             "pilot": {"help_text": "任务绑定的飞手成员 ID；必须为当前租户 ACTIVE 成员且具备 pilot_operator 角色。"},
             "scheduled_at": {"help_text": "计划执行时间，可为空。"},
             "remark": {"help_text": "任务备注，可为空。"},
@@ -106,17 +109,52 @@ class MissionCreateSerializer(RejectUnknownFieldsMixin, serializers.ModelSeriali
 
 
 class MissionUpdateSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
+    route = serializers.PrimaryKeyRelatedField(queryset=Route.objects.all(), required=False)
+
     class Meta:
         model = Mission
         fields = [
             "name",
+            "route",
             "drone",
             "scheduled_at",
             "remark",
         ]
         extra_kwargs = {
             "name": {"help_text": "任务名称。"},
-            "drone": {"help_text": "任务绑定的无人机 ID；可为空以解绑。", "required": False, "allow_null": True},
+            "route": {"help_text": "任务绑定的航线 ID；仅允许待执行任务修改。", "required": False},
+            "drone": {"help_text": "任务绑定的无人机 ID；仅允许待执行任务修改。", "required": False, "allow_null": False},
             "scheduled_at": {"help_text": "计划执行时间，可为空。", "required": False},
             "remark": {"help_text": "任务备注，可为空。", "required": False},
         }
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+
+        current_tenant = require_request_tenant(self.context)
+        instance = getattr(self, "instance", None)
+        route = attrs.get("route", instance.route if instance is not None else None)
+        drone = attrs.get("drone", instance.drone if instance is not None else None)
+
+        validate_relation_belongs_to_tenant(
+            related_obj=route,
+            tenant_id=current_tenant.id,
+            field_name="route",
+            mismatch_message="仅允许绑定当前租户下的航线",
+            error_cls=serializers.ValidationError,
+        )
+        validate_relation_belongs_to_tenant(
+            related_obj=drone,
+            tenant_id=current_tenant.id,
+            field_name="drone",
+            mismatch_message="仅允许绑定当前租户下的无人机",
+            error_cls=serializers.ValidationError,
+        )
+
+        return attrs
+
+    def update(self, instance, validated_data):
+        route = validated_data.get("route", instance.route)
+        if route is not None:
+            validated_data["route_name"] = route.name
+        return super().update(instance, validated_data)

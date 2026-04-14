@@ -23,7 +23,7 @@ from apps.api_v1.schema import (
     paginated_envelope_serializer,
 )
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
-from apps.mission.models import Mission
+from apps.mission.models import Mission, MissionStatus
 from apps.mission.serializers import MissionCreateSerializer, MissionReadSerializer, MissionUpdateSerializer
 
 MISSION_LIST_RESPONSE = paginated_envelope_serializer("MissionListResponse", MissionReadSerializer)
@@ -37,6 +37,7 @@ MISSION_FILTER_PARAMETERS = [
     OpenApiParameter(name="pilot_id", type=int, location=OpenApiParameter.QUERY, description="按飞手成员 ID 过滤。"),
     OpenApiParameter(name="status", type=int, location=OpenApiParameter.QUERY, description="按任务状态过滤。"),
 ]
+
 
 def _mission_success_response(view, mission: Mission, *, http_status: int, include_headers: bool = False):
     payload = view._payload(mission)
@@ -70,6 +71,17 @@ def _reject_request_body_if_present(request, *, message: str):
             status=status.HTTP_400_BAD_REQUEST,
         )
     return None
+
+
+def _mission_state_conflict_response(*, mission: Mission, message: str):
+    return Response(
+        standard_error_payload(
+            StandardCode.STATE_CONFLICT,
+            message,
+            {"mission_id": mission.id, "status": mission.status},
+        ),
+        status=status.HTTP_409_CONFLICT,
+    )
 
 
 @extend_schema_view(
@@ -110,7 +122,7 @@ def _reject_request_body_if_present(request, *, message: str):
         tags=["Business API - Mission"],
     ),
     update=extend_schema(
-        summary="全量更新本地任务字段",
+        summary="全量更新待执行任务字段",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=MissionUpdateSerializer,
         responses={
@@ -198,7 +210,11 @@ class MissionViewSet(
         if error_response is not None:
             return error_response
 
-        serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
+        mission = self.get_object()
+        if mission.status != MissionStatus.PENDING:
+            return _mission_state_conflict_response(mission=mission, message="仅允许修改待执行任务")
+
+        serializer = self.get_serializer(mission, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         mission = self.perform_update(serializer)
         return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)

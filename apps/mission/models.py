@@ -9,8 +9,9 @@ from apps.access.validation import (
 
 
 class MissionStatus(models.IntegerChoices):
-    DRONE_UNBOUND = 0, "未绑定无人机"
-    DRONE_BOUND = 1, "已绑定无人机"
+    PENDING = 0, "待执行"
+    RUNNING = 1, "执行中"
+    COMPLETED = 2, "执行完成"
 
 
 class Mission(models.Model):
@@ -45,8 +46,10 @@ class Mission(models.Model):
     pilot = models.ForeignKey("access.TenantMember", on_delete=models.PROTECT, related_name="missions", verbose_name="飞手成员")
     pilot_name = models.CharField("飞手姓名（冗余）", max_length=50, blank=True, default="")
     scheduled_at = models.DateTimeField("计划执行时间", null=True, blank=True)
+    started_at = models.DateTimeField("开始执行时间", null=True, blank=True)
+    finished_at = models.DateTimeField("执行完成时间", null=True, blank=True)
     remark = models.CharField("任务备注", max_length=500, blank=True, default="")
-    status = models.PositiveSmallIntegerField("任务状态", choices=MissionStatus.choices, default=MissionStatus.DRONE_UNBOUND)
+    status = models.PositiveSmallIntegerField("任务状态", choices=MissionStatus.choices, default=MissionStatus.PENDING)
     is_deleted = models.BooleanField("是否已删除", default=False)
     deleted_at = models.DateTimeField("删除时间", null=True, blank=True)
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
@@ -91,12 +94,11 @@ class Mission(models.Model):
             mismatch_message="drone 必须属于当前 tenant",
             error_cls=ValidationError,
         )
-        if self.drone_id:
-            self.status = MissionStatus.DRONE_BOUND
+        self.route_name = self.route.name if self.route_id and self.route is not None else ""
+        if self.drone_id and self.drone is not None:
             self.device_sn = self.drone.device_sn
             self.drone_name = self.drone.name
         else:
-            self.status = MissionStatus.DRONE_UNBOUND
             self.device_sn = ""
             self.drone_name = ""
         validate_tenant_member_as_pilot(
@@ -112,6 +114,23 @@ class Mission(models.Model):
             ),
             error_cls=ValidationError,
         )
+        if self.status == MissionStatus.PENDING:
+            if self.started_at is not None:
+                raise ValidationError({"started_at": "待执行任务不允许写入 started_at"})
+            if self.finished_at is not None:
+                raise ValidationError({"finished_at": "待执行任务不允许写入 finished_at"})
+        elif self.status == MissionStatus.RUNNING:
+            if self.started_at is None:
+                raise ValidationError({"started_at": "执行中任务必须提供 started_at"})
+            if self.finished_at is not None:
+                raise ValidationError({"finished_at": "执行中任务不允许写入 finished_at"})
+        elif self.status == MissionStatus.COMPLETED:
+            if self.started_at is None:
+                raise ValidationError({"started_at": "执行完成任务必须提供 started_at"})
+            if self.finished_at is None:
+                raise ValidationError({"finished_at": "执行完成任务必须提供 finished_at"})
+            if self.finished_at < self.started_at:
+                raise ValidationError({"finished_at": "finished_at 不能早于 started_at"})
 
     def save(self, *args, **kwargs):
         self.full_clean()
