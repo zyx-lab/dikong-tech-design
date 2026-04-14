@@ -229,26 +229,20 @@ class AvailableDroneReadSerializer(serializers.ModelSerializer):
         return _payload_string(payload, "model", "device_model", "product_type") or "unknown"
 
 
-class DroneLiveStartSerializer(serializers.Serializer):
-    camera_index = serializers.CharField(help_text="camera.index，来自 live/capacity 返回。")
-    video_index = serializers.CharField(help_text="video.index，来自 live/capacity 返回。")
-    url_type = serializers.IntegerField(required=False, default=1, help_text="直播 URL 类型，默认 1。")
+class DroneLiveStreamSerializer(RejectUnknownFieldsMixin, serializers.Serializer):
+    videoType = serializers.CharField(
+        required=False,
+        help_text="镜头切换目标类型。仅 `/live/switch` 使用；字段名保持 DJI 原始格式。",
+    )
+    url_type = serializers.IntegerField(
+        required=False,
+        help_text="推流类型：0=AGORA，1=RTMP，2=RTSP，3=GB28181，4=WHIP。",
+    )
+    video_id = serializers.CharField(
+        required=False,
+        help_text="直播视频源标识，格式 `{drone_sn}/{payload_index}/{video_type}-0`。",
+    )
     video_quality = serializers.IntegerField(
         required=False,
-        default=0,
-        help_text="DJI 画质枚举：0=AUTO，1=SMOOTH，2=STANDARD_DEFINITION，3=HIGH_DEFINITION，4=ULTRA_HD。默认 0。",
+        help_text="直播清晰度：0=AUTO，1=SMOOTH，2=STANDARD_DEFINITION，3=HIGH_DEFINITION，4=ULTRA_HD。",
     )
-
-
-class DroneLiveStopSerializer(serializers.Serializer):
-    video_id = serializers.CharField(help_text="要停止的 video_id，格式 {device_sn}/{camera.index}/{video.index}。")
-
-
-class DroneLiveVideoQualitySerializer(serializers.Serializer):
-    video_id = serializers.CharField(help_text="要调整的 video_id，格式 {device_sn}/{camera.index}/{video.index}。")
-    video_quality = serializers.IntegerField(help_text="DJI 画质枚举：0=AUTO，1=SMOOTH，2=STANDARD_DEFINITION，3=HIGH_DEFINITION，4=ULTRA_HD。")
-
-
-class DroneLiveVideoSourceSerializer(serializers.Serializer):
-    video_id = serializers.CharField(help_text="DJI 实测 video_id，格式 {device_sn}/{camera.index}/{video.index}。")
-    videoType = serializers.CharField(help_text="上游视频源类型，保持 DJI 原始语义。")

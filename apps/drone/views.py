@@ -35,10 +35,7 @@ from apps.access.models import ScopeType
 from apps.drone.serializers import (
     AvailableDroneReadSerializer,
     DroneClaimSerializer,
-    DroneLiveStartSerializer,
-    DroneLiveStopSerializer,
-    DroneLiveVideoQualitySerializer,
-    DroneLiveVideoSourceSerializer,
+    DroneLiveStreamSerializer,
     DroneReadSerializer,
     DroneUpdateSerializer,
 )
@@ -81,25 +78,29 @@ def _drone_success_response(view, drone: Drone, *, http_status: int, include_hea
 
 
 def _dji_live_action_error_response(exc: DjiGatewayUpstreamError):
-    payload = exc.data if isinstance(exc.data, dict) else {}
-    message = str(payload.get("msg") or exc).strip() or "DJI 直播服务调用失败"
-    if exc.status_code == status.HTTP_400_BAD_REQUEST or str(payload.get("code") or "").upper() == StandardCode.INVALID_PARAMS:
-        error_data = payload.get("data")
-        if error_data in (None, {}):
-            error_data = {"detail": message}
-        return Response(
-            standard_error_payload(StandardCode.INVALID_PARAMS, message, error_data),
-            status=status.HTTP_400_BAD_REQUEST,
+    payload = dict(exc.data) if isinstance(exc.data, dict) else {}
+    if payload and "data" not in payload:
+        payload["data"] = None
+    message = str(payload.get("msg") or exc).strip().lower()
+    is_invalid_params = exc.status_code == status.HTTP_400_BAD_REQUEST or any(
+        marker in message
+        for marker in (
+            "invalid parameter",
+            "parameters are abnormal or incomplete",
+            "parameter..",
+            "must not be null",
+            "incomplete",
+            "210002",
         )
-
-    upstream_data = payload or None
+    )
+    resolved_status = exc.status_code if exc.status_code >= 400 else (
+        status.HTTP_400_BAD_REQUEST if is_invalid_params else status.HTTP_502_BAD_GATEWAY
+    )
+    if payload:
+        return Response(payload, status=resolved_status)
     return Response(
-        standard_error_payload(
-            StandardCode.INTERNAL_ERROR,
-            "DJI 直播服务调用失败",
-            {"detail": message, "upstream": upstream_data},
-        ),
-        status=status.HTTP_502_BAD_GATEWAY,
+        standard_error_payload(StandardCode.INTERNAL_ERROR, "DJI upstream error", None),
+        status=resolved_status,
     )
 
 
@@ -195,8 +196,8 @@ class DroneViewSet(
         "destroy": "drone.manage_drone",
         "live_start": "drone.manage_drone",
         "live_stop": "drone.manage_drone",
-        "live_video_quality": "drone.manage_drone",
-        "live_video_source": "drone.manage_drone",
+        "live_update": "drone.manage_drone",
+        "live_switch": "drone.manage_drone",
     }
 
     @staticmethod
@@ -210,10 +211,10 @@ class DroneViewSet(
         serializer_map = {
             "create": DroneClaimSerializer,
             "update": DroneUpdateSerializer,
-            "live_start": DroneLiveStartSerializer,
-            "live_stop": DroneLiveStopSerializer,
-            "live_video_quality": DroneLiveVideoQualitySerializer,
-            "live_video_source": DroneLiveVideoSourceSerializer,
+            "live_start": DroneLiveStreamSerializer,
+            "live_stop": DroneLiveStreamSerializer,
+            "live_update": DroneLiveStreamSerializer,
+            "live_switch": DroneLiveStreamSerializer,
         }
         return serializer_map.get(self.action, DroneReadSerializer)
 
@@ -230,7 +231,7 @@ class DroneViewSet(
             value = params.get(param)
             if value:
                 queryset = queryset.filter(**{lookup: value})
-        if self.action in {"list", "retrieve", "update", "destroy", "live_capacity", "live_start", "live_stop", "live_video_quality", "live_video_source"}:
+        if self.action in {"list", "retrieve", "update", "destroy", "live_capacity", "live_start", "live_stop", "live_update", "live_switch"}:
             queryset = queryset.exclude(status=DroneStatus.RELEASED)
             return self.apply_scope(queryset)
         return queryset
@@ -284,12 +285,6 @@ class DroneViewSet(
     @staticmethod
     def _audit_after_data(payload):
         return payload if isinstance(payload, dict) else {"result": payload}
-
-    @staticmethod
-    def _build_live_start_payload(drone: Drone, payload: dict) -> dict:
-        resolved = dict(payload)
-        resolved["video_id"] = f"{drone.device_sn}/{resolved.pop('camera_index')}/{resolved.pop('video_index')}"
-        return resolved
 
     def _execute_live_action(
         self,
@@ -464,9 +459,9 @@ class DroneViewSet(
         return Response(payload, status=status.HTTP_200_OK)
 
     @extend_schema(
-        summary="启动直播",
+        summary="启动直播（DJI 参数透传）",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=DroneLiveStartSerializer,
+        request=DroneLiveStreamSerializer,
         responses={
             200: OpenApiResponse(response=OpenApiTypes.OBJECT),
             400: BUSINESS_INVALID_PARAMS_RESPONSE,
@@ -486,13 +481,12 @@ class DroneViewSet(
             drone=drone,
             action_name="DRONE_LIVE_START",
             gateway_method_name="start_live",
-            payload_transform=self._build_live_start_payload,
         )
 
     @extend_schema(
-        summary="停止直播",
+        summary="停止直播（DJI 参数透传）",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=DroneLiveStopSerializer,
+        request=DroneLiveStreamSerializer,
         responses={
             200: OpenApiResponse(response=OpenApiTypes.OBJECT),
             400: BUSINESS_INVALID_PARAMS_RESPONSE,
@@ -515,9 +509,9 @@ class DroneViewSet(
         )
 
     @extend_schema(
-        summary="调整直播画质",
+        summary="更新直播参数（DJI 参数透传）",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=DroneLiveVideoQualitySerializer,
+        request=DroneLiveStreamSerializer,
         responses={
             200: OpenApiResponse(response=OpenApiTypes.OBJECT),
             400: BUSINESS_INVALID_PARAMS_RESPONSE,
@@ -529,20 +523,20 @@ class DroneViewSet(
         },
         tags=["Business API - Drone"],
     )
-    @action(detail=True, methods=["post"], url_path="live/video-quality")
-    def live_video_quality(self, request, *args, **kwargs):
+    @action(detail=True, methods=["post"], url_path="live/update")
+    def live_update(self, request, *args, **kwargs):
         drone = self.get_object()
         return self._execute_live_action(
             request,
             drone=drone,
-            action_name="DRONE_LIVE_VIDEO_QUALITY",
-            gateway_method_name="set_live_video_quality",
+            action_name="DRONE_LIVE_UPDATE",
+            gateway_method_name="update_live",
         )
 
     @extend_schema(
-        summary="切换直播视频源",
+        summary="切换直播视频源（DJI 参数透传）",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=DroneLiveVideoSourceSerializer,
+        request=DroneLiveStreamSerializer,
         responses={
             200: OpenApiResponse(response=OpenApiTypes.OBJECT),
             400: BUSINESS_INVALID_PARAMS_RESPONSE,
@@ -554,12 +548,12 @@ class DroneViewSet(
         },
         tags=["Business API - Drone"],
     )
-    @action(detail=True, methods=["post"], url_path="live/video-source")
-    def live_video_source(self, request, *args, **kwargs):
+    @action(detail=True, methods=["post"], url_path="live/switch")
+    def live_switch(self, request, *args, **kwargs):
         drone = self.get_object()
         return self._execute_live_action(
             request,
             drone=drone,
-            action_name="DRONE_LIVE_VIDEO_SOURCE",
-            gateway_method_name="set_live_video_source",
+            action_name="DRONE_LIVE_SWITCH",
+            gateway_method_name="switch_live",
         )

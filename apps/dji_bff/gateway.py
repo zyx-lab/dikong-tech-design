@@ -81,15 +81,21 @@ class DjiGateway:
         payload.update(kwargs)
         return self._request_json("POST", "/api/v1/manage/live/streams/stop", data=payload).data
 
-    def set_live_video_quality(self, device_sn: str, **kwargs):
+    def update_live(self, device_sn: str, **kwargs):
         payload = {"device_sn": device_sn}
         payload.update(kwargs)
         return self._request_json("POST", "/api/v1/manage/live/streams/update", data=payload).data
 
-    def set_live_video_source(self, device_sn: str, **kwargs):
+    def switch_live(self, device_sn: str, **kwargs):
         payload = {"device_sn": device_sn}
         payload.update(kwargs)
         return self._request_json("POST", "/api/v1/manage/live/streams/switch", data=payload).data
+
+    def set_live_video_quality(self, device_sn: str, **kwargs):
+        return self.update_live(device_sn, **kwargs)
+
+    def set_live_video_source(self, device_sn: str, **kwargs):
+        return self.switch_live(device_sn, **kwargs)
 
     def upload_route(self, *, route_name: str, file_obj):
         workspace_id = self._workspace_id()

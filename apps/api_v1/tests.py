@@ -95,6 +95,8 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("/api/v1/drones/available", paths)
         self.assertIn("/api/v1/drones/{id}/live/capacity", paths)
         self.assertIn("/api/v1/drones/{id}/live/start", paths)
+        self.assertIn("/api/v1/drones/{id}/live/update", paths)
+        self.assertIn("/api/v1/drones/{id}/live/switch", paths)
         self.assertIn("/api/v1/routes/{id}/kmz", paths)
         self.assertNotIn("/api/v1/missions/{id}/cancel", paths)
         self.assertIn("/api/v1/missions/{id}/advance", paths)
@@ -112,6 +114,8 @@ class OpenApiDocsTests(TestCase):
         self.assertNotIn("/api/v1/drones/{id}/disable", paths)
         self.assertNotIn("/api/v1/drones/{id}/maintenance", paths)
         self.assertNotIn("/api/v1/drones/{id}/retire", paths)
+        self.assertNotIn("/api/v1/drones/{id}/live/video-quality", paths)
+        self.assertNotIn("/api/v1/drones/{id}/live/video-source", paths)
         self.assertNotIn("/api/v1/routes/{id}/enable", paths)
         self.assertNotIn("/api/v1/routes/{id}/disable", paths)
         self.assertNotIn("/api/v1/routes/{id}/download", paths)
@@ -171,7 +175,7 @@ class OpenApiDocsTests(TestCase):
         self.assertNotIn("IDEMPOTENT_DUPLICATE", flight_record_create["responses"]["400"]["description"])
         self.assertIn("C0101", flight_record_create["responses"]["400"]["description"])
 
-    def test_business_schema_should_describe_live_start_video_quality_default(self):
+    def test_business_schema_should_describe_live_passthrough_payload(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)
         schema = response.json()
@@ -181,9 +185,14 @@ class OpenApiDocsTests(TestCase):
         schema_name = request_schema["$ref"].split("/")[-1]
         serializer_schema = schema["components"]["schemas"][schema_name]
 
+        self.assertEqual(
+            set(serializer_schema["properties"].keys()),
+            {"videoType", "url_type", "video_id", "video_quality"},
+        )
         self.assertIn("video_quality", serializer_schema["properties"])
-        self.assertEqual(serializer_schema["properties"]["video_quality"]["default"], 0)
         self.assertNotIn("video_quality", serializer_schema.get("required", []))
+        self.assertNotIn("camera_index", serializer_schema["properties"])
+        self.assertNotIn("video_index", serializer_schema["properties"])
 
     def test_business_schema_should_lock_current_operation_surface_and_bodyless_actions(self):
         response = self.client.get("/api/v1/docs/schema/")
@@ -193,6 +202,11 @@ class OpenApiDocsTests(TestCase):
         expected_methods = {
             "/api/v1/drones": {"get", "post"},
             "/api/v1/drones/{id}": {"get", "put", "delete"},
+            "/api/v1/drones/{id}/live/capacity": {"get"},
+            "/api/v1/drones/{id}/live/start": {"post"},
+            "/api/v1/drones/{id}/live/stop": {"post"},
+            "/api/v1/drones/{id}/live/update": {"post"},
+            "/api/v1/drones/{id}/live/switch": {"post"},
             "/api/v1/routes": {"get", "post"},
             "/api/v1/routes/{id}": {"get", "put", "delete"},
             "/api/v1/missions": {"get", "post"},
@@ -305,8 +319,8 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/drones/{id}/live/capacity", "get"): {"200", "401", "403", "404", "500"},
             ("/api/v1/drones/{id}/live/start", "post"): {"200", "400", "401", "403", "404", "500", "502"},
             ("/api/v1/drones/{id}/live/stop", "post"): {"200", "400", "401", "403", "404", "500", "502"},
-            ("/api/v1/drones/{id}/live/video-quality", "post"): {"200", "400", "401", "403", "404", "500", "502"},
-            ("/api/v1/drones/{id}/live/video-source", "post"): {"200", "400", "401", "403", "404", "500", "502"},
+            ("/api/v1/drones/{id}/live/update", "post"): {"200", "400", "401", "403", "404", "500", "502"},
+            ("/api/v1/drones/{id}/live/switch", "post"): {"200", "400", "401", "403", "404", "500", "502"},
             ("/api/v1/routes", "get"): {"200", "401", "403", "500"},
             ("/api/v1/routes", "post"): {"201", "400", "401", "403", "500"},
             ("/api/v1/routes/{id}", "get"): {"200", "401", "403", "404", "500"},

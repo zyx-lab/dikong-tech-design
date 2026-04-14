@@ -394,7 +394,7 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(mission.drone_id, old_drone.id)
         self.assertEqual(flight_record.drone_id, old_drone.id)
 
-    def test_live_start_should_proxy_with_composed_video_id(self):
+    def test_live_start_should_proxy_exact_upstream_payload(self):
         mock_dji_state.seed_device(device_sn="SN-LIVE-001", name="直播设备", model="M30")
         DjiDeviceIndex.objects.create(device_sn="SN-LIVE-001", last_payload={})
         drone = Drone.objects.create(
@@ -407,22 +407,21 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
 
         response = self.client.post(
             f"/api/v1/drones/{drone.id}/live/start",
-            {"camera_index": "88-0-0", "video_index": "normal-0"},
+            {"video_id": "SN-LIVE-001/88-0-0/normal-0", "url_type": 1, "video_quality": 0},
             format="json",
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["data"]["video_id"], "SN-LIVE-001/88-0-0/normal-0")
         self.assertIn("url", response.data["data"])
         self.assertIn("rtmp_url", response.data["data"])
         self.assertIn("whep_url", response.data["data"])
         self.assertIn("SN-LIVE-001-88-0-0", response.data["data"]["url"])
 
-    def test_live_start_should_default_video_quality_when_client_omits_it(self):
+    def test_live_start_should_forward_only_client_supplied_upstream_fields(self):
         drone = Drone.objects.create(
             tenant=self.tenant,
             code="DJ-LIVE-DEFAULT-001",
-            name="直播默认画质设备",
+            name="直播透传设备",
             model="M30",
             device_sn="SN-LIVE-DEFAULT-001",
             created_by_tenant_member_id=self.member.id,
@@ -434,7 +433,7 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         ) as start_mock:
             response = self.client.post(
                 f"/api/v1/drones/{drone.id}/live/start",
-                {"camera_index": "88-0-0", "video_index": "normal-0"},
+                {"video_id": "SN-LIVE-DEFAULT-001/88-0-0/normal-0", "video_quality": 3},
                 format="json",
             )
 
@@ -442,11 +441,31 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         start_mock.assert_called_once_with(
             "SN-LIVE-DEFAULT-001",
             video_id="SN-LIVE-DEFAULT-001/88-0-0/normal-0",
-            url_type=1,
-            video_quality=0,
+            video_quality=3,
         )
 
-    def test_live_start_should_return_invalid_params_when_upstream_rejects_payload(self):
+    def test_live_start_should_reject_legacy_mapped_fields(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-LIVE-LEGACY-001",
+            name="直播旧字段设备",
+            model="M30",
+            device_sn="SN-LIVE-LEGACY-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        response = self.client.post(
+            f"/api/v1/drones/{drone.id}/live/start",
+            {"camera_index": "88-0-0", "video_index": "normal-0"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["data"]["camera_index"], ["该字段在此接口不可写"])
+        self.assertEqual(response.data["data"]["video_index"], ["该字段在此接口不可写"])
+
+    def test_live_start_should_transparently_return_upstream_invalid_params(self):
         drone = Drone.objects.create(
             tenant=self.tenant,
             code="DJ-LIVE-UPSTREAM-400",
@@ -460,22 +479,25 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
             "apps.drone.views.DjiGateway.start_live",
             side_effect=DjiGatewayUpstreamError(
                 "DJI upstream business error",
-                status_code=400,
-                data={"code": "B0001", "msg": "Invalid parameter", "data": {"video_quality": ["required"]}},
+                status_code=200,
+                data={
+                    "code": "E0001",
+                    "msg": "Error Code: 210002, Error Msg: Invalid parameter.. videoQualitymust not be null, Current value is: null",
+                },
             ),
         ):
             response = self.client.post(
                 f"/api/v1/drones/{drone.id}/live/start",
-                {"camera_index": "88-0-0", "video_index": "normal-0"},
+                {"video_id": "SN-LIVE-UPSTREAM-400/88-0-0/normal-0"},
                 format="json",
             )
 
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["msg"], "Invalid parameter")
-        self.assertEqual(response.data["data"], {"video_quality": ["required"]})
+        self.assertEqual(response.data["code"], "E0001")
+        self.assertIn("Invalid parameter", response.data["msg"])
+        self.assertIsNone(response.data["data"])
 
-    def test_live_start_should_surface_upstream_service_failure_without_500(self):
+    def test_live_start_should_transparently_return_upstream_service_failure(self):
         drone = Drone.objects.create(
             tenant=self.tenant,
             code="DJ-LIVE-UPSTREAM-502",
@@ -495,17 +517,14 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         ):
             response = self.client.post(
                 f"/api/v1/drones/{drone.id}/live/start",
-                {"camera_index": "88-0-0", "video_index": "normal-0"},
+                {"video_id": "SN-LIVE-UPSTREAM-502/88-0-0/normal-0", "url_type": 1, "video_quality": 0},
                 format="json",
             )
 
         self.assertEqual(response.status_code, 502, response.data)
-        self.assertEqual(response.data["code"], "E0001")
-        self.assertEqual(response.data["msg"], "DJI 直播服务调用失败")
-        self.assertEqual(
-            response.data["data"]["upstream"],
-            {"code": "D0001", "msg": "Please check whether the live stream service is normal."},
-        )
+        self.assertEqual(response.data["code"], "D0001")
+        self.assertEqual(response.data["msg"], "Please check whether the live stream service is normal.")
+        self.assertIsNone(response.data["data"])
 
     def test_live_capacity_should_return_404_when_upstream_capacity_missing(self):
         drone = Drone.objects.create(
@@ -523,7 +542,7 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.data["code"], "C0404")
         self.assertIn("device_sn", response.data["data"])
 
-    def test_live_stop_should_require_video_id(self):
+    def test_live_stop_should_proxy_exact_upstream_payload(self):
         drone = Drone.objects.create(
             tenant=self.tenant,
             code="DJ-LIVE-STOP-001",
@@ -533,13 +552,23 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
             created_by_tenant_member_id=self.member.id,
         )
 
-        response = self.client.post(f"/api/v1/drones/{drone.id}/live/stop", {}, format="json")
+        with patch(
+            "apps.drone.views.DjiGateway.stop_live",
+            return_value={"stopped": True},
+        ) as stop_mock:
+            response = self.client.post(
+                f"/api/v1/drones/{drone.id}/live/stop",
+                {"video_id": "SN-LIVE-STOP-001/88-0-0/normal-0"},
+                format="json",
+            )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertIn("video_id", response.data["data"])
+        self.assertEqual(response.status_code, 200)
+        stop_mock.assert_called_once_with(
+            "SN-LIVE-STOP-001",
+            video_id="SN-LIVE-STOP-001/88-0-0/normal-0",
+        )
 
-    def test_live_video_quality_should_proxy_dji_field_names(self):
+    def test_live_update_should_proxy_exact_upstream_payload(self):
         drone = Drone.objects.create(
             tenant=self.tenant,
             code="DJ-LIVE-QUALITY-001",
@@ -550,11 +579,11 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
 
         with patch(
-            "apps.drone.views.DjiGateway.set_live_video_quality",
+            "apps.drone.views.DjiGateway.update_live",
             return_value={"updated": True},
         ) as quality_mock:
             response = self.client.post(
-                f"/api/v1/drones/{drone.id}/live/video-quality",
+                f"/api/v1/drones/{drone.id}/live/update",
                 {"video_id": "SN-LIVE-QUALITY-001/88-0-0/normal-0", "video_quality": 3},
                 format="json",
             )
@@ -566,7 +595,7 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
             video_quality=3,
         )
 
-    def test_live_video_source_should_proxy_expected_dji_fields(self):
+    def test_live_switch_should_proxy_exact_upstream_payload(self):
         drone = Drone.objects.create(
             tenant=self.tenant,
             code="DJ-LIVE-SOURCE-001",
@@ -577,11 +606,11 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         )
 
         with patch(
-            "apps.drone.views.DjiGateway.set_live_video_source",
+            "apps.drone.views.DjiGateway.switch_live",
             return_value={"switched": True},
         ) as source_mock:
             response = self.client.post(
-                f"/api/v1/drones/{drone.id}/live/video-source",
+                f"/api/v1/drones/{drone.id}/live/switch",
                 {"video_id": "SN-LIVE-SOURCE-001/88-0-0/normal-0", "videoType": "wide"},
                 format="json",
             )

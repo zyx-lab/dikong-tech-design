@@ -62,7 +62,7 @@ class LiveDroneApiTests(LiveDjiGatewayApiTestCase):
 
         start_response = self.client.post(
             f"/api/v1/drones/{drone_id}/live/start",
-            {"camera_index": "88-0-0", "video_index": "normal-0"},
+            {"video_id": "SN-LIVE-001/88-0-0/normal-0", "url_type": 1, "video_quality": 0},
             format="json",
         )
         self.assertEqual(start_response.status_code, 200)
