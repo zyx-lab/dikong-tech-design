@@ -37,7 +37,12 @@ MISSION_FILTER_PARAMETERS = [
     OpenApiParameter(name="route_id", type=int, location=OpenApiParameter.QUERY, description="按航线 ID 过滤。"),
     OpenApiParameter(name="drone_id", type=int, location=OpenApiParameter.QUERY, description="按无人机 ID 过滤。"),
     OpenApiParameter(name="pilot_id", type=int, location=OpenApiParameter.QUERY, description="按飞手成员 ID 过滤。"),
-    OpenApiParameter(name="status", type=int, location=OpenApiParameter.QUERY, description="按任务状态过滤。"),
+    OpenApiParameter(
+        name="status",
+        type=int,
+        location=OpenApiParameter.QUERY,
+        description="按任务状态过滤。状态值：0=待执行，1=执行中，2=执行完成。",
+    ),
 ]
 
 
@@ -89,6 +94,7 @@ def _mission_state_conflict_response(*, mission: Mission, message: str):
 @extend_schema_view(
     list=extend_schema(
         summary="查询任务列表",
+        description="任务当前状态通过返回列表项中的 `status` 字段读取；状态值为 0=待执行、1=执行中、2=执行完成。",
         parameters=MISSION_FILTER_PARAMETERS,
         responses={
             200: OpenApiResponse(response=MISSION_LIST_RESPONSE),
@@ -100,6 +106,7 @@ def _mission_state_conflict_response(*, mission: Mission, message: str):
     ),
     retrieve=extend_schema(
         summary="读取任务详情",
+        description="任务当前状态通过响应 `data.status` 字段读取；`started_at` 表示开始执行时间，`finished_at` 仅在任务执行完成后非空。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         responses={
             200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE),
@@ -112,6 +119,7 @@ def _mission_state_conflict_response(*, mission: Mission, message: str):
     ),
     create=extend_schema(
         summary="创建任务",
+        description="创建后返回完整 mission 快照；初始状态固定为 `status=0（待执行）`，且 `started_at`、`finished_at` 为空。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=MissionCreateSerializer,
         responses={
@@ -125,6 +133,7 @@ def _mission_state_conflict_response(*, mission: Mission, message: str):
     ),
     update=extend_schema(
         summary="全量更新待执行任务字段",
+        description="仅待执行任务允许更新。更新成功后返回完整 mission 快照，可直接读取 `data.status`、`data.started_at`、`data.finished_at`。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=MissionUpdateSerializer,
         responses={
@@ -139,6 +148,7 @@ def _mission_state_conflict_response(*, mission: Mission, message: str):
     ),
     destroy=extend_schema(
         summary="软删除任务",
+        description="软删除 mission。删除动作不返回任务状态快照，仅返回 `{id, deleted}`。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=None,
         responses={
@@ -274,6 +284,7 @@ class MissionViewSet(
 
     @extend_schema(
         summary="推进任务状态",
+        description="推进任务状态：`待执行 -> 执行中 -> 执行完成`。调用成功后返回完整 mission 快照，可直接读取 `data.status`、`data.started_at`、`data.finished_at` 获取最新任务状态。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=None,
         responses={

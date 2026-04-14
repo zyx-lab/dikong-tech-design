@@ -21,6 +21,22 @@ def _pilot_display_name(pilot_member) -> str:
 
 
 class MissionReadSerializer(serializers.ModelSerializer):
+    status = serializers.ChoiceField(
+        read_only=True,
+        choices=MissionStatus.choices,
+        help_text="任务当前状态。通过任务列表返回项或任务详情的 `status` 字段读取：0=待执行，1=执行中，2=执行完成。",
+    )
+    started_at = serializers.DateTimeField(
+        read_only=True,
+        allow_null=True,
+        help_text="任务开始执行时间。仅当任务已进入执行中或执行完成时可能非空。",
+    )
+    finished_at = serializers.DateTimeField(
+        read_only=True,
+        allow_null=True,
+        help_text="任务执行完成时间。仅当任务状态为执行完成（status=2）时非空。",
+    )
+
     class Meta:
         model = Mission
         fields = [

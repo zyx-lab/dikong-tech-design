@@ -227,6 +227,25 @@ class OpenApiDocsTests(TestCase):
         self.assertTrue(properties["last_sync_at"]["nullable"])
         self.assertNotIn("unable to resolve type hint", stderr.getvalue())
 
+    def test_business_schema_should_explain_how_to_read_mission_status(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        mission_read = schema["components"]["schemas"]["MissionRead"]
+        mission_props = mission_read["properties"]
+        self.assertIn("0=待执行，1=执行中，2=执行完成", mission_props["status"]["description"])
+        self.assertIn("执行中或执行完成", mission_props["started_at"]["description"])
+        self.assertIn("status=2", mission_props["finished_at"]["description"])
+
+        mission_list = schema["paths"]["/api/v1/missions"]["get"]
+        mission_detail = schema["paths"]["/api/v1/missions/{id}"]["get"]
+        mission_advance = schema["paths"]["/api/v1/missions/{id}/advance"]["post"]
+
+        self.assertIn("列表项中的 `status`", mission_list["description"])
+        self.assertIn("data.status", mission_detail["description"])
+        self.assertIn("data.status", mission_advance["description"])
+
     def test_business_schema_should_describe_current_business_error_responses(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)
