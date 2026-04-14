@@ -246,6 +246,25 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("data.status", mission_detail["description"])
         self.assertIn("data.status", mission_advance["description"])
 
+    def test_business_schema_should_mark_flight_record_endpoints_as_deprecated(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        deprecated_paths = [
+            ("/api/v1/flight-records", "get"),
+            ("/api/v1/flight-records", "post"),
+            ("/api/v1/flight-records/{id}", "get"),
+            ("/api/v1/flight-records/{id}", "put"),
+            ("/api/v1/flight-records/{id}/complete", "post"),
+            ("/api/v1/flight-records/{id}/abort", "post"),
+        ]
+
+        for path, method in deprecated_paths:
+            operation = schema["paths"][path][method]
+            self.assertTrue(operation["summary"].startswith("（失效）"))
+            self.assertIn("已不再依赖 flight_record", operation["description"])
+
     def test_business_schema_should_describe_current_business_error_responses(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)

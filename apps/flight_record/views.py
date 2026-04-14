@@ -22,6 +22,7 @@ from apps.flight_record.serializers import FlightRecordReadSerializer, FlightRec
 
 FLIGHT_RECORD_LIST_RESPONSE = paginated_envelope_serializer("FlightRecordListResponse", FlightRecordReadSerializer)
 FLIGHT_RECORD_DETAIL_RESPONSE = object_envelope_serializer("FlightRecordDetailResponse", FlightRecordReadSerializer)
+FLIGHT_RECORD_DEPRECATED_NOTE = "（失效）当前任务执行与媒体自动归档主流程已不再依赖 flight_record；本组接口仅为历史数据维护与兼容保留。"
 
 FLIGHT_RECORD_FILTER_PARAMETERS = [
     TENANT_CODE_HEADER_PARAMETER,
@@ -157,8 +158,8 @@ FLIGHT_RECORD_STATE_CONFLICT_RESPONSE = business_error_response(
 
 def _flight_record_transition_schema(*, summary, description):
     return extend_schema(
-        summary=summary,
-        description=description,
+        summary=f"（失效）{summary}",
+        description=f"{FLIGHT_RECORD_DEPRECATED_NOTE} {description}",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=None,
         responses={
@@ -176,8 +177,8 @@ def _flight_record_transition_schema(*, summary, description):
 
 @extend_schema_view(
     list=extend_schema(
-        summary="查询飞行记录列表",
-        description="按当前租户查询飞行记录，支持按任务、无人机、飞手、状态、架次编号过滤。",
+        summary="（失效）查询飞行记录列表",
+        description=f"{FLIGHT_RECORD_DEPRECATED_NOTE} 按当前租户查询飞行记录，支持按任务、无人机、飞手、状态、架次编号过滤。",
         parameters=FLIGHT_RECORD_FILTER_PARAMETERS,
         responses={
             200: OpenApiResponse(response=FLIGHT_RECORD_LIST_RESPONSE, description="查询成功。"),
@@ -188,8 +189,8 @@ def _flight_record_transition_schema(*, summary, description):
         tags=["Business API - Flight Record"],
     ),
     retrieve=extend_schema(
-        summary="读取飞行记录详情",
-        description="按飞行记录 ID 读取单条执行详情。",
+        summary="（失效）读取飞行记录详情",
+        description=f"{FLIGHT_RECORD_DEPRECATED_NOTE} 按飞行记录 ID 读取单条执行详情。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         responses={
             200: OpenApiResponse(response=FLIGHT_RECORD_DETAIL_RESPONSE, description="读取成功。"),
@@ -201,8 +202,8 @@ def _flight_record_transition_schema(*, summary, description):
         tags=["Business API - Flight Record"],
     ),
     create=extend_schema(
-        summary="创建飞行记录",
-        description="创建一条飞行记录主数据，可绑定任务、无人机和飞手，并沉淀执行结果元数据。",
+        summary="（失效）创建飞行记录",
+        description=f"{FLIGHT_RECORD_DEPRECATED_NOTE} 创建一条飞行记录主数据，可绑定任务、无人机和飞手，并沉淀执行结果元数据。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=FlightRecordWriteSerializer,
         examples=[
@@ -233,8 +234,8 @@ def _flight_record_transition_schema(*, summary, description):
         tags=["Business API - Flight Record"],
     ),
     update=extend_schema(
-        summary="更新飞行记录",
-        description="按飞行记录 ID 更新执行结果元数据；不允许在该接口直接修改状态。",
+        summary="（失效）更新飞行记录",
+        description=f"{FLIGHT_RECORD_DEPRECATED_NOTE} 按飞行记录 ID 更新执行结果元数据；不允许在该接口直接修改状态。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=FlightRecordWriteSerializer,
         examples=[
