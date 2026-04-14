@@ -6,7 +6,7 @@ from apps.access.models import ScopeType
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.api_v1.tenant_scope import require_request_tenant
 from apps.media_file.models import MediaFile
-from apps.mission.models import Mission, MissionStatus
+from apps.mission.models import Mission
 
 
 class MediaFileReadSerializer(serializers.ModelSerializer):
@@ -64,8 +64,6 @@ class MediaFileBindMissionSerializer(RejectUnknownFieldsMixin, serializers.Seria
         ).first()
         if mission is None:
             raise serializers.ValidationError({"mission_id": ["任务不存在或已删除"]})
-        if mission.status != MissionStatus.DRONE_BOUND:
-            raise serializers.ValidationError({"mission_id": ["仅允许绑定到已绑定无人机的任务"]})
         if not mission.device_sn:
             raise serializers.ValidationError({"mission_id": ["任务缺少 device_sn，无法绑定媒体"]})
         request = self.context.get("request")

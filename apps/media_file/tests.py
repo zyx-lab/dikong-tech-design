@@ -75,7 +75,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
         self.flight_record = FlightRecord.objects.create(
             tenant=self.tenant,
@@ -263,7 +263,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=self.drone.name,
             pilot=other_pilot_member,
             pilot_name="其他飞手",
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
         self._create_mission_only_media(mission=other_mission, file_name="IMG_OTHER_MISSION.JPG")
 
@@ -294,7 +294,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         mission_only_media.refresh_from_db()
         self.assertTrue(mission_only_media.is_deleted)
 
-    def test_bind_mission_should_assign_multiple_media_to_bound_mission(self):
+    def test_bind_mission_should_assign_multiple_media_to_pending_mission(self):
         grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
         media_a = self._create_mission_only_media(mission=self.mission, file_name="IMG_BIND_A.JPG")
         media_b = self._create_mission_only_media(mission=self.mission, file_name="IMG_BIND_B.JPG")
@@ -321,13 +321,12 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(media_a.dji_index.mission_id, self.mission.id)
         self.assertEqual(media_b.dji_index.mission_id, self.mission.id)
 
-    def test_bind_mission_should_reject_unbound_mission(self):
+    def test_bind_mission_should_reject_mission_without_device_sn(self):
         grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
         self.mission.drone = None
-        self.mission.status = MissionStatus.DRONE_UNBOUND
         self.mission.device_sn = ""
         self.mission.drone_name = ""
-        self.mission.save(update_fields=["drone", "status", "device_sn", "drone_name", "updated_at"])
+        self.mission.save(update_fields=["drone", "device_sn", "drone_name", "updated_at"])
         media_file = self._create_mission_only_media(mission=self.mission, file_name="IMG_UNBOUND.JPG")
         media_file.mission = None
         media_file.save(update_fields=["mission"])
@@ -387,7 +386,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=other_drone.name,
             pilot=other_member,
             pilot_name="其他租户飞手",
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
         media_file = self._create_media(file_name="IMG_CROSS_TENANT.JPG", device_sn=self.drone.device_sn)
 
@@ -413,7 +412,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
         media_file = self._create_mission_only_media(mission=self.mission, file_name="IMG_OVERWRITE.JPG")
 
@@ -452,7 +451,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=self.drone.name,
             pilot=other_pilot_member,
             pilot_name="其他飞手",
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
 
         response = self.client.post(

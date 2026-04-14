@@ -12,6 +12,7 @@ from apps.dji_bff.gateway import DjiGateway
 from apps.dji_bff.models import DjiDeviceIndex, SyncStatus, TenantMediaIndex
 from apps.drone.models import Drone, DroneStatus
 from apps.media_file.models import MediaFile, MediaType
+from apps.mission.models import Mission, MissionStatus
 
 
 @dataclass
@@ -83,6 +84,28 @@ def _media_type(payload: dict) -> int:
     if suffix in {".mp4", ".mov", ".avi", ".mkv"}:
         return MediaType.VIDEO
     return MediaType.PHOTO
+
+
+def _match_mission_for_media(*, tenant, device_sn: str, captured_at):
+    if not device_sn or captured_at is None:
+        return None
+
+    matched = []
+    queryset = Mission.objects.filter(
+        tenant=tenant,
+        is_deleted=False,
+        device_sn=device_sn,
+        started_at__isnull=False,
+    ).exclude(status=MissionStatus.PENDING)
+
+    for mission in queryset:
+        window_end = mission.finished_at or timezone.now()
+        if mission.started_at <= captured_at <= window_end:
+            matched.append(mission)
+
+    if len(matched) == 1:
+        return matched[0]
+    return None
 
 
 def sync_device_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
@@ -170,6 +193,11 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
             "longitude": payload.get("longitude"),
             "captured_at": _datetime_value(payload, "captured_at", "capturedAt", "create_time", "createTime"),
         }
+        matched_mission = _match_mission_for_media(
+            tenant=tenant,
+            device_sn=device_sn,
+            captured_at=media_fields["captured_at"],
+        )
 
         with transaction.atomic():
             media_index = (
@@ -180,7 +208,7 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
             if media_index is None:
                 media_file = MediaFile.objects.create(
                     **media_fields,
-                    mission=None,
+                    mission=matched_mission,
                     flight_record=None,
                 )
                 TenantMediaIndex.objects.create(
@@ -188,7 +216,7 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
                     media_file=media_file,
                     dji_file_id=dji_file_id,
                     device_sn=device_sn,
-                    mission=None,
+                    mission=matched_mission,
                     sync_status=SyncStatus.SYNCED,
                     last_sync_at=media_fields["captured_at"] or now,
                     error_msg="",
@@ -196,11 +224,15 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
                 summary.created_count += 1
             else:
                 media_file = media_index.media_file
+                preserved_mission = media_index.mission or media_file.mission
+                resolved_mission = preserved_mission or matched_mission
                 for field, value in media_fields.items():
                     setattr(media_file, field, value)
+                media_file.mission = resolved_mission
                 media_file.save(
                     update_fields=[
                         "tenant",
+                        "mission",
                         "device_sn",
                         "media_type",
                         "file_name",
@@ -212,11 +244,14 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
                         "captured_at",
                     ]
                 )
+                media_index.mission = resolved_mission
                 media_index.device_sn = device_sn
                 media_index.sync_status = SyncStatus.SYNCED
                 media_index.last_sync_at = media_fields["captured_at"] or now
                 media_index.error_msg = ""
-                media_index.save(update_fields=["device_sn", "sync_status", "last_sync_at", "error_msg", "updated_at"])
+                media_index.save(
+                    update_fields=["mission", "device_sn", "sync_status", "last_sync_at", "error_msg", "updated_at"]
+                )
                 summary.updated_count += 1
 
         summary.synced_count += 1
