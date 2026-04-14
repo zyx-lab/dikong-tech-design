@@ -1,6 +1,6 @@
 # 任务逻辑模型
 
-- updated_at: 2026-03-31
+- updated_at: 2026-04-14
 - entity: mission
 
 ## 实体主表
@@ -11,70 +11,90 @@
 
 ## 状态模型
 
-`Mission.status` 仍保留本地摘要状态：
+`Mission.status` 表达本地执行状态：
 
 | 值 | 含义 |
 |----|------|
 | 0 | 待执行 |
 | 1 | 执行中 |
-| 2 | 已暂停 |
-| 3 | 已完成 |
-| 4 | 已取消 |
-| 5 | 执行失败 |
+| 2 | 执行完成 |
+
+执行时间窗字段：
+
+- `started_at`：任务进入 `执行中` 时写入
+- `finished_at`：任务进入 `执行完成` 时写入
 
 当前语义：
 
 - 创建任务时，本地初始化为 `PENDING`
-- `cancel` 动作会直接把本地状态写为 `CANCELED`
-- 后台同步任务会根据 DJI job 状态刷新本地 `Mission.status`
-- 不再存在本地 `start / pause / resume / complete / fail` 动作接口
+- 只能通过 `POST /api/v1/missions/{id}/advance` 推进状态
+- 不存在 `cancel / pause / resume / fail` 等 mission 动作接口
+- 当前阶段不做“飞行中”派生态判断
 
 ## 关系与约束
 
 - `mission.tenant -> access.Tenant`
-- `mission.route -> route.Route`（`SET_NULL`，DB 允许为空；创建接口仍要求必填）
-- `mission.drone -> drone.Drone`
+- `mission.route -> route.Route`（`SET_NULL`，DB 允许为空；创建接口要求必填）
+- `mission.drone -> drone.Drone`（`PROTECT`，DB 允许为空；创建接口要求必填）
 - `mission.pilot -> access.TenantMember`
-- `tenant_mission_indexes.mission -> mission.Mission`（一对一）
 - 创建接口约束：
   - `route`、`drone`、`pilot` 必须属于当前 tenant
   - `pilot` 必须为 `ACTIVE` 成员，且账号存在在职 `staff_profile`
   - `pilot` 必须已绑定 `pilot_operator`
-  - `route` 必须已发布到 DJI
+- 更新接口约束：
+  - 仅 `待执行` 任务允许更新
+  - 同一无人机同一时刻只允许一个 `执行中` mission
+- 删除约束：
+  - mission 软删除不可恢复
 
 ## 生命周期入口
 
 | 操作 | 路径 | 说明 |
 |-----|------|------|
-| 创建 | POST /api/v1/missions | 创建本地任务并同步 DJI job |
+| 创建 | POST /api/v1/missions | 创建本地任务 |
 | 列表 | GET /api/v1/missions | 任务列表查询 |
 | 详情 | GET /api/v1/missions/{id} | 任务详情 |
-| 更新 | PUT / PATCH /api/v1/missions/{id} | 仅更新本地管理字段 |
-| 取消 | POST /api/v1/missions/{id}/cancel | 取消 DJI job 并回写本地状态 |
+| 更新 | PUT /api/v1/missions/{id} | 更新待执行任务字段 |
+| 推进 | POST /api/v1/missions/{id}/advance | 推进 `待执行 -> 执行中 -> 执行完成` |
+| 删除 | DELETE /api/v1/missions/{id} | 软删除任务 |
 
 ## 接口语义
 
 ### 创建任务 POST /api/v1/missions
 
-- 功能：创建 mission，并立刻在 DJI 创建 job
+- 功能：创建本地 mission
 - 写入结果：
   - 创建 `Mission(status=PENDING)`
-  - 写回 `missions.dji_job_id`
-  - 创建 `TenantMissionIndex`
-- 扩展输入：可选 `dock_sn`，仅用于透传 DJI，不落本地主表
+  - `started_at`、`finished_at` 保持为空
+  - 自动回填 `route_name`、`device_sn`、`drone_name`、`pilot_name`
+- 当前不再同步 DJI job
 
-### 更新任务 PUT / PATCH /api/v1/missions/{id}
+### 更新任务 PUT /api/v1/missions/{id}
 
-- 功能：修改 mission 本地管理字段
-- 可写字段：`name`、`scheduled_at`、`remark`
-- 约束：不允许通过更新接口改写 `route`、`drone`、`pilot`、`status`、`dji_job_id`
+- 功能：修改待执行任务的本地管理字段
+- 可写字段：`name`、`route`、`drone`、`scheduled_at`、`remark`
+- 约束：不允许通过更新接口改写 `pilot`、`status`、`started_at`、`finished_at`
 
-### 取消任务 POST /api/v1/missions/{id}/cancel
+### 推进任务 POST /api/v1/missions/{id}/advance
 
-- 功能：取消 DJI job
-- 前置条件：`mission.dji_job_id` 非空
+- 功能：推进任务执行状态
 - 输入边界：请求体必须为空
-- 幂等语义：若 DJI 已返回 `404`，本地仍按取消成功收敛
+- 并发约束：同一无人机若已有其他 `RUNNING` mission，则拒绝推进
 - 副作用：
-  - `missions.status = CANCELED`
-  - 若存在 `tenant_mission_indexes`，同步更新 `execution_status`、`sync_status`、`last_sync_at`、`error_msg`
+  - 进入 `RUNNING` 时写入 `started_at`
+  - 进入 `COMPLETED` 时写入 `finished_at`
+
+### 删除任务 DELETE /api/v1/missions/{id}
+
+- 功能：软删除任务
+- 输入边界：请求体必须为空
+- 副作用：
+  - `missions.is_deleted = true`
+  - `missions.deleted_at = now()`
+
+## 与媒体归属的关系
+
+- mission 是当前阶段媒体自动归档的唯一业务锚点。
+- DJI 媒体同步按 `device_sn + captured_at` 在同租户内匹配唯一 mission 时间窗。
+- 若命中多个 mission 窗口，则保持媒体未绑定。
+- 若媒体已被人工绑定 mission，则自动同步不覆盖人工结果。

@@ -419,8 +419,10 @@ PostgreSQL
 | pilot_id | bigint | FK, NOT NULL | - | 执行飞手成员 |
 | pilot_name | varchar(50) | NOT NULL | '' | 飞手姓名（冗余） |
 | scheduled_at | timestamp | - | - | 计划执行时间 |
+| started_at | timestamp | - | - | 开始执行时间 |
+| finished_at | timestamp | - | - | 执行完成时间 |
 | remark | varchar(500) | NOT NULL | '' | 任务备注 |
-| status | smallint | NOT NULL | 0 | 无人机绑定状态：0=DRONE_UNBOUND,1=DRONE_BOUND |
+| status | smallint | NOT NULL | 0 | 任务执行状态 |
 | is_deleted | boolean | NOT NULL | false | 软删除标记 |
 | deleted_at | timestamp | - | - | 删除时间 |
 | created_at | timestamp | - | now() | 创建时间 |
@@ -429,13 +431,16 @@ PostgreSQL
 **status 状态值**：
 | 值 | 含义 |
 |----|------|
-| 0 | DRONE_UNBOUND（未绑定无人机） |
-| 1 | DRONE_BOUND（已绑定无人机） |
+| 0 | 待执行 |
+| 1 | 执行中 |
+| 2 | 执行完成 |
 
 **业务规则**：
 1. Mission 只表示 Django 本地任务单，不再映射 DJI job。
-2. `drone_id` 为空时，`status` 必须为 `DRONE_UNBOUND`；`drone_id` 非空时必须为 `DRONE_BOUND`。
-3. Mission 软删除不可恢复，不提供恢复 API。
+2. `started_at` / `finished_at` 表示 mission 执行时间窗，由 `POST /api/v1/missions/{id}/advance` 维护。
+3. 同一无人机同一时刻只允许一个 mission 处于 `执行中`。
+4. 只有 `待执行` mission 允许修改绑定字段；进入 `执行中 / 执行完成` 后不允许再改绑定关系。
+5. Mission 软删除不可恢复，不提供恢复 API。
 
 ---
 
@@ -580,5 +585,6 @@ PostgreSQL
 
 **说明补充**：
 1. media 同步链路只按 `device_sn -> tenant` 做可靠落库，不再按 `job_id` 自动关联 mission。
-2. `media_files.mission_id` 为可空外键，仅通过业务 API 显式绑定。
-3. Mission 与 Media 的软删除均不可恢复。
+2. 系统按 `device_sn + captured_at` 命中同租户下唯一 mission 时间窗时，会自动回填 `media_files.mission_id` / `tenant_media_indexes.mission_id`。
+3. 若媒体已被人工绑定 mission，则后续同步保留人工绑定结果。
+4. Mission 与 Media 的软删除均不可恢复。

@@ -1,5 +1,7 @@
 # DJI 适配接入边界设计（单上游资源池 / BFF 模式）
 
+> 状态说明（2026-04-14）：本文是阶段性设计稿，部分 mission / media 细节已被后续实现收敛。当前落地口径以 `README.md`、`业务侧实现/mission_*`、`业务侧实现/media_file_*`、`项目总体概览/逻辑设计/overall_data_dictionary.md` 为准。
+
 ## 1. 结论
 
 1. tenant 隔离只在我方系统内实现；DJI 的 `workspace`、`user` 只作为 `DjiGateway` 内部托管的上游实现细节，不作为 Django 系统的租户边界，也不作为前端要理解的业务概念。

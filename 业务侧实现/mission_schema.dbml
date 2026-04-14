@@ -4,47 +4,35 @@
 // 文档类型：图表 (schema)
 // ============================================================
 
-// updated_at: 2026-03-31
+// updated_at: 2026-04-14
 // entity: mission
 // 当前 API：
 // - GET /api/v1/missions
 // - POST /api/v1/missions
 // - GET /api/v1/missions/{id}
-// - PUT / PATCH /api/v1/missions/{id}
-// - POST /api/v1/missions/{id}/cancel
-// 当前实现已删除 start / pause / resume / complete / fail 动作接口
+// - PUT /api/v1/missions/{id}
+// - DELETE /api/v1/missions/{id}
+// - POST /api/v1/missions/{id}/advance
+// 当前实现不再维护 dji_job_id / tenant_mission_indexes / cancel action
 
-Table missions [note: '任务主表'] {
+Table missions [note: '任务主表（本地执行状态与时间窗）'] {
   id bigint [pk, increment, note: 'ID']
   tenant_id bigint [not null, note: '租户 ID']
   name varchar(100) [not null, note: '任务名称']
-  route_id bigint [note: '航线 ID；route 删除后可为空']
+  route_id bigint [note: '航线 ID；DB 允许为空，创建接口要求必填']
   route_name varchar(100) [not null, default: '', note: '航线名称（冗余）']
-  drone_id bigint [not null, note: '无人机 ID']
+  drone_id bigint [note: '无人机 ID；DB 允许为空，创建接口要求必填']
+  device_sn varchar(128) [not null, default: '', note: '设备序列号（冗余）']
   drone_name varchar(100) [not null, default: '', note: '无人机名称（冗余）']
   pilot_id bigint [not null, note: '飞手成员 ID']
   pilot_name varchar(50) [not null, default: '', note: '飞手姓名（冗余）']
   scheduled_at timestamp [note: '计划执行时间']
+  started_at timestamp [note: '开始执行时间']
+  finished_at timestamp [note: '执行完成时间']
   remark varchar(500) [not null, default: '', note: '任务备注']
-  status integer [not null, default: 0, note: '任务状态(0待执行/1执行中/2已暂停/3已完成/4已取消/5执行失败)']
-  dji_job_id varchar(128) [not null, default: '', note: 'DJI 任务 ID']
+  status integer [not null, default: 0, note: '任务状态(0待执行/1执行中/2执行完成)']
+  is_deleted boolean [not null, default: false, note: '是否已软删除']
+  deleted_at timestamp [note: '软删除时间']
   created_at timestamp [not null, note: '创建时间']
   updated_at timestamp [not null, note: '更新时间']
-}
-
-Table tenant_mission_indexes [note: 'mission 与 DJI job 的最小同步索引'] {
-  id bigint [pk, increment, note: 'ID']
-  tenant_id bigint [not null, note: '租户 ID']
-  mission_id bigint [not null, unique, note: '业务任务']
-  dji_job_id varchar(128) [not null, note: 'DJI 任务 ID']
-  execution_status varchar(64) [not null, default: '', note: '最近一次同步到的 DJI 状态原文']
-  sync_status varchar(32) [not null, default: 'PENDING', note: '同步状态']
-  last_sync_at timestamp [note: '最近同步时间']
-  error_msg varchar(255) [not null, default: '', note: '同步错误']
-  created_at timestamp [not null, note: '创建时间']
-  updated_at timestamp [not null, note: '更新时间']
-
-  indexes {
-    (tenant_id, dji_job_id) [unique, name: 'uniq_tenant_dji_job_id']
-  }
 }
