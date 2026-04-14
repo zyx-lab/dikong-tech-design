@@ -72,6 +72,11 @@ class MissionApiTests(TestCase):
             model="M30",
             device_sn="MISSION-SN-001",
         )
+        try:
+            from apps.mission.flight_state import flight_state_registry
+        except ModuleNotFoundError:
+            return
+        flight_state_registry.clear()
 
     def test_create_should_require_route(self):
         response = self.client.post(
@@ -243,6 +248,80 @@ class MissionApiTests(TestCase):
         self.assertEqual(mission.status, 2)
         self.assertIsNotNone(mission.started_at)
         self.assertIsNotNone(mission.finished_at)
+
+    def test_retrieve_should_return_flying_status_when_running_mission_drone_is_airborne(self):
+        from apps.mission.flight_state import flight_state_registry
+
+        mission = _persist_mission_fixture(
+            tenant=self.tenant,
+            name="飞行中任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=1,
+            started_at=timezone.now() - timedelta(minutes=3),
+        )
+        flight_state_registry.update_from_mode_code(device_sn=self.drone.device_sn, mode_code=5)
+
+        response = self.client.get(f"/missions/{mission.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._payload(response.data)["status"], 3)
+
+    def test_retrieve_should_fall_back_to_running_when_airborne_state_is_stale(self):
+        from apps.mission.flight_state import flight_state_registry
+
+        mission = _persist_mission_fixture(
+            tenant=self.tenant,
+            name="超时回退任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=1,
+            started_at=timezone.now() - timedelta(minutes=3),
+        )
+        flight_state_registry.update_from_mode_code(
+            device_sn=self.drone.device_sn,
+            mode_code=5,
+            observed_at=timezone.now() - timedelta(seconds=30),
+        )
+
+        response = self.client.get(f"/missions/{mission.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._payload(response.data)["status"], 1)
+
+    def test_retrieve_should_not_override_completed_status_with_airborne_registry(self):
+        from apps.mission.flight_state import flight_state_registry
+
+        mission = _persist_mission_fixture(
+            tenant=self.tenant,
+            name="完成任务",
+            route=self.route,
+            route_name=self.route.name,
+            drone=self.drone,
+            device_sn=self.drone.device_sn,
+            drone_name=self.drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=2,
+            started_at=timezone.now() - timedelta(minutes=10),
+            finished_at=timezone.now() - timedelta(minutes=1),
+        )
+        flight_state_registry.update_from_mode_code(device_sn=self.drone.device_sn, mode_code=5)
+
+        response = self.client.get(f"/missions/{mission.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._payload(response.data)["status"], 2)
 
     def test_advance_should_reject_completed_mission(self):
         started_at = timezone.now() - timedelta(minutes=10)

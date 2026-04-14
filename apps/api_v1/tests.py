@@ -246,6 +246,18 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("data.status", mission_detail["description"])
         self.assertIn("data.status", mission_advance["description"])
 
+    def test_business_schema_should_describe_derived_mission_flying_status(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        mission_props = schema["components"]["schemas"]["MissionRead"]["properties"]
+        self.assertIn("3=飞行中", mission_props["status"]["description"])
+        self.assertIn("实时派生", mission_props["status"]["description"])
+
+        mission_retrieve = schema["paths"]["/api/v1/missions/{id}"]["get"]
+        self.assertIn("飞行中", mission_retrieve["description"])
+
     def test_business_schema_should_mark_flight_record_endpoints_as_deprecated(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)
