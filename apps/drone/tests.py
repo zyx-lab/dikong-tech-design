@@ -11,6 +11,7 @@ from apps.access.test_support import (
     ensure_tenant_role_binding,
     grant_role_permissions,
 )
+from apps.dji_bff.gateway import DjiGatewayUpstreamError
 from apps.dji_bff.models import DjiDeviceIndex
 from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
@@ -416,6 +417,95 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertIn("rtmp_url", response.data["data"])
         self.assertIn("whep_url", response.data["data"])
         self.assertIn("SN-LIVE-001-88-0-0", response.data["data"]["url"])
+
+    def test_live_start_should_default_video_quality_when_client_omits_it(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-LIVE-DEFAULT-001",
+            name="直播默认画质设备",
+            model="M30",
+            device_sn="SN-LIVE-DEFAULT-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        with patch(
+            "apps.drone.views.DjiGateway.start_live",
+            return_value={"url": "rtmp://example/live", "rtmp_url": "rtmp://example/live"},
+        ) as start_mock:
+            response = self.client.post(
+                f"/api/v1/drones/{drone.id}/live/start",
+                {"camera_index": "88-0-0", "video_index": "normal-0"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        start_mock.assert_called_once_with(
+            "SN-LIVE-DEFAULT-001",
+            video_id="SN-LIVE-DEFAULT-001/88-0-0/normal-0",
+            url_type=1,
+            video_quality=0,
+        )
+
+    def test_live_start_should_return_invalid_params_when_upstream_rejects_payload(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-LIVE-UPSTREAM-400",
+            name="直播上游校验设备",
+            model="M30",
+            device_sn="SN-LIVE-UPSTREAM-400",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        with patch(
+            "apps.drone.views.DjiGateway.start_live",
+            side_effect=DjiGatewayUpstreamError(
+                "DJI upstream business error",
+                status_code=400,
+                data={"code": "B0001", "msg": "Invalid parameter", "data": {"video_quality": ["required"]}},
+            ),
+        ):
+            response = self.client.post(
+                f"/api/v1/drones/{drone.id}/live/start",
+                {"camera_index": "88-0-0", "video_index": "normal-0"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["msg"], "Invalid parameter")
+        self.assertEqual(response.data["data"], {"video_quality": ["required"]})
+
+    def test_live_start_should_surface_upstream_service_failure_without_500(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-LIVE-UPSTREAM-502",
+            name="直播上游服务设备",
+            model="M30",
+            device_sn="SN-LIVE-UPSTREAM-502",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        with patch(
+            "apps.drone.views.DjiGateway.start_live",
+            side_effect=DjiGatewayUpstreamError(
+                "DJI upstream business error",
+                status_code=200,
+                data={"code": "D0001", "msg": "Please check whether the live stream service is normal."},
+            ),
+        ):
+            response = self.client.post(
+                f"/api/v1/drones/{drone.id}/live/start",
+                {"camera_index": "88-0-0", "video_index": "normal-0"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 502, response.data)
+        self.assertEqual(response.data["code"], "E0001")
+        self.assertEqual(response.data["msg"], "DJI 直播服务调用失败")
+        self.assertEqual(
+            response.data["data"]["upstream"],
+            {"code": "D0001", "msg": "Please check whether the live stream service is normal."},
+        )
 
     def test_live_capacity_should_return_404_when_upstream_capacity_missing(self):
         drone = Drone.objects.create(

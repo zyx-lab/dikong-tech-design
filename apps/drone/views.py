@@ -27,7 +27,7 @@ from apps.api_v1.schema import (
     paginated_envelope_serializer,
 )
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
-from apps.dji_bff.gateway import DjiGateway
+from apps.dji_bff.gateway import DjiGateway, DjiGatewayUpstreamError
 from apps.dji_bff.models import DjiDeviceIndex
 from apps.drone.models import Drone, DroneStatus
 from apps.drone_assignment.models import DroneAssignmentStatus
@@ -78,6 +78,29 @@ def _drone_success_response(view, drone: Drone, *, http_status: int, include_hea
         headers = view.get_success_headers(payload)
         return Response(payload, status=http_status, headers=headers)
     return Response(payload, status=http_status)
+
+
+def _dji_live_action_error_response(exc: DjiGatewayUpstreamError):
+    payload = exc.data if isinstance(exc.data, dict) else {}
+    message = str(payload.get("msg") or exc).strip() or "DJI 直播服务调用失败"
+    if exc.status_code == status.HTTP_400_BAD_REQUEST or str(payload.get("code") or "").upper() == StandardCode.INVALID_PARAMS:
+        error_data = payload.get("data")
+        if error_data in (None, {}):
+            error_data = {"detail": message}
+        return Response(
+            standard_error_payload(StandardCode.INVALID_PARAMS, message, error_data),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    upstream_data = payload or None
+    return Response(
+        standard_error_payload(
+            StandardCode.INTERNAL_ERROR,
+            "DJI 直播服务调用失败",
+            {"detail": message, "upstream": upstream_data},
+        ),
+        status=status.HTTP_502_BAD_GATEWAY,
+    )
 
 
 @extend_schema_view(
@@ -285,7 +308,10 @@ class DroneViewSet(
         if payload_transform is not None:
             payload = payload_transform(drone, payload)
         gateway_method = getattr(DjiGateway(), gateway_method_name)
-        result = gateway_method(drone.device_sn, **payload)
+        try:
+            result = gateway_method(drone.device_sn, **payload)
+        except DjiGatewayUpstreamError as exc:
+            return _dji_live_action_error_response(exc)
         if isinstance(result, dict) and "video_id" not in result and payload.get("video_id"):
             result = dict(result)
             result["video_id"] = payload["video_id"]
@@ -447,6 +473,7 @@ class DroneViewSet(
             401: BUSINESS_PERMISSION_DENIED_RESPONSE,
             403: BUSINESS_PERMISSION_DENIED_RESPONSE,
             404: BUSINESS_NOT_FOUND_RESPONSE,
+            502: OpenApiResponse(description="DJI 上游服务失败或直播服务不可用。"),
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
@@ -472,6 +499,7 @@ class DroneViewSet(
             401: BUSINESS_PERMISSION_DENIED_RESPONSE,
             403: BUSINESS_PERMISSION_DENIED_RESPONSE,
             404: BUSINESS_NOT_FOUND_RESPONSE,
+            502: OpenApiResponse(description="DJI 上游服务失败或直播服务不可用。"),
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
@@ -496,6 +524,7 @@ class DroneViewSet(
             401: BUSINESS_PERMISSION_DENIED_RESPONSE,
             403: BUSINESS_PERMISSION_DENIED_RESPONSE,
             404: BUSINESS_NOT_FOUND_RESPONSE,
+            502: OpenApiResponse(description="DJI 上游服务失败或直播服务不可用。"),
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],
@@ -520,6 +549,7 @@ class DroneViewSet(
             401: BUSINESS_PERMISSION_DENIED_RESPONSE,
             403: BUSINESS_PERMISSION_DENIED_RESPONSE,
             404: BUSINESS_NOT_FOUND_RESPONSE,
+            502: OpenApiResponse(description="DJI 上游服务失败或直播服务不可用。"),
             500: BUSINESS_INTERNAL_ERROR_RESPONSE,
         },
         tags=["Business API - Drone"],

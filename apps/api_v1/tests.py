@@ -171,6 +171,20 @@ class OpenApiDocsTests(TestCase):
         self.assertNotIn("IDEMPOTENT_DUPLICATE", flight_record_create["responses"]["400"]["description"])
         self.assertIn("C0101", flight_record_create["responses"]["400"]["description"])
 
+    def test_business_schema_should_describe_live_start_video_quality_default(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        live_start = self._operation(schema, path="/api/v1/drones/{id}/live/start", method="post")
+        request_schema = live_start["requestBody"]["content"]["application/json"]["schema"]
+        schema_name = request_schema["$ref"].split("/")[-1]
+        serializer_schema = schema["components"]["schemas"][schema_name]
+
+        self.assertIn("video_quality", serializer_schema["properties"])
+        self.assertEqual(serializer_schema["properties"]["video_quality"]["default"], 0)
+        self.assertNotIn("video_quality", serializer_schema.get("required", []))
+
     def test_business_schema_should_lock_current_operation_surface_and_bodyless_actions(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)
@@ -289,10 +303,10 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/drones/{id}", "put"): {"200", "400", "401", "403", "404", "409", "500"},
             ("/api/v1/drones/{id}", "delete"): {"200", "401", "403", "404", "500"},
             ("/api/v1/drones/{id}/live/capacity", "get"): {"200", "401", "403", "404", "500"},
-            ("/api/v1/drones/{id}/live/start", "post"): {"200", "400", "401", "403", "404", "500"},
-            ("/api/v1/drones/{id}/live/stop", "post"): {"200", "400", "401", "403", "404", "500"},
-            ("/api/v1/drones/{id}/live/video-quality", "post"): {"200", "400", "401", "403", "404", "500"},
-            ("/api/v1/drones/{id}/live/video-source", "post"): {"200", "400", "401", "403", "404", "500"},
+            ("/api/v1/drones/{id}/live/start", "post"): {"200", "400", "401", "403", "404", "500", "502"},
+            ("/api/v1/drones/{id}/live/stop", "post"): {"200", "400", "401", "403", "404", "500", "502"},
+            ("/api/v1/drones/{id}/live/video-quality", "post"): {"200", "400", "401", "403", "404", "500", "502"},
+            ("/api/v1/drones/{id}/live/video-source", "post"): {"200", "400", "401", "403", "404", "500", "502"},
             ("/api/v1/routes", "get"): {"200", "401", "403", "500"},
             ("/api/v1/routes", "post"): {"201", "400", "401", "403", "500"},
             ("/api/v1/routes/{id}", "get"): {"200", "401", "403", "404", "500"},

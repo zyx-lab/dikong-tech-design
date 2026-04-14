@@ -233,6 +233,11 @@ class DroneLiveStartSerializer(serializers.Serializer):
     camera_index = serializers.CharField(help_text="camera.index，来自 live/capacity 返回。")
     video_index = serializers.CharField(help_text="video.index，来自 live/capacity 返回。")
     url_type = serializers.IntegerField(required=False, default=1, help_text="直播 URL 类型，默认 1。")
+    video_quality = serializers.IntegerField(
+        required=False,
+        default=0,
+        help_text="DJI 画质枚举：0=AUTO，1=SMOOTH，2=STANDARD_DEFINITION，3=HIGH_DEFINITION，4=ULTRA_HD。默认 0。",
+    )
 
 
 class DroneLiveStopSerializer(serializers.Serializer):
