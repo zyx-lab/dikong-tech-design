@@ -194,6 +194,13 @@ class OpenApiDocsTests(TestCase):
         self.assertNotIn("camera_index", serializer_schema["properties"])
         self.assertNotIn("video_index", serializer_schema["properties"])
 
+        description = live_start["description"]
+        self.assertIn("薄代理", description)
+        self.assertIn("不再做 `camera_index` / `video_index` -> `video_id` 的本地映射", description)
+        self.assertIn("400", description)
+        self.assertIn("502", description)
+        self.assertIn("video_id", description)
+
     def test_business_schema_should_lock_current_operation_surface_and_bodyless_actions(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)

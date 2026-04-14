@@ -53,6 +53,51 @@ DRONE_FILTER_PARAMETERS = [
     OpenApiParameter(name="device_sn", type=str, location=OpenApiParameter.QUERY, description="按设备 SN 精确过滤。"),
 ]
 
+LIVE_PASSTHROUGH_DESCRIPTION = (
+    "该组接口为 DJI 直播能力的薄代理，不再做 `camera_index` / `video_index` -> `video_id` 的本地映射。"
+    "请求体字段名与 DJI `/api/v1/manage/live/streams/*` 保持一致，当前支持传入 "
+    "`video_id`、`url_type`、`video_quality`、`videoType`。"
+    "不属于当前接口的字段会在 Django 层直接返回 `400 + B0001`。"
+)
+
+LIVE_ERROR_DESCRIPTION = (
+    "错误语义：`400` 表示请求字段缺失、字段名错误，或上游明确返回参数错误；"
+    "`404` 表示当前设备在 Django 租户侧不存在，或 `live/capacity` 未找到该设备能力；"
+    "`502` 表示 DJI 上游超时、不可达，或上游直播服务异常。"
+)
+
+LIVE_START_DESCRIPTION = (
+    LIVE_PASSTHROUGH_DESCRIPTION
+    + "推荐先调用 `/live/capacity` 观察上游是否返回直播能力，再调用 `/live/start`。"
+    "常见调用体至少包含 `video_id`，通常同时传入 `url_type` 与 `video_quality`。"
+    "示例："
+    "`{\"video_id\":\"1581F7FVC252A00CJ5TT/88-0-0/normal-0\",\"url_type\":1,\"video_quality\":0}`。"
+    + LIVE_ERROR_DESCRIPTION
+)
+
+LIVE_STOP_DESCRIPTION = (
+    LIVE_PASSTHROUGH_DESCRIPTION
+    + "`/live/stop` 通常只需要 `video_id`。"
+    "示例：`{\"video_id\":\"1581F7FVC252A00CJ5TT/88-0-0/normal-0\"}`。"
+    + LIVE_ERROR_DESCRIPTION
+)
+
+LIVE_UPDATE_DESCRIPTION = (
+    LIVE_PASSTHROUGH_DESCRIPTION
+    + "`/live/update` 用于把请求体原样透传到 DJI `/manage/live/streams/update`。"
+    "当前常见用法是传 `video_id` 与 `video_quality`。"
+    "示例：`{\"video_id\":\"1581F7FVC252A00CJ5TT/88-0-0/normal-0\",\"video_quality\":3}`。"
+    + LIVE_ERROR_DESCRIPTION
+)
+
+LIVE_SWITCH_DESCRIPTION = (
+    LIVE_PASSTHROUGH_DESCRIPTION
+    + "`/live/switch` 用于把请求体原样透传到 DJI `/manage/live/streams/switch`。"
+    "当前常见用法是传 `video_id` 与 `videoType`。"
+    "示例：`{\"video_id\":\"1581F7FVC252A00CJ5TT/88-0-0/normal-0\",\"videoType\":\"wide\"}`。"
+    + LIVE_ERROR_DESCRIPTION
+)
+
 def _drone_duplicate_or_validation_error_response(view, errors):
     if view._contains_duplicate_error(errors):
         return Response(
@@ -426,6 +471,11 @@ class DroneViewSet(
 
     @extend_schema(
         summary="查询设备直播能力",
+        description=(
+            "读取 DJI `/api/v1/manage/live/capacity` 并按当前无人机 `device_sn` 过滤。"
+            "如果 DJI 上游没有返回该设备的直播能力，Django 侧会返回 `404 + C0404`，"
+            "这通常意味着上游当前没有为该设备暴露 live capacity。"
+        ),
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         responses={
             200: OpenApiResponse(response=OpenApiTypes.OBJECT),
@@ -460,6 +510,7 @@ class DroneViewSet(
 
     @extend_schema(
         summary="启动直播（DJI 参数透传）",
+        description=LIVE_START_DESCRIPTION,
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneLiveStreamSerializer,
         responses={
@@ -485,6 +536,7 @@ class DroneViewSet(
 
     @extend_schema(
         summary="停止直播（DJI 参数透传）",
+        description=LIVE_STOP_DESCRIPTION,
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneLiveStreamSerializer,
         responses={
@@ -510,6 +562,7 @@ class DroneViewSet(
 
     @extend_schema(
         summary="更新直播参数（DJI 参数透传）",
+        description=LIVE_UPDATE_DESCRIPTION,
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneLiveStreamSerializer,
         responses={
@@ -535,6 +588,7 @@ class DroneViewSet(
 
     @extend_schema(
         summary="切换直播视频源（DJI 参数透传）",
+        description=LIVE_SWITCH_DESCRIPTION,
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         request=DroneLiveStreamSerializer,
         responses={

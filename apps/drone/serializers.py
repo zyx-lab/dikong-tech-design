@@ -232,17 +232,32 @@ class AvailableDroneReadSerializer(serializers.ModelSerializer):
 class DroneLiveStreamSerializer(RejectUnknownFieldsMixin, serializers.Serializer):
     videoType = serializers.CharField(
         required=False,
-        help_text="镜头切换目标类型。仅 `/live/switch` 使用；字段名保持 DJI 原始格式。",
+        help_text=(
+            "DJI 原始字段名，镜头切换目标类型。"
+            "仅 `/live/switch` 使用。"
+            "当前 Django 侧不再做字段映射或值转换，需直接传 DJI 上游接受的原始值。"
+        ),
     )
     url_type = serializers.IntegerField(
         required=False,
-        help_text="推流类型：0=AGORA，1=RTMP，2=RTSP，3=GB28181，4=WHIP。",
+        help_text=(
+            "DJI 原始字段名，推流类型：0=AGORA，1=RTMP，2=RTSP，3=GB28181，4=WHIP。"
+            "通常在 `/live/start` 时传入。"
+        ),
     )
     video_id = serializers.CharField(
         required=False,
-        help_text="直播视频源标识，格式 `{drone_sn}/{payload_index}/{video_type}-0`。",
+        help_text=(
+            "DJI 原始字段名，直播视频源标识，格式 `{drone_sn}/{payload_index}/{video_type}-0`。"
+            "例如 `1581F7FVC252A00CJ5TT/88-0-0/normal-0`。"
+            "当前 Django 侧不再接受 `camera_index` / `video_index`，请直接传完整 `video_id`。"
+        ),
     )
     video_quality = serializers.IntegerField(
         required=False,
-        help_text="直播清晰度：0=AUTO，1=SMOOTH，2=STANDARD_DEFINITION，3=HIGH_DEFINITION，4=ULTRA_HD。",
+        help_text=(
+            "DJI 原始字段名，直播清晰度：0=AUTO，1=SMOOTH，2=STANDARD_DEFINITION，"
+            "3=HIGH_DEFINITION，4=ULTRA_HD。"
+            "通常在 `/live/start` 和 `/live/update` 时传入。"
+        ),
     )
