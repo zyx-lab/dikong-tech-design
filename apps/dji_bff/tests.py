@@ -202,6 +202,26 @@ class DjiGatewayPaginationTests(TestCase):
 
         self.assertEqual(exc_info.exception.status_code, 400)
 
+    def test_request_should_wrap_timeout_as_upstream_error(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+
+        with patch("apps.dji_bff.gateway.urlopen", side_effect=TimeoutError):
+            with self.assertRaises(DjiGatewayUpstreamError) as exc_info:
+                gateway._request("GET", "/timeout", data=None, headers={}, follow_redirects=True)
+
+        self.assertEqual(exc_info.exception.status_code, 502)
+        self.assertEqual(str(exc_info.exception), "DJI upstream timed out")
+
+    def test_request_raw_should_wrap_timeout_as_upstream_error(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+
+        with patch("apps.dji_bff.gateway.urlopen", side_effect=TimeoutError):
+            with self.assertRaises(DjiGatewayUpstreamError) as exc_info:
+                gateway._request_raw("GET", "/timeout", data=None, headers={}, follow_redirects=True)
+
+        self.assertEqual(exc_info.exception.status_code, 502)
+        self.assertEqual(str(exc_info.exception), "DJI upstream timed out")
+
 @override_settings(
     DJI_UPSTREAM_USERNAME="mock-admin",
     DJI_UPSTREAM_PASSWORD="mock-password",

@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone as dt_timezone
+from socket import timeout as SocketTimeout
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -502,6 +503,8 @@ class DjiGateway:
         except HTTPError as exc:
             payload = self._parse_body(exc.read())
             raise DjiGatewayUpstreamError("DJI upstream request failed", status_code=exc.code, data=payload) from exc
+        except (TimeoutError, SocketTimeout) as exc:
+            raise DjiGatewayUpstreamError("DJI upstream timed out", status_code=502) from exc
         except URLError as exc:
             raise DjiGatewayUpstreamError("DJI upstream unreachable", status_code=502) from exc
 
@@ -519,6 +522,8 @@ class DjiGateway:
         except HTTPError as exc:
             payload = self._parse_body(exc.read())
             raise DjiGatewayUpstreamError("DJI upstream request failed", status_code=exc.code, data=payload) from exc
+        except (TimeoutError, SocketTimeout) as exc:
+            raise DjiGatewayUpstreamError("DJI upstream timed out", status_code=502) from exc
         except URLError as exc:
             raise DjiGatewayUpstreamError("DJI upstream unreachable", status_code=502) from exc
 
