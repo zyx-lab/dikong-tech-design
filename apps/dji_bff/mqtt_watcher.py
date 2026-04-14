@@ -130,7 +130,7 @@ class DjiMqttWatcher:
         return client
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):  # pragma: no cover - callback path
-        if int(reason_code) != 0:
+        if self._is_connect_failure(reason_code):
             logger.warning("DJI MQTT watcher connect rejected: %s", reason_code)
             self._connected_event.clear()
             return
@@ -215,6 +215,15 @@ class DjiMqttWatcher:
             except ValueError:
                 return None
         return None
+
+    @staticmethod
+    def _is_connect_failure(reason_code) -> bool:
+        if hasattr(reason_code, "is_failure"):
+            return bool(reason_code.is_failure)
+        try:
+            return int(reason_code) != 0
+        except (TypeError, ValueError):
+            return str(reason_code or "").strip().lower() not in {"0", "success"}
 
     @staticmethod
     def _parse_mqtt_addr(addr: str) -> tuple[str, int]:

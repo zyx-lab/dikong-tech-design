@@ -11,6 +11,8 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.reasoncodes import ReasonCode
 
 from apps.access.models import EmploymentStatus
 from apps.access.test_support import (
@@ -322,6 +324,16 @@ class DjiMqttWatcherTests(TestCase):
         self.assertIsNotNone(snapshot)
         self.assertTrue(snapshot.is_airborne)
         self.assertEqual(snapshot.mode_code, 5)
+
+    def test_watcher_on_connect_should_accept_paho_reason_code_object(self):
+        from apps.dji_bff.mqtt_watcher import DjiMqttWatcher
+
+        watcher = DjiMqttWatcher()
+        success = ReasonCode(PacketTypes.CONNACK, "Success")
+
+        watcher._on_connect(client=None, userdata=None, flags=None, reason_code=success, properties=None)
+
+        self.assertTrue(watcher._connected_event.is_set())
 
     @override_settings(DJI_MQTT_WATCHER_ENABLED=True)
     def test_should_start_in_process_watcher_should_reject_test_command(self):
