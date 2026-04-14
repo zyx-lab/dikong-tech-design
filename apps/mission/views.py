@@ -1,6 +1,8 @@
 from django.db import transaction
 from django.utils import timezone
+from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
@@ -170,6 +172,7 @@ class MissionViewSet(
         "retrieve": "mission.view_mission",
         "create": "mission.manage_mission",
         "update": "mission.manage_mission",
+        "advance": "mission.manage_mission",
         "destroy": "mission.manage_mission",
     }
 
@@ -198,7 +201,7 @@ class MissionViewSet(
             if value:
                 queryset = queryset.filter(**{model_field: value})
 
-        if self.action in {"list", "retrieve", "update", "destroy"}:
+        if self.action in {"list", "retrieve", "update", "advance", "destroy"}:
             return self.apply_scope(queryset)
         return queryset
 
@@ -268,6 +271,64 @@ class MissionViewSet(
 
     def update(self, request, *args, **kwargs):
         return self._update_mission(request)
+
+    @extend_schema(
+        summary="推进任务状态",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        request=None,
+        responses={
+            200: OpenApiResponse(response=MISSION_DETAIL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            409: OpenApiResponse(description="任务当前状态不允许推进，或同一无人机已有执行中的任务。"),
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Mission"],
+    )
+    @action(detail=True, methods=["post"], url_path="advance")
+    @transaction.atomic
+    def advance(self, request, *args, **kwargs):
+        error_response = _reject_request_body_if_present(request, message="advance 请求不支持请求体")
+        if error_response is not None:
+            return error_response
+
+        mission = get_object_or_404(self.get_queryset().select_for_update(), pk=kwargs["pk"])
+        before_data = snapshot(mission)
+
+        if mission.status == MissionStatus.PENDING:
+            occupied = (
+                self.get_queryset()
+                .select_for_update()
+                .filter(drone_id=mission.drone_id, status=MissionStatus.RUNNING)
+                .exclude(pk=mission.pk)
+                .exists()
+            )
+            if occupied:
+                return _mission_state_conflict_response(mission=mission, message="当前无人机已有执行中的任务")
+
+            mission.status = MissionStatus.RUNNING
+            mission.started_at = timezone.now()
+            mission.finished_at = None
+            mission.save(update_fields=["status", "started_at", "finished_at", "updated_at"])
+        elif mission.status == MissionStatus.RUNNING:
+            mission.status = MissionStatus.COMPLETED
+            mission.finished_at = timezone.now()
+            mission.save(update_fields=["status", "finished_at", "updated_at"])
+        else:
+            return _mission_state_conflict_response(mission=mission, message="当前任务状态不允许继续推进")
+
+        after_data = snapshot(mission)
+        log_action(
+            request=request,
+            action="MISSION_ADVANCE",
+            target_type="mission",
+            target_id=mission.id,
+            before_data=before_data,
+            after_data=after_data,
+        )
+        return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
 
     @transaction.atomic
     def perform_update(self, serializer):
