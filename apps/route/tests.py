@@ -1,4 +1,5 @@
 import re
+from datetime import timedelta
 from io import BytesIO
 from unittest.mock import patch
 from zipfile import ZipFile
@@ -905,6 +906,70 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(response.data["code"], "B0001")
 
+    def test_put_should_ignore_completed_mission_blocker(self):
+        route = Route.objects.create(tenant=self.tenant, name="已完成任务航线")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", download_url="", is_published=False)
+        pilot_user = User.objects.create_user(username="route_completed_put_pilot", password="pass1234", status=1)
+        ensure_staff_profile(pilot_user, name="已完成任务飞手", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="ROUTE-COMPLETED-PUT-DRONE-001",
+            name="已完成任务无人机",
+            model="M30",
+            device_sn="ROUTE-COMPLETED-PUT-SN-001",
+        )
+        started_at = timezone.now() - timedelta(minutes=5)
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="已完成的绑定任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=pilot_member,
+            pilot_name="已完成任务飞手",
+            status=MissionStatus.COMPLETED,
+            started_at=started_at,
+            finished_at=started_at + timedelta(minutes=4),
+        )
+
+        update_kmz_bytes = self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES)
+        with patch(
+            "apps.route.views.DjiGateway.upload_route",
+            return_value={"dji_wayline_id": "mock-wayline-completed-put", "download_url": "https://upstream/download/completed-put.kmz"},
+        ):
+            with patch(
+                "apps.route.views.DjiGateway.download_route_file",
+                return_value=GatewayResponse(
+                    status_code=200,
+                    headers={"Content-Type": self.KMZ_CONTENT_TYPE},
+                    data=b"verified-kmz",
+                ),
+            ):
+                response = self.client.put(
+                    f"/api/v1/routes/{route.id}",
+                    {
+                        "name": "已完成任务后更新",
+                        "kmz_file": SimpleUploadedFile(
+                            "route-updated.kmz",
+                            update_kmz_bytes,
+                            content_type=self.KMZ_CONTENT_TYPE,
+                        ),
+                    },
+                    format="multipart",
+                )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        route.refresh_from_db()
+        self.assertEqual(route.name, "已完成任务后更新")
+
     def test_delete_should_reject_when_bound_mission_uses_route(self):
         route = Route.objects.create(tenant=self.tenant, name="已绑定任务航线")
         TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", is_published=False)
@@ -966,6 +1031,45 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         response = self.client.delete(f"/api/v1/routes/{route.id}")
 
         self.assertEqual(response.status_code, 200, response.data)
+
+    def test_delete_should_ignore_completed_mission_blocker(self):
+        route = Route.objects.create(tenant=self.tenant, name="已完成任务航线")
+        TenantRouteIndex.objects.create(tenant=self.tenant, route=route, dji_wayline_id="", download_url="", is_published=False)
+        pilot_user = User.objects.create_user(username="route_completed_delete_pilot", password="pass1234", status=1)
+        ensure_staff_profile(pilot_user, name="已完成任务飞手", employment_status=EmploymentStatus.ACTIVE)
+        _tenant, pilot_member, _pilot_role = ensure_tenant_role_binding(
+            pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="ROUTE-COMPLETED-DELETE-DRONE-001",
+            name="已完成删除任务无人机",
+            model="M30",
+            device_sn="ROUTE-COMPLETED-DELETE-SN-001",
+        )
+        started_at = timezone.now() - timedelta(minutes=5)
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="已完成的删除任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=pilot_member,
+            pilot_name="已完成任务飞手",
+            status=MissionStatus.COMPLETED,
+            started_at=started_at,
+            finished_at=started_at + timedelta(minutes=4),
+        )
+
+        response = self.client.delete(f"/api/v1/routes/{route.id}")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(Route.objects.filter(id=route.id).exists())
 
     def test_delete_should_ignore_soft_deleted_mission_blocker(self):
         route = Route.objects.create(tenant=self.tenant, name="已删除任务航线")

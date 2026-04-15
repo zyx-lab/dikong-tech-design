@@ -248,7 +248,7 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 - 任务只有在 `待执行` 时允许修改绑定字段；进入 `执行中 / 执行完成` 后不允许再改绑定关系。
 - DJI 媒体同步当前不依赖 `flight_record` 或 `jobId`；系统按 `device_sn + captured_at` 命中唯一 mission 时间窗时自动回填 `mission_id`，若已人工绑定则保留人工结果。
 - `POST /api/v1/routes/{id}/publish` 当前采用 STS 流程：申请 STS -> 对象上传 -> `upload-callback` -> 查询航线列表解析 `dji_wayline_id`。
-- `DELETE /api/v1/routes/{id}` 在当前租户存在状态为 `PENDING/RUNNING/PAUSED` 的关联任务时会被拒绝。
+- `DELETE /api/v1/routes/{id}` 在当前租户存在状态为 `PENDING/RUNNING` 的关联任务时会被拒绝。
 - `PUT/PATCH /api/v1/flight-records/{id}` 不允许直接修改 `status`，状态流转只能通过 `complete/abort` 动作接口。
 
 ## `/api/v1/*` 响应契约

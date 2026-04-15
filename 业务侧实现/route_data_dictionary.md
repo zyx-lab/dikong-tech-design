@@ -25,7 +25,7 @@
 2. 上传 XML 必须可解析，否则返回 `B0001`。
 3. 所有本地编辑后都会把关联 `TenantRouteIndex.is_published` 置为 `false`。
 4. `waypoints` 表只做内部/历史存储，不再构成公开业务契约。
-5. 删除 `Route` 时，若存在 `Mission` 处于 `PENDING`、`RUNNING` 或 `PAUSED`，删除操作会被拒绝（`B0001`）。
+5. 删除 `Route` 时，若存在 `Mission` 处于 `PENDING` 或 `RUNNING`，删除操作会被拒绝（`B0001`）。
 6. 删除 `Route` 时，会先清理残留 `waypoints` 行，再删除 route 主记录与 XML 文件。
 
 ## 2. tenant_route_indexes（航线发布索引表）

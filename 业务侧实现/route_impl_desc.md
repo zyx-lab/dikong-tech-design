@@ -96,7 +96,7 @@
 ### 7. DELETE /api/v1/routes/{id}
 
 - 功能：删除本地航线草稿及关联资源。
-- 约束：若存在 `Mission` 在 `PENDING`、`RUNNING` 或 `PAUSED`，拒绝删除（返回 `B0001`）。
+- 约束：若存在 `Mission` 在 `PENDING` 或 `RUNNING`，拒绝删除（返回 `B0001`）。
 - 删除流程：
   - 先尝试删除 DJI 上游航线（若 `TenantRouteIndex.dji_wayline_id` 非空），404 会被忽略。
   - 先清理残留 `Waypoint` 行，再删除 `Route` 与关联 XML 文件。
