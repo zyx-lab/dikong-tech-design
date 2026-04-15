@@ -79,7 +79,10 @@ LIVE_STOP_DESCRIPTION = (
     LIVE_PASSTHROUGH_DESCRIPTION
     + "`/live/stop` 通常只需要 `video_id`。"
     "示例：`{\"video_id\":\"1581F7FVC252A00CJ5TT/88-0-0/normal-0\"}`。"
-    + LIVE_ERROR_DESCRIPTION
+    "错误语义：`400` 表示请求字段缺失、字段名错误，或上游明确返回参数错误；"
+    "`404` 表示当前设备在 Django 租户侧不存在；"
+    "`502` 表示除超时外的 DJI 上游不可达或直播服务异常；"
+    "如果 DJI 上游在停止直播时发生超时，Django 侧会返回 `200 + 00000`，并在 `msg` 与 `data.detail` 中标注这是超时受理结果。"
 )
 
 LIVE_UPDATE_DESCRIPTION = (
@@ -162,6 +165,27 @@ def _dji_live_action_error_response(exc: DjiGatewayUpstreamError):
         standard_error_payload(StandardCode.INTERNAL_ERROR, detail, detail_data),
         status=resolved_status,
     )
+
+
+def _is_dji_upstream_timeout(exc: DjiGatewayUpstreamError) -> bool:
+    return "timed out" in str(exc).strip().lower()
+
+
+def _dji_live_stop_timeout_success_payload(*, exc: DjiGatewayUpstreamError, request_payload: dict) -> dict:
+    payload = {
+        "accepted": True,
+        "timeout": True,
+        "detail": str(exc).strip() or "DJI upstream timed out",
+        "upstream_status": exc.status_code,
+    }
+    video_id = request_payload.get("video_id")
+    if video_id:
+        payload["video_id"] = video_id
+    return {
+        "code": StandardCode.SUCCESS,
+        "msg": "停止直播请求已受理，但 DJI 上游响应超时",
+        "data": payload,
+    }
 
 
 @extend_schema_view(
@@ -366,6 +390,16 @@ class DroneViewSet(
         try:
             result = gateway_method(drone.device_sn, **payload)
         except DjiGatewayUpstreamError as exc:
+            if gateway_method_name == "stop_live" and _is_dji_upstream_timeout(exc):
+                result = _dji_live_stop_timeout_success_payload(exc=exc, request_payload=payload)
+                log_action(
+                    request=request,
+                    action=action_name,
+                    target_type="drone",
+                    target_id=drone.id,
+                    after_data=self._audit_after_data(result["data"]),
+                )
+                return Response(result, status=status.HTTP_200_OK)
             return _dji_live_action_error_response(exc)
         if isinstance(result, dict) and "video_id" not in result and payload.get("video_id"):
             result = dict(result)

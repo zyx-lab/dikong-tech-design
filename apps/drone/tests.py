@@ -538,7 +538,7 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
             },
         )
 
-    def test_live_stop_should_expose_timeout_detail_for_frontend(self):
+    def test_live_stop_should_treat_timeout_as_accepted_success(self):
         drone = Drone.objects.create(
             tenant=self.tenant,
             code="DJ-LIVE-UPSTREAM-TIMEOUT",
@@ -558,14 +558,17 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
                 format="json",
             )
 
-        self.assertEqual(response.status_code, 502, response.data)
-        self.assertEqual(response.data["code"], "E0001")
-        self.assertEqual(response.data["msg"], "DJI upstream timed out")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "停止直播请求已受理，但 DJI 上游响应超时")
         self.assertEqual(
             response.data["data"],
             {
+                "accepted": True,
+                "timeout": True,
                 "detail": "DJI upstream timed out",
                 "upstream_status": 502,
+                "video_id": "SN-LIVE-UPSTREAM-TIMEOUT/88-0-0/normal-0",
             },
         )
 
