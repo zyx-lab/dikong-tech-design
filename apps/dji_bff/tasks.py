@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from apps.dji_bff.models import DjiDeviceIndex, SyncStatus, TenantMediaIndex
 from apps.drone.models import Drone, DroneStatus
 from apps.media_file.models import MediaFile, MediaType
 from apps.mission.models import Mission, MissionStatus
+
+MISSION_MEDIA_FINISH_GRACE_SECONDS = 5
 
 
 @dataclass
@@ -97,10 +100,11 @@ def _match_mission_for_media(*, tenant, device_sn: str, captured_at):
         is_deleted=False,
         device_sn=device_sn,
         started_at__isnull=False,
+        finished_at__isnull=False,
     ).exclude(status=MissionStatus.PENDING)
 
     for mission in queryset:
-        window_end = mission.finished_at or timezone.now()
+        window_end = mission.finished_at + timedelta(seconds=MISSION_MEDIA_FINISH_GRACE_SECONDS)
         if mission.started_at <= captured_at <= window_end:
             matched.append(mission)
 
