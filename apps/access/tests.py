@@ -1,6 +1,7 @@
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from rest_framework import serializers
 
 from apps.access.models import EmploymentStatus, TenantMemberStatus
@@ -13,6 +14,15 @@ from apps.access.validation import (
 from apps.drone.models import Drone
 
 User = get_user_model()
+
+
+class DatabaseSettingsTests(SimpleTestCase):
+    def test_sqlite_default_database_should_wait_20_seconds_for_locks(self):
+        default_db = settings.DATABASES["default"]
+
+        self.assertEqual(default_db["ENGINE"], "django.db.backends.sqlite3")
+        self.assertEqual(default_db["NAME"], settings.BASE_DIR / "db.sqlite3")
+        self.assertEqual(default_db["OPTIONS"]["timeout"], 20)
 
 
 class AccessValidationHelperTests(TestCase):
