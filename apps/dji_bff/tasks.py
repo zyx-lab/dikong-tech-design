@@ -121,21 +121,7 @@ def _flight_record_for_mission(*, mission: Mission | None):
 
 
 def _sync_video_count_for_flight_record(*, flight_record: FlightRecord | None):
-    if flight_record is None:
-        return
-    locked_flight_record = FlightRecord.objects.select_for_update().filter(
-        pk=flight_record.pk,
-        is_deleted=False,
-    ).first()
-    if locked_flight_record is None:
-        return
-    locked_flight_record.video_count = MediaFile.objects.filter(
-        flight_record=locked_flight_record,
-        is_deleted=False,
-        media_type=MediaType.VIDEO,
-        dji_index__isnull=False,
-    ).count()
-    locked_flight_record.save(update_fields=["video_count", "updated_at"])
+    FlightRecord.sync_video_count_from_media(flight_record=flight_record)
 
 
 def sync_device_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:

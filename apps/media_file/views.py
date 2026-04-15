@@ -28,6 +28,7 @@ from apps.api_v1.schema import (
 )
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.dji_bff.gateway import DjiGateway
+from apps.flight_record.models import FlightRecord
 from apps.media_file.models import MediaFile, MediaType
 from apps.media_file.serializers import (
     MediaFileBindMissionResultSerializer,
@@ -191,6 +192,7 @@ class MediaFileViewSet(
         media_file.is_deleted = True
         media_file.deleted_at = timezone.now()
         media_file.save(update_fields=["is_deleted", "deleted_at"])
+        FlightRecord.sync_video_count_from_media(flight_record=media_file.flight_record)
 
         deleted_payload = {"id": media_file.id, "deleted": True}
         log_action(
