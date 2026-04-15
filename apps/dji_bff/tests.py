@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from io import StringIO
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
@@ -504,6 +504,74 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
             TenantMediaIndex.objects.filter(tenant=claimed_tenant, dji_file_id="media-duplicate-sn-file").exists()
         )
         self.assertFalse(TenantMediaIndex.objects.filter(tenant=self.tenant, dji_file_id="media-duplicate-sn-file").exists())
+
+    def test_sync_media_indexes_should_accept_upstream_drone_field_for_device_sn(self):
+        Drone.objects.create(
+            tenant=self.tenant,
+            code="MEDIA-UPSTREAM-DRONE-FIELD",
+            name="媒体同步无人机",
+            model="M30",
+            device_sn="MEDIA-UPSTREAM-DRONE-SN-001",
+        )
+        gateway = SimpleNamespace(
+            list_media_files=lambda: [
+                {
+                    "file_id": "media-upstream-drone-field-file",
+                    "file_name": "MEDIA_UPSTREAM_DRONE_FIELD.JPG",
+                    "drone": "MEDIA-UPSTREAM-DRONE-SN-001",
+                }
+            ]
+        )
+
+        summary = sync_media_indexes(gateway=gateway)
+
+        self.assertEqual(summary["created_count"], 1)
+        media_index = TenantMediaIndex.objects.get(tenant=self.tenant, dji_file_id="media-upstream-drone-field-file")
+        self.assertEqual(media_index.device_sn, "MEDIA-UPSTREAM-DRONE-SN-001")
+        self.assertEqual(media_index.media_file.device_sn, "MEDIA-UPSTREAM-DRONE-SN-001")
+
+    def test_sync_media_indexes_should_normalize_naive_create_time_before_matching_mission_window(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="MEDIA-NAIVE-CREATE-TIME-DRONE",
+            name="媒体同步无人机",
+            model="M30",
+            device_sn="MEDIA-NAIVE-CREATE-TIME-SN-001",
+        )
+        route = Route.objects.create(tenant=self.tenant, name="媒体同步航线")
+        captured_at = timezone.make_aware(datetime(2026, 4, 15, 17, 4, 42), timezone.get_current_timezone())
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="应匹配无时区 create_time 的任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.COMPLETED,
+            started_at=captured_at - timedelta(minutes=1),
+            finished_at=captured_at + timedelta(minutes=1),
+        )
+        gateway = SimpleNamespace(
+            list_media_files=lambda: [
+                {
+                    "file_id": "media-naive-create-time-file",
+                    "file_name": "MEDIA_NAIVE_CREATE_TIME.JPG",
+                    "drone": drone.device_sn,
+                    "create_time": "2026-04-15 17:04:42",
+                }
+            ]
+        )
+
+        summary = sync_media_indexes(gateway=gateway)
+
+        self.assertEqual(summary["created_count"], 1)
+        media_index = TenantMediaIndex.objects.get(tenant=self.tenant, dji_file_id="media-naive-create-time-file")
+        self.assertEqual(media_index.mission_id, mission.id)
+        self.assertEqual(media_index.media_file.mission_id, mission.id)
+        self.assertEqual(media_index.media_file.captured_at, captured_at)
 
     def test_sync_media_indexes_should_auto_bind_to_unique_completed_mission_window(self):
         drone = Drone.objects.create(

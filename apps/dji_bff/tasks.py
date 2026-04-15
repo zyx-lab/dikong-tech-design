@@ -62,14 +62,15 @@ def _datetime_value(payload: dict, *keys: str):
         if isinstance(value, str) and value.strip():
             parsed = parse_datetime(value.strip())
             if parsed is not None:
+                if timezone.is_naive(parsed):
+                    return timezone.make_aware(parsed, timezone.get_current_timezone())
                 return parsed
     return None
 
 
 def _device_sn_from_payload(payload: dict) -> str:
-    # 直接取外层 device_sn（无人机 SN）
-    # children 是摄像头/负载，不需要取其 SN
-    return _string(payload, "device_sn", "deviceSn", "sn")
+    # 上游设备列表常用 device_sn；媒体列表在真实环境里也可能用 drone 表示无人机 SN。
+    return _string(payload, "device_sn", "deviceSn", "sn", "drone")
 
 
 def _file_name(payload: dict) -> str:
@@ -166,7 +167,7 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
             summary.ignored_count += 1
             continue
 
-        device_sn = _string(payload, "device_sn", "deviceSn", "sn")
+        device_sn = _device_sn_from_payload(payload)
         if not device_sn:
             summary.ignored_count += 1
             continue
