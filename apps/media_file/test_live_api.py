@@ -74,7 +74,7 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name="飞手",
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
         self.flight_record = FlightRecord.objects.create(
             tenant=self.tenant,

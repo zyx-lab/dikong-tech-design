@@ -772,7 +772,7 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=drone.name,
             pilot=pilot_member,
             pilot_name="绑定飞手",
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
 
         response = self.client.put(
@@ -819,7 +819,7 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=drone.name,
             pilot=pilot_member,
             pilot_name="绑定飞手",
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
 
         response = self.client.delete(f"/api/v1/routes/{route.id}")
@@ -846,7 +846,7 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone=None,
             pilot=pilot_member,
             pilot_name="未绑定飞手",
-            status=MissionStatus.DRONE_UNBOUND,
+            status=MissionStatus.PENDING,
         )
 
         response = self.client.delete(f"/api/v1/routes/{route.id}")
@@ -881,7 +881,7 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             drone_name=drone.name,
             pilot=pilot_member,
             pilot_name="已删除任务飞手",
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
             is_deleted=True,
             deleted_at=timezone.now(),
         )

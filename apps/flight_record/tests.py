@@ -82,7 +82,7 @@ class FlightRecordApiTests(TestCase):
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name=self.pilot_staff.name,
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
 
     def _grant_permission(self, permission_code: str):
@@ -182,7 +182,7 @@ class FlightRecordApiTests(TestCase):
             drone_name=other_drone.name,
             pilot=other_pilot_member,
             pilot_name=self.pilot_staff.name,
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
 
         with self.assertRaises(ValidationError):
@@ -237,7 +237,7 @@ class FlightRecordApiTests(TestCase):
             drone_name=other_drone.name,
             pilot=other_pilot_member,
             pilot_name=self.pilot_staff.name,
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
 
         response = self.client.post(
@@ -495,7 +495,7 @@ class FlightRecordApiTests(TestCase):
             drone_name=other_drone.name,
             pilot=other_pilot_member,
             pilot_name=other_pilot_staff.name,
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
         FlightRecord.objects.create(
             tenant=other_tenant,
@@ -1029,7 +1029,7 @@ class FlightRecordPilotScopeTests(TestCase):
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name=self.pilot_staff.name,
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
         self.other_mission = _persist_mission_fixture(
             tenant=self.tenant,
@@ -1040,7 +1040,7 @@ class FlightRecordPilotScopeTests(TestCase):
             drone_name=self.drone.name,
             pilot=self.other_pilot_member,
             pilot_name=self.other_pilot_staff.name,
-            status=MissionStatus.DRONE_BOUND,
+            status=MissionStatus.PENDING,
         )
         self.my_record = self._create_record("FRS202603080001", self.my_mission, self.pilot_member, self.pilot_staff.name)
         self.other_record = self._create_record(

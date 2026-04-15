@@ -27,7 +27,7 @@ from apps.api_v1.schema import (
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.dji_bff.gateway import DjiGateway, DjiGatewayUpstreamError
 from apps.dji_bff.models import TenantRouteIndex
-from apps.mission.models import Mission, MissionStatus
+from apps.mission.models import Mission
 from apps.route.models import Route
 from apps.route.serializers import RouteCreateSerializer, RouteReadSerializer, RouteUpdateSerializer
 
@@ -383,7 +383,7 @@ class RouteViewSet(
             tenant=self.get_current_tenant(),
             route=route,
             is_deleted=False,
-            status=MissionStatus.DRONE_BOUND,
+            drone_id__isnull=False,
         ).exists()
 
     def update(self, request, *args, **kwargs):
