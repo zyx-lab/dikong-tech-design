@@ -77,7 +77,6 @@ class FlightRecordWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSer
             "pilot_name",
             "flight_duration",
             "photo_count",
-            "video_count",
         ]
         extra_kwargs = {
             "mission_name": {"required": False, "help_text": "任务名称展示文案，可人工修正。"},
@@ -87,5 +86,4 @@ class FlightRecordWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSer
             "pilot_name": {"required": False, "help_text": "飞手名称展示文案，可人工修正。"},
             "flight_duration": {"required": False, "help_text": "飞行时长快照，单位秒。"},
             "photo_count": {"required": False, "help_text": "图片数量；当前阶段固定由人工修正，默认 0。"},
-            "video_count": {"required": False, "help_text": "视频数量快照；创建时按 mission 已关联媒体数写入。"},
         }

@@ -473,6 +473,7 @@ class FlightRecordApiTests(TestCase):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
         record = self._create_flight_record(status=FlightRecordStatus.COMPLETED)
+        original_video_count = record.video_count
 
         response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
@@ -480,7 +481,6 @@ class FlightRecordApiTests(TestCase):
                 "mission_name": "修正后的任务名",
                 "airport_name": "深圳宝安机场",
                 "photo_count": 0,
-                "video_count": 8,
             },
             format="json",
         )
@@ -488,11 +488,11 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["data"]["mission_name"], "修正后的任务名")
         self.assertEqual(response.data["data"]["airport_name"], "深圳宝安机场")
-        self.assertEqual(response.data["data"]["video_count"], 8)
+        self.assertEqual(response.data["data"]["video_count"], original_video_count)
         record.refresh_from_db()
         self.assertEqual(record.mission_name, "修正后的任务名")
         self.assertEqual(record.airport_name, "深圳宝安机场")
-        self.assertEqual(record.video_count, 8)
+        self.assertEqual(record.video_count, original_video_count)
         self.assertEqual(record.device_sn, self.drone.device_sn)
         self.assertTrue(
             AuditLog.objects.filter(
@@ -501,6 +501,21 @@ class FlightRecordApiTests(TestCase):
                 target_id=str(record.id),
             ).exists()
         )
+
+    def test_put_flight_record_with_video_count_should_return_invalid_params(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record()
+
+        response = self.client.put(
+            f"/api/v1/flight-records/{record.id}",
+            {"video_count": 5},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["data"], {"video_count": ["该字段在此接口不可写"]})
 
     def test_put_flight_record_with_anchor_field_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")

@@ -166,7 +166,6 @@ class LiveFlightRecordApiTests(LiveFlightRecordApiTestCase):
             {
                 "mission_name": "修正后的任务名称",
                 "airport_name": "深圳宝安机场",
-                "video_count": 5,
             },
             format="json",
         )
@@ -174,7 +173,14 @@ class LiveFlightRecordApiTests(LiveFlightRecordApiTestCase):
         put_data = put_response.json()["data"]
         self.assertEqual(put_data["mission_name"], "修正后的任务名称")
         self.assertEqual(put_data["airport_name"], "深圳宝安机场")
-        self.assertEqual(put_data["video_count"], 5)
+        self.assertEqual(put_data["video_count"], record.video_count)
+
+        invalid_put_response = self.client.put(
+            f"/api/v1/flight-records/{record.id}",
+            {"video_count": 5},
+            format="json",
+        )
+        self.assertEqual(invalid_put_response.status_code, 400)
 
         delete_response = self.client.delete(f"/api/v1/flight-records/{record.id}")
         self.assertEqual(delete_response.status_code, 200)
