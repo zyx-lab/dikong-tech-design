@@ -21,13 +21,16 @@
 1. `flight_record` 对应的就是某个 `mission` 的 `flight_record`
 2. 不希望把 `flight_record` 详情接口改成“按 `mission` 回落兜底”
 3. 希望把 `mission -> flight_record` 这一层自动补齐
+4. `FlightRecord.video_count` 也要跟随媒体绑定结果强一致同步
+5. `video_count` 不再允许通过 `PUT /api/v1/flight-records/{id}` 人工编辑
 
 ## 2. 目标
 
 1. 当媒体同步唯一命中某个 `mission` 时，自动补齐它对应的 `flight_record`
 2. 保持 `GET /api/v1/flight-records/{id}` 详情接口现有语义不变
 3. 让已自动绑定到 `mission` 的媒体，在下一轮同步后自然出现在 `flight_record` 详情接口中
-4. 用最小正确改动补齐现有关系链路
+4. 让 `FlightRecord.video_count` 与当前已绑定视频媒体数保持强一致
+5. 用最小正确改动补齐现有关系链路
 
 ## 3. 非目标
 
@@ -35,7 +38,7 @@
 2. 不修改 `GET /api/v1/flight-records/{id}` 的返回字段结构
 3. 不修改 `MediaFile` / `FlightRecord` 数据库结构
 4. 不新增手工绑定 `flight_record` 的单独接口
-5. 不修改 `video_count` / `photo_count` 的快照写入逻辑
+5. 不改变 `photo_count` 当前可人工修正的语义
 6. 不处理没有对应 `flight_record` 的异常历史数据修复脚本
 
 ## 4. 方案对比
@@ -99,6 +102,7 @@
 1. `flight_record` 详情接口的现有语义已经明确，没必要改成模糊的 fallback 读法
 2. 问题根因是数据关系未补齐，不是展示层没兜底
 3. 自动补齐 `MediaFile.flight_record` 后，现有接口自然就能返回 media link
+4. 在同一条同步链路里回算 `video_count`，可以保持 `flight_record` 摘要信息和媒体详情一致
 
 ## 5. 现有约束
 
@@ -131,6 +135,17 @@
 
 所以本次自动补绑必须始终以“同一个 mission 对应的 flight_record”为准，不能跨 mission 写入。
 
+### 5.4 flight_record 写接口的当前冲突
+
+当前 [apps/flight_record/serializers.py](/home/charles/dikong-tech-design/apps/flight_record/serializers.py) 的 `FlightRecordWriteSerializer` 仍允许通过 `PUT /api/v1/flight-records/{id}` 写入 `video_count`。
+
+如果本次把 `video_count` 改成同步链路里的强一致字段，但仍保留人工可写，就会出现：
+
+1. 前端手工改成功
+2. 下一轮媒体同步又把它覆盖回去
+
+这会导致接口语义不稳定，因此本次必须同步移除 `video_count` 的人工写入口。
+
 ## 6. 核心设计
 
 ### 6.1 自动补绑触发点
@@ -139,10 +154,14 @@
 
 - [apps/dji_bff/tasks.py](/home/charles/dikong-tech-design/apps/dji_bff/tasks.py) 中的 `sync_media_indexes()`
 
+同时修改：
+
+- [apps/flight_record/serializers.py](/home/charles/dikong-tech-design/apps/flight_record/serializers.py) 中的 `FlightRecordWriteSerializer`
+
 不修改：
 
 - `flight_record` 详情 serializer
-- 公开 API 协议
+- `GET /api/v1/flight-records/{id}` 返回结构
 - 数据表结构
 
 ### 6.2 flight_record 解析规则
@@ -197,7 +216,45 @@
 1. 已有显式绑定不会被同步覆盖
 2. 历史“只有 `mission` 没有 `flight_record`”的媒体，可以在后续同步时自动补齐
 
-### 6.5 不做 serializer fallback
+### 6.5 video_count 强一致规则
+
+`FlightRecord.video_count` 改为运行时回算字段，其值来源于当前已绑定到该 `flight_record` 的视频媒体数量。
+
+回算条件：
+
+1. `flight_record = 当前 record`
+2. `is_deleted = False`
+3. `media_type = VIDEO`
+4. `dji_index__isnull = False`
+
+回算时机：
+
+1. 媒体同步新建记录后，如果最终落到了某个 `flight_record`
+2. 媒体同步更新记录后，如果最终落到了某个 `flight_record`
+3. 若本轮更新前后 `flight_record` 发生变化，则旧记录和新记录都要重新回算
+
+采用当前绑定结果回算，而不是增量加减，原因是：
+
+1. 逻辑更直接
+2. 不依赖历史计数是否已经正确
+3. 更符合“强一致”的要求
+
+### 6.6 移除 video_count 的人工可写入口
+
+`PUT /api/v1/flight-records/{id}` 不再接受 `video_count`。
+
+具体规则：
+
+1. 从 `FlightRecordWriteSerializer.fields` 中移除 `video_count`
+2. 保留 `photo_count` 当前可人工修正能力
+3. 若请求体继续传 `video_count`，按未知字段返回现有错误
+
+这样可以保证：
+
+1. `video_count` 的单一事实来源是媒体同步回算
+2. 不会出现“人工改了，下一轮同步又改回去”的来回打架
+
+### 6.7 不做 serializer fallback
 
 `GET /api/v1/flight-records/{id}` 保持只读 `MediaFile.flight_record`。
 
@@ -212,7 +269,7 @@
 2. 展示层 fallback 只会掩盖底层数据缺口
 3. 保持接口语义稳定，避免以后再解释“为什么有时是真绑定，有时是回落推导”
 
-### 6.6 对线上现有数据的预期影响
+### 6.8 对线上现有数据的预期影响
 
 按本次设计，线上已经自动匹配到以下 mission 的媒体：
 
@@ -225,6 +282,7 @@
 1. 媒体 `id=2` 自动补到 `flight_record 20`
 2. 媒体 `id=1` 自动补到 `flight_record 21`
 3. 媒体 `id=3` 自动补到 `flight_record 22`
+4. `flight_record 20/21/22` 的 `video_count` 会按当前已绑定视频数回算为 `1`
 
 随后 `GET /api/v1/flight-records/20|21|22` 的 `media_files` 应自然返回对应下载入口。
 
@@ -236,18 +294,22 @@
 2. 已存在媒体若当前只有 `mission`、没有 `flight_record`，下一轮同步会自动补齐 `flight_record`
 3. 若命中 `mission` 但还没有对应 `flight_record`，则只写 `mission`，不误写 `flight_record`
 4. 已存在 `flight_record` 绑定时，同步不会覆盖它
+5. 每次自动补绑后，会把对应 `flight_record.video_count` 回算为当前视频数
 
 同时重跑现有 `flight_record` 详情测试，确保：
 
 1. 详情接口依旧只展示 `flight_record` 已绑定媒体
 2. 不引入 `mission` fallback
+3. `PUT /api/v1/flight-records/{id}` 不再允许传 `video_count`
 
 ## 8. 验收标准
 
 1. `apps.dji_bff.tests` 通过
 2. `apps.flight_record.tests` 通过
 3. 媒体同步后，命中 mission 的媒体会自动补齐对应 `flight_record`
-4. `GET /api/v1/flight-records/{id}` 无需改接口语义即可返回对应 `media_files`
+4. 对应 `flight_record.video_count` 会同步回算为当前视频媒体数
+5. `GET /api/v1/flight-records/{id}` 无需改详情接口语义即可返回对应 `media_files`
+6. `PUT /api/v1/flight-records/{id}` 不再接受 `video_count`
 
 ## 9. 风险与取舍
 
@@ -255,6 +317,6 @@
 
 本次不额外写一次性回填脚本，而是依赖已有同步任务补齐历史媒体的 `flight_record`。这符合当前最小改动原则，但意味着生效依赖再次同步。
 
-### 9.2 不联动更新 flight_record 的视频数快照
+### 9.2 video_count 不再是人工快照
 
-`FlightRecord.video_count` 是创建快照时写入的历史值。本次不因为媒体后续补绑就回写该字段，避免把“历史快照”和“当前实时关联数”混为一谈。
+本次把 `FlightRecord.video_count` 从“创建快照时写入的历史值”改为“由当前媒体绑定结果强一致回算”。这是刻意的语义收敛，代价是失去人工修正入口，但能保证列表摘要和详情媒体结果长期一致。
