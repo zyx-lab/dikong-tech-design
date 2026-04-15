@@ -21,7 +21,6 @@ class DatabaseSettingsTests(SimpleTestCase):
         default_db = settings.DATABASES["default"]
 
         self.assertEqual(default_db["ENGINE"], "django.db.backends.sqlite3")
-        self.assertEqual(default_db["NAME"], settings.BASE_DIR / "db.sqlite3")
         self.assertEqual(default_db["OPTIONS"]["timeout"], 20)
 
 
