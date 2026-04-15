@@ -495,7 +495,13 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(response.data["code"], "E0001")
         self.assertIn("Invalid parameter", response.data["msg"])
-        self.assertIsNone(response.data["data"])
+        self.assertEqual(
+            response.data["data"],
+            {
+                "detail": "Error Code: 210002, Error Msg: Invalid parameter.. videoQualitymust not be null, Current value is: null",
+                "upstream_status": 200,
+            },
+        )
 
     def test_live_start_should_transparently_return_upstream_service_failure(self):
         drone = Drone.objects.create(
@@ -524,7 +530,44 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 502, response.data)
         self.assertEqual(response.data["code"], "D0001")
         self.assertEqual(response.data["msg"], "Please check whether the live stream service is normal.")
-        self.assertIsNone(response.data["data"])
+        self.assertEqual(
+            response.data["data"],
+            {
+                "detail": "Please check whether the live stream service is normal.",
+                "upstream_status": 200,
+            },
+        )
+
+    def test_live_stop_should_expose_timeout_detail_for_frontend(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-LIVE-UPSTREAM-TIMEOUT",
+            name="直播超时设备",
+            model="M30",
+            device_sn="SN-LIVE-UPSTREAM-TIMEOUT",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        with patch(
+            "apps.drone.views.DjiGateway.stop_live",
+            side_effect=DjiGatewayUpstreamError("DJI upstream timed out", status_code=502),
+        ):
+            response = self.client.post(
+                f"/api/v1/drones/{drone.id}/live/stop",
+                {"video_id": "SN-LIVE-UPSTREAM-TIMEOUT/88-0-0/normal-0"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 502, response.data)
+        self.assertEqual(response.data["code"], "E0001")
+        self.assertEqual(response.data["msg"], "DJI upstream timed out")
+        self.assertEqual(
+            response.data["data"],
+            {
+                "detail": "DJI upstream timed out",
+                "upstream_status": 502,
+            },
+        )
 
     def test_live_capacity_should_return_404_when_upstream_capacity_missing(self):
         drone = Drone.objects.create(

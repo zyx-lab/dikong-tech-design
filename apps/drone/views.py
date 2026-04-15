@@ -124,9 +124,8 @@ def _drone_success_response(view, drone: Drone, *, http_status: int, include_hea
 
 def _dji_live_action_error_response(exc: DjiGatewayUpstreamError):
     payload = dict(exc.data) if isinstance(exc.data, dict) else {}
-    if payload and "data" not in payload:
-        payload["data"] = None
-    message = str(payload.get("msg") or exc).strip().lower()
+    detail = str(payload.get("msg") or exc).strip() or "DJI upstream error"
+    message = detail.lower()
     is_invalid_params = exc.status_code == status.HTTP_400_BAD_REQUEST or any(
         marker in message
         for marker in (
@@ -141,10 +140,26 @@ def _dji_live_action_error_response(exc: DjiGatewayUpstreamError):
     resolved_status = exc.status_code if exc.status_code >= 400 else (
         status.HTTP_400_BAD_REQUEST if is_invalid_params else status.HTTP_502_BAD_GATEWAY
     )
+    detail_data = {
+        "detail": detail,
+        "upstream_status": exc.status_code,
+    }
     if payload:
+        raw_data = payload.get("data")
+        if isinstance(raw_data, dict):
+            enriched_data = dict(raw_data)
+            enriched_data.setdefault("detail", detail)
+            enriched_data.setdefault("upstream_status", exc.status_code)
+        else:
+            enriched_data = dict(detail_data)
+            if raw_data not in (None, ""):
+                enriched_data["upstream_data"] = raw_data
+        payload["data"] = enriched_data
+        if not str(payload.get("msg") or "").strip():
+            payload["msg"] = detail
         return Response(payload, status=resolved_status)
     return Response(
-        standard_error_payload(StandardCode.INTERNAL_ERROR, "DJI upstream error", None),
+        standard_error_payload(StandardCode.INTERNAL_ERROR, detail, detail_data),
         status=resolved_status,
     )
 
