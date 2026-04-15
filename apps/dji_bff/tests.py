@@ -26,6 +26,7 @@ from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes
 from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
 from apps.drone.models import Drone, DroneStatus
+from apps.flight_record.models import FlightRecord
 from apps.media_file.models import MediaFile
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
@@ -614,6 +615,93 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(summary["created_count"], 1)
         media_index = TenantMediaIndex.objects.get(tenant=self.tenant, dji_file_id="media-finish-grace-file")
         self.assertEqual(media_index.mission_id, mission.id)
+
+    def test_sync_media_indexes_should_auto_bind_flight_record_for_new_media_when_mission_has_record(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="MEDIA-FLIGHT-RECORD-NEW-DRONE",
+            name="新媒体飞行记录无人机",
+            model="M30",
+            device_sn="MEDIA-FLIGHT-RECORD-NEW-SN-001",
+        )
+        route = Route.objects.create(tenant=self.tenant, name="新媒体飞行记录航线")
+        captured_at = timezone.now() - timedelta(minutes=1)
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="新媒体飞行记录任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.COMPLETED,
+            started_at=captured_at - timedelta(minutes=2),
+            finished_at=captured_at + timedelta(minutes=2),
+        )
+        flight_record = FlightRecord.create_from_completed_mission(mission=mission)
+        gateway = SimpleNamespace(
+            list_media_files=lambda: [
+                {
+                    "file_id": "media-flight-record-new-file",
+                    "file_name": "MEDIA_FLIGHT_RECORD_NEW.MP4",
+                    "drone": drone.device_sn,
+                    "captured_at": captured_at.isoformat(),
+                }
+            ]
+        )
+
+        summary = sync_media_indexes(gateway=gateway)
+
+        self.assertEqual(summary["created_count"], 1)
+        media_index = TenantMediaIndex.objects.get(tenant=self.tenant, dji_file_id="media-flight-record-new-file")
+        self.assertEqual(media_index.mission_id, mission.id)
+        self.assertEqual(media_index.media_file.flight_record_id, flight_record.id)
+        flight_record.refresh_from_db()
+        self.assertEqual(flight_record.video_count, 1)
+
+    def test_sync_media_indexes_should_leave_flight_record_empty_when_mission_has_no_record(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="MEDIA-FLIGHT-RECORD-NONE-DRONE",
+            name="无飞行记录无人机",
+            model="M30",
+            device_sn="MEDIA-FLIGHT-RECORD-NONE-SN-001",
+        )
+        route = Route.objects.create(tenant=self.tenant, name="无飞行记录航线")
+        captured_at = timezone.now() - timedelta(minutes=1)
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="无飞行记录任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.COMPLETED,
+            started_at=captured_at - timedelta(minutes=2),
+            finished_at=captured_at + timedelta(minutes=2),
+        )
+        gateway = SimpleNamespace(
+            list_media_files=lambda: [
+                {
+                    "file_id": "media-flight-record-none-file",
+                    "file_name": "MEDIA_FLIGHT_RECORD_NONE.MP4",
+                    "drone": drone.device_sn,
+                    "captured_at": captured_at.isoformat(),
+                }
+            ]
+        )
+
+        summary = sync_media_indexes(gateway=gateway)
+
+        self.assertEqual(summary["created_count"], 1)
+        media_index = TenantMediaIndex.objects.get(tenant=self.tenant, dji_file_id="media-flight-record-none-file")
+        self.assertEqual(media_index.mission_id, mission.id)
+        self.assertIsNone(media_index.media_file.flight_record_id)
 
     def test_sync_media_indexes_should_not_auto_bind_when_media_is_past_finished_at_grace_window(self):
         drone = Drone.objects.create(

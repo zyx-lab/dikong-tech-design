@@ -12,6 +12,7 @@ from apps.access.services import log_action
 from apps.dji_bff.gateway import DjiGateway
 from apps.dji_bff.models import DjiDeviceIndex, SyncStatus, TenantMediaIndex
 from apps.drone.models import Drone, DroneStatus
+from apps.flight_record.models import FlightRecord
 from apps.media_file.models import MediaFile, MediaType
 from apps.mission.models import Mission, MissionStatus
 
@@ -113,6 +114,24 @@ def _match_mission_for_media(*, tenant, device_sn: str, captured_at):
     return None
 
 
+def _flight_record_for_mission(*, mission: Mission | None):
+    if mission is None:
+        return None
+    return FlightRecord.objects.filter(mission=mission, is_deleted=False).first()
+
+
+def _sync_video_count_for_flight_record(*, flight_record: FlightRecord | None):
+    if flight_record is None:
+        return
+    flight_record.video_count = MediaFile.objects.filter(
+        flight_record=flight_record,
+        is_deleted=False,
+        media_type=MediaType.VIDEO,
+        dji_index__isnull=False,
+    ).count()
+    flight_record.save(update_fields=["video_count", "updated_at"])
+
+
 def sync_device_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
     gateway = gateway or DjiGateway()
     summary = SyncSummary()
@@ -203,6 +222,7 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
             device_sn=device_sn,
             captured_at=media_fields["captured_at"],
         )
+        resolved_flight_record = _flight_record_for_mission(mission=matched_mission)
 
         with transaction.atomic():
             media_index = (
@@ -214,7 +234,7 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
                 media_file = MediaFile.objects.create(
                     **media_fields,
                     mission=matched_mission,
-                    flight_record=None,
+                    flight_record=resolved_flight_record,
                 )
                 TenantMediaIndex.objects.create(
                     tenant=tenant,
@@ -226,6 +246,7 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
                     last_sync_at=media_fields["captured_at"] or now,
                     error_msg="",
                 )
+                _sync_video_count_for_flight_record(flight_record=resolved_flight_record)
                 summary.created_count += 1
             else:
                 media_file = media_index.media_file
