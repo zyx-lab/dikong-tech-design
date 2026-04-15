@@ -13,8 +13,10 @@ from apps.access.test_support import (
     ensure_tenant_role_binding,
     grant_role_permissions,
 )
+from apps.dji_bff.models import SyncStatus, TenantMediaIndex
 from apps.drone.models import Drone, DroneStatus
 from apps.flight_record.models import FlightRecord, FlightRecordStatus
+from apps.media_file.models import MediaFile, MediaType
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 
@@ -154,6 +156,42 @@ class FlightRecordApiTests(TestCase):
             is_deleted=is_deleted,
             deleted_at=deleted_at,
         )
+
+    def _create_media_file(
+        self,
+        *,
+        flight_record: FlightRecord,
+        mission: Mission,
+        file_name: str,
+        captured_at=None,
+        is_deleted: bool = False,
+        with_dji_index: bool = True,
+    ) -> MediaFile:
+        media_file = MediaFile.objects.create(
+            tenant=self.tenant,
+            flight_record=flight_record,
+            mission=mission,
+            device_sn=mission.device_sn,
+            media_type=MediaType.VIDEO,
+            file_name=file_name,
+            file_url=f"https://example.com/{file_name}",
+            thumbnail_url=f"https://example.com/thumb/{file_name}",
+            file_size=2048,
+            captured_at=captured_at or timezone.now(),
+            is_deleted=is_deleted,
+            deleted_at=timezone.now() if is_deleted else None,
+        )
+        if with_dji_index:
+            TenantMediaIndex.objects.create(
+                tenant=self.tenant,
+                media_file=media_file,
+                dji_file_id=f"dji-{file_name}",
+                device_sn=mission.device_sn,
+                mission=mission,
+                sync_status=SyncStatus.SYNCED,
+                last_sync_at=timezone.now(),
+            )
+        return media_file
 
     def test_model_should_reject_cross_tenant_mission(self):
         other_tenant, _, _ = ensure_tenant_role_binding(
@@ -366,6 +404,60 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["data"]["id"], record.id)
         self.assertEqual(response.data["data"]["device_sn"], self.drone.device_sn)
+
+    def test_retrieve_flight_record_should_include_only_current_downloadable_media_files(self):
+        self._grant_permission("flight_record.view_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record()
+        visible = self._create_media_file(
+            flight_record=record,
+            mission=record.mission,
+            file_name="VISIBLE.MP4",
+            captured_at=timezone.now() - timedelta(minutes=1),
+        )
+        self._create_media_file(
+            flight_record=record,
+            mission=record.mission,
+            file_name="DELETED.MP4",
+            is_deleted=True,
+        )
+        self._create_media_file(
+            flight_record=record,
+            mission=record.mission,
+            file_name="NOINDEX.MP4",
+            with_dji_index=False,
+        )
+        other_record = self._create_flight_record(flight_no=self._next_flight_no())
+        self._create_media_file(
+            flight_record=other_record,
+            mission=other_record.mission,
+            file_name="OTHER.MP4",
+        )
+
+        response = self.client.get(f"/api/v1/flight-records/{record.id}")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.data["data"]
+        self.assertIn("media_files", payload)
+        self.assertEqual([item["id"] for item in payload["media_files"]], [visible.id])
+        self.assertEqual(payload["media_files"][0]["media_type"], MediaType.VIDEO)
+        self.assertEqual(payload["media_files"][0]["file_name"], "VISIBLE.MP4")
+        self.assertEqual(payload["media_files"][0]["download_url"], f"/api/v1/media-files/{visible.id}/download")
+
+    def test_list_flight_records_should_not_include_media_files_field(self):
+        self._grant_permission("flight_record.view_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record()
+        self._create_media_file(
+            flight_record=record,
+            mission=record.mission,
+            file_name="LIST-HIDDEN.MP4",
+        )
+
+        response = self.client.get("/api/v1/flight-records")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("media_files", response.data["data"]["list"][0])
 
     def test_retrieve_deleted_flight_record_should_return_resource_not_found(self):
         self._grant_permission("flight_record.view_flight_record")

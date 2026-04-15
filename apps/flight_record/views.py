@@ -24,10 +24,14 @@ from apps.api_v1.schema import (
 )
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
 from apps.flight_record.models import FlightRecord, FlightRecordStatus
-from apps.flight_record.serializers import FlightRecordReadSerializer, FlightRecordWriteSerializer
+from apps.flight_record.serializers import (
+    FlightRecordDetailSerializer,
+    FlightRecordSummarySerializer,
+    FlightRecordWriteSerializer,
+)
 
-FLIGHT_RECORD_LIST_RESPONSE = paginated_envelope_serializer("FlightRecordListResponse", FlightRecordReadSerializer)
-FLIGHT_RECORD_DETAIL_RESPONSE = object_envelope_serializer("FlightRecordDetailResponse", FlightRecordReadSerializer)
+FLIGHT_RECORD_LIST_RESPONSE = paginated_envelope_serializer("FlightRecordListResponse", FlightRecordSummarySerializer)
+FLIGHT_RECORD_DETAIL_RESPONSE = object_envelope_serializer("FlightRecordDetailResponse", FlightRecordDetailSerializer)
 FLIGHT_RECORD_DELETE_RESPONSE = object_envelope_serializer("FlightRecordDeleteResponse", BusinessDeleteResultSerializer)
 
 FLIGHT_RECORD_FILTER_PARAMETERS = [
@@ -87,7 +91,7 @@ def _reject_empty_update_request(request):
     ),
     retrieve=extend_schema(
         summary="读取飞行记录详情",
-        description="按飞行记录 ID 读取单条历史快照。飞行记录由 mission 在执行完成时自动生成。",
+        description="按飞行记录 ID 读取单条历史快照。飞行记录由 mission 在执行完成时自动生成，并返回当前可下载媒体列表。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
         responses={
             200: OpenApiResponse(response=FLIGHT_RECORD_DETAIL_RESPONSE, description="读取成功。"),
@@ -159,7 +163,9 @@ class FlightRecordViewSet(
     def get_serializer_class(self):
         if self.action == "update":
             return FlightRecordWriteSerializer
-        return FlightRecordReadSerializer
+        if self.action == "retrieve":
+            return FlightRecordDetailSerializer
+        return FlightRecordSummarySerializer
 
     def get_queryset(self):
         queryset = self.scope_queryset_to_tenant(super().get_queryset()).filter(is_deleted=False)
@@ -181,7 +187,7 @@ class FlightRecordViewSet(
         return queryset
 
     def _payload(self, record: FlightRecord) -> dict:
-        return dict(FlightRecordReadSerializer(record, context={"request": self.request}).data)
+        return dict(FlightRecordSummarySerializer(record, context={"request": self.request}).data)
 
     def update(self, request, *args, **kwargs):
         error_response = _reject_empty_update_request(request)

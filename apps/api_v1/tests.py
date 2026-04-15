@@ -307,6 +307,37 @@ class OpenApiDocsTests(TestCase):
         self.assertNotIn("/api/v1/flight-records/{id}/complete", schema["paths"])
         self.assertNotIn("/api/v1/flight-records/{id}/abort", schema["paths"])
 
+    def test_business_schema_should_expose_media_files_only_on_flight_record_detail(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        detail_response = self._operation(schema, path="/api/v1/flight-records/{id}", method="get")["responses"]["200"][
+            "content"
+        ]["application/json"]["schema"]
+        detail_data_schema = detail_response["properties"]["data"]
+        if "$ref" in detail_data_schema:
+            detail_data_schema = schema["components"]["schemas"][detail_data_schema["$ref"].split("/")[-1]]
+
+        self.assertIn("media_files", detail_data_schema["properties"])
+        media_items_ref = detail_data_schema["properties"]["media_files"]["items"]["$ref"].split("/")[-1]
+        media_items_schema = schema["components"]["schemas"][media_items_ref]
+        self.assertEqual(
+            set(media_items_schema["properties"].keys()),
+            {"id", "media_type", "file_name", "thumbnail_url", "captured_at", "download_url"},
+        )
+
+        list_response = self._operation(schema, path="/api/v1/flight-records", method="get")["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+        list_data_schema = list_response["properties"]["data"]
+        if "$ref" in list_data_schema:
+            list_data_schema = schema["components"]["schemas"][list_data_schema["$ref"].split("/")[-1]]
+        list_items_schema = list_data_schema["properties"].get("list") or list_data_schema["properties"]["results"]
+        list_item_ref = list_items_schema["items"]["$ref"].split("/")[-1]
+        list_item_schema = schema["components"]["schemas"][list_item_ref]
+        self.assertNotIn("media_files", list_item_schema["properties"])
+
     def test_business_schema_should_describe_current_business_error_responses(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)

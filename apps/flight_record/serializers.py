@@ -1,10 +1,13 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from rest_framework.reverse import reverse
 
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.flight_record.models import FlightRecord
+from apps.media_file.models import MediaFile
 
 
-class FlightRecordReadSerializer(serializers.ModelSerializer):
+class FlightRecordSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = FlightRecord
         fields = [
@@ -29,6 +32,38 @@ class FlightRecordReadSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = fields
+
+
+class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
+    download_url = serializers.SerializerMethodField(help_text="平台媒体下载接口。")
+
+    class Meta:
+        model = MediaFile
+        fields = [
+            "id",
+            "media_type",
+            "file_name",
+            "thumbnail_url",
+            "captured_at",
+            "download_url",
+        ]
+        read_only_fields = fields
+
+    def get_download_url(self, obj: MediaFile) -> str:
+        return reverse("media-file-download", kwargs={"pk": obj.id})
+
+
+class FlightRecordDetailSerializer(FlightRecordSummarySerializer):
+    media_files = serializers.SerializerMethodField()
+
+    class Meta(FlightRecordSummarySerializer.Meta):
+        fields = [*FlightRecordSummarySerializer.Meta.fields, "media_files"]
+        read_only_fields = fields
+
+    @extend_schema_field(FlightRecordMediaFileSerializer(many=True))
+    def get_media_files(self, obj: FlightRecord) -> list[dict]:
+        media_queryset = obj.media_files.filter(is_deleted=False, dji_index__isnull=False).order_by("-captured_at", "-id")
+        return FlightRecordMediaFileSerializer(media_queryset, many=True, context=self.context).data
 
 
 class FlightRecordWriteSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
