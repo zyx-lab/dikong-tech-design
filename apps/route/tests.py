@@ -87,7 +87,15 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             "apps.route.views.DjiGateway.upload_route",
             return_value={"dji_wayline_id": sentinel_wayline_id, "download_url": sentinel_download_url},
         ) as upload_mock:
-            response = self._upload_kmz_route(name="城市巡检 KMZ", kmz_bytes=kmz_bytes)
+            with patch(
+                "apps.route.views.DjiGateway.download_route_file",
+                return_value=GatewayResponse(
+                    status_code=200,
+                    headers={"Content-Type": self.KMZ_CONTENT_TYPE},
+                    data=b"verified-kmz",
+                ),
+            ):
+                response = self._upload_kmz_route(name="城市巡检 KMZ", kmz_bytes=kmz_bytes)
 
         self.assertEqual(response.status_code, 201, response.data)
         data = response.data["data"]
@@ -159,19 +167,27 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             "apps.route.views.DjiGateway.upload_route",
             return_value={"dji_wayline_id": new_wayline_id, "download_url": new_download_url},
         ) as upload_mock:
-            with self.captureOnCommitCallbacks(execute=False) as callbacks:
-                response = self.client.put(
-                    f"/api/v1/routes/{route.id}",
-                    {
-                        "name": "更新后 KMZ",
-                        "kmz_file": SimpleUploadedFile(
-                            "route-updated.kmz",
-                            update_kmz_bytes,
-                            content_type=self.KMZ_CONTENT_TYPE,
-                        ),
-                    },
-                    format="multipart",
-                )
+            with patch(
+                "apps.route.views.DjiGateway.download_route_file",
+                return_value=GatewayResponse(
+                    status_code=200,
+                    headers={"Content-Type": self.KMZ_CONTENT_TYPE},
+                    data=b"verified-kmz",
+                ),
+            ):
+                with self.captureOnCommitCallbacks(execute=False) as callbacks:
+                    response = self.client.put(
+                        f"/api/v1/routes/{route.id}",
+                        {
+                            "name": "更新后 KMZ",
+                            "kmz_file": SimpleUploadedFile(
+                                "route-updated.kmz",
+                                update_kmz_bytes,
+                                content_type=self.KMZ_CONTENT_TYPE,
+                            ),
+                        },
+                        format="multipart",
+                    )
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertTrue(response.data["data"]["is_published"])
@@ -416,6 +432,35 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             "Route should not remain when upstream upload fails",
         )
 
+    def test_create_should_rollback_when_uploaded_kmz_cannot_be_downloaded(self):
+        with patch(
+            "apps.route.views.DjiGateway.upload_route",
+            return_value={
+                "dji_wayline_id": "broken-create-wayline",
+                "download_url": "https://upstream.example/downloads/broken-create.kmz",
+            },
+        ):
+            with patch(
+                "apps.route.views.DjiGateway.download_route_file",
+                side_effect=[
+                    DjiGatewayUpstreamError("missing", status_code=404),
+                    DjiGatewayUpstreamError("missing", status_code=404),
+                ],
+            ):
+                with patch(
+                    "apps.route.views.DjiGateway.get_route_download_url",
+                    return_value="https://upstream.example/downloads/broken-create-refreshed.kmz",
+                ):
+                    with patch("apps.route.views.RouteViewSet._delete_upstream_wayline_if_exists") as delete_mock:
+                        response = self._upload_kmz_route(name="上传后下载失败 KMZ")
+
+        self.assertEqual(response.status_code, 502, response.data)
+        self.assertEqual(response.data["code"], "E0001")
+        self.assertEqual(response.data["msg"], "上传后航线文件校验失败")
+        self.assertFalse(Route.objects.filter(tenant=self.tenant, name="上传后下载失败 KMZ").exists())
+        self.assertFalse(TenantRouteIndex.objects.filter(dji_wayline_id="broken-create-wayline").exists())
+        delete_mock.assert_called_once()
+
     def test_create_should_cleanup_upstream_and_not_persist_when_log_action_fails(self):
         kmz_bytes = self._build_test_kmz()
 
@@ -456,7 +501,15 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             return ("mock-wayline-id", "https://upstream/download/create.kmz")
 
         with patch("apps.route.views._upload_route_to_upstream", side_effect=_mock_upload):
-            response = self._upload_kmz_route(name="事务外创建 KMZ")
+            with patch(
+                "apps.route.views.DjiGateway.download_route_file",
+                return_value=GatewayResponse(
+                    status_code=200,
+                    headers={"Content-Type": self.KMZ_CONTENT_TYPE},
+                    data=b"verified-kmz",
+                ),
+            ):
+                response = self._upload_kmz_route(name="事务外创建 KMZ")
 
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(seen_atomic_state["atomic_depth"], baseline_atomic_depth)
@@ -498,6 +551,59 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(route_index.download_url, old_download_url)
         self.assertTrue(route_index.is_published)
         self.assertIn(old_wayline["wayline_id"], mock_dji_state.waylines)
+
+    def test_put_should_keep_existing_route_when_new_kmz_cannot_be_downloaded(self):
+        route = Route.objects.create(tenant=self.tenant, name="旧航线")
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id="stable-wayline",
+            download_url="https://upstream.example/downloads/stable.kmz",
+            is_published=True,
+        )
+
+        with patch(
+            "apps.route.views.DjiGateway.upload_route",
+            return_value={
+                "dji_wayline_id": "broken-update-wayline",
+                "download_url": "https://upstream.example/downloads/broken-update.kmz",
+            },
+        ):
+            with patch(
+                "apps.route.views.DjiGateway.download_route_file",
+                side_effect=[
+                    DjiGatewayUpstreamError("missing", status_code=404),
+                    DjiGatewayUpstreamError("missing", status_code=404),
+                ],
+            ):
+                with patch(
+                    "apps.route.views.DjiGateway.get_route_download_url",
+                    return_value="https://upstream.example/downloads/broken-update-refreshed.kmz",
+                ):
+                    with patch("apps.route.views.RouteViewSet._delete_upstream_wayline_if_exists") as delete_mock:
+                        response = self.client.put(
+                            f"/api/v1/routes/{route.id}",
+                            {
+                                "name": "新航线",
+                                "kmz_file": SimpleUploadedFile(
+                                    "broken-update.kmz",
+                                    self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES),
+                                    content_type=self.KMZ_CONTENT_TYPE,
+                                ),
+                            },
+                            format="multipart",
+                        )
+
+        self.assertEqual(response.status_code, 502, response.data)
+        self.assertEqual(response.data["code"], "E0001")
+        self.assertEqual(response.data["msg"], "上传后航线文件校验失败")
+        route.refresh_from_db()
+        self.assertEqual(route.name, "旧航线")
+        route_index = TenantRouteIndex.objects.get(route=route)
+        self.assertEqual(route_index.dji_wayline_id, "stable-wayline")
+        self.assertEqual(route_index.download_url, "https://upstream.example/downloads/stable.kmz")
+        self.assertTrue(route_index.is_published)
+        delete_mock.assert_called_once()
 
     def test_put_should_delete_new_upstream_wayline_when_index_persist_fails(self):
         route = Route.objects.create(tenant=self.tenant, name="局部失败 KMZ")
@@ -651,18 +757,26 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
             return ("mock-wayline-id", "https://upstream/download/update.kmz")
 
         with patch("apps.route.views._upload_route_to_upstream", side_effect=_mock_upload):
-            response = self.client.put(
-                f"/api/v1/routes/{route.id}",
-                {
-                    "name": "事务外更新 KMZ",
-                    "kmz_file": SimpleUploadedFile(
-                        "route-updated.kmz",
-                        self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES),
-                        content_type=self.KMZ_CONTENT_TYPE,
-                    ),
-                },
-                format="multipart",
-            )
+            with patch(
+                "apps.route.views.DjiGateway.download_route_file",
+                return_value=GatewayResponse(
+                    status_code=200,
+                    headers={"Content-Type": self.KMZ_CONTENT_TYPE},
+                    data=b"verified-kmz",
+                ),
+            ):
+                response = self.client.put(
+                    f"/api/v1/routes/{route.id}",
+                    {
+                        "name": "事务外更新 KMZ",
+                        "kmz_file": SimpleUploadedFile(
+                            "route-updated.kmz",
+                            self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES),
+                            content_type=self.KMZ_CONTENT_TYPE,
+                        ),
+                    },
+                    format="multipart",
+                )
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(seen_atomic_state["atomic_depth"], baseline_atomic_depth)

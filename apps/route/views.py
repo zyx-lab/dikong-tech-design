@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
+from apps.access.exceptions import StandardizedApiException
 from apps.access.services import log_action
 from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.api_v1.schema import (
@@ -68,6 +69,22 @@ def _route_not_found_response():
     return Response(
         standard_error_payload(StandardCode.NOT_FOUND, "资源不存在", None),
         status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+def _route_upload_verification_exception(*, detail: str, dji_wayline_id: str, download_url: str, upstream_status: int | None = None):
+    data = {
+        "detail": detail,
+        "dji_wayline_id": dji_wayline_id,
+        "download_url": download_url,
+    }
+    if upstream_status is not None:
+        data["upstream_status"] = upstream_status
+    return StandardizedApiException(
+        msg="上传后航线文件校验失败",
+        data=data,
+        standard_code=StandardCode.INTERNAL_ERROR,
+        status_code=status.HTTP_502_BAD_GATEWAY,
     )
 
 
@@ -252,6 +269,49 @@ class RouteViewSet(
         except Exception:
             logger.exception("route upload cleanup failed after rollback", extra={"wayline_id": wayline_id})
 
+    def _verify_uploaded_route_file(self, *, gateway: DjiGateway, dji_wayline_id: str, download_url: str) -> str:
+        current_download_url = str(download_url or "").strip()
+        if current_download_url:
+            try:
+                gateway.download_route_file(current_download_url)
+                return current_download_url
+            except DjiGatewayUpstreamError as exc:
+                if exc.status_code != status.HTTP_404_NOT_FOUND:
+                    raise _route_upload_verification_exception(
+                        detail="上传成功，但航线文件下载校验失败",
+                        dji_wayline_id=dji_wayline_id,
+                        download_url=current_download_url,
+                        upstream_status=exc.status_code,
+                    ) from exc
+
+        try:
+            refreshed_download_url = str(gateway.get_route_download_url(dji_wayline_id) or "").strip()
+        except DjiGatewayUpstreamError as exc:
+            raise _route_upload_verification_exception(
+                detail="上传成功，但无法获取最新航线下载地址",
+                dji_wayline_id=dji_wayline_id,
+                download_url=current_download_url,
+                upstream_status=exc.status_code,
+            ) from exc
+
+        if not refreshed_download_url:
+            raise _route_upload_verification_exception(
+                detail="上传成功，但未获取到可用航线下载地址",
+                dji_wayline_id=dji_wayline_id,
+                download_url=current_download_url,
+            )
+
+        try:
+            gateway.download_route_file(refreshed_download_url)
+        except DjiGatewayUpstreamError as exc:
+            raise _route_upload_verification_exception(
+                detail="上传成功，但航线文件对象不存在或不可下载",
+                dji_wayline_id=dji_wayline_id,
+                download_url=refreshed_download_url,
+                upstream_status=exc.status_code,
+            ) from exc
+        return refreshed_download_url
+
     @transaction.atomic
     def _finalize_create(self, *, route: Route, tenant, dji_wayline_id: str, download_url: str):
         _sync_route_index(
@@ -282,6 +342,11 @@ class RouteViewSet(
             kmz_file=kmz_file,
         )
         cleanup_state["wayline_id"] = dji_wayline_id
+        download_url = self._verify_uploaded_route_file(
+            gateway=gateway,
+            dji_wayline_id=dji_wayline_id,
+            download_url=download_url,
+        )
 
         route = self._finalize_create(
             route=route,
@@ -363,6 +428,11 @@ class RouteViewSet(
             kmz_file=kmz_file,
         )
         cleanup_state["wayline_id"] = new_wayline_id
+        new_download_url = self._verify_uploaded_route_file(
+            gateway=gateway,
+            dji_wayline_id=new_wayline_id,
+            download_url=new_download_url,
+        )
 
         route = self._finalize_update(
             serializer=serializer,
