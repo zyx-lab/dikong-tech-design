@@ -228,7 +228,7 @@ class MissionApiTests(TestCase):
         self.assertIsNone(mission.finished_at)
         self.assertFalse(FlightRecord.objects.filter(mission=mission).exists())
 
-    def test_advance_should_move_running_to_completed_and_create_flight_record_snapshot(self):
+    def test_advance_should_complete_mission_and_create_flight_record_snapshot(self):
         started_at = timezone.now() - timedelta(minutes=10)
         mission = _persist_mission_fixture(
             tenant=self.tenant,
@@ -286,7 +286,7 @@ class MissionApiTests(TestCase):
         self.assertEqual(record.end_time, mission.finished_at)
         self.assertEqual(record.status, FlightRecordStatus.COMPLETED)
         self.assertEqual(record.photo_count, 0)
-        self.assertEqual(record.video_count, 1)
+        self.assertEqual(record.video_count, 0)
         self.assertEqual(
             record.flight_duration,
             int((mission.finished_at - mission.started_at).total_seconds()),

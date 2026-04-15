@@ -123,13 +123,19 @@ def _flight_record_for_mission(*, mission: Mission | None):
 def _sync_video_count_for_flight_record(*, flight_record: FlightRecord | None):
     if flight_record is None:
         return
-    flight_record.video_count = MediaFile.objects.filter(
-        flight_record=flight_record,
+    locked_flight_record = FlightRecord.objects.select_for_update().filter(
+        pk=flight_record.pk,
+        is_deleted=False,
+    ).first()
+    if locked_flight_record is None:
+        return
+    locked_flight_record.video_count = MediaFile.objects.filter(
+        flight_record=locked_flight_record,
         is_deleted=False,
         media_type=MediaType.VIDEO,
         dji_index__isnull=False,
     ).count()
-    flight_record.save(update_fields=["video_count", "updated_at"])
+    locked_flight_record.save(update_fields=["video_count", "updated_at"])
 
 
 def sync_device_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
@@ -222,8 +228,6 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
             device_sn=device_sn,
             captured_at=media_fields["captured_at"],
         )
-        resolved_flight_record = _flight_record_for_mission(mission=matched_mission)
-
         with transaction.atomic():
             media_index = (
                 TenantMediaIndex.objects.select_related("media_file")
@@ -231,6 +235,7 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
                 .first()
             )
             if media_index is None:
+                resolved_flight_record = _flight_record_for_mission(mission=matched_mission)
                 media_file = MediaFile.objects.create(
                     **media_fields,
                     mission=matched_mission,
@@ -250,15 +255,23 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
                 summary.created_count += 1
             else:
                 media_file = media_index.media_file
-                preserved_mission = media_index.mission or media_file.mission
+                previous_flight_record = media_file.flight_record
+                preserved_mission = (
+                    media_index.mission
+                    or media_file.mission
+                    or (previous_flight_record.mission if previous_flight_record is not None else None)
+                )
                 resolved_mission = preserved_mission or matched_mission
+                resolved_flight_record = previous_flight_record or _flight_record_for_mission(mission=resolved_mission)
                 for field, value in media_fields.items():
                     setattr(media_file, field, value)
                 media_file.mission = resolved_mission
+                media_file.flight_record = resolved_flight_record
                 media_file.save(
                     update_fields=[
                         "tenant",
                         "mission",
+                        "flight_record",
                         "device_sn",
                         "media_type",
                         "file_name",
@@ -278,6 +291,9 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None) -> dict[str, int]:
                 media_index.save(
                     update_fields=["mission", "device_sn", "sync_status", "last_sync_at", "error_msg", "updated_at"]
                 )
+                _sync_video_count_for_flight_record(flight_record=previous_flight_record)
+                if resolved_flight_record != previous_flight_record:
+                    _sync_video_count_for_flight_record(flight_record=resolved_flight_record)
                 summary.updated_count += 1
 
         summary.synced_count += 1

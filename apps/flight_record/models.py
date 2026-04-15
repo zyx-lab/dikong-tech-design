@@ -113,7 +113,7 @@ class FlightRecord(models.Model):
             "end_time": mission.finished_at,
             "flight_duration": flight_duration,
             "photo_count": 0,
-            "video_count": MediaFile.objects.filter(mission=mission, is_deleted=False).count(),
+            "video_count": 0,
             "status": FlightRecordStatus.COMPLETED,
         }
 

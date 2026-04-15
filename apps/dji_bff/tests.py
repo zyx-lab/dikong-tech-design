@@ -27,7 +27,7 @@ from apps.dji_mock.state import mock_dji_state
 from apps.dji_mock.test_support import MockDjiUpstreamTestMixin
 from apps.drone.models import Drone, DroneStatus
 from apps.flight_record.models import FlightRecord
-from apps.media_file.models import MediaFile
+from apps.media_file.models import MediaFile, MediaType
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 
@@ -660,6 +660,148 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(media_index.media_file.flight_record_id, flight_record.id)
         flight_record.refresh_from_db()
         self.assertEqual(flight_record.video_count, 1)
+
+    def test_sync_media_indexes_should_backfill_flight_record_for_existing_mission_bound_media(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="MEDIA-FLIGHT-RECORD-BACKFILL-DRONE",
+            name="回填飞行记录无人机",
+            model="M30",
+            device_sn="MEDIA-FLIGHT-RECORD-BACKFILL-SN-001",
+        )
+        route = Route.objects.create(tenant=self.tenant, name="回填飞行记录航线")
+        captured_at = timezone.now() - timedelta(minutes=1)
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="回填飞行记录任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.COMPLETED,
+            started_at=captured_at - timedelta(minutes=2),
+            finished_at=captured_at + timedelta(minutes=2),
+        )
+        flight_record = FlightRecord.create_from_completed_mission(mission=mission)
+        media_file = MediaFile.objects.create(
+            tenant=self.tenant,
+            mission=mission,
+            flight_record=None,
+            device_sn=drone.device_sn,
+            media_type=MediaType.VIDEO,
+            file_name="MEDIA_FLIGHT_RECORD_BACKFILL.MP4",
+            file_url="dji://media-flight-record-backfill-file",
+            captured_at=captured_at,
+        )
+        TenantMediaIndex.objects.create(
+            tenant=self.tenant,
+            media_file=media_file,
+            dji_file_id="media-flight-record-backfill-file",
+            device_sn=drone.device_sn,
+            mission=mission,
+            sync_status=SyncStatus.SYNCED,
+            last_sync_at=captured_at,
+        )
+        gateway = SimpleNamespace(
+            list_media_files=lambda: [
+                {
+                    "file_id": "media-flight-record-backfill-file",
+                    "file_name": "MEDIA_FLIGHT_RECORD_BACKFILL.MP4",
+                    "drone": drone.device_sn,
+                    "captured_at": captured_at.isoformat(),
+                }
+            ]
+        )
+
+        summary = sync_media_indexes(gateway=gateway)
+
+        self.assertEqual(summary["updated_count"], 1)
+        media_file.refresh_from_db()
+        self.assertEqual(media_file.flight_record_id, flight_record.id)
+        flight_record.refresh_from_db()
+        self.assertEqual(flight_record.video_count, 1)
+
+    def test_sync_media_indexes_should_preserve_existing_flight_record_binding_on_resync(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="MEDIA-FLIGHT-RECORD-PRESERVE-DRONE",
+            name="保留飞行记录无人机",
+            model="M30",
+            device_sn="MEDIA-FLIGHT-RECORD-PRESERVE-SN-001",
+        )
+        route = Route.objects.create(tenant=self.tenant, name="保留飞行记录航线")
+        preserved_captured_at = timezone.now() - timedelta(minutes=10)
+        preserved_mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="保留飞行记录任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.COMPLETED,
+            started_at=preserved_captured_at - timedelta(minutes=2),
+            finished_at=preserved_captured_at + timedelta(minutes=2),
+        )
+        preserved_flight_record = FlightRecord.create_from_completed_mission(mission=preserved_mission)
+        media_file = MediaFile.objects.create(
+            tenant=self.tenant,
+            mission=None,
+            flight_record=preserved_flight_record,
+            device_sn=drone.device_sn,
+            media_type=MediaType.VIDEO,
+            file_name="MEDIA_FLIGHT_RECORD_PRESERVE.MP4",
+            file_url="dji://media-flight-record-preserve-file",
+            captured_at=preserved_captured_at,
+        )
+        TenantMediaIndex.objects.create(
+            tenant=self.tenant,
+            media_file=media_file,
+            dji_file_id="media-flight-record-preserve-file",
+            device_sn=drone.device_sn,
+            mission=None,
+            sync_status=SyncStatus.SYNCED,
+            last_sync_at=preserved_captured_at,
+        )
+        matched_captured_at = timezone.now() - timedelta(minutes=1)
+        Mission.objects.create(
+            tenant=self.tenant,
+            name="新的自动匹配任务",
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=self.pilot_member,
+            pilot_name="飞手",
+            status=MissionStatus.COMPLETED,
+            started_at=matched_captured_at - timedelta(minutes=2),
+            finished_at=matched_captured_at + timedelta(minutes=2),
+        )
+        gateway = SimpleNamespace(
+            list_media_files=lambda: [
+                {
+                    "file_id": "media-flight-record-preserve-file",
+                    "file_name": "MEDIA_FLIGHT_RECORD_PRESERVE.MP4",
+                    "drone": drone.device_sn,
+                    "captured_at": matched_captured_at.isoformat(),
+                }
+            ]
+        )
+
+        summary = sync_media_indexes(gateway=gateway)
+
+        self.assertEqual(summary["updated_count"], 1)
+        media_file.refresh_from_db()
+        self.assertEqual(media_file.flight_record_id, preserved_flight_record.id)
+        self.assertEqual(media_file.mission_id, preserved_mission.id)
+        preserved_flight_record.refresh_from_db()
+        self.assertEqual(preserved_flight_record.video_count, 1)
 
     def test_sync_media_indexes_should_leave_flight_record_empty_when_mission_has_no_record(self):
         drone = Drone.objects.create(
