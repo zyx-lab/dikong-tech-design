@@ -25,6 +25,7 @@ from apps.api_v1.schema import (
     paginated_envelope_serializer,
 )
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
+from apps.flight_record.models import FlightRecord
 from apps.mission.models import Mission, MissionStatus
 from apps.mission.serializers import MissionCreateSerializer, MissionReadSerializer, MissionUpdateSerializer
 
@@ -299,6 +300,7 @@ class MissionViewSet(
         description=(
             "推进任务状态：`待执行 -> 执行中 -> 执行完成`。调用成功后返回完整 mission 快照，"
             "可直接读取 `data.status`、`data.started_at`、`data.finished_at` 获取最新任务状态。"
+            "`待执行 -> 执行中` 仅更新 mission；`执行中 -> 执行完成` 时会自动生成一条 flight record 历史快照。"
             "`status=3（飞行中）` 为实时派生状态，不写入数据库；仅当任务已处于执行中且对应无人机被实时判定为在飞时返回。"
         ),
         parameters=[TENANT_CODE_HEADER_PARAMETER],
@@ -343,6 +345,7 @@ class MissionViewSet(
             mission.status = MissionStatus.COMPLETED
             mission.finished_at = timezone.now()
             mission.save(update_fields=["status", "finished_at", "updated_at"])
+            FlightRecord.create_from_completed_mission(mission=mission)
         else:
             return _mission_state_conflict_response(mission=mission, message="当前任务状态不允许继续推进")
 

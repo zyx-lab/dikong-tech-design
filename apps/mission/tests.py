@@ -16,6 +16,8 @@ from apps.access.test_support import (
     grant_role_permissions,
 )
 from apps.drone.models import Drone
+from apps.flight_record.models import FlightRecord, FlightRecordStatus
+from apps.media_file.models import MediaFile, MediaType
 from apps.mission.models import Mission
 from apps.route.models import Route
 
@@ -224,8 +226,9 @@ class MissionApiTests(TestCase):
         self.assertEqual(mission.status, 1)
         self.assertIsNotNone(mission.started_at)
         self.assertIsNone(mission.finished_at)
+        self.assertFalse(FlightRecord.objects.filter(mission=mission).exists())
 
-    def test_advance_should_move_running_to_completed_and_write_finished_at(self):
+    def test_advance_should_move_running_to_completed_and_create_flight_record_snapshot(self):
         started_at = timezone.now() - timedelta(minutes=10)
         mission = _persist_mission_fixture(
             tenant=self.tenant,
@@ -240,6 +243,26 @@ class MissionApiTests(TestCase):
             status=1,
             started_at=started_at,
         )
+        MediaFile.objects.create(
+            tenant=self.tenant,
+            mission=mission,
+            device_sn=self.drone.device_sn,
+            media_type=MediaType.VIDEO,
+            file_name="mission-video.mp4",
+            file_url="https://example.com/mission-video.mp4",
+            captured_at=started_at + timedelta(minutes=2),
+        )
+        MediaFile.objects.create(
+            tenant=self.tenant,
+            mission=mission,
+            device_sn=self.drone.device_sn,
+            media_type=MediaType.PHOTO,
+            file_name="mission-photo.jpg",
+            file_url="https://example.com/mission-photo.jpg",
+            captured_at=started_at + timedelta(minutes=3),
+            is_deleted=True,
+            deleted_at=started_at + timedelta(minutes=4),
+        )
 
         response = self.client.post(f"/missions/{mission.id}/advance")
 
@@ -248,6 +271,26 @@ class MissionApiTests(TestCase):
         self.assertEqual(mission.status, 2)
         self.assertIsNotNone(mission.started_at)
         self.assertIsNotNone(mission.finished_at)
+        record = FlightRecord.objects.get(mission=mission)
+        self.assertEqual(record.tenant_id, self.tenant.id)
+        self.assertEqual(record.flight_no, f"FR-{mission.id}")
+        self.assertEqual(record.device_sn, self.drone.device_sn)
+        self.assertEqual(record.mission_name, mission.name)
+        self.assertEqual(record.route_name, mission.route_name)
+        self.assertEqual(record.airport_name, "")
+        self.assertEqual(record.drone_id, mission.drone_id)
+        self.assertEqual(record.drone_name, mission.drone_name)
+        self.assertEqual(record.pilot_id, mission.pilot_id)
+        self.assertEqual(record.pilot_name, mission.pilot_name)
+        self.assertEqual(record.start_time, mission.started_at)
+        self.assertEqual(record.end_time, mission.finished_at)
+        self.assertEqual(record.status, FlightRecordStatus.COMPLETED)
+        self.assertEqual(record.photo_count, 0)
+        self.assertEqual(record.video_count, 1)
+        self.assertEqual(
+            record.flight_duration,
+            int((mission.finished_at - mission.started_at).total_seconds()),
+        )
 
     def test_retrieve_should_return_flying_status_when_running_mission_drone_is_airborne(self):
         from apps.mission.flight_state import flight_state_registry

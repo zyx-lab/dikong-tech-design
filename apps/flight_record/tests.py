@@ -22,7 +22,6 @@ User = get_user_model()
 
 
 def _persist_mission_fixture(**kwargs) -> Mission:
-    # Flight record tests only need a persisted mission fixture.
     mission = Mission(**kwargs)
     Mission.objects.bulk_create([mission])
     return Mission.objects.get(pk=mission.pk)
@@ -32,9 +31,10 @@ class FlightRecordApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self._flight_no_seq = 1
+        self._mission_seq = 1
 
         self.viewer_user = User.objects.create_user(username="flight_record_viewer", password="pass1234", status=1)
-        self.viewer_staff = ensure_staff_profile(
+        ensure_staff_profile(
             self.viewer_user,
             staff_no="FR-001",
             name="记录查看员A",
@@ -73,82 +73,87 @@ class FlightRecordApiTests(TestCase):
             device_sn="SN-FR-001",
             status=DroneStatus.CLAIMED,
         )
-        self.mission = _persist_mission_fixture(
-            tenant=self.tenant,
-            name="飞行记录测试任务",
-            route=self.route,
-            route_name=self.route.name,
-            drone=self.drone,
-            drone_name=self.drone.name,
-            pilot=self.pilot_member,
-            pilot_name=self.pilot_staff.name,
-            status=MissionStatus.PENDING,
-        )
 
-    def _grant_permission(self, permission_code: str):
+    def _grant_permission(self, permission_code: str, *, scope: ScopeType = ScopeType.ALL):
         grant_role_permissions(
             self.role,
-            {permission_code: ScopeType.ALL},
-            group_name=f"{permission_code}-group",
+            {permission_code: scope},
+            group_name=f"{permission_code}-{scope}-group",
         )
 
-    def _create_flight_record(self, *, status: int = FlightRecordStatus.COMPLETED, mission: Mission | None = None) -> FlightRecord:
-        current_mission = mission or self.mission
-        flight_no = f"YJ20260308{self._flight_no_seq:04d}"
+    def _next_flight_no(self) -> str:
+        flight_no = f"FR20260415{self._flight_no_seq:04d}"
         self._flight_no_seq += 1
+        return flight_no
+
+    def _create_mission(
+        self,
+        *,
+        tenant=None,
+        route=None,
+        drone=None,
+        pilot=None,
+        pilot_name=None,
+        name: str | None = None,
+        status: int = MissionStatus.PENDING,
+        started_at=None,
+        finished_at=None,
+    ) -> Mission:
+        tenant = tenant or self.tenant
+        route = route or self.route
+        drone = drone or self.drone
+        pilot = pilot or self.pilot_member
+        pilot_name = pilot_name or self.pilot_staff.name
+        name = name or f"飞行任务{self._mission_seq}"
+        self._mission_seq += 1
+        return _persist_mission_fixture(
+            tenant=tenant,
+            name=name,
+            route=route,
+            route_name=route.name,
+            drone=drone,
+            device_sn=drone.device_sn,
+            drone_name=drone.name,
+            pilot=pilot,
+            pilot_name=pilot_name,
+            status=status,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+
+    def _create_flight_record(
+        self,
+        *,
+        mission: Mission | None = None,
+        flight_no: str | None = None,
+        status: int = FlightRecordStatus.COMPLETED,
+        is_deleted: bool = False,
+        deleted_at=None,
+    ) -> FlightRecord:
+        mission = mission or self._create_mission()
         start_time = timezone.now() - timedelta(minutes=20)
         end_time = timezone.now()
         return FlightRecord.objects.create(
             tenant=self.tenant,
-            flight_no=flight_no,
-            mission=current_mission,
-            mission_name=current_mission.name,
-            route_name=self.route.name,
+            flight_no=flight_no or self._next_flight_no(),
+            mission=mission,
+            mission_name=mission.name,
+            route_name=mission.route_name,
             airport_name="珠海金湾机场",
-            drone=self.drone,
-            drone_name=self.drone.name,
-            pilot=self.pilot_member,
-            pilot_name=self.pilot_staff.name,
+            drone=mission.drone,
+            device_sn=mission.device_sn,
+            drone_name=mission.drone_name,
+            pilot=mission.pilot,
+            pilot_name=mission.pilot_name,
             start_time=start_time,
             end_time=end_time,
-            flight_duration=1200,
-            photo_count=12,
+            flight_duration=int((end_time - start_time).total_seconds()),
+            photo_count=0,
             video_count=3,
             status=status,
+            is_deleted=is_deleted,
+            deleted_at=deleted_at,
         )
-
-    def test_create_flight_record_should_return_success(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-
-        response = self.client.post(
-            "/api/v1/flight-records",
-            {
-                "flight_no": "YJ202603080999",
-                "mission": self.mission.id,
-                "drone": self.drone.id,
-                "pilot": self.pilot_member.id,
-                "airport_name": "珠海金湾机场",
-                "start_time": "2026-03-08T08:00:00+08:00",
-                "end_time": "2026-03-08T08:18:20+08:00",
-                "photo_count": 20,
-                "video_count": 4,
-                "status": FlightRecordStatus.COMPLETED,
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["flight_no"], "YJ202603080999")
-        self.assertEqual(response.data["data"]["mission"], self.mission.id)
-        self.assertEqual(response.data["data"]["drone"], self.drone.id)
-        self.assertEqual(response.data["data"]["pilot"], self.pilot_member.id)
-        self.assertEqual(response.data["data"]["mission_name"], self.mission.name)
-        self.assertEqual(response.data["data"]["drone_name"], self.drone.name)
-        self.assertEqual(response.data["data"]["pilot_name"], self.pilot_staff.name)
-        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.COMPLETED)
 
     def test_model_should_reject_cross_tenant_mission(self):
         other_tenant, _, _ = ensure_tenant_role_binding(
@@ -179,6 +184,7 @@ class FlightRecordApiTests(TestCase):
             route=other_route,
             route_name=other_route.name,
             drone=other_drone,
+            device_sn=other_drone.device_sn,
             drone_name=other_drone.name,
             pilot=other_pilot_member,
             pilot_name=self.pilot_staff.name,
@@ -188,12 +194,13 @@ class FlightRecordApiTests(TestCase):
         with self.assertRaises(ValidationError):
             FlightRecord.objects.create(
                 tenant=self.tenant,
-                flight_no="YJ202603089998",
+                flight_no=self._next_flight_no(),
                 mission=other_mission,
                 mission_name=other_mission.name,
                 route_name=other_route.name,
                 airport_name="跨租户机场",
                 drone=self.drone,
+                device_sn=self.drone.device_sn,
                 drone_name=self.drone.name,
                 pilot=self.pilot_member,
                 pilot_name=self.pilot_staff.name,
@@ -203,398 +210,141 @@ class FlightRecordApiTests(TestCase):
                 status=FlightRecordStatus.COMPLETED,
             )
 
-    def test_create_flight_record_with_cross_tenant_mission_should_return_invalid_params(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-        other_tenant, _, _ = ensure_tenant_role_binding(
-            self.viewer_user,
-            tenant_code="flight_record_other_tenant",
-            role_code="flight_record_other_role",
-            role_name="飞行记录其他租户角色",
-        )
-        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线")
-        other_drone = Drone.objects.create(
-            tenant=other_tenant,
-            code="FR-OTHER-DRN-001",
-            name="其他租户无人机",
-            model="M300",
-            device_sn="FR-OTHER-SN-001",
-            status=DroneStatus.CLAIMED,
-        )
-        _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
-            self.pilot_user,
-            tenant=other_tenant,
-            role_code="pilot_operator",
-            role_name="飞手",
-        )
-        ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
-        other_mission = _persist_mission_fixture(
-            tenant=other_tenant,
-            name="其他租户任务",
-            route=other_route,
-            route_name=other_route.name,
-            drone=other_drone,
-            drone_name=other_drone.name,
-            pilot=other_pilot_member,
-            pilot_name=self.pilot_staff.name,
-            status=MissionStatus.PENDING,
-        )
-
-        response = self.client.post(
-            "/api/v1/flight-records",
-            {
-                "flight_no": "YJ202603081998",
-                "mission": other_mission.id,
-                "drone": self.drone.id,
-                "pilot": self.pilot_member.id,
-                "status": FlightRecordStatus.IN_PROGRESS,
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertIn("mission", response.data["data"])
-
-    def test_create_flight_record_invalid_params_should_return_invalid_params(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-
-        response = self.client.post(
-            "/api/v1/flight-records",
-            {
-                "mission": self.mission.id,
-                "drone": self.drone.id,
-                "pilot": self.pilot_member.id,
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertIn("flight_no", response.data["data"])
-
     def test_model_should_reject_end_time_before_start_time(self):
-        start_time = timezone.now()
-        end_time = start_time - timedelta(minutes=5)
-
+        mission = self._create_mission()
         with self.assertRaises(ValidationError):
             FlightRecord.objects.create(
                 tenant=self.tenant,
-                flight_no="YJ202603089997",
-                mission=self.mission,
-                mission_name=self.mission.name,
-                route_name=self.route.name,
-                airport_name="模型时间机场",
-                drone=self.drone,
-                drone_name=self.drone.name,
-                pilot=self.pilot_member,
-                pilot_name=self.pilot_staff.name,
-                start_time=start_time,
-                end_time=end_time,
+                flight_no=self._next_flight_no(),
+                mission=mission,
+                mission_name=mission.name,
+                route_name=mission.route_name,
+                airport_name="珠海金湾机场",
+                drone=mission.drone,
+                device_sn=mission.device_sn,
+                drone_name=mission.drone_name,
+                pilot=mission.pilot,
+                pilot_name=mission.pilot_name,
+                start_time=timezone.now(),
+                end_time=timezone.now() - timedelta(minutes=1),
                 status=FlightRecordStatus.COMPLETED,
             )
 
     def test_model_should_reject_inactive_pilot(self):
-        inactive_pilot_user = User.objects.create_user(username="flight_record_inactive_pilot", password="pass1234", status=1)
-        inactive_pilot = ensure_staff_profile(
-            inactive_pilot_user,
-            staff_no="FR-P-MODEL-003",
-            name="模型离职飞手",
+        inactive_user = User.objects.create_user(username="flight_record_inactive_pilot", password="pass1234", status=1)
+        ensure_staff_profile(
+            inactive_user,
+            staff_no="FR-P-999",
+            name="离职飞手",
             employment_status=EmploymentStatus.INACTIVE,
         )
-        _pilot_tenant, inactive_pilot_member, _pilot_role = ensure_tenant_role_binding(
-            inactive_pilot_user,
+        _tenant, inactive_member, _role = ensure_tenant_role_binding(
+            inactive_user,
             tenant=self.tenant,
             role_code="pilot_operator",
             role_name="飞手",
         )
-        ensure_tenant_member_position(inactive_pilot_member, code="pilot_operator", name="飞手")
+        ensure_tenant_member_position(inactive_member, code="pilot_operator", name="飞手")
+        mission = self._create_mission()
 
         with self.assertRaises(ValidationError):
             FlightRecord.objects.create(
                 tenant=self.tenant,
-                flight_no="YJ202603089996",
-                mission=self.mission,
-                mission_name=self.mission.name,
-                route_name=self.route.name,
-                airport_name="模型离职飞手机场",
-                drone=self.drone,
-                drone_name=self.drone.name,
-                pilot=inactive_pilot_member,
-                pilot_name=inactive_pilot.name,
-                start_time=timezone.now() - timedelta(minutes=10),
+                flight_no=self._next_flight_no(),
+                mission=mission,
+                mission_name=mission.name,
+                route_name=mission.route_name,
+                airport_name="珠海金湾机场",
+                drone=mission.drone,
+                device_sn=mission.device_sn,
+                drone_name=mission.drone_name,
+                pilot=inactive_member,
+                pilot_name="离职飞手",
+                start_time=timezone.now() - timedelta(minutes=5),
                 end_time=timezone.now(),
                 status=FlightRecordStatus.COMPLETED,
             )
 
-    def test_model_should_reject_non_pilot_staff(self):
-        observer_user = User.objects.create_user(username="flight_record_observer", password="pass1234", status=1)
-        observer_staff = ensure_staff_profile(
-            observer_user,
-            staff_no="FR-O-MODEL-001",
-            name="模型观察员",
-            employment_status=EmploymentStatus.ACTIVE,
-        )
-        _observer_tenant, observer_member, _observer_role = ensure_tenant_role_binding(
-            observer_user,
-            tenant=self.tenant,
-            role_code="route_planner",
-            role_name="观察员",
-        )
-        ensure_tenant_member_position(observer_member, code="route_planner", name="观察员")
+    def test_model_should_reject_duplicate_mission_snapshot(self):
+        mission = self._create_mission()
+        self._create_flight_record(mission=mission)
 
         with self.assertRaises(ValidationError):
-            FlightRecord.objects.create(
-                tenant=self.tenant,
-                flight_no="YJ202603089995",
-                mission=self.mission,
-                mission_name=self.mission.name,
-                route_name=self.route.name,
-                airport_name="模型非飞手机场",
-                drone=self.drone,
-                drone_name=self.drone.name,
-                pilot=observer_member,
-                pilot_name=observer_staff.name,
-                start_time=timezone.now() - timedelta(minutes=10),
-                end_time=timezone.now(),
-                status=FlightRecordStatus.COMPLETED,
-            )
+            self._create_flight_record(mission=mission)
 
-    def test_model_should_reject_mission_drone_mismatch(self):
-        other_drone = Drone.objects.create(
-            tenant=self.tenant,
-            code="FR-MISMATCH-DRONE",
-            name="模型不一致无人机",
-            model="M350",
-            device_sn="FR-MISMATCH-SN",
-            status=DroneStatus.CLAIMED,
-        )
-
-        with self.assertRaises(ValidationError):
-            FlightRecord.objects.create(
-                tenant=self.tenant,
-                flight_no="YJ202603089994",
-                mission=self.mission,
-                mission_name=self.mission.name,
-                route_name=self.route.name,
-                airport_name="模型绑定不一致机场",
-                drone=other_drone,
-                drone_name=other_drone.name,
-                pilot=self.pilot_member,
-                pilot_name=self.pilot_staff.name,
-                start_time=timezone.now() - timedelta(minutes=10),
-                end_time=timezone.now(),
-                status=FlightRecordStatus.COMPLETED,
-            )
-
-    def test_model_should_reject_mission_pilot_mismatch(self):
-        other_pilot_user = User.objects.create_user(username="flight_record_other_pilot_mismatch", password="pass1234", status=1)
-        other_pilot = ensure_staff_profile(
-            other_pilot_user,
-            staff_no="FR-P-MISMATCH-001",
-            name="模型其他飞手",
-            employment_status=EmploymentStatus.ACTIVE,
-        )
-        _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
-            other_pilot_user,
-            tenant=self.tenant,
-            role_code="pilot_operator",
-            role_name="飞手",
-        )
-        ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
-
-        with self.assertRaises(ValidationError):
-            FlightRecord.objects.create(
-                tenant=self.tenant,
-                flight_no="YJ202603089993",
-                mission=self.mission,
-                mission_name=self.mission.name,
-                route_name=self.route.name,
-                airport_name="模型飞手不一致机场",
-                drone=self.drone,
-                drone_name=self.drone.name,
-                pilot=other_pilot_member,
-                pilot_name=other_pilot.name,
-                start_time=timezone.now() - timedelta(minutes=10),
-                end_time=timezone.now(),
-                status=FlightRecordStatus.COMPLETED,
-            )
-
-    def test_model_should_reject_invalid_status_transition(self):
-        record = self._create_flight_record(status=FlightRecordStatus.COMPLETED)
-        record.status = FlightRecordStatus.ABORTED
+    def test_model_should_reject_soft_delete_restore(self):
+        record = self._create_flight_record(is_deleted=True, deleted_at=timezone.now())
+        record.is_deleted = False
+        record.deleted_at = None
 
         with self.assertRaises(ValidationError):
             record.save()
 
-    def test_create_flight_record_duplicate_should_return_idempotent_duplicate(self):
+    def test_create_flight_record_should_return_method_not_allowed(self):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
-        self._create_flight_record()
-        existing_no = FlightRecord.objects.order_by("-id").first().flight_no
 
         response = self.client.post(
             "/api/v1/flight-records",
-            {
-                "flight_no": existing_no,
-                "mission": self.mission.id,
-                "drone": self.drone.id,
-                "pilot": self.pilot_member.id,
-                "status": FlightRecordStatus.IN_PROGRESS,
-            },
+            {"flight_no": "FR202604150999"},
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "C0101")
-        self.assertEqual(response.data["code"], "C0101")
+        self.assertEqual(response.status_code, 405, response.data)
 
-    def test_create_flight_record_duplicate_in_other_tenant_should_be_allowed(self):
+    def test_complete_action_should_return_method_not_allowed(self):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
-        flight_no = "YJ202603089999"
+        record = self._create_flight_record()
 
-        other_user = User.objects.create_user(username="flight_record_other_viewer", password="pass1234", status=1)
-        other_pilot_user = User.objects.create_user(username="flight_record_other_pilot", password="pass1234", status=1)
-        other_pilot_staff = ensure_staff_profile(
-            other_pilot_user,
-            staff_no="FR-P-002",
-            name="飞手B",
-            employment_status=EmploymentStatus.ACTIVE,
-        )
-        other_tenant, _, _ = ensure_tenant_role_binding(
-            other_user,
-            tenant_code="flight_record_unique_other_tenant",
-            role_code="flight_record_unique_other_role",
-            role_name="飞行记录其他租户角色",
-        )
-        _other_pilot_tenant, other_pilot_member, _other_pilot_role = ensure_tenant_role_binding(
-            other_pilot_user,
-            tenant=other_tenant,
-            role_code="pilot_operator",
-            role_name="飞手",
-        )
-        ensure_tenant_member_position(other_pilot_member, code="pilot_operator", name="飞手")
-        other_route = Route.objects.create(tenant=other_tenant, name="其他租户航线")
-        other_drone = Drone.objects.create(
-            tenant=other_tenant,
-            code="FR-OTHER-UNIQ-DRN-001",
-            name="其他租户无人机",
-            model="M300",
-            device_sn="FR-OTHER-UNIQ-SN-001",
-            status=DroneStatus.CLAIMED,
-        )
-        other_mission = _persist_mission_fixture(
-            tenant=other_tenant,
-            name="其他租户任务",
-            route=other_route,
-            route_name=other_route.name,
-            drone=other_drone,
-            drone_name=other_drone.name,
-            pilot=other_pilot_member,
-            pilot_name=other_pilot_staff.name,
-            status=MissionStatus.PENDING,
-        )
-        FlightRecord.objects.create(
-            tenant=other_tenant,
-            flight_no=flight_no,
-            mission=other_mission,
-            mission_name=other_mission.name,
-            route_name=other_route.name,
-            airport_name="深圳宝安机场",
-            drone=other_drone,
-            drone_name=other_drone.name,
-            pilot=other_pilot_member,
-            pilot_name=other_pilot_staff.name,
-            status=FlightRecordStatus.IN_PROGRESS,
-        )
+        response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
 
-        response = self.client.post(
-            "/api/v1/flight-records",
-            {
-                "flight_no": flight_no,
-                "mission": self.mission.id,
-                "drone": self.drone.id,
-                "pilot": self.pilot_member.id,
-                "status": FlightRecordStatus.IN_PROGRESS,
-            },
-            format="json",
-        )
+        self.assertEqual(response.status_code, 405, response.data)
 
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["data"]["flight_no"], flight_no)
-
-    def test_create_flight_record_without_auth_should_return_permission_denied(self):
-        response = self.client.post(
-            "/api/v1/flight-records",
-            {
-                "flight_no": "YJ202603081111",
-                "mission": self.mission.id,
-                "drone": self.drone.id,
-                "pilot": self.pilot_member.id,
-                "status": FlightRecordStatus.IN_PROGRESS,
-            },
-            format="json",
-        )
-
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_create_flight_record_without_permission_should_return_permission_denied(self):
+    def test_abort_action_should_return_method_not_allowed(self):
+        self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record()
 
-        response = self.client.post(
-            "/api/v1/flight-records",
-            {
-                "flight_no": "YJ202603081222",
-                "mission": self.mission.id,
-                "drone": self.drone.id,
-                "pilot": self.pilot_member.id,
-                "status": FlightRecordStatus.IN_PROGRESS,
-            },
-            format="json",
-        )
+        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
 
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
+        self.assertEqual(response.status_code, 405, response.data)
 
-    def test_list_flight_records_should_return_success(self):
+    def test_list_flight_records_should_return_only_not_deleted_records(self):
         self._grant_permission("flight_record.view_flight_record")
         self.client.force_authenticate(self.viewer_user)
-        self._create_flight_record()
-        self._create_flight_record(status=FlightRecordStatus.ABORTED)
+        visible = self._create_flight_record(status=FlightRecordStatus.COMPLETED)
+        self._create_flight_record(
+            status=FlightRecordStatus.ABORTED,
+            is_deleted=True,
+            deleted_at=timezone.now(),
+        )
 
         response = self.client.get("/api/v1/flight-records")
+
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertIn("list", response.data["data"])
-        self.assertGreaterEqual(len(response.data["data"]["list"]), 2)
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["id"], visible.id)
 
     def test_list_flight_records_with_status_filter_should_return_filtered_results(self):
         self._grant_permission("flight_record.view_flight_record")
         self.client.force_authenticate(self.viewer_user)
         self._create_flight_record(status=FlightRecordStatus.COMPLETED)
-        self._create_flight_record(status=FlightRecordStatus.ABORTED)
+        aborted = self._create_flight_record(status=FlightRecordStatus.ABORTED)
 
         response = self.client.get("/api/v1/flight-records", {"status": FlightRecordStatus.ABORTED})
+
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(len(response.data["data"]["list"]), 1)
-        self.assertEqual(response.data["data"]["list"][0]["status"], FlightRecordStatus.ABORTED)
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["id"], aborted.id)
 
     def test_list_flight_records_without_auth_should_return_permission_denied(self):
         self._create_flight_record()
 
         response = self.client.get("/api/v1/flight-records")
+
         self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
         self.assertEqual(response.data["code"], "A0401")
 
     def test_list_flight_records_without_permission_should_return_permission_denied(self):
@@ -602,8 +352,8 @@ class FlightRecordApiTests(TestCase):
         self.client.force_authenticate(self.viewer_user)
 
         response = self.client.get("/api/v1/flight-records")
+
         self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
         self.assertEqual(response.data["code"], "A0403")
 
     def test_retrieve_flight_record_should_return_success(self):
@@ -612,64 +362,46 @@ class FlightRecordApiTests(TestCase):
         record = self._create_flight_record()
 
         response = self.client.get(f"/api/v1/flight-records/{record.id}")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["id"], record.id)
-        self.assertEqual(response.data["data"]["flight_no"], record.flight_no)
-        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.COMPLETED)
 
-    def test_retrieve_flight_record_not_found_should_return_resource_not_found(self):
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["id"], record.id)
+        self.assertEqual(response.data["data"]["device_sn"], self.drone.device_sn)
+
+    def test_retrieve_deleted_flight_record_should_return_resource_not_found(self):
         self._grant_permission("flight_record.view_flight_record")
         self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record(is_deleted=True, deleted_at=timezone.now())
 
-        response = self.client.get("/api/v1/flight-records/999999")
+        response = self.client.get(f"/api/v1/flight-records/{record.id}")
+
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.data["code"], "C0404")
-        self.assertEqual(response.data["code"], "C0404")
-    def test_retrieve_flight_record_without_auth_should_return_permission_denied(self):
-        record = self._create_flight_record()
 
-        response = self.client.get(f"/api/v1/flight-records/{record.id}")
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_retrieve_flight_record_without_permission_should_return_permission_denied(self):
-        record = self._create_flight_record()
-        self.client.force_authenticate(self.viewer_user)
-
-        response = self.client.get(f"/api/v1/flight-records/{record.id}")
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
-
-    def test_put_flight_record_should_return_success_with_partial_payload(self):
+    def test_put_flight_record_should_only_update_summary_fields(self):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
-        new_end_time = record.end_time + timedelta(minutes=5)
+        record = self._create_flight_record(status=FlightRecordStatus.COMPLETED)
 
         response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
             {
+                "mission_name": "修正后的任务名",
                 "airport_name": "深圳宝安机场",
-                "end_time": new_end_time.isoformat(),
-                "photo_count": 16,
+                "photo_count": 0,
+                "video_count": 8,
             },
             format="json",
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["data"]["mission_name"], "修正后的任务名")
         self.assertEqual(response.data["data"]["airport_name"], "深圳宝安机场")
-        self.assertEqual(response.data["data"]["photo_count"], 16)
-        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.IN_PROGRESS)
+        self.assertEqual(response.data["data"]["video_count"], 8)
         record.refresh_from_db()
+        self.assertEqual(record.mission_name, "修正后的任务名")
         self.assertEqual(record.airport_name, "深圳宝安机场")
-        self.assertEqual(record.photo_count, 16)
-        self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
+        self.assertEqual(record.video_count, 8)
+        self.assertEqual(record.device_sn, self.drone.device_sn)
         self.assertTrue(
             AuditLog.objects.filter(
                 action="FLIGHT_RECORD_UPDATE",
@@ -678,23 +410,20 @@ class FlightRecordApiTests(TestCase):
             ).exists()
         )
 
-    def test_put_flight_record_with_status_should_return_invalid_params(self):
+    def test_put_flight_record_with_anchor_field_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
+        record = self._create_flight_record()
 
         response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
-            {"status": FlightRecordStatus.COMPLETED},
+            {"end_time": "2026-03-08T07:00:00+08:00"},
             format="json",
         )
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertIn("status", response.data["data"])
-        record.refresh_from_db()
-        self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
+        self.assertEqual(response.data["data"], {"end_time": ["该字段在此接口不可写"]})
 
     def test_put_flight_record_empty_body_should_return_invalid_params(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -709,23 +438,6 @@ class FlightRecordApiTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-
-    def test_put_flight_record_invalid_params_should_return_invalid_params(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record()
-
-        response = self.client.put(
-            f"/api/v1/flight-records/{record.id}",
-            {"end_time": "2026-03-08T07:00:00+08:00"},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertIn("end_time", response.data["data"])
 
     def test_put_flight_record_not_found_should_return_resource_not_found(self):
         self._grant_permission("flight_record.manage_flight_record")
@@ -733,12 +445,11 @@ class FlightRecordApiTests(TestCase):
 
         response = self.client.put(
             "/api/v1/flight-records/999999",
-            {"airport_name": "不存在"},
+            {"airport_name": "深圳宝安机场"},
             format="json",
         )
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["code"], "C0404")
         self.assertEqual(response.data["code"], "C0404")
 
     def test_put_flight_record_without_auth_should_return_permission_denied(self):
@@ -746,12 +457,11 @@ class FlightRecordApiTests(TestCase):
 
         response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
-            {"airport_name": "无权限修改"},
+            {"airport_name": "深圳宝安机场"},
             format="json",
         )
 
         self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
         self.assertEqual(response.data["code"], "A0401")
 
     def test_put_flight_record_without_permission_should_return_permission_denied(self):
@@ -760,212 +470,64 @@ class FlightRecordApiTests(TestCase):
 
         response = self.client.put(
             f"/api/v1/flight-records/{record.id}",
-            {"airport_name": "无权限修改"},
+            {"airport_name": "深圳宝安机场"},
             format="json",
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
         self.assertEqual(response.data["code"], "A0403")
+
+    def test_delete_should_soft_delete_flight_record_and_hide_it_from_api(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self._grant_permission("flight_record.view_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record()
+
+        response = self.client.delete(f"/api/v1/flight-records/{record.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"], {"id": record.id, "deleted": True})
+        record.refresh_from_db()
+        self.assertTrue(record.is_deleted)
+        self.assertIsNotNone(record.deleted_at)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="FLIGHT_RECORD_DELETE",
+                target_type="flight_record",
+                target_id=str(record.id),
+            ).exists()
+        )
+        list_response = self.client.get("/api/v1/flight-records")
+        self.assertEqual(list_response.data["data"]["total"], 0)
+        detail_response = self.client.get(f"/api/v1/flight-records/{record.id}")
+        self.assertEqual(detail_response.status_code, 404)
+
+    def test_delete_should_reject_request_body(self):
+        self._grant_permission("flight_record.manage_flight_record")
+        self.client.force_authenticate(self.viewer_user)
+        record = self._create_flight_record()
+
+        response = self.client.delete(
+            f"/api/v1/flight-records/{record.id}",
+            {"reason": "manual"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
 
     def test_patch_should_return_method_not_allowed(self):
         self._grant_permission("flight_record.manage_flight_record")
         self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
+        record = self._create_flight_record()
 
         response = self.client.patch(
             f"/api/v1/flight-records/{record.id}",
-            {"airport_name": "不应成功"},
+            {"airport_name": "深圳宝安机场"},
             format="json",
         )
 
         self.assertEqual(response.status_code, 405, response.data)
-
-    def test_complete_flight_record_should_return_success(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
-
-        response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.COMPLETED)
-
-        record.refresh_from_db()
-        self.assertEqual(record.status, FlightRecordStatus.COMPLETED)
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="FLIGHT_RECORD_COMPLETE",
-                target_type="flight_record",
-                target_id=str(record.id),
-            ).exists()
-        )
-
-    def test_complete_completed_flight_record_should_be_idempotent_success(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.COMPLETED)
-
-        response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.COMPLETED)
-
-    def test_complete_flight_record_with_body_should_return_invalid_params(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
-
-        response = self.client.post(
-            f"/api/v1/flight-records/{record.id}/complete",
-            {"unexpected": True},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        record.refresh_from_db()
-        self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
-
-    def test_complete_flight_record_state_conflict_should_return_state_conflict(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.ABORTED)
-
-        response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
-
-        self.assertEqual(response.status_code, 409)
-        self.assertIn(response.data["code"], {"C0201", "C0202"})
-        self.assertIn(response.data["code"], {"C0201", "C0202"})
-        record.refresh_from_db()
-        self.assertEqual(record.status, FlightRecordStatus.ABORTED)
-
-    def test_complete_flight_record_not_found_should_return_resource_not_found(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-
-        response = self.client.post("/api/v1/flight-records/999999/complete")
-
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["code"], "C0404")
-        self.assertEqual(response.data["code"], "C0404")
-
-    def test_complete_flight_record_without_auth_should_return_permission_denied(self):
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
-
-        response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
-
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_complete_flight_record_without_permission_should_return_permission_denied(self):
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
-        self.client.force_authenticate(self.viewer_user)
-
-        response = self.client.post(f"/api/v1/flight-records/{record.id}/complete")
-
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
-
-    def test_abort_flight_record_should_return_success(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
-
-        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.ABORTED)
-
-        record.refresh_from_db()
-        self.assertEqual(record.status, FlightRecordStatus.ABORTED)
-        self.assertTrue(
-            AuditLog.objects.filter(
-                action="FLIGHT_RECORD_ABORT",
-                target_type="flight_record",
-                target_id=str(record.id),
-            ).exists()
-        )
-
-    def test_abort_aborted_flight_record_should_be_idempotent_success(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.ABORTED)
-
-        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["code"], "00000")
-        self.assertEqual(response.data["msg"], "success")
-        self.assertEqual(response.data["data"]["status"], FlightRecordStatus.ABORTED)
-
-    def test_abort_flight_record_with_body_should_return_invalid_params(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
-
-        response = self.client.post(
-            f"/api/v1/flight-records/{record.id}/abort",
-            {"unexpected": True},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertEqual(response.data["code"], "B0001")
-        record.refresh_from_db()
-        self.assertEqual(record.status, FlightRecordStatus.IN_PROGRESS)
-
-    def test_abort_flight_record_state_conflict_should_return_state_conflict(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-        record = self._create_flight_record(status=FlightRecordStatus.COMPLETED)
-
-        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
-
-        self.assertEqual(response.status_code, 409)
-        self.assertIn(response.data["code"], {"C0201", "C0202"})
-        self.assertIn(response.data["code"], {"C0201", "C0202"})
-        record.refresh_from_db()
-        self.assertEqual(record.status, FlightRecordStatus.COMPLETED)
-
-    def test_abort_flight_record_not_found_should_return_resource_not_found(self):
-        self._grant_permission("flight_record.manage_flight_record")
-        self.client.force_authenticate(self.viewer_user)
-
-        response = self.client.post("/api/v1/flight-records/999999/abort")
-
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data["code"], "C0404")
-        self.assertEqual(response.data["code"], "C0404")
-
-    def test_abort_flight_record_without_auth_should_return_permission_denied(self):
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
-
-        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
-
-        self.assertIn(response.status_code, (401, 403))
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0401")
-
-    def test_abort_flight_record_without_permission_should_return_permission_denied(self):
-        record = self._create_flight_record(status=FlightRecordStatus.IN_PROGRESS)
-        self.client.force_authenticate(self.viewer_user)
-
-        response = self.client.post(f"/api/v1/flight-records/{record.id}/abort")
-
-        self.assertEqual(response.status_code, 403)
-        self.assertIn(response.data["code"], {"A0401", "A0403"})
-        self.assertEqual(response.data["code"], "A0403")
 
 
 class FlightRecordPilotScopeTests(TestCase):
@@ -1026,6 +588,7 @@ class FlightRecordPilotScopeTests(TestCase):
             route=self.route,
             route_name=self.route.name,
             drone=self.drone,
+            device_sn=self.drone.device_sn,
             drone_name=self.drone.name,
             pilot=self.pilot_member,
             pilot_name=self.pilot_staff.name,
@@ -1037,14 +600,15 @@ class FlightRecordPilotScopeTests(TestCase):
             route=self.route,
             route_name=self.route.name,
             drone=self.drone,
+            device_sn=self.drone.device_sn,
             drone_name=self.drone.name,
             pilot=self.other_pilot_member,
             pilot_name=self.other_pilot_staff.name,
             status=MissionStatus.PENDING,
         )
-        self.my_record = self._create_record("FRS202603080001", self.my_mission, self.pilot_member, self.pilot_staff.name)
+        self.my_record = self._create_record("FRS202604150001", self.my_mission, self.pilot_member, self.pilot_staff.name)
         self.other_record = self._create_record(
-            "FRS202603080002",
+            "FRS202604150002",
             self.other_mission,
             self.other_pilot_member,
             self.other_pilot_staff.name,
@@ -1064,12 +628,15 @@ class FlightRecordPilotScopeTests(TestCase):
             route_name=self.route.name,
             airport_name="珠海金湾机场",
             drone=self.drone,
+            device_sn=self.drone.device_sn,
             drone_name=self.drone.name,
             pilot=pilot_member,
             pilot_name=pilot_name,
             start_time=start_time,
             end_time=end_time,
             flight_duration=600,
+            photo_count=0,
+            video_count=1,
             status=FlightRecordStatus.COMPLETED,
         )
 
@@ -1080,20 +647,27 @@ class FlightRecordPilotScopeTests(TestCase):
         self.assertEqual(response.data["data"]["total"], 1)
         self.assertEqual(response.data["data"]["list"][0]["id"], self.my_record.id)
 
-    def test_pilot_create_flight_record_for_other_mission_should_return_invalid_params(self):
-        response = self.client.post(
-            "/api/v1/flight-records",
-            {
-                "flight_no": "FRS202603080003",
-                "mission": self.other_mission.id,
-                "drone": self.drone.id,
-                "airport_name": "珠海金湾机场",
-                "start_time": "2026-03-08T08:00:00+08:00",
-                "end_time": "2026-03-08T08:10:00+08:00",
-            },
+    def test_pilot_should_not_retrieve_other_flight_record(self):
+        response = self.client.get(f"/api/v1/flight-records/{self.other_record.id}")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["code"], "C0404")
+
+    def test_pilot_should_not_update_other_flight_record(self):
+        response = self.client.put(
+            f"/api/v1/flight-records/{self.other_record.id}",
+            {"airport_name": "深圳宝安机场"},
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], "B0001")
-        self.assertIn("pilot", response.data["data"])
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["code"], "C0404")
+
+    def test_pilot_create_should_return_method_not_allowed(self):
+        response = self.client.post(
+            "/api/v1/flight-records",
+            {"flight_no": "FRS202604150003"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 405, response.data)

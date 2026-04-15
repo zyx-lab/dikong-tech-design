@@ -171,9 +171,9 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("已绑定", schema["paths"]["/api/v1/drones/available"]["get"]["summary"])
         self.assertIn("已绑定", schema["paths"]["/api/v1/drones"]["post"]["summary"])
 
-        flight_record_create = schema["paths"]["/api/v1/flight-records"]["post"]
-        self.assertNotIn("IDEMPOTENT_DUPLICATE", flight_record_create["responses"]["400"]["description"])
-        self.assertIn("C0101", flight_record_create["responses"]["400"]["description"])
+        flight_record_detail = schema["paths"]["/api/v1/flight-records/{id}"]["put"]
+        self.assertIn("历史快照", flight_record_detail["description"])
+        self.assertIn("自动生成", schema["paths"]["/api/v1/missions/{id}/advance"]["post"]["description"])
 
     def test_business_schema_should_describe_live_passthrough_payload(self):
         response = self.client.get("/api/v1/docs/schema/")
@@ -219,8 +219,8 @@ class OpenApiDocsTests(TestCase):
             "/api/v1/missions": {"get", "post"},
             "/api/v1/missions/{id}": {"get", "put", "delete"},
             "/api/v1/missions/{id}/advance": {"post"},
-            "/api/v1/flight-records": {"get", "post"},
-            "/api/v1/flight-records/{id}": {"get", "put"},
+            "/api/v1/flight-records": {"get"},
+            "/api/v1/flight-records/{id}": {"get", "put", "delete"},
             "/api/v1/drone-assignments": {"get", "post"},
             "/api/v1/drone-assignments/{id}": {"get"},
             "/api/v1/media-files": {"get"},
@@ -236,8 +236,6 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/routes/{id}/kmz", "get"),
             ("/api/v1/missions/{id}", "delete"),
             ("/api/v1/missions/{id}/advance", "post"),
-            ("/api/v1/flight-records/{id}/complete", "post"),
-            ("/api/v1/flight-records/{id}/abort", "post"),
             ("/api/v1/drone-assignments/{id}/cancel", "post"),
             ("/api/v1/media-files/{id}", "delete"),
             ("/api/v1/media-files/{id}/download", "get"),
@@ -293,24 +291,21 @@ class OpenApiDocsTests(TestCase):
         mission_retrieve = schema["paths"]["/api/v1/missions/{id}"]["get"]
         self.assertIn("飞行中", mission_retrieve["description"])
 
-    def test_business_schema_should_mark_flight_record_endpoints_as_deprecated(self):
+    def test_business_schema_should_describe_flight_record_as_active_snapshot_api(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)
         schema = response.json()
 
-        deprecated_paths = [
-            ("/api/v1/flight-records", "get"),
-            ("/api/v1/flight-records", "post"),
-            ("/api/v1/flight-records/{id}", "get"),
-            ("/api/v1/flight-records/{id}", "put"),
-            ("/api/v1/flight-records/{id}/complete", "post"),
-            ("/api/v1/flight-records/{id}/abort", "post"),
-        ]
+        list_operation = schema["paths"]["/api/v1/flight-records"]["get"]
+        detail_operation = schema["paths"]["/api/v1/flight-records/{id}"]["get"]
+        delete_operation = schema["paths"]["/api/v1/flight-records/{id}"]["delete"]
 
-        for path, method in deprecated_paths:
-            operation = schema["paths"][path][method]
-            self.assertTrue(operation["summary"].startswith("（失效）"))
-            self.assertIn("已不再依赖 flight_record", operation["description"])
+        self.assertFalse(list_operation["summary"].startswith("（失效）"))
+        self.assertIn("历史快照", list_operation["description"])
+        self.assertIn("自动生成", detail_operation["description"])
+        self.assertIn("软删除", delete_operation["description"])
+        self.assertNotIn("/api/v1/flight-records/{id}/complete", schema["paths"])
+        self.assertNotIn("/api/v1/flight-records/{id}/abort", schema["paths"])
 
     def test_business_schema_should_describe_current_business_error_responses(self):
         response = self.client.get("/api/v1/docs/schema/")
