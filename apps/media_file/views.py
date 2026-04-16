@@ -131,6 +131,7 @@ class MediaFileViewSet(
         "retrieve": "media_file.view_media_file",
         "download": "media_file.view_media_file",
         "playback": "media_file.view_media_file",
+        "playback_url": "media_file.view_media_file",
         "destroy": "media_file.manage_media_file",
         "bind_mission": "media_file.manage_media_file",
     }
@@ -247,6 +248,17 @@ class MediaFileViewSet(
             )
         playback_url = DjiGateway().get_media_playback_url(media_file.dji_index.dji_file_id)
         return HttpResponseRedirect(playback_url)
+
+    @action(detail=True, methods=["get"], url_path="playback-url")
+    def playback_url(self, request, *args, **kwargs):
+        media_file = self.get_object()
+        if media_file.media_type != MediaType.VIDEO:
+            return Response(
+                validation_error_payload({"media_type": ["该媒体不支持 playback"]}),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        playback_url = DjiGateway().get_media_playback_url(media_file.dji_index.dji_file_id)
+        return Response({"playback_url": playback_url}, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="批量绑定媒体到任务",

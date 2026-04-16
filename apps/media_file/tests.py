@@ -223,6 +223,35 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "/__mock-dji__/_downloads/media/dji-VID_PLAYBACK.MP4")
 
+    def test_playback_url_should_return_standard_json_for_video(self):
+        media_file = self._create_media(file_name="VID_PLAYBACK_URL.MP4", device_sn="MEDIA-SN-001")
+        media_file.media_type = MediaType.VIDEO
+        media_file.save(update_fields=["media_type"])
+
+        with patch(
+            "apps.media_file.views.DjiGateway.get_media_playback_url",
+            return_value="https://playback.example/dji-VID_PLAYBACK_URL.MP4.m3u8",
+        ) as get_media_playback_url:
+            response = self.client.get(f"/api/v1/media-files/{media_file.id}/playback-url")
+
+        get_media_playback_url.assert_called_once_with("dji-VID_PLAYBACK_URL.MP4")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(
+            response.data["data"],
+            {"playback_url": "https://playback.example/dji-VID_PLAYBACK_URL.MP4.m3u8"},
+        )
+
+    def test_playback_url_should_reject_photo_media_file(self):
+        media_file = self._create_media(file_name="IMG_PLAYBACK_URL.JPG", device_sn="MEDIA-SN-001")
+
+        response = self.client.get(f"/api/v1/media-files/{media_file.id}/playback-url")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["data"], {"media_type": ["该媒体不支持 playback"]})
+
     def test_playback_should_reject_photo_media_file(self):
         media_file = self._create_media(file_name="IMG_PLAYBACK.JPG", device_sn="MEDIA-SN-001")
 

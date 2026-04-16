@@ -149,3 +149,19 @@ class LiveMediaFileApiTests(LiveDjiGatewayApiTestCase):
         )
         self.assertEqual(bind_response.status_code, 200)
         self.assertEqual(bind_response.json()["data"]["updated_count"], 1)
+
+    def test_playback_url_should_follow_live_http_contract(self):
+        self.media_file.media_type = MediaType.VIDEO
+        self.media_file.file_name = "MEDIA_LIVE.MP4"
+        self.media_file.file_url = "https://example.com/MEDIA_LIVE.MP4"
+        self.media_file.save(update_fields=["media_type", "file_name", "file_url"])
+
+        response = self.client.get(f"/api/v1/media-files/{self.media_file.id}/playback-url")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["code"], "00000")
+        self.assertEqual(response.json()["msg"], "success")
+        self.assertEqual(
+            response.json()["data"],
+            {"playback_url": "/__mock-dji__/_downloads/media/media-live-file"},
+        )
