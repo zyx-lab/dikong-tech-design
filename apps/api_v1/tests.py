@@ -108,6 +108,7 @@ class OpenApiDocsTests(TestCase):
         self.assertIn("/api/v1/missions/{id}/advance", paths)
         self.assertIn("/api/v1/media-files/{id}/download", paths)
         self.assertIn("/api/v1/media-files/{id}/playback", paths)
+        self.assertIn("/api/v1/media-files/{id}/playback-url", paths)
         self.assertIn("/api/v1/media-files/bind-mission", paths)
         self.assertEqual(schema["paths"]["/api/v1/media-files/bind-mission"].keys(), {"post"})
         self.assertIn("/api/v1/drone-assignments/{id}/cancel", paths)
@@ -252,6 +253,7 @@ class OpenApiDocsTests(TestCase):
             "/api/v1/media-files/{id}": {"get", "delete"},
             "/api/v1/media-files/{id}/download": {"get"},
             "/api/v1/media-files/{id}/playback": {"get"},
+            "/api/v1/media-files/{id}/playback-url": {"get"},
             "/api/v1/media-files/bind-mission": {"post"},
         }
         for path, methods in expected_methods.items():
@@ -267,6 +269,7 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/media-files/{id}", "delete"),
             ("/api/v1/media-files/{id}/download", "get"),
             ("/api/v1/media-files/{id}/playback", "get"),
+            ("/api/v1/media-files/{id}/playback-url", "get"),
         ):
             self.assertNotIn("requestBody", self._operation(schema, path=path, method=method))
 
@@ -366,6 +369,22 @@ class OpenApiDocsTests(TestCase):
         list_item_schema = schema["components"]["schemas"][list_item_ref]
         self.assertNotIn("media_files", list_item_schema["properties"])
 
+    def test_business_schema_should_describe_media_playback_url_response_shape(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        operation = self._operation(schema, path="/api/v1/media-files/{id}/playback-url", method="get")
+        success_schema = self._resolve_component_schema(
+            schema,
+            operation["responses"]["200"]["content"]["application/json"]["schema"],
+        )
+        self.assertIn("data", success_schema["properties"])
+        data_schema = self._resolve_component_schema(schema, success_schema["properties"]["data"])
+
+        self.assertEqual(set(data_schema["properties"].keys()), {"playback_url"})
+        self.assertEqual(data_schema["properties"]["playback_url"]["type"], "string")
+
     def test_business_schema_should_describe_current_business_error_responses(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)
@@ -402,6 +421,7 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/media-files/{id}", "delete"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/media-files/{id}/download", "get"): {"302", "401", "403", "404", "500"},
             ("/api/v1/media-files/{id}/playback", "get"): {"302", "400", "401", "403", "404", "500"},
+            ("/api/v1/media-files/{id}/playback-url", "get"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/media-files/bind-mission", "post"): {"200", "400", "401", "403", "500"},
         }
 

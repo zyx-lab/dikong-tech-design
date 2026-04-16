@@ -2,10 +2,10 @@ from django.db import transaction
 from django.http import HttpResponseRedirect
 from django.db.models import Q
 from django.utils import timezone
-from rest_framework import mixins, status, viewsets
+from rest_framework import mixins, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view, inline_serializer
 
 from apps.access.models import ScopeType
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
@@ -42,6 +42,14 @@ MEDIA_FILE_DELETE_RESPONSE = object_envelope_serializer("MediaFileDeleteResponse
 MEDIA_FILE_BIND_MISSION_RESPONSE = object_envelope_serializer(
     "MediaFileBindMissionResponse",
     MediaFileBindMissionResultSerializer,
+)
+MEDIA_FILE_PLAYBACK_URL_RESULT_SERIALIZER = inline_serializer(
+    name="MediaFilePlaybackUrlResult",
+    fields={"playback_url": serializers.CharField(help_text="DJI 侧视频播放地址。")},
+)
+MEDIA_FILE_PLAYBACK_URL_RESPONSE = object_envelope_serializer(
+    "MediaFilePlaybackUrlResponse",
+    MEDIA_FILE_PLAYBACK_URL_RESULT_SERIALIZER,
 )
 
 MEDIA_FILE_FILTER_PARAMETERS = [
@@ -249,6 +257,19 @@ class MediaFileViewSet(
         playback_url = DjiGateway().get_media_playback_url(media_file.dji_index.dji_file_id)
         return HttpResponseRedirect(playback_url)
 
+    @extend_schema(
+        summary="获取媒体播放地址（JSON）",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        responses={
+            200: OpenApiResponse(response=MEDIA_FILE_PLAYBACK_URL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Media File"],
+    )
     @action(detail=True, methods=["get"], url_path="playback-url")
     def playback_url(self, request, *args, **kwargs):
         media_file = self.get_object()
