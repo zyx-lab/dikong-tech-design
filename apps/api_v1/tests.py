@@ -324,7 +324,7 @@ class OpenApiDocsTests(TestCase):
         media_items_schema = schema["components"]["schemas"][media_items_ref]
         self.assertEqual(
             set(media_items_schema["properties"].keys()),
-            {"id", "media_type", "file_name", "thumbnail_url", "captured_at", "download_url"},
+            {"id", "media_type", "file_name", "thumbnail_url", "captured_at", "download_url", "playback_url"},
         )
 
         list_response = self._operation(schema, path="/api/v1/flight-records", method="get")["responses"]["200"]["content"][
