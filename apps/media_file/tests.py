@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -202,10 +203,15 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         media_file.media_type = MediaType.VIDEO
         media_file.save(update_fields=["media_type"])
 
-        response = self.client.get(f"/api/v1/media-files/{media_file.id}/playback")
+        with patch(
+            "apps.media_file.views.DjiGateway.get_media_playback_url",
+            return_value="/__mock-dji__/playback-only/dji-VID_PLAYBACK.MP4",
+        ) as get_media_playback_url:
+            response = self.client.get(f"/api/v1/media-files/{media_file.id}/playback")
 
+        get_media_playback_url.assert_called_once_with("dji-VID_PLAYBACK.MP4")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], "/__mock-dji__/_downloads/media/dji-VID_PLAYBACK.MP4")
+        self.assertEqual(response["Location"], "/__mock-dji__/playback-only/dji-VID_PLAYBACK.MP4")
 
     def test_playback_should_reject_photo_media_file(self):
         media_file = self._create_media(file_name="IMG_PLAYBACK.JPG", device_sn="MEDIA-SN-001")
