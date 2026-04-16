@@ -213,6 +213,16 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "/__mock-dji__/playback-only/dji-VID_PLAYBACK.MP4")
 
+    def test_playback_should_redirect_to_mock_dji_download_url_via_real_gateway(self):
+        media_file = self._create_media(file_name="VID_PLAYBACK.MP4", device_sn="MEDIA-SN-001")
+        media_file.media_type = MediaType.VIDEO
+        media_file.save(update_fields=["media_type"])
+
+        response = self.client.get(f"/api/v1/media-files/{media_file.id}/playback")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/__mock-dji__/_downloads/media/dji-VID_PLAYBACK.MP4")
+
     def test_playback_should_reject_photo_media_file(self):
         media_file = self._create_media(file_name="IMG_PLAYBACK.JPG", device_sn="MEDIA-SN-001")
 
