@@ -197,6 +197,25 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "/__mock-dji__/_downloads/media/dji-IMG_DL.JPG")
 
+    def test_playback_should_redirect_to_dji_playback_url_for_video(self):
+        media_file = self._create_media(file_name="VID_PLAYBACK.MP4", device_sn="MEDIA-SN-001")
+        media_file.media_type = MediaType.VIDEO
+        media_file.save(update_fields=["media_type"])
+
+        response = self.client.get(f"/api/v1/media-files/{media_file.id}/playback")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/__mock-dji__/_downloads/media/dji-VID_PLAYBACK.MP4")
+
+    def test_playback_should_reject_photo_media_file(self):
+        media_file = self._create_media(file_name="IMG_PLAYBACK.JPG", device_sn="MEDIA-SN-001")
+
+        response = self.client.get(f"/api/v1/media-files/{media_file.id}/playback")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["data"], {"media_type": ["该媒体不支持 playback"]})
+
     def test_media_api_should_reject_create_and_update(self):
         media_file = self._create_media(file_name="IMG_READONLY.JPG", device_sn="MEDIA-SN-001")
 

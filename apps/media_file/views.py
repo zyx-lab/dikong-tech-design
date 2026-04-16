@@ -130,6 +130,7 @@ class MediaFileViewSet(
         "list": "media_file.view_media_file",
         "retrieve": "media_file.view_media_file",
         "download": "media_file.view_media_file",
+        "playback": "media_file.view_media_file",
         "destroy": "media_file.manage_media_file",
         "bind_mission": "media_file.manage_media_file",
     }
@@ -222,6 +223,30 @@ class MediaFileViewSet(
         media_file = self.get_object()
         download_url = DjiGateway().get_media_url(media_file.dji_index.dji_file_id)
         return HttpResponseRedirect(download_url)
+
+    @extend_schema(
+        summary="获取媒体播放地址",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        responses={
+            302: OpenApiResponse(description="302 重定向到 DJI 播放地址。"),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Media File"],
+    )
+    @action(detail=True, methods=["get"])
+    def playback(self, request, *args, **kwargs):
+        media_file = self.get_object()
+        if media_file.media_type != MediaType.VIDEO:
+            return Response(
+                validation_error_payload({"media_type": ["该媒体不支持 playback"]}),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        playback_url = DjiGateway().get_media_playback_url(media_file.dji_index.dji_file_id)
+        return HttpResponseRedirect(playback_url)
 
     @extend_schema(
         summary="批量绑定媒体到任务",
