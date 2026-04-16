@@ -245,6 +245,22 @@ class DjiGateway:
                 return download_url
         raise DjiGatewayUpstreamError("未获取到媒体下载地址", status_code=502, data=payload)
 
+    def get_media_playback_url(self, dji_file_id: str):
+        workspace_id = self._workspace_id()
+        response = self._request_json(
+            "GET",
+            f"/api/v1/media/workspaces/{workspace_id}/files/{dji_file_id}/playback-url",
+            follow_redirects=False,
+        )
+        if "Location" in response.headers:
+            return response.headers["Location"]
+        payload = response.data
+        if isinstance(payload, dict):
+            playback_url = self._extract_download_url(payload)
+            if playback_url:
+                return playback_url
+        raise DjiGatewayUpstreamError("未获取到媒体播放地址", status_code=502, data=payload)
+
     def list_media_files(self) -> list[dict]:
         workspace_id = self._workspace_id()
         return self._request_paginated_items(f"/api/v1/media/workspaces/{workspace_id}/files")
