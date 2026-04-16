@@ -9,24 +9,24 @@
 
 ## 1. routes（航线表）
 
-**说明**：租户内 route 草稿主记录，`xml_file` 是航线唯一的源文件。
+**说明**：租户内 route 主记录，只保存本地业务元数据。
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 | ------ | ---- | ---- | ------ | ---- |
 | id | bigserial | PK | 自增 | 主键 |
 | tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
 | name | varchar(100) | NOT NULL | - | 航线名称 |
-| xml_file | varchar(100) | NOT NULL | '' | 本地 XML 草稿路径（`FileField`） |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
 
 **业务规则**：
-1. `POST /api/v1/routes` 与 `PUT /api/v1/routes/{id}` 只接受 `multipart/form-data`，可写字段仅 `name` 与 `xml_file`；旧字段（`route_type`、`waypoints[]`、`drone_type_id` 等）被 reject。
-2. 上传 XML 必须可解析，否则返回 `B0001`。
-3. 所有本地编辑后都会把关联 `TenantRouteIndex.is_published` 置为 `false`。
-4. `waypoints` 表只做内部/历史存储，不再构成公开业务契约。
-5. 删除 `Route` 时，若存在 `Mission` 处于 `PENDING` 或 `RUNNING`，删除操作会被拒绝（`B0001`）。
-6. 删除 `Route` 时，会先清理残留 `waypoints` 行，再删除 route 主记录与 XML 文件。
+1. `POST /api/v1/routes` 仅接受 `multipart/form-data`，必须提交 `name` 与 `kmz_file`。
+2. `PUT /api/v1/routes/{id}` 支持部分更新：可只改 `name`、只换 `kmz_file`、同时改两者，或空 body no-op。
+3. `PUT` 的 `application/json` 路径只支持 `name`；涉及 `kmz_file` 的更新必须走表单提交。
+4. 上传文件必须是有效 KMZ/ZIP，否则返回 `B0001`。
+5. `waypoints` 表只做内部/历史存储，不再构成公开业务契约。
+6. 删除 `Route` 时，若存在 `Mission` 处于 `PENDING` 或 `RUNNING` 且已绑定无人机，删除操作会被拒绝（`B0001`）。
+7. 删除 `Route` 时，会先清理残留 `waypoints` 行，再删除 route 主记录。
 
 ## 2. tenant_route_indexes（航线发布索引表）
 
@@ -38,6 +38,7 @@
 | tenant_id | bigint | FK, NOT NULL | - | 所属租户 |
 | route_id | bigint | FK, NOT NULL, UNIQUE | - | 对应 route |
 | dji_wayline_id | varchar(128) | NOT NULL | '' | 当前已发布 DJI 航线 ID；未发布时为空串 |
+| download_url | varchar(500) | NOT NULL | '' | 当前绑定 DJI 航线下载地址 |
 | is_published | boolean | NOT NULL | false | 当前本地草稿是否已与最近一次成功发布结果一致 |
 | created_at | timestamp | NOT NULL | now() | 创建时间 |
 | updated_at | timestamp | NOT NULL | now() | 更新时间 |
@@ -45,15 +46,15 @@
 **约束与规则**：
 1. `route_id` 一对一绑定 `routes.id`。
 2. `(tenant_id, dji_wayline_id)` 仅在 `dji_wayline_id` 非空时唯一。
-3. 创建 route 草稿时自动创建一条 `tenant_route_indexes`，初始值为 `dji_wayline_id=''`、`is_published=false`。
-4. 任意本地编辑 route 后，都要把 `is_published` 置回 `false`。
-5. `POST /api/v1/routes/{id}/publish` 成功后回写新的 `dji_wayline_id`，并把 `is_published` 置为 `true`。
+3. `POST /api/v1/routes` 成功后会创建或写入一条有效 `tenant_route_indexes`，回填 `dji_wayline_id`、`download_url`、`is_published=true`。
+4. `PUT /api/v1/routes/{id}` 仅更新 `name` 时不会修改索引。
+5. `PUT /api/v1/routes/{id}` 携带 `kmz_file` 时会替换 `dji_wayline_id`、`download_url`，并保持 `is_published=true`。
 
 ## 3. 与实现对应
 
 1. 模型：`apps/route/models.py`
 2. DJI 映射：`apps/dji_bff/models.py`
-3. 航点聚合写链路：`apps/route/serializers.py`、`apps/route/services.py`、`apps/route/views.py`
+3. 航线上传与更新链路：`apps/route/serializers.py`、`apps/route/views.py`
 
 ## 4. 业务响应契约（Business API）
 

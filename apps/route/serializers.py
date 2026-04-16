@@ -69,5 +69,33 @@ class RouteCreateSerializer(RouteWriteSerializer):
     pass
 
 
+class RouteUpdateJsonSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer):
+    class Meta:
+        model = Route
+        fields = ["name"]
+        extra_kwargs = {
+            "name": {
+                "help_text": "航线名称。仅支持名称局部更新；省略该字段表示空更新。",
+                "required": False,
+            },
+        }
+
+
 class RouteUpdateSerializer(RouteWriteSerializer):
-    pass
+    kmz_file = serializers.FileField(
+        required=False,
+        allow_empty_file=False,
+        help_text="航线 KMZ 文件。",
+        error_messages={
+            "empty": "提交的文件为空。",
+        },
+    )
+
+    class Meta(RouteWriteSerializer.Meta):
+        extra_kwargs = {
+            **RouteWriteSerializer.Meta.extra_kwargs,
+            "name": {
+                **RouteWriteSerializer.Meta.extra_kwargs["name"],
+                "required": False,
+            },
+        }

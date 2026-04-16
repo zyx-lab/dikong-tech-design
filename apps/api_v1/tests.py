@@ -70,6 +70,12 @@ class OpenApiDocsTests(TestCase):
     def _operation(self, schema, *, path, method):
         return schema["paths"][path][method]
 
+    def _resolve_component_schema(self, schema, schema_or_ref):
+        if "$ref" not in schema_or_ref:
+            return schema_or_ref
+        schema_name = schema_or_ref["$ref"].split("/")[-1]
+        return schema["components"]["schemas"][schema_name]
+
     def _resolve_route_write_schema(self, schema, *, path, method):
         operation = self._operation(schema, path=path, method=method)
         request_body = operation["requestBody"]["content"]
@@ -141,6 +147,12 @@ class OpenApiDocsTests(TestCase):
         self.assertNotIn("patch", schema["paths"]["/api/v1/routes/{id}"])
         self.assertNotIn("/api/v1/routes/{id}/publish", schema["paths"])
         self.assertNotIn("/api/v1/routes/{id}/xml", schema["paths"])
+        create_operation = self._operation(schema, path="/api/v1/routes", method="post")
+        update_operation = self._operation(schema, path="/api/v1/routes/{id}", method="put")
+        update_json_schema = self._resolve_component_schema(
+            schema,
+            update_operation["requestBody"]["content"]["application/json"]["schema"],
+        )
         create_schema_name, create_schema = self._resolve_route_write_schema(
             schema,
             path="/api/v1/routes",
@@ -156,6 +168,18 @@ class OpenApiDocsTests(TestCase):
         self.assertEqual(update_schema_name, "RouteUpdate")
         self.assertEqual(set(create_schema.get("properties", {}).keys()), {"name", "kmz_file"})
         self.assertEqual(set(update_schema.get("properties", {}).keys()), {"name", "kmz_file"})
+        self.assertEqual(set(create_operation["requestBody"]["content"].keys()), {"multipart/form-data", "application/x-www-form-urlencoded"})
+        self.assertEqual(
+            set(update_operation["requestBody"]["content"].keys()),
+            {"application/json", "multipart/form-data", "application/x-www-form-urlencoded"},
+        )
+        self.assertEqual(set(create_schema.get("required", [])), {"name", "kmz_file"})
+        self.assertEqual(update_schema.get("required", []), [])
+        self.assertEqual(set(update_json_schema.get("properties", {}).keys()), {"name"})
+        self.assertEqual(update_json_schema.get("required", []), [])
+        self.assertIn("局部更新", update_operation["summary"])
+        self.assertIn("application/json", update_operation["description"])
+        self.assertIn("no-op", update_operation["description"])
         self.assertNotIn("PatchedRouteUpdate", schema["components"]["schemas"])
         for removed_field in ("waypoints", "description", "flight_height", "speed", "start_point"):
             self.assertNotIn(removed_field, create_schema.get("properties", {}))

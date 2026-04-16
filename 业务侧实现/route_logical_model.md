@@ -1,6 +1,6 @@
 # 航线逻辑模型
 
-- updated_at: 2026-03-31
+- updated_at: 2026-04-16
 - entity: route
 
 ## 实体主表
@@ -11,33 +11,35 @@
 
 ## 聚合边界
 
-- `Route` 是公开业务聚合根，唯一可写字段是 `name` 与 `xml_file`，XML 文件是聚合的“单一真实源”。
-- `waypoints` 表仍存在，但只做历史/内部持久化，不再单独暴露 API、权限或 `waypoints[]` 编辑契约。
-- `TenantRouteIndex` 负责记录 `is_published` 与 `dji_wayline_id`，任何本地编辑都会把 `is_published` 置为 `false`。
+- `Route` 是公开业务聚合根，只保存本地业务主数据 `name`。
+- `TenantRouteIndex` 是 route 与 DJI 航线之间的唯一发布状态桥接，维护 `dji_wayline_id`、`download_url`、`is_published`。
+- `waypoints` 表仍存在，但只保留历史/内部存储语义，不再参与公开读写契约。
 
 ## 发布状态模型
 
-当前设计不再使用 `Route.status`。
+当前设计不使用 `Route.status`。
 
-Route 与 DJI 的发布关系由 `TenantRouteIndex` 表达：
+Route 与 DJI 的绑定关系由 `TenantRouteIndex` 表达：
 
 | 字段 | 含义 |
 |---|---|
-| dji_wayline_id | 当前已发布 DJI 航线 ID；未发布时为空串 |
-| is_published | 当前本地 route 草稿是否已与最新一次成功发布结果一致 |
+| dji_wayline_id | 当前绑定的 DJI 航线 ID；未发布时为空串 |
+| download_url | 当前绑定航线的下载地址 |
+| is_published | 当前 route 是否已绑定最近一次成功上传的 DJI 航线 |
 
 语义：
 
 - `is_published = false`
-  - 从未发布，或
-  - 曾发布，但本地 route 草稿在此后又发生编辑
+  - route 尚未成功绑定可下载的上游航线，或
+  - 本地数据存在但尚未建立有效 DJI 索引
 - `is_published = true`
-  - 当前本地草稿与最新一次成功 DJI 发布结果一致
+  - 当前 `Route` 已与最新一次成功上传到 DJI 的 KMZ 保持一致
 
 ## 关系与约束
 
 - `route.tenant -> access.Tenant`
 - `tenant_route_indexes.route -> route.Route`（一对一）
+- `tenant_route_indexes(tenant_id, dji_wayline_id)` 在 `dji_wayline_id != ''` 时唯一
 - `waypoints.route_id -> routes.id`
 - `waypoints(route_id, sequence)` 唯一
 
@@ -45,55 +47,47 @@ Route 与 DJI 的发布关系由 `TenantRouteIndex` 表达：
 
 | 操作 | 路径 | 说明 |
 |-----|------|------|
-| 创建草稿 | POST /api/v1/routes | 新增本地 route 草稿，仅写 `name` + `xml_file`（multipart/form-data） |
+| 创建 | POST /api/v1/routes | 创建 route，并立即上传 `name + kmz_file` 到 DJI |
 | 列表 | GET /api/v1/routes | 航线列表查询 |
-| 详情 | GET /api/v1/routes/{id} | 读取 route 元数据（不含 XML） |
-| 更新草稿 | PUT /api/v1/routes/{id} | 替换 XML 草稿（multipart/form-data，仅 `name` + `xml_file`） |
-| XML | GET /api/v1/routes/{id}/xml | 获取当前草稿的源 XML 文件 |
-| 发布 | POST /api/v1/routes/{id}/publish | 用 XML 构建 KMZ 并上传 DJI；更新 `TenantRouteIndex` |
-| 删除 | DELETE /api/v1/routes/{id} | 删除 route（会同步删除 XML、DJI 航线与残留 waypoint 行） |
+| 详情 | GET /api/v1/routes/{id} | 读取 route 元数据 |
+| 更新 | PUT /api/v1/routes/{id} | 部分更新 route 名称，或替换上游 KMZ |
+| 下载 KMZ | GET /api/v1/routes/{id}/kmz | 通过 `download_url` 代理当前 KMZ |
+| 删除 | DELETE /api/v1/routes/{id} | 删除 route，并 best-effort 删除当前 DJI 航线 |
 
 ## 接口语义
 
-### 创建草稿 POST /api/v1/routes
+### 创建 POST /api/v1/routes
 
-- 功能：创建 route 草稿，写入 `name` 与 XML。
-- 请求：`multipart/form-data`，必须提供 `xml_file`，会校验可解析性，拒绝 `waypoints[]` 与旧字段。
-- 写入结果：
-  - 创建 `Route` 并关联 XML 草稿；
-  - 创建 `TenantRouteIndex(dji_wayline_id="", is_published=false)`；
-  - 记录 `ROUTE_CREATE` 审计。
+- 请求：仅支持 `multipart/form-data`，必须提供 `name` 与 `kmz_file`。
+- 结果：
+  - 创建本地 `Route`
+  - 上传 DJI 并校验下载地址
+  - 写入 `TenantRouteIndex(dji_wayline_id, download_url, is_published=true)`
+  - 记录 `ROUTE_CREATE` 审计
 
-### 更新草稿 PUT /api/v1/routes/{id}
+### 更新 PUT /api/v1/routes/{id}
 
-- 功能：全量替换本地航线草稿。
-- 请求：`multipart/form-data`，只能写 `name` 与 `xml_file`（必须提供，且可解析）；不接受 `waypoints[]`、`route_type` 等旧字段。
-- 语义：
-  - 替换 XML 后删除旧文件。
-  - 删除旧文件时会清理存储并把 `is_published` 置为 `false`。
-  - 返回更新后的航线元数据。
+- 请求语义是“部分更新”，而不是完整替换。
+- 支持四种输入：
+  - `application/json` 仅提交 `name`
+  - 表单仅提交 `kmz_file`
+  - 表单同时提交 `name + kmz_file`
+  - 空请求体 no-op
+- 关键行为：
+  - 仅更新 `name` 时，不触达 DJI，不修改 `TenantRouteIndex`
+  - 只替换 `kmz_file` 时，保留当前名称
+  - 携带 `kmz_file` 的更新会走“上传 -> 校验 -> 本地切换 -> on_commit 清理旧航线”流程
+  - 若该 route 被 `PENDING` / `RUNNING` 且已绑定无人机的 mission 占用，拒绝更新
+  - `PATCH /api/v1/routes/{id}` 不存在
 
-### 获取 XML GET /api/v1/routes/{id}/xml
+### 下载 KMZ GET /api/v1/routes/{id}/kmz
 
-- 功能：读取当前草稿的 XML 内容流，`Content-Type: application/xml`。
-- 若本地文件缺失或存储中找不到，返回 404。
-- 权限：`route.view_route`。
-
-### 发布 POST /api/v1/routes/{id}/publish
-
-- 功能：用当前 XML 构建 KMZ 并上传 DJI。
-- 请求：不接受请求体；若检测到 `Content-Length`，返回 400。
-- 过程：
-  - `build_route_kmz_from_xml` 校验并打包 XML。
-  - `DjiGateway.upload_route` 上传，记录新的 `dji_wayline_id`。
-  - 回写 `TenantRouteIndex`（`dji_wayline_id` + `is_published=true`），并写审计。
-  - 若原先发布过 DJI 航线，上传成功后异步删除旧航线。
+- 优先使用已保存 `download_url` 下载
+- 若 `download_url` 为空或上游返回 404，则尝试通过 `dji_wayline_id` 刷新下载地址后重试
+- 成功返回二进制 KMZ 流
 
 ### 删除 DELETE /api/v1/routes/{id}
 
-- 功能：删除本地航线与 XML 草稿。
-- 约束：若存在 `Mission.status` 为 `PENDING` / `RUNNING` / `PAUSED` 的引用，拒绝删除。
-- 过程：
-  - 删除 `TenantRouteIndex` 关联的 DJI 航线（404 忽略）。
-  - 先清理残留 `waypoints` 行，再删除 `Route` 与 XML 文件。
-  - 记录 `ROUTE_DELETE` 审计并返回 `{id, deleted:true}`。
+- 本地先删除 `Route` 及残留 `waypoints`
+- 事务提交后 best-effort 删除当前 `dji_wayline_id`
+- 若 route 被 `PENDING` / `RUNNING` 且已绑定无人机的 mission 占用，拒绝删除

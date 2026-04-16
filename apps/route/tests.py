@@ -237,6 +237,121 @@ class RouteKmzApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(response.data.get("data"), {"kmz_file": ["提交的文件为空。"]})
 
+    def test_put_should_update_name_only_from_json_without_touching_upstream(self):
+        route = Route.objects.create(tenant=self.tenant, name="仅改名称前")
+        route_index = TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id="mock-wayline-name-only",
+            download_url="/api/v1/wayline/workspaces/mock-workspace-001/waylines/mock-wayline-name-only/url",
+            is_published=True,
+        )
+        previous_updated_at = route.updated_at
+
+        with patch("apps.route.views.DjiGateway.upload_route") as upload_mock:
+            response = self.client.put(
+                f"/api/v1/routes/{route.id}",
+                {"name": "仅改名称后"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        route.refresh_from_db()
+        route_index.refresh_from_db()
+        self.assertEqual(route.name, "仅改名称后")
+        self.assertEqual(route_index.dji_wayline_id, "mock-wayline-name-only")
+        self.assertEqual(
+            route_index.download_url,
+            "/api/v1/wayline/workspaces/mock-workspace-001/waylines/mock-wayline-name-only/url",
+        )
+        self.assertTrue(route.updated_at > previous_updated_at)
+        upload_mock.assert_not_called()
+
+    def test_put_should_replace_upstream_wayline_when_only_kmz_file_is_provided(self):
+        route = Route.objects.create(tenant=self.tenant, name="仅文件更新前")
+        old_wayline_id = mock_dji_state.create_wayline(name="kmz-only-old")["wayline_id"]
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id=old_wayline_id,
+            download_url=f"/api/v1/wayline/workspaces/mock-workspace-001/waylines/{old_wayline_id}/url",
+            is_published=True,
+        )
+        update_kmz_bytes = self._build_test_kmz(template_bytes=self.UPDATED_TEMPLATE_BYTES)
+
+        with patch(
+            "apps.route.views.DjiGateway.upload_route",
+            return_value={
+                "dji_wayline_id": "mock-wayline-kmz-only",
+                "download_url": "https://upstream/download/kmz-only.kmz",
+            },
+        ) as upload_mock:
+            with patch(
+                "apps.route.views.DjiGateway.download_route_file",
+                return_value=GatewayResponse(
+                    status_code=200,
+                    headers={"Content-Type": self.KMZ_CONTENT_TYPE},
+                    data=b"verified-kmz",
+                ),
+            ):
+                with self.captureOnCommitCallbacks(execute=False) as callbacks:
+                    response = self.client.put(
+                        f"/api/v1/routes/{route.id}",
+                        {
+                            "kmz_file": SimpleUploadedFile(
+                                "route-updated.kmz",
+                                update_kmz_bytes,
+                                content_type=self.KMZ_CONTENT_TYPE,
+                            ),
+                        },
+                        format="multipart",
+                    )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        route.refresh_from_db()
+        route_index = TenantRouteIndex.objects.get(route=route)
+        self.assertEqual(route.name, "仅文件更新前")
+        self.assertEqual(route_index.dji_wayline_id, "mock-wayline-kmz-only")
+        self.assertEqual(route_index.download_url, "https://upstream/download/kmz-only.kmz")
+        self.assertEqual(upload_mock.call_args.kwargs["route_name"].split("-", 2)[1], "仅文件更新前")
+        self.assertEqual(len(callbacks), 1)
+        self.assertIn(old_wayline_id, mock_dji_state.waylines)
+        for callback in callbacks:
+            callback()
+        self.assertNotIn(old_wayline_id, mock_dji_state.waylines)
+
+    def test_put_should_treat_empty_json_body_as_no_op(self):
+        route = Route.objects.create(tenant=self.tenant, name="空更新前")
+        route_index = TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=route,
+            dji_wayline_id="mock-wayline-empty-put",
+            download_url="/api/v1/wayline/workspaces/mock-workspace-001/waylines/mock-wayline-empty-put/url",
+            is_published=True,
+        )
+        previous_updated_at = route.updated_at
+
+        with patch("apps.route.views.DjiGateway.upload_route") as upload_mock:
+            with patch("apps.route.views.log_action") as log_action_mock:
+                response = self.client.put(
+                    f"/api/v1/routes/{route.id}",
+                    {},
+                    format="json",
+                )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        route.refresh_from_db()
+        route_index.refresh_from_db()
+        self.assertEqual(route.name, "空更新前")
+        self.assertEqual(route.updated_at, previous_updated_at)
+        self.assertEqual(route_index.dji_wayline_id, "mock-wayline-empty-put")
+        self.assertEqual(
+            route_index.download_url,
+            "/api/v1/wayline/workspaces/mock-workspace-001/waylines/mock-wayline-empty-put/url",
+        )
+        upload_mock.assert_not_called()
+        log_action_mock.assert_not_called()
+
     def test_kmz_download_should_proxy_saved_download_url(self):
         route = Route.objects.create(tenant=self.tenant, name="下载 KMZ")
         download_url = "https://upstream.example/downloads/downloadable.kmz"

@@ -30,7 +30,7 @@ from apps.dji_bff.gateway import DjiGateway, DjiGatewayUpstreamError
 from apps.dji_bff.models import TenantRouteIndex
 from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
-from apps.route.serializers import RouteCreateSerializer, RouteReadSerializer, RouteUpdateSerializer
+from apps.route.serializers import RouteCreateSerializer, RouteReadSerializer, RouteUpdateJsonSerializer, RouteUpdateSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,15 @@ ROUTE_FILTER_PARAMETERS = [
     TENANT_CODE_HEADER_PARAMETER,
     OpenApiParameter(name="name", type=str, location=OpenApiParameter.QUERY, description="按航线名称模糊匹配。"),
 ]
+ROUTE_CREATE_REQUEST = {
+    "multipart/form-data": RouteCreateSerializer,
+    "application/x-www-form-urlencoded": RouteCreateSerializer,
+}
+ROUTE_UPDATE_REQUEST = {
+    "application/json": RouteUpdateJsonSerializer,
+    "multipart/form-data": RouteUpdateSerializer,
+    "application/x-www-form-urlencoded": RouteUpdateSerializer,
+}
 
 
 def _route_success_response(view, route: Route, *, http_status: int, include_headers: bool = False):
@@ -165,8 +174,9 @@ def _sync_route_index(*, tenant, route: Route, dji_wayline_id: str, download_url
     ),
     create=extend_schema(
         summary="上传航线 KMZ 并创建航线",
+        description="仅接受表单提交；必须同时提供 `name` 与 `kmz_file`，创建成功后会立即上传 DJI 并返回当前航线快照。",
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=RouteCreateSerializer,
+        request=ROUTE_CREATE_REQUEST,
         responses={
             201: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE),
             400: BUSINESS_INVALID_PARAMS_RESPONSE,
@@ -177,9 +187,17 @@ def _sync_route_index(*, tenant, route: Route, dji_wayline_id: str, download_url
         tags=["Business API - Route"],
     ),
     update=extend_schema(
-        summary="上传新的 KMZ 并更新航线",
+        summary="局部更新航线名称或替换 KMZ",
+        description=(
+            "支持三种更新路径："
+            "1) `application/json` 仅提交 `name` 时，只更新本地航线名称；"
+            "2) `multipart/form-data`/`application/x-www-form-urlencoded` 提交 `kmz_file` 时，"
+            "替换当前 DJI 航线文件；"
+            "3) 同时提交 `name` 与 `kmz_file` 时，两者一起更新。"
+            "空请求体会返回当前航线快照并视为 no-op。`PATCH` 仍然不支持。"
+        ),
         parameters=[TENANT_CODE_HEADER_PARAMETER],
-        request=RouteUpdateSerializer,
+        request=ROUTE_UPDATE_REQUEST,
         responses={
             200: OpenApiResponse(response=ROUTE_DETAIL_RESPONSE),
             400: BUSINESS_INVALID_PARAMS_RESPONSE,
@@ -252,6 +270,12 @@ class RouteViewSet(
 
     def _payload(self, route: Route) -> dict:
         return dict(RouteReadSerializer(route, context={"request": self.request}).data)
+
+    def get_parsers(self):
+        parser_classes = list(self.parser_classes)
+        if "put" in getattr(self, "action_map", {}) and "post" not in getattr(self, "action_map", {}):
+            parser_classes = [parsers.JSONParser, *parser_classes]
+        return [parser() for parser in parser_classes]
 
     def _cleanup_created_route_after_failure(self, *, route_id: int | None):
         if not route_id:
@@ -409,7 +433,21 @@ class RouteViewSet(
                     wayline_id=wayline_id,
                     best_effort=True,
                 )
-            )
+        )
+        return route
+
+    @transaction.atomic
+    def _finalize_local_only_update(self, *, serializer, route: Route):
+        before_data = self._payload(route)
+        route = serializer.save()
+        log_action(
+            request=self.request,
+            action="ROUTE_UPDATE",
+            target_type="route",
+            target_id=route.id,
+            before_data=before_data,
+            after_data=self._payload(route),
+        )
         return route
 
     def perform_update(self, serializer, *, gateway: DjiGateway, cleanup_state: dict[str, str]):
@@ -468,8 +506,13 @@ class RouteViewSet(
                 ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        serializer = self.get_serializer(route, data=request.data)
+        serializer = self.get_serializer(route, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        if not serializer.validated_data:
+            return _route_success_response(self, route, http_status=status.HTTP_200_OK)
+        if "kmz_file" not in serializer.validated_data:
+            route = self._finalize_local_only_update(serializer=serializer, route=route)
+            return _route_success_response(self, route, http_status=status.HTTP_200_OK)
         gateway = DjiGateway()
         cleanup_state = {"wayline_id": ""}
         try:
