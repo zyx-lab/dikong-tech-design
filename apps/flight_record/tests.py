@@ -443,7 +443,7 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(payload["media_files"][0]["media_type"], MediaType.VIDEO)
         self.assertEqual(payload["media_files"][0]["file_name"], "VISIBLE.MP4")
         self.assertEqual(payload["media_files"][0]["download_url"], f"/api/v1/media-files/{visible.id}/download")
-        self.assertEqual(payload["media_files"][0]["playback_url"], f"/api/v1/media-files/{visible.id}/playback")
+        self.assertEqual(payload["media_files"][0]["playback_url"], f"/api/v1/media-files/{visible.id}/playback-url")
 
     def test_retrieve_flight_record_should_expose_blank_playback_url_for_photo_media(self):
         self._grant_permission("flight_record.view_flight_record")

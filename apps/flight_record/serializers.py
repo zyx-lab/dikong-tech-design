@@ -36,7 +36,7 @@ class FlightRecordSummarySerializer(serializers.ModelSerializer):
 
 class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField(help_text="平台媒体下载接口。")
-    playback_url = serializers.SerializerMethodField(help_text="平台媒体播放接口；仅视频媒体返回非空。")
+    playback_url = serializers.SerializerMethodField(help_text="平台媒体播放地址查询接口；仅视频媒体返回非空。")
 
     class Meta:
         model = MediaFile
@@ -57,7 +57,7 @@ class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
     def get_playback_url(self, obj: MediaFile) -> str:
         if obj.media_type != MediaType.VIDEO:
             return ""
-        return reverse("media-file-playback", kwargs={"pk": obj.id})
+        return reverse("media-file-playback-url", kwargs={"pk": obj.id})
 
 
 class FlightRecordDetailSerializer(FlightRecordSummarySerializer):
