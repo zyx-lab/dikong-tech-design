@@ -252,6 +252,8 @@ def upload_wayline(request, workspace_id: str):
             "download_url": f"/api/v1/wayline/workspaces/{workspace_id}/waylines/{created['wayline_id']}/url",
         }
     )
+
+
 @protected_mock_dji_view
 def wayline_download_url(request, workspace_id: str, wayline_id: str):
     if request.method != "GET":
@@ -337,6 +339,17 @@ def list_media_files(request, workspace_id: str):
 
 @protected_mock_dji_view
 def media_download_url(request, workspace_id: str, file_id: str):
+    if request.method != "GET":
+        raise Http404
+    if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
+        return _error("C0404", "workspace not found", status=404)
+    if file_id not in mock_dji_state.media_files:
+        return _error("C0404", "media file not found", status=404)
+    return HttpResponseRedirect(f"/__mock-dji__/_downloads/media/{file_id}")
+
+
+@protected_mock_dji_view
+def media_playback_url(request, workspace_id: str, file_id: str):
     if request.method != "GET":
         raise Http404
     if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:

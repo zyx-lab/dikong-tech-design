@@ -4,7 +4,7 @@ from rest_framework.reverse import reverse
 
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.flight_record.models import FlightRecord
-from apps.media_file.models import MediaFile
+from apps.media_file.models import MediaFile, MediaType
 
 
 class FlightRecordSummarySerializer(serializers.ModelSerializer):
@@ -36,6 +36,7 @@ class FlightRecordSummarySerializer(serializers.ModelSerializer):
 
 class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField(help_text="平台媒体下载接口。")
+    playback_url = serializers.SerializerMethodField(help_text="平台媒体播放接口；仅视频媒体返回非空。")
 
     class Meta:
         model = MediaFile
@@ -46,11 +47,17 @@ class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
             "thumbnail_url",
             "captured_at",
             "download_url",
+            "playback_url",
         ]
         read_only_fields = fields
 
     def get_download_url(self, obj: MediaFile) -> str:
         return reverse("media-file-download", kwargs={"pk": obj.id})
+
+    def get_playback_url(self, obj: MediaFile) -> str:
+        if obj.media_type != MediaType.VIDEO:
+            return ""
+        return reverse("media-file-playback", kwargs={"pk": obj.id})
 
 
 class FlightRecordDetailSerializer(FlightRecordSummarySerializer):

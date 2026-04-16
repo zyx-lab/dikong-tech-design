@@ -107,6 +107,7 @@ class OpenApiDocsTests(TestCase):
         self.assertNotIn("/api/v1/missions/{id}/cancel", paths)
         self.assertIn("/api/v1/missions/{id}/advance", paths)
         self.assertIn("/api/v1/media-files/{id}/download", paths)
+        self.assertIn("/api/v1/media-files/{id}/playback", paths)
         self.assertIn("/api/v1/media-files/bind-mission", paths)
         self.assertEqual(schema["paths"]["/api/v1/media-files/bind-mission"].keys(), {"post"})
         self.assertIn("/api/v1/drone-assignments/{id}/cancel", paths)
@@ -249,6 +250,8 @@ class OpenApiDocsTests(TestCase):
             "/api/v1/drone-assignments/{id}": {"get"},
             "/api/v1/media-files": {"get"},
             "/api/v1/media-files/{id}": {"get", "delete"},
+            "/api/v1/media-files/{id}/download": {"get"},
+            "/api/v1/media-files/{id}/playback": {"get"},
             "/api/v1/media-files/bind-mission": {"post"},
         }
         for path, methods in expected_methods.items():
@@ -263,6 +266,7 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/drone-assignments/{id}/cancel", "post"),
             ("/api/v1/media-files/{id}", "delete"),
             ("/api/v1/media-files/{id}/download", "get"),
+            ("/api/v1/media-files/{id}/playback", "get"),
         ):
             self.assertNotIn("requestBody", self._operation(schema, path=path, method=method))
 
@@ -348,7 +352,7 @@ class OpenApiDocsTests(TestCase):
         media_items_schema = schema["components"]["schemas"][media_items_ref]
         self.assertEqual(
             set(media_items_schema["properties"].keys()),
-            {"id", "media_type", "file_name", "thumbnail_url", "captured_at", "download_url"},
+            {"id", "media_type", "file_name", "thumbnail_url", "captured_at", "download_url", "playback_url"},
         )
 
         list_response = self._operation(schema, path="/api/v1/flight-records", method="get")["responses"]["200"]["content"][
@@ -397,6 +401,7 @@ class OpenApiDocsTests(TestCase):
             ("/api/v1/media-files/{id}", "get"): {"200", "401", "403", "404", "500"},
             ("/api/v1/media-files/{id}", "delete"): {"200", "400", "401", "403", "404", "500"},
             ("/api/v1/media-files/{id}/download", "get"): {"302", "401", "403", "404", "500"},
+            ("/api/v1/media-files/{id}/playback", "get"): {"302", "400", "401", "403", "404", "500"},
             ("/api/v1/media-files/bind-mission", "post"): {"200", "400", "401", "403", "500"},
         }
 

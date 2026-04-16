@@ -145,6 +145,14 @@ class DjiMockServerTests(SimpleTestCase):
         self.assertEqual(download_response.status_code, 302)
         self.assertEqual(download_response["Location"], "/__mock-dji__/_downloads/media/mock-file-001")
 
+        playback_response = self.client.get(
+            "/__mock-dji__/api/v1/media/workspaces/mock-workspace-001/files/mock-file-001/playback-url",
+            HTTP_X_AUTH_TOKEN=token,
+            follow=False,
+        )
+        self.assertEqual(playback_response.status_code, 302)
+        self.assertEqual(playback_response["Location"], "/__mock-dji__/_downloads/media/mock-file-001")
+
     def test_wayline_upload_should_require_non_empty_file(self):
         token = mock_dji_state.access_token
 
