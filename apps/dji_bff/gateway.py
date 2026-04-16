@@ -255,6 +255,10 @@ class DjiGateway:
         if "Location" in response.headers:
             return response.headers["Location"]
         payload = response.data
+        if isinstance(payload, str):
+            playback_url = payload.strip()
+            if playback_url:
+                return playback_url
         if isinstance(payload, dict):
             playback_url = self._extract_download_url(payload)
             if playback_url:

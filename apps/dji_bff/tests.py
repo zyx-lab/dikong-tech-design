@@ -222,6 +222,25 @@ class DjiGatewayPaginationTests(TestCase):
         )
         self.assertFalse(request_mock.call_args.kwargs["follow_redirects"])
 
+    def test_get_media_playback_url_should_accept_string_data_payload(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        upstream_response = GatewayResponse(
+            status_code=200,
+            headers={},
+            data="https://playback.example/media-001.m3u8",
+        )
+
+        with patch.object(gateway, "_workspace_id", return_value="mock-workspace-001"):
+            with patch.object(gateway, "_request_json", return_value=upstream_response) as request_mock:
+                playback_url = gateway.get_media_playback_url("media-001")
+
+        self.assertEqual(playback_url, "https://playback.example/media-001.m3u8")
+        self.assertEqual(
+            request_mock.call_args.args,
+            ("GET", "/api/v1/media/workspaces/mock-workspace-001/files/media-001/playback-url"),
+        )
+        self.assertFalse(request_mock.call_args.kwargs["follow_redirects"])
+
     def test_request_should_wrap_timeout_as_upstream_error(self):
         gateway = DjiGateway(base_url="http://mock-dji")
 
