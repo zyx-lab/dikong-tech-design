@@ -3,6 +3,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, Callable, Optional
 
+from django.conf import settings
 from django.db.models import Q, QuerySet
 from django.forms.models import model_to_dict
 from django.utils import timezone
@@ -77,6 +78,7 @@ _SCOPE_RANK = {
 }
 
 PLATFORM_ADMIN_ROLE_CODE = "platform_admin"
+DEFAULT_AUDIT_DB_EXCLUDED_ACTIONS = {"DJI_DEVICE_SYNC", "DJI_MEDIA_SYNC"}
 
 
 def _dedupe_keep_order(values: list[str]) -> list[str]:
@@ -181,6 +183,15 @@ def _resolve_client_ip(request) -> Optional[str]:
     return meta.get("REMOTE_ADDR")
 
 
+def _audit_db_excluded_actions() -> set[str]:
+    configured = getattr(settings, "AUDIT_DB_EXCLUDED_ACTIONS", DEFAULT_AUDIT_DB_EXCLUDED_ACTIONS)
+    if isinstance(configured, str):
+        return {item.strip() for item in configured.split(",") if item.strip()}
+    if isinstance(configured, (list, tuple, set, frozenset)):
+        return {str(item).strip() for item in configured if str(item).strip()}
+    return set(DEFAULT_AUDIT_DB_EXCLUDED_ACTIONS)
+
+
 def log_action(
     *,
     action: str,
@@ -191,8 +202,11 @@ def log_action(
     tenant=None,
     request=None,
     actor_user=None,
-) -> AuditLog:
+) -> Optional[AuditLog]:
     """统一审计日志入口。"""
+
+    if action in _audit_db_excluded_actions():
+        return None
 
     if actor_user is None and request is not None:
         actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None

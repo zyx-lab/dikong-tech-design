@@ -15,6 +15,7 @@ from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 
 from apps.access.models import EmploymentStatus
+from apps.access.models import AuditLog
 from apps.access.test_support import (
     ensure_staff_profile,
     ensure_tenant_member_position,
@@ -485,6 +486,11 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertFalse(DjiDeviceIndex.objects.filter(device_sn="STALE-DRONE-001").exists())
         self.assertTrue(DjiDeviceIndex.objects.filter(device_sn="MOCK-DRONE-001").exists())
 
+    def test_sync_device_indexes_should_not_write_audit_log_row(self):
+        sync_device_indexes()
+
+        self.assertFalse(AuditLog.objects.filter(action="DJI_DEVICE_SYNC").exists())
+
     def test_sync_media_indexes_should_create_local_read_model_from_upstream_media(self):
         Drone.objects.create(
             tenant=self.tenant,
@@ -502,6 +508,19 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(media_index.sync_status, SyncStatus.SYNCED)
         media_file = MediaFile.objects.get(id=media_index.media_file_id, tenant=self.tenant)
         self.assertEqual(media_file.device_sn, "MOCK-DRONE-001")
+
+    def test_sync_media_indexes_should_not_write_audit_log_row(self):
+        Drone.objects.create(
+            tenant=self.tenant,
+            code="MEDIA-SYNC-NO-AUDIT",
+            name="媒体同步无人机",
+            model="M30",
+            device_sn="MOCK-DRONE-001",
+        )
+
+        sync_media_indexes()
+
+        self.assertFalse(AuditLog.objects.filter(action="DJI_MEDIA_SYNC").exists())
 
     def test_sync_media_indexes_should_use_claimed_drone_when_released_and_claimed_share_device_sn(self):
         sync_user = User.objects.create_user(username="dji_bff_sync_user", password="pass1234", status=1)

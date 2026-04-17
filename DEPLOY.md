@@ -2,6 +2,10 @@
 
 本项目使用 Docker Compose 进行容器化部署，包含 PostgreSQL 数据库和 Django 应用。
 
+如果你的 Django 运行在宿主机而不是容器里，请先看
+[宿主机 Django 切换到 Docker PostgreSQL 操作手册](docs/host-django-postgres-migration.md)；
+下面的 compose 启动步骤只适用于 web 和 db 都放进容器的场景。
+
 ## 快速启动
 
 ```bash
@@ -96,6 +100,9 @@ docker-compose logs -f db
 # 查看所有日志
 docker-compose logs -f
 ```
+
+如果你要查 Django 的文件日志、`request_id` / `trace_id`，或者上游调用细节，请看
+[Django 日志排查指南](docs/django-logging-guide.md)。
 
 ### 重新构建镜像
 
