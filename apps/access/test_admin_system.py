@@ -1,0 +1,181 @@
+import tempfile
+import json
+from pathlib import Path
+
+from django.contrib.auth import get_user_model
+from django.test import TestCase, override_settings
+
+
+User = get_user_model()
+
+
+class SuperuserAdminAccessTests(TestCase):
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(username="admin_root", password="pass1234")
+        self.staff_user = User.objects.create_user(
+            username="admin_staff",
+            password="pass1234",
+            is_staff=True,
+            is_superuser=False,
+        )
+
+    def test_admin_index_should_allow_superuser(self):
+        self.client.force_login(self.superuser)
+
+        response = self.client.get("/admin/")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_admin_index_should_include_system_logs_entry(self):
+        self.client.force_login(self.superuser)
+
+        response = self.client.get("/admin/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "/admin/system/logs/")
+        self.assertContains(response, "系统日志")
+
+    def test_admin_index_should_reject_non_superuser_staff(self):
+        self.client.force_login(self.staff_user)
+
+        response = self.client.get("/admin/")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/admin/login/", response.headers["Location"])
+
+
+class AdminLogViewerTests(TestCase):
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(username="admin_logs", password="pass1234")
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.log_dir = Path(self.tempdir.name)
+        structured_line = json.dumps(
+            {
+                "timestamp": "2026-04-17T14:00:00+08:00",
+                "event": "request_finished",
+                "level": "INFO",
+                "request_id": "req-1",
+                "request": {"method": "GET", "path": "/api/v1/health"},
+                "response": {"status_code": 200},
+            },
+            ensure_ascii=False,
+        )
+        (self.log_dir / "app.log").write_text(f"line-1\n{structured_line}\nline-2\n", encoding="utf-8")
+        (self.log_dir / "error.log").write_text("err-1\n", encoding="utf-8")
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_render_selected_log_file(self):
+        self.client.force_login(self.superuser)
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"file": "app.log", "show_details": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "line-1")
+        self.assertContains(response, "line-2")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_block_path_traversal(self):
+        self.client.force_login(self.superuser)
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"file": "../secrets.txt"})
+
+        self.assertEqual(response.status_code, 400)
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_support_keyword_filter(self):
+        self.client.force_login(self.superuser)
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"file": "app.log", "q": "line-2"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "line-2")
+        self.assertNotContains(response, "line-1")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_render_structured_columns_for_json_log(self):
+        self.client.force_login(self.superuser)
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"file": "app.log", "q": "request_finished", "show_details": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "request_finished")
+        self.assertContains(response, "/api/v1/health")
+        self.assertContains(response, "req-1")
+        self.assertContains(response, "日志明细")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_group_rows_into_trace_chains(self):
+        self.client.force_login(self.superuser)
+        chain_lines = [
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:00:00+08:00",
+                    "event": "request_started",
+                    "level": "INFO",
+                    "request_id": "chain-1",
+                    "request": {"method": "POST", "path": "/api/v1/drones/1/live/start"},
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:00:01+08:00",
+                    "event": "upstream_request",
+                    "level": "INFO",
+                    "trace_id": "chain-1",
+                    "request": {"method": "POST", "path": "/api/v1/manage/live/streams/start"},
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:00:02+08:00",
+                    "event": "request_exception",
+                    "level": "ERROR",
+                    "request_id": "chain-1",
+                    "request": {"method": "POST", "path": "/api/v1/drones/1/live/start"},
+                    "response": {"status_code": 502},
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:01:00+08:00",
+                    "event": "request_finished",
+                    "level": "INFO",
+                    "request_id": "chain-2",
+                    "request": {"method": "GET", "path": "/api/v1/health"},
+                    "response": {"status_code": 200},
+                },
+                ensure_ascii=False,
+            ),
+        ]
+        (self.log_dir / "app.log").write_text("\n".join(chain_lines) + "\n", encoding="utf-8")
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"file": "app.log", "chain_id": "chain-1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "链路总览")
+        self.assertContains(response, "chain-1")
+        self.assertContains(response, "上游请求")
+        self.assertContains(response, "/api/v1/drones/1/live/start")
+        self.assertNotContains(response, "chain-2")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_default_to_summary_only(self):
+        self.client.force_login(self.superuser)
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"file": "app.log"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "默认只显示链路总览")
+        self.assertNotContains(response, "日志明细")

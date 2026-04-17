@@ -1,10 +1,14 @@
 import json
 from collections import defaultdict
+from pathlib import Path
 
+from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.db.models import Count, Prefetch, Q
-from django.urls import reverse
+from django.http import HttpResponseBadRequest
+from django.template.response import TemplateResponse
+from django.urls import path, reverse
 from django.utils.html import format_html, format_html_join
 
 from apps.access.models import (
@@ -911,3 +915,365 @@ class AuditLogAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     @admin.display(description="变更后")
     def after_data_pretty(self, obj):
         return pretty_json(obj.after_data)
+
+
+def _superuser_only_admin_permission(self, request):
+    return request.user.is_active and request.user.is_superuser
+
+
+def _is_safe_log_filename(value: str) -> bool:
+    if not value:
+        return False
+    if "/" in value or "\\" in value:
+        return False
+    if ".." in value:
+        return False
+    return True
+
+
+def _parse_tail(raw_value: str | None) -> int:
+    try:
+        tail = int(raw_value or "100")
+    except (TypeError, ValueError):
+        return 100
+    return min(max(tail, 1), 2000)
+
+
+def _parse_auto_refresh_seconds(raw_value: str | None) -> int:
+    try:
+        seconds = int(raw_value or "0")
+    except (TypeError, ValueError):
+        return 0
+    return min(max(seconds, 0), 300)
+
+
+def _parse_bool(raw_value: str | None, *, default: bool) -> bool:
+    if raw_value is None:
+        return default
+    return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _list_log_files(log_dir: Path):
+    if not log_dir.exists():
+        return []
+    return sorted(path.name for path in log_dir.glob("*.log") if path.is_file())
+
+
+def _load_log_lines(path: Path, *, tail: int) -> list[str]:
+    with path.open("r", encoding="utf-8", errors="replace") as fh:
+        return [line.rstrip("\n") for line in fh.readlines()[-tail:]]
+
+
+def _apply_keyword_filter(lines: list[str], *, keyword: str) -> list[str]:
+    if not keyword:
+        return lines
+    normalized = keyword.lower()
+    return [line for line in lines if normalized in line.lower()]
+
+
+def _safe_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _safe_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _log_stage_name(event: str) -> str:
+    mapping = {
+        "request_started": "入口请求",
+        "request_finished": "出口响应",
+        "request_exception": "请求异常",
+        "upstream_request": "上游请求",
+        "upstream_response": "上游响应",
+        "upstream_error": "上游异常",
+    }
+    return mapping.get(event, event or "未知环节")
+
+
+def _extract_chain_id(payload: dict, request_payload: dict, response_payload: dict) -> str:
+    context_payload = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+    response_body = response_payload.get("body") if isinstance(response_payload.get("body"), dict) else {}
+    candidates = [
+        payload.get("trace_id"),
+        payload.get("request_id"),
+        payload.get("traceId"),
+        payload.get("requestId"),
+        context_payload.get("trace_id"),
+        context_payload.get("request_id"),
+        context_payload.get("traceId"),
+        context_payload.get("requestId"),
+        response_body.get("traceId"),
+        request_payload.get("trace_id"),
+        request_payload.get("request_id"),
+    ]
+    for value in candidates:
+        text = _safe_text(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _build_row_summary(*, payload: dict, row: dict, request_payload: dict, response_payload: dict) -> str:
+    event = row["event"]
+    if event == "upstream_request":
+        method = row["method"] or "-"
+        path = row["path"] or "-"
+        return f"调用上游: {method} {path}"
+    if event == "upstream_response":
+        status = row["status_code"] or "-"
+        return f"上游返回: status={status}"
+    if event == "upstream_error":
+        error_payload = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+        err_type = _safe_text(error_payload.get("type")) or "upstream_error"
+        message = _safe_text(error_payload.get("message") or error_payload.get("msg")) or "上游调用失败"
+        return f"{err_type}: {message}"
+    if event in {"request_finished", "request_exception", "request_started"}:
+        method = row["method"] or "-"
+        path = row["path"] or "-"
+        status = row["status_code"]
+        if status:
+            return f"{method} {path} -> {status}"
+        return f"{method} {path}"
+    return _safe_text(payload.get("message") or payload.get("msg") or row["event"] or row["raw"])[:200]
+
+
+def _parse_log_row(*, line_no: int, raw_line: str, include_details: bool) -> dict:
+    row = {
+        "line_no": line_no,
+        "raw": raw_line,
+        "is_json": False,
+        "timestamp": "",
+        "level": "",
+        "event": "",
+        "request_id": "",
+        "chain_id": "",
+        "method": "",
+        "path": "",
+        "status_code": "",
+        "status_code_int": None,
+        "logger": "",
+        "duration_ms": "",
+        "stage": "",
+        "is_error": False,
+        "summary": raw_line[:200],
+        "pretty_json": "",
+    }
+    try:
+        payload = json.loads(raw_line)
+    except (TypeError, ValueError):
+        return row
+
+    row["is_json"] = True
+    if include_details:
+        row["pretty_json"] = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    if not isinstance(payload, dict):
+        row["summary"] = _safe_text(payload)[:200]
+        return row
+
+    request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+    response_payload = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+    row["timestamp"] = _safe_text(payload.get("timestamp") or payload.get("time") or payload.get("@timestamp"))
+    row["level"] = _safe_text(payload.get("level") or payload.get("levelname")).upper()
+    row["event"] = _safe_text(payload.get("event"))
+    row["request_id"] = _safe_text(payload.get("request_id") or payload.get("trace_id"))
+    row["chain_id"] = _extract_chain_id(payload, request_payload, response_payload)
+    row["method"] = _safe_text(request_payload.get("method"))
+    row["path"] = _safe_text(request_payload.get("path"))
+    row["status_code"] = _safe_text(response_payload.get("status_code") or payload.get("status_code"))
+    row["status_code_int"] = _safe_int(row["status_code"])
+    row["logger"] = _safe_text(payload.get("logger") or payload.get("name"))
+    row["duration_ms"] = _safe_text(payload.get("duration_ms") or payload.get("durationMs"))
+    row["stage"] = _log_stage_name(row["event"])
+    row["summary"] = _build_row_summary(
+        payload=payload,
+        row=row,
+        request_payload=request_payload,
+        response_payload=response_payload,
+    )[:200]
+    row["is_error"] = (
+        row["level"] in {"ERROR", "CRITICAL"}
+        or row["event"] in {"request_exception", "upstream_error"}
+        or (row["status_code_int"] is not None and row["status_code_int"] >= 500)
+    )
+    return row
+
+
+def _build_log_rows(lines: list[str], *, newest_first: bool, include_details: bool) -> list[dict]:
+    indexed_lines = list(enumerate(lines, start=1))
+    if newest_first:
+        indexed_lines.reverse()
+    return [
+        _parse_log_row(line_no=line_no, raw_line=raw_line, include_details=include_details)
+        for line_no, raw_line in indexed_lines
+    ]
+
+
+def _summarize_log_rows(rows: list[dict]) -> dict:
+    level_counts: dict[str, int] = defaultdict(int)
+    event_counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        if row["level"]:
+            level_counts[row["level"]] += 1
+        if row["event"]:
+            event_counts[row["event"]] += 1
+    return {
+        "levels": sorted(level_counts.items(), key=lambda item: (-item[1], item[0]))[:8],
+        "events": sorted(event_counts.items(), key=lambda item: (-item[1], item[0]))[:8],
+    }
+
+
+def _build_log_chains(rows: list[dict]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        chain_id = row.get("chain_id")
+        if not chain_id:
+            continue
+        chain = grouped.setdefault(
+            chain_id,
+            {
+                "chain_id": chain_id,
+                "steps": [],
+                "line_min": row["line_no"],
+                "line_max": row["line_no"],
+            },
+        )
+        chain["steps"].append(row)
+        chain["line_min"] = min(chain["line_min"], row["line_no"])
+        chain["line_max"] = max(chain["line_max"], row["line_no"])
+
+    chains: list[dict] = []
+    for chain in grouped.values():
+        steps = sorted(chain["steps"], key=lambda item: item["line_no"])
+        entry_step = next((step for step in steps if step["path"]), steps[0] if steps else None)
+        final_step = steps[-1] if steps else None
+        entrypoint = ""
+        if entry_step:
+            method = entry_step["method"].strip()
+            path = entry_step["path"].strip()
+            entrypoint = f"{method} {path}".strip()
+        chain["steps"] = steps
+        chain["step_count"] = len(steps)
+        chain["error_count"] = sum(1 for step in steps if step["is_error"])
+        chain["has_error"] = chain["error_count"] > 0
+        chain["entrypoint"] = entrypoint
+        chain["started_at"] = steps[0]["timestamp"] if steps else ""
+        chain["ended_at"] = final_step["timestamp"] if final_step else ""
+        chain["final_stage"] = final_step["stage"] if final_step else ""
+        chain["final_status_code"] = final_step["status_code"] if final_step else ""
+        chain["duration_ms"] = final_step["duration_ms"] if final_step else ""
+        chains.append(chain)
+
+    chains.sort(key=lambda item: item["line_max"], reverse=True)
+    return chains
+
+
+def system_logs_view(request):
+    log_dir = Path(settings.DJANGO_LOG_DIR)
+    available_files = _list_log_files(log_dir)
+    selected_file = request.GET.get("file", "app.log")
+    tail = _parse_tail(request.GET.get("tail"))
+    keyword = request.GET.get("q", "").strip()
+    chain_id = request.GET.get("chain_id", "").strip()
+    show_details = _parse_bool(request.GET.get("show_details"), default=False)
+    newest_first = _parse_bool(request.GET.get("newest_first"), default=True)
+    auto_refresh_seconds = _parse_auto_refresh_seconds(request.GET.get("refresh"))
+    lines: list[str] = []
+    rows: list[dict] = []
+    chains: list[dict] = []
+    error_message = None
+
+    if not _is_safe_log_filename(selected_file):
+        return HttpResponseBadRequest("invalid log filename")
+
+    selected_path = log_dir / selected_file
+    if selected_path.exists() and selected_path.is_file():
+        lines = _load_log_lines(selected_path, tail=tail)
+        lines = _apply_keyword_filter(lines, keyword=keyword)
+        rows = _build_log_rows(lines, newest_first=newest_first, include_details=show_details)
+        if chain_id:
+            rows = [row for row in rows if row.get("chain_id") == chain_id]
+        chains = _build_log_chains(rows)
+    else:
+        error_message = f"日志文件不存在: {selected_file}"
+
+    summary = _summarize_log_rows(rows)
+    context = {
+        **admin.site.each_context(request),
+        "title": "系统日志",
+        "log_dir": str(log_dir),
+        "available_files": available_files,
+        "selected_file": selected_file,
+        "tail": tail,
+        "query_text": keyword,
+        "chain_id": chain_id,
+        "show_details": show_details,
+        "newest_first": newest_first,
+        "auto_refresh_seconds": auto_refresh_seconds,
+        "rows": rows,
+        "chains": chains,
+        "lines": [row["raw"] for row in rows],
+        "total_rows": len(rows),
+        "json_rows": sum(1 for row in rows if row["is_json"]),
+        "chain_count": len(chains),
+        "level_summary": summary["levels"],
+        "event_summary": summary["events"],
+        "error_message": error_message,
+    }
+    return TemplateResponse(request, "admin/system_logs.html", context)
+
+
+admin.AdminSite.has_permission = _superuser_only_admin_permission
+_default_admin_get_urls = admin.site.get_urls
+_default_admin_get_app_list = admin.AdminSite.get_app_list
+
+
+def _admin_get_urls_with_system_logs():
+    custom_urls = [
+        path("system/logs/", admin.site.admin_view(system_logs_view), name="system_logs"),
+    ]
+    return custom_urls + _default_admin_get_urls()
+
+
+admin.site.get_urls = _admin_get_urls_with_system_logs
+
+
+def _admin_get_app_list_with_system_logs(self, request, app_label=None):
+    app_list = _default_admin_get_app_list(self, request, app_label=app_label)
+    if app_label not in (None, "system"):
+        return app_list
+
+    logs_url = reverse("admin:system_logs")
+    system_entry = {
+        "name": "系统工具",
+        "app_label": "system",
+        "app_url": logs_url,
+        "has_module_perms": True,
+        "models": [
+            {
+                "name": "系统日志",
+                "object_name": "SystemLog",
+                "admin_url": logs_url,
+                "view_only": True,
+                "perms": {
+                    "add": False,
+                    "change": False,
+                    "delete": False,
+                    "view": True,
+                },
+            }
+        ],
+    }
+    if app_label == "system":
+        return [system_entry]
+    return [*app_list, system_entry]
+
+
+admin.AdminSite.get_app_list = _admin_get_app_list_with_system_logs

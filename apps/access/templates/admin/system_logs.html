@@ -1,0 +1,322 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">首页</a>
+  &rsaquo; 系统日志
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>系统日志</h1>
+<style>
+  .logs-toolbar {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+    align-items: end;
+  }
+  .logs-toolbar .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .logs-toolbar label {
+    font-size: 12px;
+    color: #666;
+  }
+  .logs-toolbar input,
+  .logs-toolbar select {
+    width: 100%;
+  }
+  .meta {
+    margin: 10px 0 14px;
+    color: #666;
+  }
+  .stat-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .stat-chip {
+    border: 1px solid #ddd;
+    background: #fff;
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 12px;
+  }
+  .chain-card {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    background: #fff;
+  }
+  .chain-card summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 10px 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .chain-card summary::-webkit-details-marker {
+    display: none;
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    border: 1px solid #ddd;
+    background: #f8f8f8;
+  }
+  .pill-error {
+    border-color: #f1b0b7;
+    background: #ffe8eb;
+    color: #9b1c2c;
+  }
+  .chain-title {
+    font-weight: 600;
+  }
+  .chain-steps {
+    margin: 0;
+    padding: 0 12px 12px 30px;
+  }
+  .chain-steps li {
+    margin: 0 0 8px;
+  }
+  .step-head {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .step-summary {
+    margin: 4px 0 0;
+  }
+  .subtle {
+    color: #666;
+    font-size: 12px;
+  }
+  .json-box {
+    margin-top: 4px;
+    border-radius: 6px;
+    background: #101418;
+    color: #d8e0e8;
+    padding: 10px;
+    overflow: auto;
+    max-height: 420px;
+  }
+  .rows-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+  }
+  .rows-table th,
+  .rows-table td {
+    border: 1px solid #e5e5e5;
+    padding: 6px 8px;
+    vertical-align: top;
+  }
+  .rows-table th {
+    background: #f6f6f6;
+    white-space: nowrap;
+  }
+  .row-error {
+    background: #fff5f6;
+  }
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  }
+</style>
+
+<form method="get" class="logs-toolbar" id="log-filter-form">
+  <div class="field">
+    <label for="id_file">日志文件</label>
+    <select id="id_file" name="file">
+      {% for filename in available_files %}
+        <option value="{{ filename }}" {% if filename == selected_file %}selected{% endif %}>{{ filename }}</option>
+      {% endfor %}
+      {% if not available_files %}
+        <option value="{{ selected_file }}" selected>{{ selected_file }}</option>
+      {% endif %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="id_tail">尾部行数</label>
+    <input id="id_tail" name="tail" type="number" min="1" max="2000" value="{{ tail }}" />
+  </div>
+  <div class="field">
+    <label for="id_q">关键字过滤</label>
+    <input id="id_q" name="q" value="{{ query_text }}" placeholder="event/path/traceId" />
+  </div>
+  <div class="field">
+    <label for="id_chain_id">链路 ID 过滤</label>
+    <input id="id_chain_id" name="chain_id" value="{{ chain_id }}" placeholder="trace_id / request_id" />
+  </div>
+  <div class="field">
+    <label for="id_refresh">自动刷新(秒)</label>
+    <input id="id_refresh" name="refresh" type="number" min="0" max="300" value="{{ auto_refresh_seconds }}" />
+  </div>
+  <div class="field">
+    <label><input type="checkbox" name="newest_first" value="1" {% if newest_first %}checked{% endif %} /> 倒序</label>
+    <label style="margin-top: 8px;"><input type="checkbox" name="show_details" value="1" {% if show_details %}checked{% endif %} /> 显示明细</label>
+    <button type="submit" class="button default">应用</button>
+  </div>
+</form>
+
+<div class="meta">日志目录: <code>{{ log_dir }}</code></div>
+{% if error_message %}
+  <p style="color: #ba2121;">{{ error_message }}</p>
+{% endif %}
+
+<div class="stat-row">
+  <span class="stat-chip">总行数: {{ total_rows }}</span>
+  <span class="stat-chip">结构化日志: {{ json_rows }}</span>
+  <span class="stat-chip">链路数: {{ chain_count }}</span>
+  {% for level, count in level_summary %}
+    <span class="stat-chip">{{ level }}: {{ count }}</span>
+  {% endfor %}
+</div>
+
+<h2>链路总览</h2>
+{% if chains %}
+  {% for chain in chains %}
+    <details class="chain-card" {% if forloop.first %}open{% endif %}>
+      <summary>
+        <span class="pill mono">{{ chain.chain_id }}</span>
+        {% if chain.has_error %}
+          <span class="pill pill-error">异常链路</span>
+        {% else %}
+          <span class="pill">正常链路</span>
+        {% endif %}
+        <span class="chain-title">{{ chain.entrypoint|default:"(无入口路径)" }}</span>
+        <span class="pill">{{ chain.step_count }} steps</span>
+        {% if chain.final_status_code %}
+          <span class="pill">最终状态: {{ chain.final_status_code }}</span>
+        {% endif %}
+        {% if chain.duration_ms %}
+          <span class="pill">耗时: {{ chain.duration_ms }} ms</span>
+        {% endif %}
+      </summary>
+      <ol class="chain-steps">
+        {% for step in chain.steps %}
+          <li>
+            <div class="step-head">
+              <span class="pill {% if step.is_error %}pill-error{% endif %}">{{ step.stage|default:step.event }}</span>
+              {% if step.timestamp %}<span class="subtle">{{ step.timestamp }}</span>{% endif %}
+              {% if step.method or step.path %}<span class="mono">{{ step.method }} {{ step.path }}</span>{% endif %}
+              {% if step.status_code %}<span class="pill">status={{ step.status_code }}</span>{% endif %}
+              {% if step.logger %}<span class="subtle">{{ step.logger }}</span>{% endif %}
+              <span class="subtle">#{{ step.line_no }}</span>
+            </div>
+            <div class="step-summary">{{ step.summary }}</div>
+            {% if step.pretty_json %}
+              <details>
+                <summary class="subtle">展开结构化详情</summary>
+                <pre class="json-box">{{ step.pretty_json }}</pre>
+              </details>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ol>
+    </details>
+  {% endfor %}
+{% else %}
+  <p class="subtle">当前筛选条件下没有可聚合的链路。</p>
+{% endif %}
+
+{% if show_details %}
+  <h2>日志明细</h2>
+  <table class="rows-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>时间</th>
+        <th>级别</th>
+        <th>环节</th>
+        <th>链路</th>
+        <th>请求</th>
+        <th>状态</th>
+        <th>摘要</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr class="{% if row.is_error %}row-error{% endif %}">
+          <td class="mono">{{ row.line_no }}</td>
+          <td class="mono">{{ row.timestamp|default:"-" }}</td>
+          <td>{{ row.level|default:"-" }}</td>
+          <td>{{ row.stage|default:row.event|default:"-" }}</td>
+          <td class="mono">{{ row.chain_id|default:"-" }}</td>
+          <td class="mono">{{ row.method }} {{ row.path }}</td>
+          <td>{{ row.status_code|default:"-" }}</td>
+          <td>
+            <div>{{ row.summary }}</div>
+            {% if row.pretty_json %}
+              <details>
+                <summary class="subtle">展开 JSON</summary>
+                <pre class="json-box">{{ row.pretty_json }}</pre>
+              </details>
+            {% elif row.raw %}
+              <details>
+                <summary class="subtle">展开原始行</summary>
+                <pre class="json-box">{{ row.raw }}</pre>
+              </details>
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="8" class="subtle">(empty)</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="subtle">默认只显示链路总览。勾选“显示明细”后再查看完整日志行和 JSON。</p>
+{% endif %}
+
+{% if auto_refresh_seconds > 0 %}
+  <script>
+    setTimeout(function () { window.location.reload(); }, {{ auto_refresh_seconds }} * 1000);
+  </script>
+{% endif %}
+<script>
+  (function () {
+    const form = document.getElementById("log-filter-form");
+    if (!form) {
+      return;
+    }
+    const immediateNames = new Set(["file", "tail", "newest_first", "show_details", "refresh"]);
+    const debounceNames = new Set(["q", "chain_id"]);
+    let timer = null;
+
+    function submitForm() {
+      form.submit();
+    }
+
+    form.addEventListener("change", function (event) {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
+        return;
+      }
+      if (immediateNames.has(target.name)) {
+        submitForm();
+      }
+    });
+
+    ["q", "chain_id"].forEach(function (name) {
+      const input = form.querySelector(`[name="${name}"]`);
+      if (!input) {
+        return;
+      }
+      input.addEventListener("input", function () {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(submitForm, 350);
+      });
+    });
+  })();
+</script>
+{% endblock %}
