@@ -1,11 +1,28 @@
 import os
 from pathlib import Path
 
+from config.logging_config import build_logging_config
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
 ALLOWED_HOSTS = [host.strip() for host in os.getenv("DJANGO_ALLOWED_HOSTS", "*").split(",") if host.strip()]
+
+DJANGO_LOG_DIR = Path(os.getenv("DJANGO_LOG_DIR", str(BASE_DIR / "logs")))
+DJANGO_LOG_LEVEL = os.getenv("DJANGO_LOG_LEVEL", "INFO")
+DJANGO_LOG_MAX_BYTES = int(os.getenv("DJANGO_LOG_MAX_BYTES", str(10 * 1024 * 1024)))
+DJANGO_LOG_BACKUP_COUNT = int(os.getenv("DJANGO_LOG_BACKUP_COUNT", "10"))
+DJANGO_LOG_BODY_MAX_CHARS = int(os.getenv("DJANGO_LOG_BODY_MAX_CHARS", "20000"))
+DJANGO_LOG_HEADER_MAX_CHARS = int(os.getenv("DJANGO_LOG_HEADER_MAX_CHARS", "4096"))
+
+LOGGING = build_logging_config(
+    base_dir=BASE_DIR,
+    log_dir=DJANGO_LOG_DIR,
+    level=DJANGO_LOG_LEVEL,
+    max_bytes=DJANGO_LOG_MAX_BYTES,
+    backup_count=DJANGO_LOG_BACKUP_COUNT,
+)
 
 INSTALLED_APPS = [
     "django.contrib.admin",

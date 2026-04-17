@@ -26,3 +26,7 @@
 - Preserve source anchors and stable identifiers where possible.
 - Keep accepted knowledge content separate from mutable review state.
 - Do not treat experiments as part of the mandatory daily loop.
+
+## Local Skills
+
+- When the user asks to debug an upstream or proxy API, read `skills/debug-upstream/SKILL.md` first.

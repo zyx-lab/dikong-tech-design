@@ -1,8 +1,10 @@
+import time
 import uuid
 
 from django.core.exceptions import PermissionDenied
 
 from apps.access.models import Tenant, TenantStatus
+from apps.access.request_logging import build_request_context, current_request_id
 
 
 class RequestContextMiddleware:
@@ -17,9 +19,16 @@ class RequestContextMiddleware:
     def __call__(self, request):
         request_id = request.META.get(self.header_name) or str(uuid.uuid4())
         request.request_id = request_id
-        response = self.get_response(request)
-        response[self.response_header] = request_id
-        return response
+        request.trace_id = request_id
+        request.log_started_at = time.monotonic()
+        request.log_context = build_request_context(request)
+        token = current_request_id.set(request_id)
+        try:
+            response = self.get_response(request)
+            response[self.response_header] = request_id
+            return response
+        finally:
+            current_request_id.reset(token)
 
 
 class TenantContextMiddleware:
@@ -49,4 +58,6 @@ class TenantContextMiddleware:
         if tenant is None or tenant.status != TenantStatus.ACTIVE:
             raise PermissionDenied("Invalid or disabled tenant")
 
+        if hasattr(request, "log_context"):
+            request.log_context = build_request_context(request)
         return self.get_response(request)

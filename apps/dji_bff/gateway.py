@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import logging
 import json
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,11 +12,15 @@ from socket import timeout as SocketTimeout
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from typing import Any
 
 from django.conf import settings
 from django.utils import timezone
 
+from apps.access.request_logging import log_json, redact_payload
 from apps.dji_bff.models import DjiWorkspaceConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,6 +56,67 @@ class DjiGateway:
     def __init__(self, *, base_url: str | None = None, timeout: int | None = None):
         self.base_url = (base_url or getattr(settings, "DJI_UPSTREAM_BASE_URL", "")).rstrip("/")
         self.timeout = timeout or int(getattr(settings, "DJI_UPSTREAM_TIMEOUT_SECONDS", 10))
+
+    def _log_upstream_event(self, event: str, *, level: int = logging.INFO, **payload: Any) -> None:
+        log_json(logger, level, event, **payload)
+
+    def _upstream_request_payload(
+        self,
+        *,
+        method: str,
+        path: str,
+        headers: dict[str, str] | None = None,
+        body: Any = None,
+        attempt: int | None = None,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "method": method,
+            "path": path,
+            "url": self._absolute_url(path),
+        }
+        if headers is not None:
+            payload["headers"] = redact_payload(dict(headers))
+        if body is not None:
+            payload["body"] = redact_payload(body)
+        if attempt is not None:
+            payload["attempt"] = attempt
+        if extra:
+            payload.update(extra)
+        return payload
+
+    @staticmethod
+    def _upstream_response_payload(response: GatewayResponse) -> dict[str, Any]:
+        return {
+            "status_code": response.status_code,
+            "headers": redact_payload(dict(response.headers)),
+            "body": redact_payload(response.data),
+        }
+
+    @staticmethod
+    def _upstream_error_type(exc: DjiGatewayUpstreamError) -> str:
+        message = str(exc).lower()
+        if "timed out" in message:
+            return "timeout"
+        if "unreachable" in message:
+            return "unreachable"
+        if "business error" in message:
+            return "business_error"
+        if exc.status_code == 401:
+            return "auth_error"
+        if exc.status_code >= 500:
+            return "http_error"
+        return "upstream_error"
+
+    def _upstream_error_payload(self, exc: DjiGatewayUpstreamError) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "type": self._upstream_error_type(exc),
+            "message": str(exc),
+            "status_code": exc.status_code,
+        }
+        if exc.data is not None:
+            payload["data"] = redact_payload(exc.data)
+        return payload
 
     def get_live_capacity(self, device_sn: str):
         payload = self._request_json("GET", "/api/v1/manage/live/capacity").data
@@ -308,26 +375,109 @@ class DjiGateway:
             "password": password,
             "flag": self._configured_login_flag(),
         }
-        response = self._request(
-            "POST",
-            "/api/v1/manage/login",
-            data=json.dumps(payload).encode("utf-8"),
-            headers=self._headers(content_type="application/json"),
-            follow_redirects=True,
+        headers = self._headers(content_type="application/json")
+        request_payload = self._upstream_request_payload(
+            method="POST",
+            path="/api/v1/manage/login",
+            headers=headers,
+            body=payload,
+            attempt=1,
         )
-        return self._save_session(response.data, config=config)
+        started_at = time.monotonic()
+        self._log_upstream_event("upstream_login_request", request=request_payload)
+        try:
+            response = self._request(
+                "POST",
+                "/api/v1/manage/login",
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                follow_redirects=True,
+            )
+        except DjiGatewayUpstreamError as exc:
+            self._log_upstream_event(
+                "upstream_error",
+                level=logging.ERROR,
+                request=request_payload,
+                error=self._upstream_error_payload(exc),
+                attempt=1,
+                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+            )
+            raise
+
+        response_payload = self._upstream_response_payload(response)
+        self._log_upstream_event(
+            "upstream_login_response",
+            response=response_payload,
+            request=request_payload,
+            attempt=1,
+            duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+        )
+        try:
+            return self._save_session(response.data, config=config)
+        except DjiGatewayUpstreamError as exc:
+            self._log_upstream_event(
+                "upstream_error",
+                level=logging.ERROR,
+                request=request_payload,
+                response=response_payload,
+                error=self._upstream_error_payload(exc),
+                attempt=1,
+                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+            )
+            raise
 
     def _refresh_session(self, config: DjiWorkspaceConfig) -> DjiWorkspaceConfig:
         if not config.access_token:
             raise DjiGatewayUpstreamError("DJI access_token 缺失，无法续期", status_code=401)
-        response = self._request(
-            "POST",
-            "/api/v1/manage/token/refresh",
-            data=None,
-            headers=self._headers(content_type="application/json", auth_token=config.access_token),
-            follow_redirects=True,
+        headers = self._headers(content_type="application/json", auth_token=config.access_token)
+        request_payload = self._upstream_request_payload(
+            method="POST",
+            path="/api/v1/manage/token/refresh",
+            headers=headers,
+            attempt=1,
         )
-        return self._save_session(response.data, config=config)
+        started_at = time.monotonic()
+        self._log_upstream_event("upstream_refresh_request", request=request_payload)
+        try:
+            response = self._request(
+                "POST",
+                "/api/v1/manage/token/refresh",
+                data=None,
+                headers=headers,
+                follow_redirects=True,
+            )
+        except DjiGatewayUpstreamError as exc:
+            self._log_upstream_event(
+                "upstream_error",
+                level=logging.ERROR,
+                request=request_payload,
+                error=self._upstream_error_payload(exc),
+                attempt=1,
+                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+            )
+            raise
+
+        response_payload = self._upstream_response_payload(response)
+        self._log_upstream_event(
+            "upstream_refresh_response",
+            response=response_payload,
+            request=request_payload,
+            attempt=1,
+            duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+        )
+        try:
+            return self._save_session(response.data, config=config)
+        except DjiGatewayUpstreamError as exc:
+            self._log_upstream_event(
+                "upstream_error",
+                level=logging.ERROR,
+                request=request_payload,
+                response=response_payload,
+                error=self._upstream_error_payload(exc),
+                attempt=1,
+                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+            )
+            raise
 
     def _save_session(self, payload, *, config: DjiWorkspaceConfig | None = None) -> DjiWorkspaceConfig:
         if not isinstance(payload, dict):
@@ -409,21 +559,74 @@ class DjiGateway:
         data=None,
         follow_redirects: bool = True,
         authenticate: bool = True,
+        request_event: str = "upstream_request",
+        response_event: str = "upstream_response",
     ) -> GatewayResponse:
-        body = None
+        body = json.dumps(data).encode("utf-8") if data is not None else None
         auth_token = None
-        if data is not None:
-            body = json.dumps(data).encode("utf-8")
         if authenticate:
             auth_token = self._ensure_authenticated().access_token
         headers = self._headers(content_type="application/json", auth_token=auth_token)
+        request_payload = self._upstream_request_payload(
+            method=method,
+            path=path,
+            headers=headers,
+            body=data,
+            attempt=1,
+        )
+        started_at = time.monotonic()
+        self._log_upstream_event(request_event, request=request_payload)
         try:
-            return self._request(method, path, data=body, headers=headers, follow_redirects=follow_redirects)
+            response = self._request(method, path, data=body, headers=headers, follow_redirects=follow_redirects)
         except DjiGatewayUpstreamError as exc:
             if not authenticate or not self._is_auth_error(exc):
+                self._log_upstream_event(
+                    "upstream_error",
+                    level=logging.ERROR,
+                    request=request_payload,
+                    error=self._upstream_error_payload(exc),
+                    attempt=1,
+                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+                )
                 raise
+            self._log_upstream_event(
+                "upstream_retry",
+                level=logging.WARNING,
+                request=request_payload,
+                error=self._upstream_error_payload(exc),
+                reason="auth_error",
+                attempt=2,
+                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+            )
             headers = self._headers(content_type="application/json", auth_token=self._reauthenticate().access_token)
-            return self._request(method, path, data=body, headers=headers, follow_redirects=follow_redirects)
+            request_payload = self._upstream_request_payload(
+                method=method,
+                path=path,
+                headers=headers,
+                body=data,
+                attempt=2,
+            )
+            self._log_upstream_event(request_event, request=request_payload)
+            try:
+                response = self._request(method, path, data=body, headers=headers, follow_redirects=follow_redirects)
+            except DjiGatewayUpstreamError as retry_exc:
+                self._log_upstream_event(
+                    "upstream_error",
+                    level=logging.ERROR,
+                    request=request_payload,
+                    error=self._upstream_error_payload(retry_exc),
+                    attempt=2,
+                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+                )
+                raise
+        self._log_upstream_event(
+            response_event,
+            response=self._upstream_response_payload(response),
+            request=request_payload,
+            attempt=request_payload.get("attempt", 1),
+            duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+        )
+        return response
 
     def _request_paginated_items(self, path: str, *, query: dict | None = None, page_size: int = 100) -> list[dict]:
         items: list[dict] = []
@@ -460,20 +663,84 @@ class DjiGateway:
         data: bytes | None = None,
         follow_redirects: bool = True,
         authenticate: bool = True,
+        request_event: str = "upstream_request",
+        response_event: str = "upstream_response",
     ) -> GatewayResponse:
         auth_token = None
         if authenticate:
             auth_token = self._ensure_authenticated().access_token
         headers = self._headers(auth_token=auth_token, accept="*/*")
+        request_payload = self._upstream_request_payload(
+            method=method,
+            path=path,
+            headers=headers,
+            body=data,
+            attempt=1,
+        )
+        started_at = time.monotonic()
+        self._log_upstream_event(request_event, request=request_payload)
         try:
-            return self._request_raw(method, path, data=data, headers=headers, follow_redirects=follow_redirects)
+            response = self._request_raw(method, path, data=data, headers=headers, follow_redirects=follow_redirects)
         except DjiGatewayUpstreamError as exc:
             if not authenticate or not self._is_auth_error(exc):
+                self._log_upstream_event(
+                    "upstream_error",
+                    level=logging.ERROR,
+                    request=request_payload,
+                    error=self._upstream_error_payload(exc),
+                    attempt=1,
+                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+                )
                 raise
+            self._log_upstream_event(
+                "upstream_retry",
+                level=logging.WARNING,
+                request=request_payload,
+                error=self._upstream_error_payload(exc),
+                reason="auth_error",
+                attempt=2,
+                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+            )
             headers = self._headers(auth_token=self._reauthenticate().access_token, accept="*/*")
-            return self._request_raw(method, path, data=data, headers=headers, follow_redirects=follow_redirects)
+            request_payload = self._upstream_request_payload(
+                method=method,
+                path=path,
+                headers=headers,
+                body=data,
+                attempt=2,
+            )
+            self._log_upstream_event(request_event, request=request_payload)
+            try:
+                response = self._request_raw(method, path, data=data, headers=headers, follow_redirects=follow_redirects)
+            except DjiGatewayUpstreamError as retry_exc:
+                self._log_upstream_event(
+                    "upstream_error",
+                    level=logging.ERROR,
+                    request=request_payload,
+                    error=self._upstream_error_payload(retry_exc),
+                    attempt=2,
+                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+                )
+                raise
+        self._log_upstream_event(
+            response_event,
+            response=self._upstream_response_payload(response),
+            request=request_payload,
+            attempt=request_payload.get("attempt", 1),
+            duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+        )
+        return response
 
-    def _request_multipart(self, method: str, path: str, *, fields: dict[str, str], files: dict[str, tuple[str, bytes]]) -> GatewayResponse:
+    def _request_multipart(
+        self,
+        method: str,
+        path: str,
+        *,
+        fields: dict[str, str],
+        files: dict[str, tuple[str, bytes]],
+        request_event: str = "upstream_request",
+        response_event: str = "upstream_response",
+    ) -> GatewayResponse:
         boundary = f"----DjiBoundary{uuid.uuid4().hex}"
         body = bytearray()
         for key, value in fields.items():
@@ -494,16 +761,69 @@ class DjiGateway:
             content_type=f"multipart/form-data; boundary={boundary}",
             auth_token=self._ensure_authenticated().access_token,
         )
+        request_payload = self._upstream_request_payload(
+            method=method,
+            path=path,
+            headers=headers,
+            body={"fields": fields, "files": files},
+            attempt=1,
+        )
+        started_at = time.monotonic()
+        self._log_upstream_event(request_event, request=request_payload)
         try:
-            return self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
+            response = self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
         except DjiGatewayUpstreamError as exc:
             if not self._is_auth_error(exc):
+                self._log_upstream_event(
+                    "upstream_error",
+                    level=logging.ERROR,
+                    request=request_payload,
+                    error=self._upstream_error_payload(exc),
+                    attempt=1,
+                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+                )
                 raise
+            self._log_upstream_event(
+                "upstream_retry",
+                level=logging.WARNING,
+                request=request_payload,
+                error=self._upstream_error_payload(exc),
+                reason="auth_error",
+                attempt=2,
+                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+            )
             headers = self._headers(
                 content_type=f"multipart/form-data; boundary={boundary}",
                 auth_token=self._reauthenticate().access_token,
             )
-            return self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
+            request_payload = self._upstream_request_payload(
+                method=method,
+                path=path,
+                headers=headers,
+                body={"fields": fields, "files": files},
+                attempt=2,
+            )
+            self._log_upstream_event(request_event, request=request_payload)
+            try:
+                response = self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
+            except DjiGatewayUpstreamError as retry_exc:
+                self._log_upstream_event(
+                    "upstream_error",
+                    level=logging.ERROR,
+                    request=request_payload,
+                    error=self._upstream_error_payload(retry_exc),
+                    attempt=2,
+                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+                )
+                raise
+        self._log_upstream_event(
+            response_event,
+            response=self._upstream_response_payload(response),
+            request=request_payload,
+            attempt=request_payload.get("attempt", 1),
+            duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+        )
+        return response
 
     def _request(self, method: str, path: str, *, data: bytes | None, headers: dict[str, str], follow_redirects: bool) -> GatewayResponse:
         url = self._absolute_url(path)

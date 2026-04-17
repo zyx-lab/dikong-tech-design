@@ -1,13 +1,50 @@
 """Custom exception handlers for DRF."""
 import logging
+import time
 
 from rest_framework.exceptions import APIException, AuthenticationFailed, NotAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
 
 from apps.api_v1.business_response import build_standard_response, standard_error_payload
+from apps.access.request_logging import (
+    build_exception_log_payload,
+    build_request_context,
+    build_request_log_payload,
+    build_response_log_payload,
+    log_json,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _log_request_exception(request, exc, response):
+    if request is None:
+        return
+
+    trace_id = getattr(request, "request_id", None) or getattr(request, "trace_id", None)
+    started_at = getattr(request, "log_started_at", None)
+    duration_ms = None
+    if started_at is not None:
+        duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
+
+    response_payload = build_response_log_payload(response) if response is not None else {
+        "status_code": 500,
+        "headers": {},
+        "body": None,
+    }
+    log_json(
+        logger,
+        logging.ERROR,
+        "request_exception",
+        request=build_request_log_payload(request),
+        response=response_payload,
+        exception=build_exception_log_payload(exc),
+        status_code=getattr(response, "status_code", 500),
+        context=build_request_context(request),
+        request_id=trace_id,
+        duration_ms=duration_ms,
+    )
 
 
 class StandardizedApiException(APIException):
@@ -126,17 +163,10 @@ def custom_exception_handler(exc, context):
                     "detail": detail,
                 }
 
+        _log_request_exception(request, exc, response)
         return response
 
-    if request is not None:
-        logger.exception(
-            "Unhandled API exception on %s %s",
-            request.method,
-            request.get_full_path(),
-            exc_info=exc,
-        )
-    else:
-        logger.exception("Unhandled API exception", exc_info=exc)
+    _log_request_exception(request, exc, response)
 
     if is_business_api:
         return Response(

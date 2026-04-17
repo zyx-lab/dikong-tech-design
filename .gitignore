@@ -20,3 +20,4 @@ api-tester.html
 .worktrees/
 .xml
 routes/
+logs/

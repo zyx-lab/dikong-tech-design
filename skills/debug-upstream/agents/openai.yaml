@@ -1,0 +1,4 @@
+interface:
+  display_name: "上游接口排障"
+  short_description: "登录上游、读 docs/schema 并排查任何代理接口失败"
+  default_prompt: "Use $debug-upstream when debugging backend APIs that proxy upstream services, especially when the real endpoint must be discovered from live docs, OpenAPI, or schema, a resource disappears from a list/capacity/index endpoint, or logs show 404/502/timeout/auth/state mismatches."

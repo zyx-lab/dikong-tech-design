@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 from rest_framework.response import Response
 
+from apps.access.request_logging import (
+    build_request_context,
+    build_request_log_payload,
+    build_response_log_payload,
+    log_json,
+)
 from apps.api_v1.pagination import StandardPageNumberPagination
+
+logger = logging.getLogger(__name__)
 
 
 class StandardCode:
@@ -244,10 +254,25 @@ class BusinessApiResponseMixin:
     def finalize_response(self, request, response, *args, **kwargs):
         finalized = super().finalize_response(request, response, *args, **kwargs)
         if isinstance(finalized, Response):
-            trace_id = getattr(request, "trace_id", None)
+            trace_id = getattr(request, "request_id", None) or getattr(request, "trace_id", None)
             finalized.data = build_standard_response(
                 getattr(finalized, "data", None),
                 int(finalized.status_code),
                 trace_id=trace_id,
+            )
+            started_at = getattr(request, "log_started_at", None)
+            duration_ms = None
+            if started_at is not None:
+                duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
+            log_json(
+                logger,
+                logging.INFO,
+                "request_finished",
+                request=build_request_log_payload(request),
+                response=build_response_log_payload(finalized),
+                context=build_request_context(request),
+                request_id=trace_id,
+                status_code=int(finalized.status_code),
+                duration_ms=duration_ms,
             )
         return finalized
