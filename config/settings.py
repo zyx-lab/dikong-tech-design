@@ -54,6 +54,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.access.middleware.RequestContextMiddleware",
+    "apps.access.middleware.RequestLifecycleLoggingMiddleware",
     "apps.access.middleware.TenantContextMiddleware",
 ]
 

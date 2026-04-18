@@ -185,7 +185,7 @@
 <h2>链路总览</h2>
 {% if chains %}
   {% for chain in chains %}
-    <details class="chain-card" {% if forloop.first %}open{% endif %}>
+    <details class="chain-card" data-chain-id="{{ chain.chain_id }}" {% if forloop.first %}open{% endif %}>
       <summary>
         <span class="pill mono">{{ chain.chain_id }}</span>
         {% if chain.has_error %}
@@ -286,35 +286,83 @@
 <script>
   (function () {
     const form = document.getElementById("log-filter-form");
-    if (!form) {
+    if (form) {
+      const immediateNames = new Set(["file", "tail", "newest_first", "show_details", "refresh"]);
+      let timer = null;
+
+      function submitForm() {
+        form.submit();
+      }
+
+      form.addEventListener("change", function (event) {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
+          return;
+        }
+        if (immediateNames.has(target.name)) {
+          submitForm();
+        }
+      });
+
+      ["q", "chain_id"].forEach(function (name) {
+        const input = form.querySelector(`[name="${name}"]`);
+        if (!input) {
+          return;
+        }
+        input.addEventListener("input", function () {
+          window.clearTimeout(timer);
+          timer = window.setTimeout(submitForm, 350);
+        });
+      });
+    }
+
+    const cards = Array.from(document.querySelectorAll("details.chain-card[data-chain-id]"));
+    if (!cards.length) {
       return;
     }
-    const immediateNames = new Set(["file", "tail", "newest_first", "show_details", "refresh"]);
-    const debounceNames = new Set(["q", "chain_id"]);
-    let timer = null;
 
-    function submitForm() {
-      form.submit();
+    const storageKey = `admin-system-logs:expanded:${window.location.pathname}:${window.location.search}`;
+
+    function readExpandedIds() {
+      try {
+        const raw = window.sessionStorage.getItem(storageKey);
+        if (!raw) {
+          return null;
+        }
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+          return null;
+        }
+        return new Set(parsed.filter(function (item) {
+          return typeof item === "string" && item.length > 0;
+        }));
+      } catch (error) {
+        return null;
+      }
     }
 
-    form.addEventListener("change", function (event) {
-      const target = event.target;
-      if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
-        return;
+    function persistExpandedIds() {
+      try {
+        const expanded = cards
+          .filter(function (card) { return card.open; })
+          .map(function (card) { return card.dataset.chainId; })
+          .filter(function (item) { return typeof item === "string" && item.length > 0; });
+        window.sessionStorage.setItem(storageKey, JSON.stringify(expanded));
+      } catch (error) {
       }
-      if (immediateNames.has(target.name)) {
-        submitForm();
-      }
-    });
+    }
 
-    ["q", "chain_id"].forEach(function (name) {
-      const input = form.querySelector(`[name="${name}"]`);
-      if (!input) {
-        return;
-      }
-      input.addEventListener("input", function () {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(submitForm, 350);
+    const savedIds = readExpandedIds();
+    if (savedIds !== null) {
+      cards.forEach(function (card) {
+        const chainId = card.dataset.chainId || "";
+        card.open = savedIds.has(chainId);
+      });
+    }
+
+    cards.forEach(function (card) {
+      card.addEventListener("toggle", function () {
+        window.requestAnimationFrame(persistExpandedIds);
       });
     });
   })();

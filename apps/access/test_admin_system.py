@@ -98,6 +98,30 @@ class AdminLogViewerTests(TestCase):
         self.assertNotContains(response, "line-1")
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_search_full_file_when_keyword_present(self):
+        self.client.force_login(self.superuser)
+        lines = [f"line-{index}" for index in range(1, 161)]
+        lines[0] = "target-line-1"
+        (self.log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"file": "app.log", "tail": "100", "q": "target-line-1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "target-line-1")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_list_rotated_log_files(self):
+        self.client.force_login(self.superuser)
+        (self.log_dir / "app.log.1").write_text("rotated\n", encoding="utf-8")
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"file": "app.log"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "app.log.1")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
     def test_admin_logs_view_should_render_structured_columns_for_json_log(self):
         self.client.force_login(self.superuser)
 
@@ -165,8 +189,10 @@ class AdminLogViewerTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "链路总览")
         self.assertContains(response, "chain-1")
+        self.assertContains(response, 'data-chain-id="chain-1"')
         self.assertContains(response, "上游请求")
         self.assertContains(response, "/api/v1/drones/1/live/start")
+        self.assertContains(response, "sessionStorage")
         self.assertNotContains(response, "chain-2")
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))

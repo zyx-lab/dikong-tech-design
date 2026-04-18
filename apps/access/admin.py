@@ -956,12 +956,15 @@ def _parse_bool(raw_value: str | None, *, default: bool) -> bool:
 def _list_log_files(log_dir: Path):
     if not log_dir.exists():
         return []
-    return sorted(path.name for path in log_dir.glob("*.log") if path.is_file())
+    return sorted(path.name for path in log_dir.glob("*.log*") if path.is_file())
 
 
-def _load_log_lines(path: Path, *, tail: int) -> list[str]:
+def _load_log_lines(path: Path, *, tail: int | None) -> list[str]:
     with path.open("r", encoding="utf-8", errors="replace") as fh:
-        return [line.rstrip("\n") for line in fh.readlines()[-tail:]]
+        lines = [line.rstrip("\n") for line in fh.readlines()]
+    if tail is None:
+        return lines
+    return lines[-tail:]
 
 
 def _apply_keyword_filter(lines: list[str], *, keyword: str) -> list[str]:
@@ -1195,7 +1198,10 @@ def system_logs_view(request):
 
     selected_path = log_dir / selected_file
     if selected_path.exists() and selected_path.is_file():
-        lines = _load_log_lines(selected_path, tail=tail)
+        # Keyword / chain filters should search the whole file instead of only tail lines.
+        # Otherwise recent noisy logs can hide the target request from the admin view.
+        effective_tail = None if (keyword or chain_id) else tail
+        lines = _load_log_lines(selected_path, tail=effective_tail)
         lines = _apply_keyword_filter(lines, keyword=keyword)
         rows = _build_log_rows(lines, newest_first=newest_first, include_details=show_details)
         if chain_id:

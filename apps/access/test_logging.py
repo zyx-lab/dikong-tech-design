@@ -76,10 +76,18 @@ class BrokenBusinessView(APIView):
         raise RuntimeError("boom")
 
 
+class PlainBusinessView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({"plain": True})
+
+
 urlpatterns = [
     path("api/v1/__tests__/echo-body", EchoBodyView.as_view(), name="test-echo-body"),
     path("api/v1/__tests__/whoami", AuthenticatedEchoView.as_view(), name="test-whoami"),
     path("api/v1/__tests__/broken", BrokenBusinessView.as_view(), name="test-broken"),
+    path("api/v1/__tests__/plain", PlainBusinessView.as_view(), name="test-plain"),
 ] + project_urlpatterns
 
 
@@ -128,6 +136,46 @@ class RequestLifecycleLoggingTests(TestCase):
         self.assertEqual(finished["response"]["body"]["data"]["received"]["name"], "demo")
         self.assertEqual(finished["request_id"], response.data["traceId"])
         self.assertGreaterEqual(finished["duration_ms"], 0)
+
+    def test_request_should_log_request_started_event(self):
+        response = self.client.get("/api/v1/__tests__/plain", HTTP_X_REQUEST_ID="req-started-1")
+
+        self.assertEqual(response.status_code, 200)
+        log_lines = self._read_log_lines("app.log")
+        started = next(item for item in reversed(log_lines) if item["event"] == "request_started")
+        self.assertEqual(started["request_id"], "req-started-1")
+        self.assertEqual(started["request"]["method"], "GET")
+        self.assertEqual(started["request"]["path"], "/api/v1/__tests__/plain")
+
+    def test_plain_api_view_should_log_request_finished_via_middleware_fallback(self):
+        response = self.client.get("/api/v1/__tests__/plain", HTTP_X_REQUEST_ID="req-plain-1")
+
+        self.assertEqual(response.status_code, 200)
+        log_lines = self._read_log_lines("app.log")
+        finished = next(
+            item
+            for item in reversed(log_lines)
+            if item["event"] == "request_finished" and item["request"]["path"] == "/api/v1/__tests__/plain"
+        )
+        self.assertEqual(finished["request_id"], "req-plain-1")
+        self.assertEqual(finished["status_code"], 200)
+
+    def test_business_api_response_mixin_should_not_duplicate_request_finished(self):
+        response = self.client.post(
+            "/api/v1/__tests__/echo-body",
+            {"name": "demo"},
+            format="json",
+            HTTP_X_REQUEST_ID="req-finished-once-1",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        log_lines = self._read_log_lines("app.log")
+        finished_events = [
+            item
+            for item in log_lines
+            if item["event"] == "request_finished" and item["request"]["path"] == "/api/v1/__tests__/echo-body"
+        ]
+        self.assertEqual(len(finished_events), 1)
 
     def test_authenticated_request_should_log_user_context(self):
         user = User.objects.create_user(username="logging_user", password="pass1234", status=1)

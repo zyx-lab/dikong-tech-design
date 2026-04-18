@@ -234,7 +234,14 @@ def build_request_log_payload(request) -> dict[str, Any]:
     if body is None and hasattr(request, "body"):
         raw_body = getattr(request, "body", b"")
         if raw_body not in (None, b"", ""):
-            body = raw_body
+            content_type = str(meta.get("CONTENT_TYPE", "")).lower()
+            if isinstance(raw_body, (bytes, bytearray)) and "application/json" in content_type:
+                try:
+                    body = json.loads(bytes(raw_body).decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    body = raw_body
+            else:
+                body = raw_body
     return {
         "method": getattr(request, "method", None),
         "path": getattr(request, "path", None),
