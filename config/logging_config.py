@@ -65,7 +65,7 @@ def build_logging_config(
             },
         },
         "root": {
-            "handlers": ["app_file", "error_file", "console"],
+            "handlers": ["app_file", "error_file"],
             "level": level,
         },
     }

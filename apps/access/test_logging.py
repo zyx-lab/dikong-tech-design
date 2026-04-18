@@ -33,7 +33,7 @@ class LoggingConfigTests(SimpleTestCase):
         self.assertEqual(config["handlers"]["app_file"]["filename"], "/tmp/dikong/logs/app.log")
         self.assertEqual(config["handlers"]["error_file"]["filename"], "/tmp/dikong/logs/error.log")
         self.assertEqual(config["handlers"]["console"]["class"], "logging.StreamHandler")
-        self.assertIn("console", config["root"]["handlers"])
+        self.assertEqual(config["root"]["handlers"], ["app_file", "error_file"])
         self.assertEqual(config["loggers"]["django.server"]["handlers"], ["console"])
 
 
