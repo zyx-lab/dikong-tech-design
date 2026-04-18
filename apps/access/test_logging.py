@@ -32,6 +32,9 @@ class LoggingConfigTests(SimpleTestCase):
         self.assertEqual(config["handlers"]["app_file"]["class"], "logging.handlers.RotatingFileHandler")
         self.assertEqual(config["handlers"]["app_file"]["filename"], "/tmp/dikong/logs/app.log")
         self.assertEqual(config["handlers"]["error_file"]["filename"], "/tmp/dikong/logs/error.log")
+        self.assertEqual(config["handlers"]["console"]["class"], "logging.StreamHandler")
+        self.assertIn("console", config["root"]["handlers"])
+        self.assertEqual(config["loggers"]["django.server"]["handlers"], ["console"])
 
 
 class RedactionTests(SimpleTestCase):

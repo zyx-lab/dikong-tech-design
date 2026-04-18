@@ -45,6 +45,12 @@ def build_logging_config(
                 "backupCount": backup_count,
                 "encoding": "utf-8",
             },
+            "console": {
+                "class": "logging.StreamHandler",
+                "level": level,
+                "formatter": "json_lines",
+                "stream": "ext://sys.stdout",
+            },
         },
         "loggers": {
             "django.request": {
@@ -53,13 +59,13 @@ def build_logging_config(
                 "propagate": False,
             },
             "django.server": {
-                "handlers": [],
+                "handlers": ["console"],
                 "level": "INFO",
                 "propagate": False,
             },
         },
         "root": {
-            "handlers": ["app_file", "error_file"],
+            "handlers": ["app_file", "error_file", "console"],
             "level": level,
         },
     }
