@@ -72,6 +72,8 @@ PostgreSQL
 - 成功：`code=00000`，`msg=success`
 - 失败：统一返回 `code / msg / data`，常见错误码为 `A0401`、`A0403`、`B0001`、`C0101`、`C0201`、`C0404`
 
+飞行记录由 `mission` 完成后自动生成，不提供 POST 创建、complete 或 abort 接口。
+
 ### 1. GET /api/v1/flight-records
 - 功能：飞行记录列表查询
 - 筛选参数：mission_id, drone_id, pilot_id, status, flight_no
@@ -80,55 +82,34 @@ PostgreSQL
 - 权限：flight_record.view_flight_record
 - 业务码：`00000`, `A0401 / A0403`
 
-### 2. POST /api/v1/flight-records
-- 功能：创建飞行记录
-- 必填：flight_no
-- 可选：mission, drone, pilot, start_time, end_time, flight_duration, photo_count, video_count, airport_name
-- 约束：`flight_no` 只要求租户内唯一；`pilot` 若提交，必须是当前租户下的 `ACTIVE TenantMember`
-- 约束：若调用方角色命中 `flight_record.manage_flight_record = ASSIGNED`，则创建目标必须落到当前飞手本人，不能创建其他飞手的飞行记录
-- 权限：flight_record.manage_flight_record
-- 业务码：`00000`, `B0001`, `C0101`, `A0401 / A0403`
-
-### 3. GET /api/v1/flight-records/{id}
+### 2. GET /api/v1/flight-records/{id}
 - 功能：飞行记录详情
 - 说明：若调用方角色命中 `flight_record.view_flight_record = ASSIGNED`，则只能读取当前飞手自己的记录
 - 权限：flight_record.view_flight_record
 - 业务码：`00000`, `C0404`, `A0401 / A0403`
 
-### 4. PUT / PATCH /api/v1/flight-records/{id}
-- 功能：全量或局部更新飞行记录
-- 可写字段：mission, drone, pilot, start_time, end_time, flight_duration, photo_count, video_count, airport_name
-- 约束：PATCH 请求体必须至少包含一个可写字段；`pilot` 字段语义同创建接口，提交值为 `TenantMember.id`
+### 3. PUT /api/v1/flight-records/{id}
+- 功能：更新飞行记录摘要字段
+- 可写字段：mission_name, route_name, airport_name, drone_name, pilot_name, flight_duration, photo_count
+- 约束：`video_count`、`status`、`mission`、`drone`、`pilot`、`start_time`、`end_time` 不对外开放写入
 - 约束：若调用方角色命中 `flight_record.manage_flight_record = ASSIGNED`，则不能把记录改写到其他飞手名下
 - 权限：flight_record.manage_flight_record
 - 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
-### 5. POST /api/v1/flight-records/{id}/complete
-- 功能：完成飞行记录
-- 状态流转：IN_PROGRESS -> COMPLETED
+### 4. DELETE /api/v1/flight-records/{id}
+- 功能：软删除飞行记录
 - 约束：请求体必须为空
-- 幂等：已完成记录重复 complete 返回当前状态
+- 行为：将记录标记为已删除，不再出现在列表中
 - 权限：flight_record.manage_flight_record
-- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
-- 审计：FLIGHT_RECORD_COMPLETE
-
-### 6. POST /api/v1/flight-records/{id}/abort
-- 功能：异常终止飞行记录
-- 状态流转：IN_PROGRESS -> ABORTED
-- 约束：请求体必须为空
-- 幂等：已异常终止记录重复 abort 返回当前状态
-- 权限：flight_record.manage_flight_record
-- 业务码：`00000`, `B0001`, `C0201`, `C0404`, `A0401 / A0403`
-- 审计：FLIGHT_RECORD_ABORT
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
+- 审计：FLIGHT_RECORD_DELETE
 
 ---
 
 ## 审计动作
 
-- FLIGHT_RECORD_CREATE
 - FLIGHT_RECORD_UPDATE
-- FLIGHT_RECORD_COMPLETE
-- FLIGHT_RECORD_ABORT
+- FLIGHT_RECORD_DELETE
 
 ---
 

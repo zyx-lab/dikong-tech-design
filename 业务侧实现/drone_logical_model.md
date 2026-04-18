@@ -65,8 +65,7 @@ PostgreSQL
 ### drones.status
 | 值 | 含义 |
 |----|------|
-| ENABLED | 启用 |
-| DISABLED | 停用 |
+| CLAIMED | 已认领 |
 | RELEASED | 已释放（解除认领） |
 
 ### drone_assignments.status
@@ -82,6 +81,7 @@ PostgreSQL
 - drone_assignments.drone_id -> drones.id
 - drone_assignments.tenant_id -> tenants.id
 - drone_assignments.tenant_member_id -> tenant_members.id
+- drones.dji_online 仅记录 DJI 在线摘要，不作为认领态
 - 唯一约束：`(tenant_id, code)` 全量唯一
 - 唯一约束：`(tenant_id, device_sn)` 在 `status != RELEASED` 条件下唯一
 - 唯一约束：`device_sn` 在 `status != RELEASED` 条件下全局唯一
@@ -97,13 +97,13 @@ PostgreSQL
 | 可认领列表 | GET /api/v1/drones/available | 查询共享设备池中可认领设备 |
 | 认领 | POST /api/v1/drones | 认领共享设备 |
 | 详情 | GET /api/v1/drones/{id} | 无人机详情 |
-| 更新 | PUT / PATCH /api/v1/drones/{id} | 全量或局部更新无人机 |
+| 更新 | PUT /api/v1/drones/{id} | 局部更新无人机 |
 | 解除认领 | DELETE /api/v1/drones/{id} | 软删除；将状态改为 RELEASED，释放设备占用 |
 | 直播能力 | GET /api/v1/drones/{id}/live/capacity | 查询设备直播能力 |
 | 启动直播 | POST /api/v1/drones/{id}/live/start | 启动直播 |
 | 停止直播 | POST /api/v1/drones/{id}/live/stop | 停止直播 |
-| 调整画质 | POST /api/v1/drones/{id}/live/video-quality | 调整直播画质 |
-| 切换视频源 | POST /api/v1/drones/{id}/live/video-source | 切换直播视频源 |
+| 更新直播参数 | POST /api/v1/drones/{id}/live/update | 更新直播参数 |
+| 切换视频源 | POST /api/v1/drones/{id}/live/switch | 切换直播视频源 |
 
 ### 分配关系 (/api/v1/drone-assignments)
 | 操作 | 路径 | 说明 |
@@ -121,11 +121,31 @@ PostgreSQL
 - 可选：`name`、`model`、`org_id`
 - 业务码：`00000`, `B0001`, `C0101`, `A0401 / A0403`
 
-### 更新设备 PUT / PATCH /api/v1/drones/{id}
-- 功能：修改本地管理字段
+### 更新设备 PUT /api/v1/drones/{id}
+- 功能：局部修改本地管理字段
 - 可写字段：`code`、`name`、`model`、`org_id`
 - 不可写字段：`device_sn`、`status`
 - 业务码：`00000`, `B0001`, `C0101`, `C0404`, `A0401 / A0403`
+
+### 启动直播 POST /api/v1/drones/{id}/live/start
+- 功能：启动 DJI 直播
+- 请求体：`video_id`、`url_type`、`video_quality`、`videoType`
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
+
+### 停止直播 POST /api/v1/drones/{id}/live/stop
+- 功能：停止 DJI 直播
+- 请求体：可选 `video_id`
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
+
+### 更新直播参数 POST /api/v1/drones/{id}/live/update
+- 功能：更新 DJI 直播参数
+- 请求体：`video_id`、`video_quality`
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
+
+### 切换直播视频源 POST /api/v1/drones/{id}/live/switch
+- 功能：切换 DJI 直播视频源
+- 请求体：`video_id`、`videoType`
+- 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
 ### 解除认领 DELETE /api/v1/drones/{id}
 - 功能：软删除已认领无人机

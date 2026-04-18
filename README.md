@@ -22,9 +22,9 @@
   - 无人机台账（drone）：认领共享设备、读取/编辑本地管理字段、直播控制
   - 无人机分配（drone_assignment）：查询、创建、取消
   - 航线（route）：KMZ 直传与 DJI 航线绑定；`POST /api/v1/routes` 通过 `name + kmz_file` 创建并立即上传 DJI，`PUT /api/v1/routes/{id}` 支持部分更新（仅名称、本地 no-op、或替换 KMZ），`GET /api/v1/routes/{id}/kmz` 代理下载当前 KMZ；`waypoints` 表只保留历史/内部语义
-  - 任务（mission）：查询、创建、更新、推进执行状态；本地维护执行时间窗
-  - 飞行记录（flight_record）：CRUD + 状态流转（完成/异常终止）
-  - 媒体文件（media_file）：只读查询 + 下载；数据由 DJI 同步沉淀，并按 `device_sn + captured_at` 自动回填 mission
+  - 任务（mission）：查询、创建、更新、软删除、推进执行状态；本地维护执行时间窗
+  - 飞行记录（flight_record）：只读查询、摘要更新、软删除；记录由任务完成链路自动生成
+  - 媒体文件（media_file）：只读查询 + 下载 / 回放 / 回放地址 / 绑定任务；数据由 DJI 同步沉淀，并按 `device_sn + captured_at` 自动回填 mission
 
 3. Internal DJI Bridge（系统内部 DJI 桥接）
 
@@ -185,12 +185,12 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 
 - `GET /api/v1/drones/available`
 - `GET/POST /api/v1/drones`
-- `GET/PUT/PATCH/DELETE /api/v1/drones/{id}`
+- `GET/PUT/DELETE /api/v1/drones/{id}`
 - `GET /api/v1/drones/{id}/live/capacity`
 - `POST /api/v1/drones/{id}/live/start`
 - `POST /api/v1/drones/{id}/live/stop`
-- `POST /api/v1/drones/{id}/live/video-quality`
-- `POST /api/v1/drones/{id}/live/video-source`
+- `POST /api/v1/drones/{id}/live/update`
+- `POST /api/v1/drones/{id}/live/switch`
 
 6. Business API - 无人机分配（drone_assignment）
 
@@ -223,16 +223,16 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 
 9. Business API - 飞行记录（flight_record）
 
-- `GET/POST /api/v1/flight-records`
-- `GET/PUT/PATCH /api/v1/flight-records/{id}`
-- `POST /api/v1/flight-records/{id}/complete`
-- `POST /api/v1/flight-records/{id}/abort`
+- `GET /api/v1/flight-records`
+- `GET/PUT/DELETE /api/v1/flight-records/{id}`
 
 10. Business API - 媒体文件（media_file）
 
 - `GET /api/v1/media-files`
 - `GET /api/v1/media-files/{id}`
 - `GET /api/v1/media-files/{id}/download`
+- `GET /api/v1/media-files/{id}/playback`
+- `GET /api/v1/media-files/{id}/playback-url`
 - `POST /api/v1/media-files/bind-mission`
 
 11. Internal DJI Bridge
@@ -255,7 +255,7 @@ python manage.py run_dji_sync_scheduler --interval-seconds 0 --max-cycles 2
 - `POST /api/v1/routes` 会直接上传 DJI，成功后持久化 `dji_wayline_id`、`download_url` 与 `is_published=true`。
 - `PUT /api/v1/routes/{id}` 仅更新 `name` 时不会触达 DJI；携带 `kmz_file` 时会先上传并校验新 KMZ，再切换本地索引并在提交后 best-effort 清理旧航线。
 - `DELETE /api/v1/routes/{id}` 在当前租户存在状态为 `PENDING/RUNNING` 的关联任务时会被拒绝。
-- `PUT/PATCH /api/v1/flight-records/{id}` 不允许直接修改 `status`，状态流转只能通过 `complete/abort` 动作接口。
+- `PUT /api/v1/flight-records/{id}` 只允许更新摘要字段（`mission_name`、`route_name`、`airport_name`、`drone_name`、`pilot_name`、`flight_duration`、`photo_count`），`status` 不对外开放写入，也没有 `complete/abort` 动作接口。
 
 ## `/api/v1/*` 响应契约
 

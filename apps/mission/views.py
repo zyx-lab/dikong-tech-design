@@ -142,9 +142,9 @@ def _mission_state_conflict_response(*, mission: Mission, message: str):
         tags=["Business API - Mission"],
     ),
     update=extend_schema(
-        summary="全量更新待执行任务字段",
+        summary="局部更新待执行任务字段",
         description=(
-            "仅待执行任务允许更新。更新成功后返回完整 mission 快照，可直接读取 "
+            "仅待执行任务允许更新，且必须至少提交一个可写字段。更新成功后返回完整 mission 快照，可直接读取 "
             "`data.status`、`data.started_at`、`data.finished_at`。"
         ),
         parameters=[TENANT_CODE_HEADER_PARAMETER],

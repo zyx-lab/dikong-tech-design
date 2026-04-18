@@ -322,6 +322,15 @@ class OpenApiDocsTests(TestCase):
         mission_retrieve = schema["paths"]["/api/v1/missions/{id}"]["get"]
         self.assertIn("飞行中", mission_retrieve["description"])
 
+    def test_business_schema_should_describe_mission_put_as_partial_update(self):
+        response = self.client.get("/api/v1/docs/schema/")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+
+        mission_update = schema["paths"]["/api/v1/missions/{id}"]["put"]
+        self.assertIn("局部更新待执行任务字段", mission_update["summary"])
+        self.assertNotIn("全量更新待执行任务字段", mission_update["summary"])
+
     def test_business_schema_should_describe_flight_record_as_active_snapshot_api(self):
         response = self.client.get("/api/v1/docs/schema/")
         self.assertEqual(response.status_code, 200)

@@ -45,15 +45,15 @@ PostgreSQL
 | name | CharField(128) | 无人机名称 |
 | model | CharField(128) | 型号 |
 | device_sn | CharField(128) | 设备序列号，未释放记录中全局唯一 |
-| status | CharField(16) | 状态：ENABLED/DISABLED/RELEASED |
+| status | CharField(16) | 状态：CLAIMED/RELEASED |
+| dji_online | BooleanField | DJI 在线摘要，与认领态分离 |
 | org_id | BigIntegerField | 组织 ID（预留） |
 | created_by_tenant_member_id | BigIntegerField | 创建人 TenantMember ID |
 | created_at | DateTimeField | 创建时间 |
 | updated_at | DateTimeField | 更新时间 |
 
 ### DroneStatus 枚举
-- ENABLED = "ENABLED", "启用"
-- DISABLED = "DISABLED", "停用"
+- CLAIMED = "CLAIMED", "已认领"
 - RELEASED = "RELEASED", "已释放"
 
 ### DroneAssignment 表 (drone_assignments)
@@ -80,7 +80,8 @@ PostgreSQL
 - `device_sn` 在 `status != RELEASED` 条件下全局唯一
 - 同一 `(drone, tenant_member)` 在 `ACTIVE` 状态下唯一
 - `ASSIGNED` 范围统一按 `tenant_member_id` 命中
-- `status` 不可由业务 API 直接写入；后台同步任务维护 `ENABLED/DISABLED`，`DELETE /api/v1/drones/{id}` 会置为 `RELEASED`
+- `status` 不可由业务 API 直接写入；认领时置为 `CLAIMED`，`DELETE /api/v1/drones/{id}` 会置为 `RELEASED`
+- `dji_online` 由后台同步任务维护，不作为认领态
 
 ---
 
@@ -120,8 +121,8 @@ PostgreSQL
 - 权限：drone.view_drone
 - 业务码：`00000`, `C0404`, `A0401 / A0403`
 
-#### 5. PUT / PATCH /api/v1/drones/{id}
-- 功能：全量或局部更新无人机
+#### 5. PUT /api/v1/drones/{id}
+- 功能：局部更新无人机
 - 可写字段：code, name, model, org_id
 - 约束：`device_sn`、`status` 不可直接修改
 - 权限：drone.manage_drone
@@ -142,7 +143,7 @@ PostgreSQL
 
 #### 8. POST /api/v1/drones/{id}/live/start
 - 功能：启动直播
-- 请求体：`camera_index`、`video_index`，可选 `url_type`
+- 请求体：`video_id`、`url_type`、`video_quality`、`videoType`（可选透传）
 - 权限：drone.manage_drone
 - 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
@@ -152,13 +153,13 @@ PostgreSQL
 - 权限：drone.manage_drone
 - 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
-#### 10. POST /api/v1/drones/{id}/live/video-quality
-- 功能：调整直播画质
-- 请求体：`quality`，可选 `video_id`
+#### 10. POST /api/v1/drones/{id}/live/update
+- 功能：更新直播参数
+- 请求体：`video_id`、`video_quality`
 - 权限：drone.manage_drone
 - 业务码：`00000`, `B0001`, `C0404`, `A0401 / A0403`
 
-#### 11. POST /api/v1/drones/{id}/live/video-source
+#### 11. POST /api/v1/drones/{id}/live/switch
 - 功能：切换直播视频源
 - 请求体：`video_id`、`videoType`
 - 权限：drone.manage_drone
@@ -208,8 +209,8 @@ PostgreSQL
 - DRONE_LIVE_CAPACITY
 - DRONE_LIVE_START
 - DRONE_LIVE_STOP
-- DRONE_LIVE_VIDEO_QUALITY
-- DRONE_LIVE_VIDEO_SOURCE
+- DRONE_LIVE_UPDATE
+- DRONE_LIVE_SWITCH
 
 ### 分配关系
 - DRONE_ASSIGNMENT_CREATE
