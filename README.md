@@ -340,39 +340,16 @@ User(is_platform_admin=true)
 - 目前 `pilot_operator` 在无人机、任务、飞行记录、媒体文件等能力上使用 `ASSIGNED`。
 - `OWN / ASSIGNED` 的主体统一按当前租户内的 `TenantMember.id` 判定，不再使用全局 staff id。
 
-## 文档导航
+## 保留文档
 
-### 总体设计
+开发者日常只需要看这几份长期文档：
 
-- 总体概念图：[overall_er_diagram.md](项目总体概览/概念设计/overall_er_diagram.md)
-- 总体逻辑模型：[overall_logical_model.md](项目总体概览/逻辑设计/overall_logical_model.md)
-- 总体数据字典：[overall_data_dictionary.md](项目总体概览/逻辑设计/overall_data_dictionary.md)
-- 总体 DBML：[overall_schema.dbml](项目总体概览/逻辑设计/overall_schema.dbml)
-- DJI 适配边界：[DJI适配接入边界设计.md](项目总体概览/DJI适配接入边界设计.md)
-- DJI 权限与租户隔离：[DJI权限与租户隔离设计.md](权限管理侧实现/DJI权限与租户隔离设计.md)
-- 业务接口扩展指南：[业务接口扩展指南.md](项目总体概览/业务接口扩展指南.md)
+- [README.md](README.md)：项目总览、启动方式、API 入口、当前约束
+- [CLAUDE.md](CLAUDE.md)：开发约定、常用命令、架构速查
+- [DEPLOY.md](DEPLOY.md)：容器化部署与运维入口
+- [docs/django-logging-guide.md](docs/django-logging-guide.md)：日志排查
+- [docs/host-django-postgres-migration.md](docs/host-django-postgres-migration.md)：宿主机迁移到 Docker PostgreSQL
+- [项目总体概览/DJI适配接入边界设计.md](项目总体概览/DJI适配接入边界设计.md)：DJI 接入边界
+- [权限管理侧实现/DJI权限与租户隔离设计.md](权限管理侧实现/DJI权限与租户隔离设计.md)：权限与租户隔离边界
 
-### 业务侧实现（业务侧实现/）
-
-| 业务域     | 数据字典                                                                              | 实现描述                                                                  | 逻辑模型                                                                          | 图表                                                                    |
-| ---------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| 无人机     | [drone_data_dictionary.md](业务侧实现/drone_data_dictionary.md)                       | [drone_impl_desc.md](业务侧实现/drone_impl_desc.md)                       | [drone_logical_model.md](业务侧实现/drone_logical_model.md)                       | [drone_schema.dbml](业务侧实现/drone_schema.dbml)                       |
-| 无人机分配 | [drone_assignment_data_dictionary.md](业务侧实现/drone_assignment_data_dictionary.md) | [drone_assignment_impl_desc.md](业务侧实现/drone_assignment_impl_desc.md) | [drone_assignment_logical_model.md](业务侧实现/drone_assignment_logical_model.md) | [drone_assignment_schema.dbml](业务侧实现/drone_assignment_schema.dbml) |
-| 航线       | [route_data_dictionary.md](业务侧实现/route_data_dictionary.md)                       | [route_impl_desc.md](业务侧实现/route_impl_desc.md)                       | [route_logical_model.md](业务侧实现/route_logical_model.md)                       | [route_schema.dbml](业务侧实现/route_schema.dbml)                       |
-| 航点       | [waypoint_data_dictionary.md](业务侧实现/waypoint_data_dictionary.md)                 | [waypoint_impl_desc.md](业务侧实现/waypoint_impl_desc.md)                 | [waypoint_logical_model.md](业务侧实现/waypoint_logical_model.md)                 | [waypoint_schema.dbml](业务侧实现/waypoint_schema.dbml)                 |
-| 任务       | [mission_data_dictionary.md](业务侧实现/mission_data_dictionary.md)                   | [mission_impl_desc.md](业务侧实现/mission_impl_desc.md)                   | [mission_logical_model.md](业务侧实现/mission_logical_model.md)                   | [mission_schema.dbml](业务侧实现/mission_schema.dbml)                   |
-| 飞行记录   | [flight_record_data_dictionary.md](业务侧实现/flight_record_data_dictionary.md)       | [flight_record_impl_desc.md](业务侧实现/flight_record_impl_desc.md)       | [flight_record_logical_model.md](业务侧实现/flight_record_logical_model.md)       | [flight_record_schema.dbml](业务侧实现/flight_record_schema.dbml)       |
-| 媒体文件   | [media_file_data_dictionary.md](业务侧实现/media_file_data_dictionary.md)             | [media_file_impl_desc.md](业务侧实现/media_file_impl_desc.md)             | [media_file_logical_model.md](业务侧实现/media_file_logical_model.md)             | [media_file_schema.dbml](业务侧实现/media_file_schema.dbml)             |
-
-说明：
-
-- `Waypoint` 四件套当前只描述 route 聚合内部存储，不代表存在公开 waypoint 业务 API。
-
-### 权限管理侧实现（权限管理侧实现/）
-
-- 权限设计基线：[权限设计.md](权限管理侧实现/权限设计.md)
-- 角色权限矩阵：[角色权限矩阵设计.md](权限管理侧实现/角色权限矩阵设计.md)
-- 维护学习参考：[维护与学习参考.md](权限管理侧实现/维护与学习参考.md)
-- Admin 与表关系：[Admin菜单与数据库表关系说明.md](权限管理侧实现/Admin菜单与数据库表关系说明.md)
-- 权限逻辑模型：[authz_logical_model.md](权限管理侧实现/authz_logical_model.md)
-- 权限 DBML：[authz_schema.dbml](权限管理侧实现/authz_schema.dbml)
+其余研究记录、阶段计划、一次性复现文档已经删除，避免文档入口分散。

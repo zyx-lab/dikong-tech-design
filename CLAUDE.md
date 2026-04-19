@@ -88,6 +88,9 @@ python manage.py spectacular --file /tmp/openapi.yaml --urlconf config.business_
 - If a feature touches DJI behavior, check whether it belongs in `apps/dji_bff` before changing a business app directly.
 
 ## Useful references
-- `README.md`: current project overview and bootstrap steps.
-- `项目总体概览/`: architecture, logical model, DBML, and API redesign documents.
-- `权限管理侧实现/`: permission model, role matrix, and authz design references.
+- `README.md`: current project overview, bootstrap steps, and the current document entry point.
+- `DEPLOY.md`: containerized deployment notes.
+- `docs/django-logging-guide.md`: logging and request-chain troubleshooting.
+- `docs/host-django-postgres-migration.md`: host-to-Docker PostgreSQL migration notes.
+- `项目总体概览/DJI适配接入边界设计.md`: DJI integration boundary baseline.
+- `权限管理侧实现/DJI权限与租户隔离设计.md`: permission and tenant isolation baseline.
