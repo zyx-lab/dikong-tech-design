@@ -12,6 +12,7 @@ from apps.access.services import IdentityService, log_action, snapshot
 from apps.api_v1.business_response import (
     BusinessApiResponseMixin,
     StandardCode,
+    build_instance_response,
     standard_error_payload,
     validation_error_payload,
 )
@@ -115,14 +116,6 @@ def _drone_validate_or_respond(view, serializer):
     if serializer.errors:
         return _drone_duplicate_or_validation_error_response(view, serializer.errors)
     return None
-
-
-def _drone_success_response(view, drone: Drone, *, http_status: int, include_headers: bool = False):
-    payload = view._payload(drone)
-    if include_headers:
-        headers = view.get_success_headers(payload)
-        return Response(payload, status=http_status, headers=headers)
-    return Response(payload, status=http_status)
 
 
 def _dji_live_action_error_response(exc: DjiGatewayUpstreamError):
@@ -363,9 +356,6 @@ class DroneViewSet(
 
         raise exc
 
-    def _payload(self, drone: Drone) -> dict:
-        return dict(DroneReadSerializer(drone, context={"request": self.request}).data)
-
     @staticmethod
     def _audit_after_data(payload):
         return payload if isinstance(payload, dict) else {"result": payload}
@@ -448,7 +438,14 @@ class DroneViewSet(
             drone = self.perform_create(serializer)
         except IntegrityError as exc:
             return self._duplicate_integrity_response(serializer, exc)
-        return _drone_success_response(self, drone, http_status=status.HTTP_201_CREATED, include_headers=True)
+        return build_instance_response(
+            DroneReadSerializer,
+            drone,
+            self.request,
+            http_status=status.HTTP_201_CREATED,
+            include_headers=True,
+            headers_builder=self.get_success_headers,
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -477,7 +474,12 @@ class DroneViewSet(
         if error_response is not None:
             return error_response
         drone = self.perform_update(serializer)
-        return _drone_success_response(self, drone, http_status=status.HTTP_200_OK)
+        return build_instance_response(
+            DroneReadSerializer,
+            drone,
+            self.request,
+            http_status=status.HTTP_200_OK,
+        )
 
     @transaction.atomic
     def perform_update(self, serializer):

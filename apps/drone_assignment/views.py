@@ -8,7 +8,15 @@ from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_sche
 
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.services import IdentityService, log_action, snapshot
-from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload, validation_error_payload
+from apps.api_v1.business_response import (
+    BusinessApiResponseMixin,
+    StandardCode,
+    build_instance_payload,
+    build_instance_response,
+    reject_request_body_if_present,
+    standard_error_payload,
+    validation_error_payload,
+)
 from apps.api_v1.schema import (
     BUSINESS_DUPLICATE_RESPONSE,
     BUSINESS_INVALID_PARAMS_RESPONSE,
@@ -121,9 +129,6 @@ class DroneAssignmentViewSet(
             return "已存在" in errors or "unique" in errors.lower()
         return False
 
-    def _payload(self, assignment: DroneAssignment) -> dict:
-        return dict(DroneAssignmentReadSerializer(assignment, context={"request": self.request}).data)
-
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=False)
@@ -136,9 +141,14 @@ class DroneAssignmentViewSet(
             return Response(validation_error_payload(serializer.errors), status=status.HTTP_400_BAD_REQUEST)
 
         assignment = self.perform_create(serializer)
-        payload = self._payload(assignment)
-        headers = self.get_success_headers(payload)
-        return Response(payload, status=status.HTTP_201_CREATED, headers=headers)
+        return build_instance_response(
+            DroneAssignmentReadSerializer,
+            assignment,
+            self.request,
+            http_status=status.HTTP_201_CREATED,
+            include_headers=True,
+            headers_builder=self.get_success_headers,
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -153,7 +163,7 @@ class DroneAssignmentViewSet(
             action="DRONE_ASSIGNMENT_CREATE",
             target_type="drone_assignment",
             target_id=assignment.id,
-            after_data=self._payload(assignment),
+            after_data=build_instance_payload(DroneAssignmentReadSerializer, assignment, self.request),
         )
         return assignment
 
@@ -174,21 +184,20 @@ class DroneAssignmentViewSet(
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def cancel(self, request, *args, **kwargs):
-        if request.data:
-            return Response(
-                standard_error_payload(
-                    StandardCode.INVALID_PARAMS,
-                    "cancel 请求不支持提交 body 参数",
-                    {"body": "不支持请求体，请移除 body 后重试"},
-                ),
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        error_response = reject_request_body_if_present(request, message="cancel 请求不支持提交 body 参数")
+        if error_response is not None:
+            return error_response
 
         assignment = self.get_object()
         before_data = snapshot(assignment)
 
         if assignment.status == DroneAssignmentStatus.INACTIVE:
-            return Response(self._payload(assignment), status=status.HTTP_200_OK)
+            return build_instance_response(
+                DroneAssignmentReadSerializer,
+                assignment,
+                self.request,
+                http_status=status.HTTP_200_OK,
+            )
 
         assignment.status = DroneAssignmentStatus.INACTIVE
         assignment.end_at = timezone.now()
@@ -201,4 +210,9 @@ class DroneAssignmentViewSet(
             before_data=before_data,
             after_data=snapshot(assignment),
         )
-        return Response(self._payload(assignment), status=status.HTTP_200_OK)
+        return build_instance_response(
+            DroneAssignmentReadSerializer,
+            assignment,
+            self.request,
+            http_status=status.HTTP_200_OK,
+        )

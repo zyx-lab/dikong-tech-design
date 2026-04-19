@@ -10,6 +10,8 @@ from apps.access.services import log_action, snapshot
 from apps.api_v1.business_response import (
     BusinessApiResponseMixin,
     StandardCode,
+    build_instance_response,
+    reject_request_body_if_present,
     standard_error_payload,
 )
 from apps.api_v1.schema import (
@@ -48,19 +50,6 @@ FLIGHT_RECORD_FILTER_PARAMETERS = [
     ),
     OpenApiParameter(name="flight_no", type=str, location=OpenApiParameter.QUERY, description="按架次编号做模糊匹配。"),
 ]
-
-
-def _reject_request_body_if_present(request, *, message: str):
-    if request.data:
-        return Response(
-            standard_error_payload(
-                StandardCode.INVALID_PARAMS,
-                message,
-                {"body": "不支持请求体，请移除 body 后重试"},
-            ),
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    return None
 
 
 def _reject_empty_update_request(request):
@@ -186,9 +175,6 @@ class FlightRecordViewSet(
             return self.apply_scope(queryset)
         return queryset
 
-    def _payload(self, record: FlightRecord) -> dict:
-        return dict(FlightRecordSummarySerializer(record, context={"request": self.request}).data)
-
     def update(self, request, *args, **kwargs):
         error_response = _reject_empty_update_request(request)
         if error_response is not None:
@@ -209,11 +195,16 @@ class FlightRecordViewSet(
             before_data=before_data,
             after_data=after_data,
         )
-        return Response(self._payload(record), status=status.HTTP_200_OK)
+        return build_instance_response(
+            FlightRecordSummarySerializer,
+            record,
+            self.request,
+            http_status=status.HTTP_200_OK,
+        )
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        error_response = _reject_request_body_if_present(request, message="DELETE 请求不支持请求体")
+        error_response = reject_request_body_if_present(request, message="DELETE 请求不支持请求体")
         if error_response is not None:
             return error_response
 

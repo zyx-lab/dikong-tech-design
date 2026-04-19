@@ -14,7 +14,14 @@ from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_sche
 from apps.access.drf_permissions import PermissionMapMixin, ScopedActionPermission, ScopedQuerysetMixin
 from apps.access.exceptions import StandardizedApiException
 from apps.access.services import log_action
-from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
+from apps.api_v1.business_response import (
+    BusinessApiResponseMixin,
+    StandardCode,
+    build_instance_payload,
+    build_instance_response,
+    reject_request_body_if_present,
+    standard_error_payload,
+)
 from apps.api_v1.schema import (
     BusinessDeleteResultSerializer,
     BUSINESS_INVALID_PARAMS_RESPONSE,
@@ -51,28 +58,6 @@ ROUTE_UPDATE_REQUEST = {
     "multipart/form-data": RouteUpdateSerializer,
     "application/x-www-form-urlencoded": RouteUpdateSerializer,
 }
-
-
-def _route_success_response(view, route: Route, *, http_status: int, include_headers: bool = False):
-    payload = view._payload(route)
-    if include_headers:
-        headers = view.get_success_headers(payload)
-        return Response(payload, status=http_status, headers=headers)
-    return Response(payload, status=http_status)
-
-
-def _reject_request_body_if_present(request, *, message: str):
-    if request.META.get("CONTENT_LENGTH") not in (None, "", "0"):
-        return Response(
-            standard_error_payload(
-                StandardCode.INVALID_PARAMS,
-                message,
-                {"body": "不支持请求体，请移除 body 后重试"},
-            ),
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    return None
-
 
 def _route_not_found_response():
     return Response(
@@ -268,9 +253,6 @@ class RouteViewSet(
             return self.apply_scope(queryset)
         return queryset
 
-    def _payload(self, route: Route) -> dict:
-        return dict(RouteReadSerializer(route, context={"request": self.request}).data)
-
     def get_parsers(self):
         parser_classes = list(self.parser_classes)
         if "put" in getattr(self, "action_map", {}) and "post" not in getattr(self, "action_map", {}):
@@ -349,7 +331,7 @@ class RouteViewSet(
             action="ROUTE_CREATE",
             target_type="route",
             target_id=route.id,
-            after_data=self._payload(route),
+            after_data=build_instance_payload(RouteReadSerializer, route, self.request),
         )
         return route
 
@@ -394,7 +376,14 @@ class RouteViewSet(
             self._cleanup_uploaded_wayline_after_failure(gateway=gateway, wayline_id=cleanup_state["wayline_id"])
             self._cleanup_created_route_after_failure(route_id=cleanup_state["route_id"])
             raise
-        return _route_success_response(self, route, http_status=status.HTTP_201_CREATED, include_headers=True)
+        return build_instance_response(
+            RouteReadSerializer,
+            route,
+            self.request,
+            http_status=status.HTTP_201_CREATED,
+            include_headers=True,
+            headers_builder=self.get_success_headers,
+        )
 
     @transaction.atomic
     def _finalize_update(
@@ -424,7 +413,7 @@ class RouteViewSet(
             target_type="route",
             target_id=route.id,
             before_data=before_data,
-            after_data=self._payload(route),
+            after_data=build_instance_payload(RouteReadSerializer, route, self.request),
         )
         if old_wayline_id and old_wayline_id != new_wayline_id:
             transaction.on_commit(
@@ -438,7 +427,7 @@ class RouteViewSet(
 
     @transaction.atomic
     def _finalize_local_only_update(self, *, serializer, route: Route):
-        before_data = self._payload(route)
+        before_data = build_instance_payload(RouteReadSerializer, route, self.request)
         route = serializer.save()
         log_action(
             request=self.request,
@@ -446,13 +435,13 @@ class RouteViewSet(
             target_type="route",
             target_id=route.id,
             before_data=before_data,
-            after_data=self._payload(route),
+            after_data=build_instance_payload(RouteReadSerializer, route, self.request),
         )
         return route
 
     def perform_update(self, serializer, *, gateway: DjiGateway, cleanup_state: dict[str, str]):
         route = serializer.instance
-        before_data = self._payload(route)
+        before_data = build_instance_payload(RouteReadSerializer, route, self.request)
         tenant = self.get_current_tenant()
         kmz_file = _require_kmz_file(serializer)
 
@@ -505,14 +494,24 @@ class RouteViewSet(
                     {"route_id": route.id},
                 ),
                 status=status.HTTP_400_BAD_REQUEST,
-            )
+        )
         serializer = self.get_serializer(route, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         if not serializer.validated_data:
-            return _route_success_response(self, route, http_status=status.HTTP_200_OK)
+            return build_instance_response(
+                RouteReadSerializer,
+                route,
+                self.request,
+                http_status=status.HTTP_200_OK,
+            )
         if "kmz_file" not in serializer.validated_data:
             route = self._finalize_local_only_update(serializer=serializer, route=route)
-            return _route_success_response(self, route, http_status=status.HTTP_200_OK)
+            return build_instance_response(
+                RouteReadSerializer,
+                route,
+                self.request,
+                http_status=status.HTTP_200_OK,
+            )
         gateway = DjiGateway()
         cleanup_state = {"wayline_id": ""}
         try:
@@ -520,7 +519,12 @@ class RouteViewSet(
         except Exception:
             self._cleanup_uploaded_wayline_after_failure(gateway=gateway, wayline_id=cleanup_state["wayline_id"])
             raise
-        return _route_success_response(self, route, http_status=status.HTTP_200_OK)
+        return build_instance_response(
+            RouteReadSerializer,
+            route,
+            self.request,
+            http_status=status.HTTP_200_OK,
+        )
 
     @extend_schema(
         summary="下载航线 KMZ",
@@ -607,7 +611,11 @@ class RouteViewSet(
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        error_response = _reject_request_body_if_present(request, message="DELETE 请求不支持提交 body 参数")
+        error_response = reject_request_body_if_present(
+            request,
+            message="DELETE 请求不支持提交 body 参数",
+            use_content_length=True,
+        )
         if error_response is not None:
             return error_response
 
@@ -622,7 +630,7 @@ class RouteViewSet(
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        before_data = self._payload(route)
+        before_data = build_instance_payload(RouteReadSerializer, route, self.request)
         route_index = getattr(route, "dji_index", None)
         gateway = DjiGateway()
         route_id = route.id

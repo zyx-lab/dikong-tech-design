@@ -13,6 +13,7 @@ from apps.access.services import AuthzService, log_action, snapshot
 from apps.api_v1.business_response import (
     BusinessApiResponseMixin,
     StandardCode,
+    reject_request_body_if_present,
     standard_error_payload,
     validation_error_payload,
 )
@@ -66,18 +67,6 @@ MEDIA_FILE_FILTER_PARAMETERS = [
     ),
     OpenApiParameter(name="file_name", type=str, location=OpenApiParameter.QUERY, description="按文件名模糊匹配。"),
 ]
-
-def _reject_request_body_if_present(request, *, message: str):
-    if request.data:
-        return Response(
-            standard_error_payload(
-                StandardCode.INVALID_PARAMS,
-                message,
-                {"body": "不支持请求体，请移除 body 后重试"},
-            ),
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    return None
 
 
 @extend_schema_view(
@@ -193,7 +182,7 @@ class MediaFileViewSet(
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        error_response = _reject_request_body_if_present(request, message="DELETE 请求不支持请求体")
+        error_response = reject_request_body_if_present(request, message="DELETE 请求不支持请求体")
         if error_response is not None:
             return error_response
 

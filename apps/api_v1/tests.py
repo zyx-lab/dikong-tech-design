@@ -1,17 +1,19 @@
 from contextlib import redirect_stderr
 from io import StringIO
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import path
 from drf_spectacular.drainage import reset_generator_stats
+from rest_framework import serializers
 from rest_framework.permissions import AllowAny
 from rest_framework.test import APIClient
 from rest_framework.views import APIView
 
 from apps.access.models import DirectoryStatus, Role, ScopeType, Tenant, TenantStatus
 from apps.access.test_support import grant_role_permissions
-from apps.api_v1.business_response import attach_standard_envelope
+from apps.api_v1.business_response import attach_standard_envelope, build_instance_response, reject_request_body_if_present
 from apps.dji_bff.models import DjiDeviceIndex
 from config.urls import urlpatterns as project_urlpatterns
 
@@ -61,6 +63,68 @@ class BusinessApiResponseContractTests(TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.json()["code"], "E0001")
         self.assertEqual(response.json()["msg"], "系统异常")
+
+
+class BusinessViewHelperTests(TestCase):
+    class ExampleObject:
+        def __init__(self, identifier: int, name: str):
+            self.id = identifier
+            self.name = name
+
+    class ExampleSerializer(serializers.Serializer):
+        id = serializers.IntegerField()
+        name = serializers.CharField()
+
+    def test_build_instance_response_should_serialise_instance_and_forward_headers(self):
+        request = SimpleNamespace()
+        response = build_instance_response(
+            self.ExampleSerializer,
+            self.ExampleObject(7, "alpha"),
+            request,
+            http_status=201,
+            include_headers=True,
+            headers_builder=lambda payload: {"X-Example": payload["name"]},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data, {"id": 7, "name": "alpha"})
+        self.assertEqual(response.headers["X-Example"], "alpha")
+
+    def test_reject_request_body_if_present_should_handle_request_data_and_content_length(self):
+        data_request = SimpleNamespace(data={"foo": "bar"})
+        data_response = reject_request_body_if_present(data_request, message="DELETE 请求不支持请求体")
+
+        self.assertIsNotNone(data_response)
+        self.assertEqual(data_response.status_code, 400)
+        self.assertEqual(
+            data_response.data,
+            {
+                "code": "B0001",
+                "msg": "DELETE 请求不支持请求体",
+                "data": {"body": "不支持请求体，请移除 body 后重试"},
+            },
+        )
+
+        empty_request = SimpleNamespace(data={})
+        self.assertIsNone(reject_request_body_if_present(empty_request, message="DELETE 请求不支持请求体"))
+
+        content_length_request = SimpleNamespace(META={"CONTENT_LENGTH": "18"})
+        content_length_response = reject_request_body_if_present(
+            content_length_request,
+            message="DELETE 请求不支持提交 body 参数",
+            use_content_length=True,
+        )
+
+        self.assertIsNotNone(content_length_response)
+        self.assertEqual(content_length_response.status_code, 400)
+        self.assertEqual(
+            content_length_response.data,
+            {
+                "code": "B0001",
+                "msg": "DELETE 请求不支持提交 body 参数",
+                "data": {"body": "不支持请求体，请移除 body 后重试"},
+            },
+        )
 
 
 class OpenApiDocsTests(TestCase):

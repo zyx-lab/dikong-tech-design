@@ -11,6 +11,9 @@ from apps.access.services import log_action, snapshot
 from apps.api_v1.business_response import (
     BusinessApiResponseMixin,
     StandardCode,
+    build_instance_payload,
+    build_instance_response,
+    reject_request_body_if_present,
     standard_error_payload,
     validation_error_payload,
 )
@@ -47,14 +50,6 @@ MISSION_FILTER_PARAMETERS = [
 ]
 
 
-def _mission_success_response(view, mission: Mission, *, http_status: int, include_headers: bool = False):
-    payload = view._payload(mission)
-    if include_headers:
-        headers = view.get_success_headers(payload)
-        return Response(payload, status=http_status, headers=headers)
-    return Response(payload, status=http_status)
-
-
 def _reject_empty_update_request(request):
     if not request.data:
         return Response(
@@ -64,20 +59,7 @@ def _reject_empty_update_request(request):
                 {"body": "请至少提交一个可写字段"},
             ),
             status=status.HTTP_400_BAD_REQUEST,
-        )
-    return None
-
-
-def _reject_request_body_if_present(request, *, message: str):
-    if request.data:
-        return Response(
-            standard_error_payload(
-                StandardCode.INVALID_PARAMS,
-                message,
-                {"body": "不支持请求体，请移除 body 后重试"},
-            ),
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    )
     return None
 
 
@@ -228,9 +210,6 @@ class MissionViewSet(
             return self.apply_scope(queryset)
         return queryset
 
-    def _payload(self, mission: Mission) -> dict:
-        return dict(MissionReadSerializer(mission, context={"request": self.request}).data)
-
     def _update_mission(self, request):
         error_response = _reject_empty_update_request(request)
         if error_response is not None:
@@ -243,11 +222,16 @@ class MissionViewSet(
         serializer = self.get_serializer(mission, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         mission = self.perform_update(serializer)
-        return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
+        return build_instance_response(
+            MissionReadSerializer,
+            mission,
+            self.request,
+            http_status=status.HTTP_200_OK,
+        )
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        error_response = _reject_request_body_if_present(request, message="DELETE 请求不支持请求体")
+        error_response = reject_request_body_if_present(request, message="DELETE 请求不支持请求体")
         if error_response is not None:
             return error_response
 
@@ -277,7 +261,14 @@ class MissionViewSet(
             return Response(validation_error_payload(serializer.errors), status=status.HTTP_400_BAD_REQUEST)
 
         mission = self.perform_create(serializer)
-        return _mission_success_response(self, mission, http_status=status.HTTP_201_CREATED, include_headers=True)
+        return build_instance_response(
+            MissionReadSerializer,
+            mission,
+            self.request,
+            http_status=status.HTTP_201_CREATED,
+            include_headers=True,
+            headers_builder=self.get_success_headers,
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -288,7 +279,7 @@ class MissionViewSet(
             action="MISSION_CREATE",
             target_type="mission",
             target_id=mission.id,
-            after_data=self._payload(mission),
+            after_data=build_instance_payload(MissionReadSerializer, mission, self.request),
         )
         return mission
 
@@ -319,7 +310,7 @@ class MissionViewSet(
     @action(detail=True, methods=["post"], url_path="advance")
     @transaction.atomic
     def advance(self, request, *args, **kwargs):
-        error_response = _reject_request_body_if_present(request, message="advance 请求不支持请求体")
+        error_response = reject_request_body_if_present(request, message="advance 请求不支持请求体")
         if error_response is not None:
             return error_response
 
@@ -358,7 +349,12 @@ class MissionViewSet(
             before_data=before_data,
             after_data=after_data,
         )
-        return _mission_success_response(self, mission, http_status=status.HTTP_200_OK)
+        return build_instance_response(
+            MissionReadSerializer,
+            mission,
+            self.request,
+            http_status=status.HTTP_200_OK,
+        )
 
     @transaction.atomic
     def perform_update(self, serializer):

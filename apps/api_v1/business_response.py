@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rest_framework import status
 from rest_framework.response import Response
 
 from apps.api_v1.pagination import StandardPageNumberPagination
@@ -251,3 +252,43 @@ class BusinessApiResponseMixin:
                 trace_id=trace_id,
             )
         return finalized
+
+
+def build_instance_payload(serializer_class, instance, request) -> dict[str, Any]:
+    return dict(serializer_class(instance, context={"request": request}).data)
+
+
+def build_instance_response(
+    serializer_class,
+    instance,
+    request,
+    *,
+    http_status: int,
+    include_headers: bool = False,
+    headers_builder=None,
+):
+    payload = build_instance_payload(serializer_class, instance, request)
+    if include_headers and headers_builder is not None:
+        return Response(payload, status=http_status, headers=headers_builder(payload))
+    return Response(payload, status=http_status)
+
+
+def reject_request_body_if_present(request, *, message: str, use_content_length: bool = False):
+    if use_content_length:
+        request_meta = getattr(request, "META", {})
+        content_length = request_meta.get("CONTENT_LENGTH") if isinstance(request_meta, dict) else None
+        has_body = content_length not in (None, "", "0")
+    else:
+        has_body = bool(getattr(request, "data", None))
+
+    if not has_body:
+        return None
+
+    return Response(
+        standard_error_payload(
+            StandardCode.INVALID_PARAMS,
+            message,
+            {"body": "不支持请求体，请移除 body 后重试"},
+        ),
+        status=status.HTTP_400_BAD_REQUEST,
+    )
