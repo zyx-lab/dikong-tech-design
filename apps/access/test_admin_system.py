@@ -67,31 +67,36 @@ class AdminLogViewerTests(TestCase):
         self.tempdir.cleanup()
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
-    def test_admin_logs_view_should_render_selected_log_file(self):
+    def test_admin_logs_view_should_render_app_log_family_without_file_selector(self):
         self.client.force_login(self.superuser)
 
         with override_settings(DJANGO_LOG_DIR=self.log_dir):
-            response = self.client.get("/admin/system/logs/", {"file": "app.log", "show_details": "1"})
+            response = self.client.get("/admin/system/logs/", {"show_details": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "line-1")
+        self.assertContains(response, "line-2")
+        self.assertContains(response, "日志范围: <code>app.log*</code>")
+        self.assertNotContains(response, "id_file")
+        self.assertNotContains(response, "日志文件")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_ignore_file_query_parameter(self):
+        self.client.force_login(self.superuser)
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"file": "../secrets.txt", "show_details": "1"})
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "line-1")
         self.assertContains(response, "line-2")
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
-    def test_admin_logs_view_should_block_path_traversal(self):
-        self.client.force_login(self.superuser)
-
-        with override_settings(DJANGO_LOG_DIR=self.log_dir):
-            response = self.client.get("/admin/system/logs/", {"file": "../secrets.txt"})
-
-        self.assertEqual(response.status_code, 400)
-
-    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
     def test_admin_logs_view_should_support_keyword_filter(self):
         self.client.force_login(self.superuser)
 
         with override_settings(DJANGO_LOG_DIR=self.log_dir):
-            response = self.client.get("/admin/system/logs/", {"file": "app.log", "q": "line-2"})
+            response = self.client.get("/admin/system/logs/", {"q": "line-2"})
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "line-2")
@@ -105,7 +110,7 @@ class AdminLogViewerTests(TestCase):
         (self.log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         with override_settings(DJANGO_LOG_DIR=self.log_dir):
-            response = self.client.get("/admin/system/logs/", {"file": "app.log", "tail": "100", "q": "target-line-1"})
+            response = self.client.get("/admin/system/logs/", {"tail": "100", "q": "target-line-1"})
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "target-line-1")
@@ -116,7 +121,7 @@ class AdminLogViewerTests(TestCase):
         (self.log_dir / "app.log.1").write_text("rotated\n", encoding="utf-8")
 
         with override_settings(DJANGO_LOG_DIR=self.log_dir):
-            response = self.client.get("/admin/system/logs/", {"file": "app.log"})
+            response = self.client.get("/admin/system/logs/", {})
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "app.log.1")
@@ -126,7 +131,7 @@ class AdminLogViewerTests(TestCase):
         self.client.force_login(self.superuser)
 
         with override_settings(DJANGO_LOG_DIR=self.log_dir):
-            response = self.client.get("/admin/system/logs/", {"file": "app.log", "q": "request_finished", "show_details": "1"})
+            response = self.client.get("/admin/system/logs/", {"q": "request_finished", "show_details": "1"})
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "request_finished")
@@ -184,7 +189,7 @@ class AdminLogViewerTests(TestCase):
         (self.log_dir / "app.log").write_text("\n".join(chain_lines) + "\n", encoding="utf-8")
 
         with override_settings(DJANGO_LOG_DIR=self.log_dir):
-            response = self.client.get("/admin/system/logs/", {"file": "app.log", "chain_id": "chain-1"})
+            response = self.client.get("/admin/system/logs/", {"chain_id": "chain-1"})
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "链路总览")
@@ -196,12 +201,131 @@ class AdminLogViewerTests(TestCase):
         self.assertNotContains(response, "chain-2")
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_stitch_chain_across_rotated_log_family(self):
+        self.client.force_login(self.superuser)
+        rotated_lines = [
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:00:00+08:00",
+                    "event": "request_started",
+                    "level": "INFO",
+                    "request_id": "chain-rotated",
+                    "request": {"method": "GET", "path": "/api/v1/media-files/3/playback-url"},
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:00:01+08:00",
+                    "event": "upstream_request",
+                    "level": "INFO",
+                    "trace_id": "chain-rotated",
+                    "request": {
+                        "method": "GET",
+                        "path": "/api/v1/media/workspaces/mock/files/3/playback-url",
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        ]
+        current_lines = [
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:00:02+08:00",
+                    "event": "request_finished",
+                    "level": "INFO",
+                    "request_id": "chain-rotated",
+                    "request": {"method": "GET", "path": "/api/v1/media-files/3/playback-url"},
+                    "response": {"status_code": 200},
+                },
+                ensure_ascii=False,
+            )
+        ]
+        (self.log_dir / "app.log.1").write_text("\n".join(rotated_lines) + "\n", encoding="utf-8")
+        (self.log_dir / "app.log").write_text("\n".join(current_lines) + "\n", encoding="utf-8")
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"chain_id": "chain-rotated"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "chain-rotated")
+        self.assertContains(response, "3 steps")
+        self.assertContains(response, "app.log.1#1")
+        self.assertContains(response, "app.log#1")
+        self.assertContains(response, "/api/v1/media/workspaces/mock/files/3/playback-url")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_filter_by_tenant_code_at_chain_level(self):
+        self.client.force_login(self.superuser)
+        tenant_lines = [
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:00:00+08:00",
+                    "event": "request_started",
+                    "level": "INFO",
+                    "request_id": "chain-tenant-a",
+                    "request": {
+                        "method": "GET",
+                        "path": "/api/v1/media-files/1/playback-url",
+                        "headers": {"X-Tenant-Code": "tenant-a"},
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:00:01+08:00",
+                    "event": "upstream_request",
+                    "level": "INFO",
+                    "trace_id": "chain-tenant-a",
+                    "request": {"method": "GET", "path": "/api/v1/media/workspaces/a/files/1/playback-url"},
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:00:02+08:00",
+                    "event": "request_finished",
+                    "level": "INFO",
+                    "request_id": "chain-tenant-a",
+                    "request": {"method": "GET", "path": "/api/v1/media-files/1/playback-url"},
+                    "response": {"status_code": 200},
+                    "context": {"tenant_code": "tenant-a"},
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-04-17T14:01:00+08:00",
+                    "event": "request_finished",
+                    "level": "INFO",
+                    "request_id": "chain-tenant-b",
+                    "request": {"method": "GET", "path": "/api/v1/media-files/2/playback-url"},
+                    "response": {"status_code": 200},
+                    "context": {"tenant_code": "tenant-b"},
+                },
+                ensure_ascii=False,
+            ),
+        ]
+        (self.log_dir / "app.log").write_text("\n".join(tenant_lines) + "\n", encoding="utf-8")
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"tenant_code": "tenant-a"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "chain-tenant-a")
+        self.assertContains(response, "租户: tenant-a")
+        self.assertContains(response, "/api/v1/media/workspaces/a/files/1/playback-url")
+        self.assertNotContains(response, "chain-tenant-b")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
     def test_admin_logs_view_should_default_to_summary_only(self):
         self.client.force_login(self.superuser)
 
         with override_settings(DJANGO_LOG_DIR=self.log_dir):
-            response = self.client.get("/admin/system/logs/", {"file": "app.log"})
+            response = self.client.get("/admin/system/logs/", {})
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "默认只显示链路总览")
         self.assertNotContains(response, "日志明细")
+        self.assertNotContains(response, "id_file")

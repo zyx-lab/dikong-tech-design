@@ -12,7 +12,7 @@
 <style>
   .logs-toolbar {
     display: grid;
-    grid-template-columns: repeat(6, minmax(140px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 10px;
     margin-bottom: 14px;
     align-items: end;
@@ -135,17 +135,6 @@
 
 <form method="get" class="logs-toolbar" id="log-filter-form">
   <div class="field">
-    <label for="id_file">日志文件</label>
-    <select id="id_file" name="file">
-      {% for filename in available_files %}
-        <option value="{{ filename }}" {% if filename == selected_file %}selected{% endif %}>{{ filename }}</option>
-      {% endfor %}
-      {% if not available_files %}
-        <option value="{{ selected_file }}" selected>{{ selected_file }}</option>
-      {% endif %}
-    </select>
-  </div>
-  <div class="field">
     <label for="id_tail">尾部行数</label>
     <input id="id_tail" name="tail" type="number" min="1" max="2000" value="{{ tail }}" />
   </div>
@@ -156,6 +145,10 @@
   <div class="field">
     <label for="id_chain_id">链路 ID 过滤</label>
     <input id="id_chain_id" name="chain_id" value="{{ chain_id }}" placeholder="trace_id / request_id" />
+  </div>
+  <div class="field">
+    <label for="id_tenant_code">租户编码过滤</label>
+    <input id="id_tenant_code" name="tenant_code" value="{{ tenant_code }}" placeholder="tenant_code" />
   </div>
   <div class="field">
     <label for="id_refresh">自动刷新(秒)</label>
@@ -169,6 +162,10 @@
 </form>
 
 <div class="meta">日志目录: <code>{{ log_dir }}</code></div>
+<div class="meta">日志范围: <code>{{ log_scope }}</code></div>
+{% if searched_files %}
+  <div class="meta">搜索文件: <code>{{ searched_files|join:", " }}</code></div>
+{% endif %}
 {% if error_message %}
   <p style="color: #ba2121;">{{ error_message }}</p>
 {% endif %}
@@ -193,6 +190,9 @@
         {% else %}
           <span class="pill">正常链路</span>
         {% endif %}
+        {% if chain.tenant_code %}
+          <span class="pill">租户: {{ chain.tenant_code }}</span>
+        {% endif %}
         <span class="chain-title">{{ chain.entrypoint|default:"(无入口路径)" }}</span>
         <span class="pill">{{ chain.step_count }} steps</span>
         {% if chain.final_status_code %}
@@ -211,7 +211,7 @@
               {% if step.method or step.path %}<span class="mono">{{ step.method }} {{ step.path }}</span>{% endif %}
               {% if step.status_code %}<span class="pill">status={{ step.status_code }}</span>{% endif %}
               {% if step.logger %}<span class="subtle">{{ step.logger }}</span>{% endif %}
-              <span class="subtle">#{{ step.line_no }}</span>
+              <span class="subtle">{{ step.source_file }}#{{ step.line_no }}</span>
             </div>
             <div class="step-summary">{{ step.summary }}</div>
             {% if step.pretty_json %}
@@ -234,7 +234,7 @@
   <table class="rows-table">
     <thead>
       <tr>
-        <th>#</th>
+        <th>位置</th>
         <th>时间</th>
         <th>级别</th>
         <th>环节</th>
@@ -247,7 +247,7 @@
     <tbody>
       {% for row in rows %}
         <tr class="{% if row.is_error %}row-error{% endif %}">
-          <td class="mono">{{ row.line_no }}</td>
+          <td class="mono">{{ row.source_file }}#{{ row.line_no }}</td>
           <td class="mono">{{ row.timestamp|default:"-" }}</td>
           <td>{{ row.level|default:"-" }}</td>
           <td>{{ row.stage|default:row.event|default:"-" }}</td>
@@ -287,7 +287,7 @@
   (function () {
     const form = document.getElementById("log-filter-form");
     if (form) {
-      const immediateNames = new Set(["file", "tail", "newest_first", "show_details", "refresh"]);
+      const immediateNames = new Set(["tail", "newest_first", "show_details", "refresh"]);
       let timer = null;
 
       function submitForm() {
@@ -304,7 +304,7 @@
         }
       });
 
-      ["q", "chain_id"].forEach(function (name) {
+      ["q", "chain_id", "tenant_code"].forEach(function (name) {
         const input = form.querySelector(`[name="${name}"]`);
         if (!input) {
           return;

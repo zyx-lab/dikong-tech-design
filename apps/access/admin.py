@@ -6,7 +6,6 @@ from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.db.models import Count, Prefetch, Q
-from django.http import HttpResponseBadRequest
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils.html import format_html, format_html_join
@@ -921,16 +920,6 @@ def _superuser_only_admin_permission(self, request):
     return request.user.is_active and request.user.is_superuser
 
 
-def _is_safe_log_filename(value: str) -> bool:
-    if not value:
-        return False
-    if "/" in value or "\\" in value:
-        return False
-    if ".." in value:
-        return False
-    return True
-
-
 def _parse_tail(raw_value: str | None) -> int:
     try:
         tail = int(raw_value or "100")
@@ -953,25 +942,55 @@ def _parse_bool(raw_value: str | None, *, default: bool) -> bool:
     return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _list_log_files(log_dir: Path):
-    if not log_dir.exists():
-        return []
-    return sorted(path.name for path in log_dir.glob("*.log*") if path.is_file())
+def _log_family_name(filename: str) -> str:
+    marker = ".log"
+    index = filename.find(marker)
+    if index < 0:
+        return filename
+    return filename[: index + len(marker)]
 
 
-def _load_log_lines(path: Path, *, tail: int | None) -> list[str]:
-    with path.open("r", encoding="utf-8", errors="replace") as fh:
-        lines = [line.rstrip("\n") for line in fh.readlines()]
+def _log_family_sort_key(path: Path) -> tuple[int, int, str]:
+    family = _log_family_name(path.name)
+    suffix = path.name[len(family):]
+    if not suffix:
+        return (1, 0, path.name)
+
+    normalized_suffix = suffix.lstrip(".")
+    if normalized_suffix.isdigit():
+        # Rotated files use .1/.2/... where larger suffixes are older.
+        return (0, -int(normalized_suffix), path.name)
+    return (0, 0, path.name)
+
+
+def _resolve_log_paths(log_dir: Path, *, family_root: str, include_family: bool) -> list[Path]:
+    selected_path = log_dir / family_root
+    if not include_family:
+        return [selected_path]
+
+    family = _log_family_name(family_root)
+    paths = [path for path in log_dir.glob(f"{family}*") if path.is_file()]
+    if selected_path.is_file() and selected_path not in paths:
+        paths.append(selected_path)
+    return sorted(paths, key=_log_family_sort_key)
+
+
+def _load_log_entries(paths: list[Path], *, tail: int | None) -> list[tuple[str, int, str]]:
+    entries: list[tuple[str, int, str]] = []
+    for path in paths:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            lines = [line.rstrip("\n") for line in fh.readlines()]
+        entries.extend((path.name, line_no, line) for line_no, line in enumerate(lines, start=1))
     if tail is None:
-        return lines
-    return lines[-tail:]
+        return entries
+    return entries[-tail:]
 
 
-def _apply_keyword_filter(lines: list[str], *, keyword: str) -> list[str]:
+def _apply_keyword_filter(entries: list[tuple[str, int, str]], *, keyword: str) -> list[tuple[str, int, str]]:
     if not keyword:
-        return lines
+        return entries
     normalized = keyword.lower()
-    return [line for line in lines if normalized in line.lower()]
+    return [entry for entry in entries if normalized in entry[2].lower()]
 
 
 def _safe_text(value) -> str:
@@ -1024,6 +1043,31 @@ def _extract_chain_id(payload: dict, request_payload: dict, response_payload: di
     return ""
 
 
+def _extract_header_value(headers_payload: dict, header_name: str) -> str:
+    normalized_name = header_name.strip().lower()
+    for key, value in headers_payload.items():
+        if _safe_text(key).strip().lower() == normalized_name:
+            return _safe_text(value).strip()
+    return ""
+
+
+def _extract_tenant_code(payload: dict, request_payload: dict) -> str:
+    context_payload = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+    request_headers = request_payload.get("headers") if isinstance(request_payload.get("headers"), dict) else {}
+    candidates = [
+        context_payload.get("tenant_code"),
+        context_payload.get("tenantCode"),
+        payload.get("tenant_code"),
+        payload.get("tenantCode"),
+        _extract_header_value(request_headers, "X-Tenant-Code"),
+    ]
+    for value in candidates:
+        text = _safe_text(value).strip()
+        if text:
+            return text
+    return ""
+
+
 def _build_row_summary(*, payload: dict, row: dict, request_payload: dict, response_payload: dict) -> str:
     event = row["event"]
     if event == "upstream_request":
@@ -1048,8 +1092,9 @@ def _build_row_summary(*, payload: dict, row: dict, request_payload: dict, respo
     return _safe_text(payload.get("message") or payload.get("msg") or row["event"] or row["raw"])[:200]
 
 
-def _parse_log_row(*, line_no: int, raw_line: str, include_details: bool) -> dict:
+def _parse_log_row(*, source_file: str, line_no: int, raw_line: str, include_details: bool) -> dict:
     row = {
+        "source_file": source_file,
         "line_no": line_no,
         "raw": raw_line,
         "is_json": False,
@@ -1058,6 +1103,7 @@ def _parse_log_row(*, line_no: int, raw_line: str, include_details: bool) -> dic
         "event": "",
         "request_id": "",
         "chain_id": "",
+        "tenant_code": "",
         "method": "",
         "path": "",
         "status_code": "",
@@ -1088,6 +1134,7 @@ def _parse_log_row(*, line_no: int, raw_line: str, include_details: bool) -> dic
     row["event"] = _safe_text(payload.get("event"))
     row["request_id"] = _safe_text(payload.get("request_id") or payload.get("trace_id"))
     row["chain_id"] = _extract_chain_id(payload, request_payload, response_payload)
+    row["tenant_code"] = _extract_tenant_code(payload, request_payload)
     row["method"] = _safe_text(request_payload.get("method"))
     row["path"] = _safe_text(request_payload.get("path"))
     row["status_code"] = _safe_text(response_payload.get("status_code") or payload.get("status_code"))
@@ -1109,13 +1156,13 @@ def _parse_log_row(*, line_no: int, raw_line: str, include_details: bool) -> dic
     return row
 
 
-def _build_log_rows(lines: list[str], *, newest_first: bool, include_details: bool) -> list[dict]:
-    indexed_lines = list(enumerate(lines, start=1))
+def _build_log_rows(entries: list[tuple[str, int, str]], *, newest_first: bool, include_details: bool) -> list[dict]:
+    indexed_entries = list(entries)
     if newest_first:
-        indexed_lines.reverse()
+        indexed_entries.reverse()
     return [
-        _parse_log_row(line_no=line_no, raw_line=raw_line, include_details=include_details)
-        for line_no, raw_line in indexed_lines
+        _parse_log_row(source_file=source_file, line_no=line_no, raw_line=raw_line, include_details=include_details)
+        for source_file, line_no, raw_line in indexed_entries
     ]
 
 
@@ -1167,6 +1214,7 @@ def _build_log_chains(rows: list[dict]) -> list[dict]:
         chain["error_count"] = sum(1 for step in steps if step["is_error"])
         chain["has_error"] = chain["error_count"] > 0
         chain["entrypoint"] = entrypoint
+        chain["tenant_code"] = next((step["tenant_code"] for step in steps if step["tenant_code"]), "")
         chain["started_at"] = steps[0]["timestamp"] if steps else ""
         chain["ended_at"] = final_step["timestamp"] if final_step else ""
         chain["final_stage"] = final_step["stage"] if final_step else ""
@@ -1178,54 +1226,85 @@ def _build_log_chains(rows: list[dict]) -> list[dict]:
     return chains
 
 
+def _matches_tenant_code(row: dict, tenant_code: str) -> bool:
+    normalized = tenant_code.strip().lower()
+    if not normalized:
+        return True
+    return row.get("tenant_code", "").strip().lower() == normalized
+
+
+def _apply_tenant_code_filter(rows: list[dict], *, tenant_code: str) -> list[dict]:
+    if not tenant_code:
+        return rows
+
+    matched_chain_ids = {
+        row["chain_id"]
+        for row in rows
+        if row.get("chain_id") and _matches_tenant_code(row, tenant_code)
+    }
+    filtered_rows: list[dict] = []
+    for row in rows:
+        chain_id = row.get("chain_id")
+        if chain_id and chain_id in matched_chain_ids:
+            filtered_rows.append(row)
+            continue
+        if _matches_tenant_code(row, tenant_code):
+            filtered_rows.append(row)
+    return filtered_rows
+
+
 def system_logs_view(request):
     log_dir = Path(settings.DJANGO_LOG_DIR)
-    available_files = _list_log_files(log_dir)
-    selected_file = request.GET.get("file", "app.log")
     tail = _parse_tail(request.GET.get("tail"))
     keyword = request.GET.get("q", "").strip()
     chain_id = request.GET.get("chain_id", "").strip()
+    tenant_code = request.GET.get("tenant_code", "").strip()
     show_details = _parse_bool(request.GET.get("show_details"), default=False)
     newest_first = _parse_bool(request.GET.get("newest_first"), default=True)
     auto_refresh_seconds = _parse_auto_refresh_seconds(request.GET.get("refresh"))
-    lines: list[str] = []
+    entries: list[tuple[str, int, str]] = []
     rows: list[dict] = []
     chains: list[dict] = []
+    search_paths: list[Path] = []
     error_message = None
 
-    if not _is_safe_log_filename(selected_file):
-        return HttpResponseBadRequest("invalid log filename")
-
-    selected_path = log_dir / selected_file
-    if selected_path.exists() and selected_path.is_file():
-        # Keyword / chain filters should search the whole file instead of only tail lines.
-        # Otherwise recent noisy logs can hide the target request from the admin view.
-        effective_tail = None if (keyword or chain_id) else tail
-        lines = _load_log_lines(selected_path, tail=effective_tail)
-        lines = _apply_keyword_filter(lines, keyword=keyword)
-        rows = _build_log_rows(lines, newest_first=newest_first, include_details=show_details)
+    # The admin viewer intentionally treats application logs as a single family.
+    # This keeps the UI stable and avoids exposing per-file rotation details.
+    family_root = "app.log"
+    effective_tail = None if (keyword or chain_id or tenant_code) else tail
+    search_paths = _resolve_log_paths(
+        log_dir,
+        family_root=family_root,
+        include_family=True,
+    )
+    if search_paths:
+        entries = _load_log_entries(search_paths, tail=effective_tail)
+        entries = _apply_keyword_filter(entries, keyword=keyword)
+        rows = _build_log_rows(entries, newest_first=newest_first, include_details=show_details)
         if chain_id:
             rows = [row for row in rows if row.get("chain_id") == chain_id]
+        rows = _apply_tenant_code_filter(rows, tenant_code=tenant_code)
         chains = _build_log_chains(rows)
     else:
-        error_message = f"日志文件不存在: {selected_file}"
+        error_message = "日志文件不存在: app.log*"
 
     summary = _summarize_log_rows(rows)
     context = {
         **admin.site.each_context(request),
         "title": "系统日志",
         "log_dir": str(log_dir),
-        "available_files": available_files,
-        "selected_file": selected_file,
+        "log_scope": "app.log*",
         "tail": tail,
         "query_text": keyword,
         "chain_id": chain_id,
+        "tenant_code": tenant_code,
         "show_details": show_details,
         "newest_first": newest_first,
         "auto_refresh_seconds": auto_refresh_seconds,
         "rows": rows,
         "chains": chains,
         "lines": [row["raw"] for row in rows],
+        "searched_files": [path.name for path in search_paths],
         "total_rows": len(rows),
         "json_rows": sum(1 for row in rows if row["is_json"]),
         "chain_count": len(chains),
