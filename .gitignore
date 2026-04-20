@@ -14,7 +14,10 @@ db.sqlite3.bak.*
 codex_devflow_scaffold
 frontend
 .claude
-tools/
+tools/*
+!tools/__init__.py
+!tools/sqlite_postgres_migration.py
+!tools/test_sqlite_postgres_migration.py
 translation-prompt.md
 api-tester.html
 .worktrees/

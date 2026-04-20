@@ -1,8 +1,13 @@
-# 现网原地迁移：宿主机 Django 切换到 Docker PostgreSQL
+# 现网原地迁移：手动 `python manage.py runserver` 切换到 Docker PostgreSQL
 
-适用场景：Django 已经在服务器上运行，线上已有账号和业务数据；PostgreSQL 准备用 Docker 容器承载。目标是把当前 SQLite 原地切到 PostgreSQL，不重建账号体系，不修改现有登录信息。迁移期间允许短暂停机。
+适用场景：Django 现在是你在服务器上手动执行 `python manage.py runserver ...` 启动；当前数据库是 SQLite；准备把数据库切到 Docker 里的 PostgreSQL。目标是保留现有账号和业务数据，只做数据库底层切换。
 
-下面的命令按顺序执行。每做完一步，再看下一步。
+这份文档不再展开所有底层命令，默认使用仓库里的 4 个 Python 脚本自动化迁移步骤：
+
+- [scripts/precheck_backup_export.py](/home/charles/dikong-tech-design/scripts/precheck_backup_export.py)
+- [scripts/prepare_postgres_import.py](/home/charles/dikong-tech-design/scripts/prepare_postgres_import.py)
+- [scripts/verify_and_restore.py](/home/charles/dikong-tech-design/scripts/verify_and_restore.py)
+- [scripts/show_migration_state.py](/home/charles/dikong-tech-design/scripts/show_migration_state.py)
 
 ## 0. 先看清楚这几条
 
@@ -10,248 +15,154 @@
 2. 不执行 `createsuperuser`、`create_business_admin_account`、`seed_role_permissions` 这类初始化命令。
 3. 不改现有业务账号、管理员账号和密码。
 4. `POSTGRES_PASSWORD` 是 PostgreSQL 数据库用户密码，不是应用登录密码。
-5. 先停掉所有会写数据库的进程，再导出 SQLite；导入完成后，再把 Django 切到 PostgreSQL。
+5. 迁移脚本按“分段执行”设计，不是一键到底。每段成功后再执行下一段。
 
 ## 1. 进入项目目录
 
-把下面这行里的路径改成你服务器上的实际项目路径。
-
 ```bash
 cd /path/to/dikong-tech-design
+source .venv/bin/activate
 ```
 
-## 2. 停掉所有写入进程
+## 2. 第一段：停写入、备份 SQLite、导出数据
 
-先确认当前有哪些相关进程：
+这一步会做下面几件事：
+
+- 停掉当前 `runserver` 进程
+- 停掉 `run_dji_sync_scheduler` 进程
+- 备份 `db.sqlite3` 及其 WAL / journal 文件
+- 导出当前业务数据到 JSON
+- 在备份目录里生成 `migration_state.json`
+
+先看一下将要执行什么：
 
 ```bash
-ps -ef | grep -E 'gunicorn|manage.py runserver|run_dji_sync_scheduler' | grep -v grep
+python scripts/precheck_backup_export.py --dry-run
 ```
 
-如果你是用 `systemd` 管理 Django 服务，先停掉它：
+确认没问题后正式执行：
 
 ```bash
-sudo systemctl stop <你的 Django 服务名>
+python scripts/precheck_backup_export.py
 ```
 
-如果同步脚本也是 `systemd` 服务，也一并停掉：
+默认备份目录会落在 `/tmp/dikong/<timestamp>`。
+
+执行成功后，脚本会打印一个 `backup_dir=...`。后面两段都要用这个目录。
+
+如果你想自己指定备份目录或 PostgreSQL 端口，也可以：
 
 ```bash
-sudo systemctl stop <你的同步脚本服务名>
+python scripts/precheck_backup_export.py \
+  --backup-dir "/tmp/dikong/migrate-001" \
+  --postgres-port 15432
 ```
 
-不是 `systemd` 管理的进程，直接 `pkill`：
+如果想查看这次迁移保存的状态文件：
 
 ```bash
-pkill -f "manage.py runserver" || true
-pkill -f gunicorn || true
-pkill -f "run_dji_sync_scheduler" || true
+python scripts/show_migration_state.py \
+  --backup-dir "/tmp/dikong/migrate-001" \
+  --summary
 ```
 
-再确认一次，应该没有输出：
+## 3. 第二段：确保 PostgreSQL 容器存在并导入数据
+
+这一步会做下面几件事：
+
+- 检查 `docker` 是否可用
+- 确保 PostgreSQL 容器存在并可启动
+- 若容器不存在，则自动创建
+- 执行 Django `migrate`
+- 执行 `loaddata`
+- 执行 `sqlsequencereset`
+
+先看一下将要执行什么：
 
 ```bash
-ps -ef | grep -E 'gunicorn|manage.py runserver|run_dji_sync_scheduler' | grep -v grep
+python scripts/prepare_postgres_import.py \
+  --backup-dir "/tmp/dikong/你的备份目录" \
+  --dry-run
 ```
 
-## 3. 备份当前 SQLite 文件
-
-先准备一个放备份的目录。这个目录放在项目外面，避免误提交。
+正式执行：
 
 ```bash
-export BACKUP_DIR="$HOME/dikong-backup/$(date +%F_%H%M%S)"
-mkdir -p "$BACKUP_DIR"
+python scripts/prepare_postgres_import.py \
+  --backup-dir "/tmp/dikong/你的备份目录"
 ```
 
-把 SQLite 主文件和可能存在的辅助文件一起备份：
+脚本会提示输入 PostgreSQL 密码。
+如果你明确要重建 PostgreSQL 容器，可以加 `--recreate-container`，但这只适合你确认容器里没有要保留的数据时使用。
+
+## 4. 第三段：校验数据并恢复服务
+
+这一步分成两个模式。
+
+### 4.1 只校验，不启动 Django
+
+这会：
+
+- 从 PostgreSQL 再导出一份数据
+- 与第一段导出的 SQLite JSON 做比对
 
 ```bash
-for f in db.sqlite3 db.sqlite3-wal db.sqlite3-shm db.sqlite3-journal; do
-  [ -f "$f" ] && cp -a "$f" "$BACKUP_DIR/"
-done
-
-ls -lh "$BACKUP_DIR"
+python scripts/verify_and_restore.py \
+  --backup-dir "/tmp/dikong/你的备份目录" \
+  --mode verify
 ```
 
-## 4. 导出现网业务数据
+### 4.2 校验通过后，按 PostgreSQL 启动 Django
 
-这一条命令会把当前业务数据导成 JSON 文件。`access` app 里包含你现有的账号、会话、角色和权限相关数据，所以这一步会把这些内容一起带走。请在 **还没有切到 PostgreSQL** 之前执行。
+这会：
+
+- 先执行上面的数据比对
+- 比对通过后，用 PostgreSQL 环境变量后台启动 `runserver`
+- 把输出写到备份目录里的 `runserver.log`
 
 ```bash
-DB_ENGINE=sqlite .venv/bin/python manage.py dumpdata \
-  access drone drone_assignment route waypoint mission flight_record media_file dji_bff \
-  --indent 2 \
-  > "$BACKUP_DIR/business-data.json"
+python scripts/verify_and_restore.py \
+  --backup-dir "/tmp/dikong/你的备份目录" \
+  --mode start-postgres \
+  --host 0.0.0.0 \
+  --port 8000
 ```
 
-如果以后你新增了业务 app，就把 app 名字也加到这条命令里。
+成功后，脚本会打印新的 `runserver pid` 和日志文件路径。
 
-## 5. 启动 PostgreSQL 容器
+## 5. 回滚
+
+如果你已经完成了前两段，但还没接受 PostgreSQL 上的新写入，可以恢复回 SQLite：
 
 ```bash
-read -s -p "请输入 PostgreSQL 密码: " POSTGRES_PASSWORD; echo
-
-export POSTGRES_CONTAINER=dikong-postgres
-export POSTGRES_DB=dikong
-export POSTGRES_USER=postgres
-export POSTGRES_PORT=5432
-
-ss -ltnp | grep ":${POSTGRES_PORT} " || true
-
-如果 5432 已经被占用，就把 `POSTGRES_PORT` 改成一个新端口，比如 `15432`，然后后面的命令里也保持一致。
-
-docker rm -f "$POSTGRES_CONTAINER" 2>/dev/null || true
-docker volume create dikong_pgdata >/dev/null
-
-docker run -d \
-  --name "$POSTGRES_CONTAINER" \
-  --restart unless-stopped \
-  -e POSTGRES_DB="$POSTGRES_DB" \
-  -e POSTGRES_USER="$POSTGRES_USER" \
-  -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-  -p 127.0.0.1:${POSTGRES_PORT}:5432 \
-  -v dikong_pgdata:/var/lib/postgresql/data \
-  postgres:16-alpine
+python scripts/verify_and_restore.py \
+  --backup-dir "/tmp/dikong/你的备份目录" \
+  --mode rollback \
+  --host 0.0.0.0 \
+  --port 8000
 ```
 
-确认数据库已经起来：
+这会：
 
-```bash
-docker logs --tail 50 "$POSTGRES_CONTAINER"
-docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" -i "$POSTGRES_CONTAINER" \
-  psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1;"
-```
+- 把备份目录里的 SQLite 文件恢复回项目目录
+- 用 SQLite 环境重新后台启动 `runserver`
 
-看到 `SELECT 1` 正常返回后，再继续。
+重要提醒：如果 PostgreSQL 已经开始接收新的业务写入，回滚回 SQLite 就不再是零损失了。这个时候不要直接回滚，先确认是否接受丢掉切换后的新增数据。
 
-## 6. 切 Django 到 PostgreSQL 并创建表结构
+## 6. 脚本边界
 
-从这一步开始，后面的 `manage.py` 命令都要连 PostgreSQL。
+这 3 个脚本只覆盖你当前这种场景：
 
-```bash
-export DB_ENGINE=postgres
-export DB_HOST=127.0.0.1
-export DB_PORT="$POSTGRES_PORT"
-export DB_NAME="$POSTGRES_DB"
-export DB_USER="$POSTGRES_USER"
-export DB_PASSWORD="$POSTGRES_PASSWORD"
-```
+- 宿主机直接跑 `python manage.py runserver`
+- SQLite -> Docker PostgreSQL
+- 同一个仓库内原地迁移
 
-如果你是通过 `systemd`、`gunicorn` 或 Docker 启动 Django，就把同样的 `DB_*` 环境变量写回原来的启动配置。现在先不要重启服务，等数据导入和校验完成后再切。
+它们不会替你处理这些事情：
 
-先让 Django 创建 PostgreSQL 里的表结构：
+- `systemd` / `gunicorn` / `supervisor` 服务管理
+- Nginx / 反向代理配置
+- 外部 PostgreSQL 实例
+- 双写、零停机切换
+- 迁移本地文件
 
-```bash
-.venv/bin/python manage.py migrate
-```
-
-再检查一下配置有没有问题：
-
-```bash
-.venv/bin/python manage.py check
-```
-
-如果这一步报错，先不要继续，先修好报错再往下做。
-
-## 7. 把 SQLite 数据导入 PostgreSQL
-
-把刚才导出的 JSON 文件导入 PostgreSQL：
-
-```bash
-.venv/bin/python manage.py loaddata "$BACKUP_DIR/business-data.json"
-```
-
-如果这里报 `IntegrityError`、`foreign key`、`relation already exists` 之类的错误，先停下来，不要硬往下走。
-
-导入完数据后，PostgreSQL 的自增序列要重新对齐，不然下一次插入可能撞主键：
-
-```bash
-.venv/bin/python manage.py sqlsequencereset \
-  access drone drone_assignment route waypoint mission flight_record media_file dji_bff \
-  > "$BACKUP_DIR/reset_sequences.sql"
-```
-
-把 SQL 执行到 PostgreSQL 容器里：
-
-```bash
-docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" -i "$POSTGRES_CONTAINER" \
-  psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-  < "$BACKUP_DIR/reset_sequences.sql"
-```
-
-如果 `reset_sequences.sql` 是空文件，也可以继续，说明这些表没有需要重置的序列。
-
-## 8. 核对数据是否一致
-
-最稳妥的办法是把 PostgreSQL 再导出一次，然后和 SQLite 的导出结果直接比对。
-
-```bash
-.venv/bin/python manage.py dumpdata \
-  access drone drone_assignment route waypoint mission flight_record media_file dji_bff \
-  --indent 2 \
-  > "$BACKUP_DIR/business-data-postgres.json"
-
-if diff -u "$BACKUP_DIR/business-data.json" "$BACKUP_DIR/business-data-postgres.json" > "$BACKUP_DIR/data-diff.txt"; then
-  echo "OK: SQLite 和 PostgreSQL 的导出结果一致"
-else
-  echo "FAIL: 两边导出结果不一致，先不要启动服务。"
-  echo "请查看差异文件：$BACKUP_DIR/data-diff.txt"
-  exit 1
-fi
-```
-
-如果这里通过，说明业务数据已经对齐。
-
-## 9. 恢复线上服务
-
-如果你是手动启动 Django，就在同一个终端里继续启动：
-
-```bash
-.venv/bin/python manage.py runserver 0.0.0.0:8000
-```
-
-如果你是用 `gunicorn` 或 `systemd` 启动的，把同样的 `DB_*` 环境变量写回你的启动配置，然后重启原来的服务。
-
-重启后，打开下面这个地址看一下：
-
-```bash
-curl -I http://127.0.0.1:8000/api/v1/docs/
-```
-
-能返回正常响应，说明 Django 已经成功连上 PostgreSQL。
-如果你的 Django 不是跑在 8000 端口，把这个 URL 里的端口改成你自己的端口。
-
-## 10. 回滚方案
-
-如果切换后发现问题，而且 PostgreSQL 还没有接收新的业务写入，可以直接回滚回 SQLite。
-
-先停掉 Django：
-
-```bash
-pkill -f "manage.py runserver" || true
-pkill -f gunicorn || true
-pkill -f "run_dji_sync_scheduler" || true
-```
-
-把数据库环境改回 SQLite：
-
-```bash
-unset DB_ENGINE
-unset DB_HOST
-unset DB_PORT
-unset DB_NAME
-unset DB_USER
-unset DB_PASSWORD
-```
-
-把原来的 SQLite 文件恢复回来：
-
-```bash
-for f in db.sqlite3 db.sqlite3-wal db.sqlite3-shm db.sqlite3-journal; do
-  [ -f "$BACKUP_DIR/$f" ] && cp -a "$BACKUP_DIR/$f" "$PWD/"
-done
-```
-
-然后用原来的方式重新启动 Django。
-
-重要提醒：如果 PostgreSQL 已经开始接收新的写入，回滚回 SQLite 就不再是零损失了。这个时候不要随便回滚，先确认是否接受丢掉切换后的新增数据。
+如果后面你的服务启动方式变了，这套脚本也要跟着调整。当前阶段它们就是为“现网手动 runserver 切库”准备的最小闭环。
