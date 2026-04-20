@@ -268,7 +268,8 @@ def docker_container_is_running(container_name: str) -> bool | None:
     )
     if result.returncode == 0:
         return result.stdout.strip().lower() == "true"
-    if "No such object" in (result.stderr or "") or "No such object" in (result.stdout or ""):
+    output = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
+    if "no such object" in output:
         return None
     raise RuntimeError(
         f"docker inspect failed for {container_name}: {(result.stderr or result.stdout or '').strip()}"

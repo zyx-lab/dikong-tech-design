@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 from unittest import TestCase
@@ -166,6 +167,19 @@ class SQLitePostgresMigrationHelperTests(TestCase):
         self.assertIn("migration state file not found", str(exc_info.exception))
         self.assertIn("scripts/precheck_backup_export.py", str(exc_info.exception))
         self.assertIn(str(missing_backup_dir), str(exc_info.exception))
+
+    @patch("tools.sqlite_postgres_migration.subprocess.run")
+    def test_docker_container_is_running_treats_lowercase_no_such_object_as_missing(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["docker", "inspect"],
+            returncode=1,
+            stdout="",
+            stderr="error: no such object: dikong-postgres",
+        )
+
+        from tools.sqlite_postgres_migration import docker_container_is_running
+
+        self.assertIsNone(docker_container_is_running("dikong-postgres"))
 
     @patch("tools.sqlite_postgres_migration.wait_for_postgres_ready")
     @patch("tools.sqlite_postgres_migration.run_command")
