@@ -62,6 +62,40 @@ class AdminLogViewerTests(TestCase):
         )
         (self.log_dir / "app.log").write_text(f"line-1\n{structured_line}\nline-2\n", encoding="utf-8")
         (self.log_dir / "error.log").write_text("err-1\n", encoding="utf-8")
+        sync_request_line = json.dumps(
+            {
+                "timestamp": "2026-04-17T14:10:00+08:00",
+                "event": "upstream_request",
+                "level": "INFO",
+                "sync_run_id": "sync-run-1",
+                "request": {"method": "GET", "path": "/api/v1/manage/users/current"},
+            },
+            ensure_ascii=False,
+        )
+        sync_response_line = json.dumps(
+            {
+                "timestamp": "2026-04-17T14:10:01+08:00",
+                "event": "upstream_response",
+                "level": "INFO",
+                "sync_run_id": "sync-run-1",
+                "request": {"method": "GET", "path": "/api/v1/manage/users/current"},
+                "response": {"status_code": 200},
+            },
+            ensure_ascii=False,
+        )
+        sync_error_line = json.dumps(
+            {
+                "timestamp": "2026-04-17T14:10:02+08:00",
+                "event": "upstream_error",
+                "level": "ERROR",
+                "sync_run_id": "sync-run-1",
+                "request": {"method": "GET", "path": "/api/v1/manage/users/current"},
+                "error": {"type": "timeout", "message": "sync timeout"},
+            },
+            ensure_ascii=False,
+        )
+        (self.log_dir / "sync.log").write_text(f"{sync_request_line}\n{sync_response_line}\n", encoding="utf-8")
+        (self.log_dir / "sync.error.log").write_text(f"{sync_error_line}\n", encoding="utf-8")
 
     def tearDown(self):
         self.tempdir.cleanup()
@@ -76,9 +110,10 @@ class AdminLogViewerTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "line-1")
         self.assertContains(response, "line-2")
-        self.assertContains(response, "日志范围: <code>app.log*</code>")
+        self.assertContains(response, "日志范围: <code>请求日志</code>")
         self.assertNotContains(response, "id_file")
         self.assertNotContains(response, "日志文件")
+        self.assertNotContains(response, "err-1")
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
     def test_admin_logs_view_should_ignore_file_query_parameter(self):
@@ -90,6 +125,37 @@ class AdminLogViewerTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "line-1")
         self.assertContains(response, "line-2")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_render_sync_scope_from_sync_file_family(self):
+        self.client.force_login(self.superuser)
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"scope": "sync", "show_details": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "日志范围: <code>同步日志</code>")
+        self.assertContains(response, "sync-run-1")
+        self.assertContains(response, 'data-chain-id="sync-run-1"')
+        self.assertContains(response, "3 steps")
+        self.assertContains(response, "上游请求")
+        self.assertContains(response, "上游响应")
+        self.assertContains(response, "上游异常")
+        self.assertNotContains(response, "line-1")
+        self.assertNotContains(response, "err-1")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_render_error_scope_from_error_family(self):
+        self.client.force_login(self.superuser)
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"scope": "error", "show_details": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "日志范围: <code>错误日志</code>")
+        self.assertContains(response, "err-1")
+        self.assertNotContains(response, "line-1")
+        self.assertNotContains(response, "sync-run-1")
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
     def test_admin_logs_view_should_support_keyword_filter(self):
@@ -116,15 +182,15 @@ class AdminLogViewerTests(TestCase):
         self.assertContains(response, "target-line-1")
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
-    def test_admin_logs_view_should_list_rotated_log_files(self):
+    def test_admin_logs_view_should_include_rotated_request_log_content_without_file_names(self):
         self.client.force_login(self.superuser)
         (self.log_dir / "app.log.1").write_text("rotated\n", encoding="utf-8")
 
         with override_settings(DJANGO_LOG_DIR=self.log_dir):
-            response = self.client.get("/admin/system/logs/", {})
+            response = self.client.get("/admin/system/logs/", {"show_details": "1"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "app.log.1")
+        self.assertContains(response, "rotated")
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
     def test_admin_logs_view_should_render_structured_columns_for_json_log(self):

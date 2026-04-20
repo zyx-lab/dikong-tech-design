@@ -3,6 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 
+class SyncScopeFilter:
+    def __init__(self, *, sync_only: bool):
+        self.sync_only = bool(sync_only)
+
+    def filter(self, record) -> bool:
+        has_sync_run_id = bool(getattr(record, "sync_run_id", None))
+        return has_sync_run_id if self.sync_only else not has_sync_run_id
+
+
 def build_logging_config(
     *,
     base_dir: Path,
@@ -26,6 +35,16 @@ def build_logging_config(
                 "format": "%(message)s",
             },
         },
+        "filters": {
+            "non_sync_scope": {
+                "()": "config.logging_config.SyncScopeFilter",
+                "sync_only": False,
+            },
+            "sync_scope": {
+                "()": "config.logging_config.SyncScopeFilter",
+                "sync_only": True,
+            },
+        },
         "handlers": {
             "app_file": {
                 "class": "logging.handlers.RotatingFileHandler",
@@ -35,6 +54,7 @@ def build_logging_config(
                 "maxBytes": max_bytes,
                 "backupCount": backup_count,
                 "encoding": "utf-8",
+                "filters": ["non_sync_scope"],
             },
             "error_file": {
                 "class": "logging.handlers.RotatingFileHandler",
@@ -44,6 +64,27 @@ def build_logging_config(
                 "maxBytes": max_bytes,
                 "backupCount": backup_count,
                 "encoding": "utf-8",
+                "filters": ["non_sync_scope"],
+            },
+            "sync_file": {
+                "class": "logging.handlers.RotatingFileHandler",
+                "level": level,
+                "formatter": "json_lines",
+                "filename": str(resolved_log_dir / "sync.log"),
+                "maxBytes": max_bytes,
+                "backupCount": backup_count,
+                "encoding": "utf-8",
+                "filters": ["sync_scope"],
+            },
+            "sync_error_file": {
+                "class": "logging.handlers.RotatingFileHandler",
+                "level": "ERROR",
+                "formatter": "json_lines",
+                "filename": str(resolved_log_dir / "sync.error.log"),
+                "maxBytes": max_bytes,
+                "backupCount": backup_count,
+                "encoding": "utf-8",
+                "filters": ["sync_scope"],
             },
             "console": {
                 "class": "logging.StreamHandler",
@@ -65,7 +106,7 @@ def build_logging_config(
             },
         },
         "root": {
-            "handlers": ["app_file", "error_file"],
+            "handlers": ["app_file", "error_file", "sync_file", "sync_error_file"],
             "level": level,
         },
     }

@@ -4,6 +4,7 @@ import json
 import logging
 import traceback
 import uuid
+from contextlib import contextmanager
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import asdict, is_dataclass
@@ -16,6 +17,7 @@ from django.conf import settings
 
 
 current_request_id: ContextVar[str | None] = ContextVar("current_request_id", default=None)
+current_sync_run_id: ContextVar[str | None] = ContextVar("current_sync_run_id", default=None)
 
 SENSITIVE_KEYS = {
     "authorization",
@@ -156,12 +158,27 @@ def _json_default(value: Any) -> Any:
     return str(value)
 
 
+@contextmanager
+def sync_log_context(sync_run_id: str | None = None):
+    resolved_sync_run_id = str(sync_run_id).strip() if sync_run_id is not None else ""
+    if not resolved_sync_run_id:
+        resolved_sync_run_id = current_sync_run_id.get() or str(uuid.uuid4())
+    token = current_sync_run_id.set(resolved_sync_run_id)
+    try:
+        yield resolved_sync_run_id
+    finally:
+        current_sync_run_id.reset(token)
+
+
 def log_json(logger: logging.Logger, level: int, event: str, **payload: Any) -> None:
     request_id = payload.pop("request_id", None)
     trace_id = payload.pop("trace_id", None)
+    sync_run_id = payload.pop("sync_run_id", None)
     current_request = current_request_id.get()
+    current_sync_run = current_sync_run_id.get()
     resolved_request_id = request_id or trace_id or current_request
     resolved_trace_id = trace_id or request_id or current_request
+    resolved_sync_run_id = sync_run_id or current_sync_run
 
     record = {
         "timestamp": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
@@ -174,7 +191,13 @@ def log_json(logger: logging.Logger, level: int, event: str, **payload: Any) -> 
         record["request_id"] = resolved_request_id
     if resolved_trace_id is not None:
         record["trace_id"] = resolved_trace_id
-    logger.log(level, json.dumps(record, ensure_ascii=False, default=_json_default))
+    if resolved_sync_run_id is not None:
+        record["sync_run_id"] = resolved_sync_run_id
+    logger.log(
+        level,
+        json.dumps(record, ensure_ascii=False, default=_json_default),
+        extra={"sync_run_id": resolved_sync_run_id},
+    )
 
 
 def _resolve_client_ip(request) -> str | None:

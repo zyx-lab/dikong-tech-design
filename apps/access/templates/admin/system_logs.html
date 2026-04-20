@@ -135,6 +135,14 @@
 
 <form method="get" class="logs-toolbar" id="log-filter-form">
   <div class="field">
+    <label for="id_scope">日志范围</label>
+    <select id="id_scope" name="scope">
+      <option value="request" {% if scope == "request" %}selected{% endif %}>请求日志</option>
+      <option value="sync" {% if scope == "sync" %}selected{% endif %}>同步日志</option>
+      <option value="error" {% if scope == "error" %}selected{% endif %}>错误日志</option>
+    </select>
+  </div>
+  <div class="field">
     <label for="id_tail">尾部行数</label>
     <input id="id_tail" name="tail" type="number" min="1" max="2000" value="{{ tail }}" />
   </div>
@@ -163,9 +171,6 @@
 
 <div class="meta">日志目录: <code>{{ log_dir }}</code></div>
 <div class="meta">日志范围: <code>{{ log_scope }}</code></div>
-{% if searched_files %}
-  <div class="meta">搜索文件: <code>{{ searched_files|join:", " }}</code></div>
-{% endif %}
 {% if error_message %}
   <p style="color: #ba2121;">{{ error_message }}</p>
 {% endif %}
@@ -287,7 +292,7 @@
   (function () {
     const form = document.getElementById("log-filter-form");
     if (form) {
-      const immediateNames = new Set(["tail", "newest_first", "show_details", "refresh"]);
+      const immediateNames = new Set(["scope", "tail", "newest_first", "show_details", "refresh"]);
       let timer = null;
 
       function submitForm() {

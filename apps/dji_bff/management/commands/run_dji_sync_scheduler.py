@@ -3,6 +3,7 @@ import time
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
+from apps.access.request_logging import sync_log_context
 from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes
 
 
@@ -69,7 +70,8 @@ class Command(BaseCommand):
 
     @staticmethod
     def run_sync_cycle():
-        return {
-            "devices": sync_device_indexes(),
-            "media": sync_media_indexes(),
-        }
+        with sync_log_context():
+            return {
+                "devices": sync_device_indexes(),
+                "media": sync_media_indexes(),
+            }

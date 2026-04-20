@@ -942,6 +942,31 @@ def _parse_bool(raw_value: str | None, *, default: bool) -> bool:
     return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_log_scope(raw_value: str | None) -> str:
+    scope = str(raw_value or "request").strip().lower()
+    if scope in {"request", "sync", "error"}:
+        return scope
+    return "request"
+
+
+def _log_scope_label(scope: str) -> str:
+    mapping = {
+        "request": "请求日志",
+        "sync": "同步日志",
+        "error": "错误日志",
+    }
+    return mapping.get(scope, "请求日志")
+
+
+def _log_scope_family_roots(scope: str) -> list[str]:
+    mapping = {
+        "request": ["app.log"],
+        "sync": ["sync.log", "sync.error.log"],
+        "error": ["error.log"],
+    }
+    return mapping.get(scope, ["app.log"])
+
+
 def _log_family_name(filename: str) -> str:
     marker = ".log"
     index = filename.find(marker)
@@ -963,16 +988,21 @@ def _log_family_sort_key(path: Path) -> tuple[int, int, str]:
     return (0, 0, path.name)
 
 
-def _resolve_log_paths(log_dir: Path, *, family_root: str, include_family: bool) -> list[Path]:
-    selected_path = log_dir / family_root
-    if not include_family:
-        return [selected_path]
-
-    family = _log_family_name(family_root)
-    paths = [path for path in log_dir.glob(f"{family}*") if path.is_file()]
-    if selected_path.is_file() and selected_path not in paths:
-        paths.append(selected_path)
-    return sorted(paths, key=_log_family_sort_key)
+def _resolve_log_paths(log_dir: Path, *, family_roots: list[str]) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for family_root in family_roots:
+        selected_path = log_dir / family_root
+        family = _log_family_name(family_root)
+        family_paths = [path for path in log_dir.glob(f"{family}*") if path.is_file()]
+        if selected_path.is_file() and selected_path not in family_paths:
+            family_paths.append(selected_path)
+        for path in sorted(family_paths, key=_log_family_sort_key):
+            if path in seen:
+                continue
+            seen.add(path)
+            paths.append(path)
+    return paths
 
 
 def _load_log_entries(paths: list[Path], *, tail: int | None) -> list[tuple[str, int, str]]:
@@ -1020,22 +1050,36 @@ def _log_stage_name(event: str) -> str:
     return mapping.get(event, event or "未知环节")
 
 
-def _extract_chain_id(payload: dict, request_payload: dict, response_payload: dict) -> str:
+def _extract_chain_id(payload: dict, request_payload: dict, response_payload: dict, *, scope: str) -> str:
     context_payload = payload.get("context") if isinstance(payload.get("context"), dict) else {}
     response_body = response_payload.get("body") if isinstance(response_payload.get("body"), dict) else {}
-    candidates = [
-        payload.get("trace_id"),
-        payload.get("request_id"),
-        payload.get("traceId"),
-        payload.get("requestId"),
-        context_payload.get("trace_id"),
-        context_payload.get("request_id"),
-        context_payload.get("traceId"),
-        context_payload.get("requestId"),
-        response_body.get("traceId"),
-        request_payload.get("trace_id"),
-        request_payload.get("request_id"),
-    ]
+    candidates = []
+    if scope == "sync":
+        candidates.extend(
+            [
+                payload.get("sync_run_id"),
+                payload.get("syncRunId"),
+                context_payload.get("sync_run_id"),
+                context_payload.get("syncRunId"),
+                request_payload.get("sync_run_id"),
+                request_payload.get("syncRunId"),
+            ]
+        )
+    candidates.extend(
+        [
+            payload.get("trace_id"),
+            payload.get("request_id"),
+            payload.get("traceId"),
+            payload.get("requestId"),
+            context_payload.get("trace_id"),
+            context_payload.get("request_id"),
+            context_payload.get("traceId"),
+            context_payload.get("requestId"),
+            response_body.get("traceId"),
+            request_payload.get("trace_id"),
+            request_payload.get("request_id"),
+        ]
+    )
     for value in candidates:
         text = _safe_text(value).strip()
         if text:
@@ -1092,7 +1136,7 @@ def _build_row_summary(*, payload: dict, row: dict, request_payload: dict, respo
     return _safe_text(payload.get("message") or payload.get("msg") or row["event"] or row["raw"])[:200]
 
 
-def _parse_log_row(*, source_file: str, line_no: int, raw_line: str, include_details: bool) -> dict:
+def _parse_log_row(*, source_file: str, line_no: int, raw_line: str, include_details: bool, scope: str) -> dict:
     row = {
         "source_file": source_file,
         "line_no": line_no,
@@ -1103,6 +1147,7 @@ def _parse_log_row(*, source_file: str, line_no: int, raw_line: str, include_det
         "event": "",
         "request_id": "",
         "chain_id": "",
+        "sync_run_id": "",
         "tenant_code": "",
         "method": "",
         "path": "",
@@ -1133,7 +1178,8 @@ def _parse_log_row(*, source_file: str, line_no: int, raw_line: str, include_det
     row["level"] = _safe_text(payload.get("level") or payload.get("levelname")).upper()
     row["event"] = _safe_text(payload.get("event"))
     row["request_id"] = _safe_text(payload.get("request_id") or payload.get("trace_id"))
-    row["chain_id"] = _extract_chain_id(payload, request_payload, response_payload)
+    row["sync_run_id"] = _safe_text(payload.get("sync_run_id") or payload.get("syncRunId"))
+    row["chain_id"] = _extract_chain_id(payload, request_payload, response_payload, scope=scope)
     row["tenant_code"] = _extract_tenant_code(payload, request_payload)
     row["method"] = _safe_text(request_payload.get("method"))
     row["path"] = _safe_text(request_payload.get("path"))
@@ -1156,12 +1202,12 @@ def _parse_log_row(*, source_file: str, line_no: int, raw_line: str, include_det
     return row
 
 
-def _build_log_rows(entries: list[tuple[str, int, str]], *, newest_first: bool, include_details: bool) -> list[dict]:
+def _build_log_rows(entries: list[tuple[str, int, str]], *, newest_first: bool, include_details: bool, scope: str) -> list[dict]:
     indexed_entries = list(entries)
     if newest_first:
         indexed_entries.reverse()
     return [
-        _parse_log_row(source_file=source_file, line_no=line_no, raw_line=raw_line, include_details=include_details)
+        _parse_log_row(source_file=source_file, line_no=line_no, raw_line=raw_line, include_details=include_details, scope=scope)
         for source_file, line_no, raw_line in indexed_entries
     ]
 
@@ -1255,6 +1301,8 @@ def _apply_tenant_code_filter(rows: list[dict], *, tenant_code: str) -> list[dic
 
 def system_logs_view(request):
     log_dir = Path(settings.DJANGO_LOG_DIR)
+    scope = _normalize_log_scope(request.GET.get("scope"))
+    scope_label = _log_scope_label(scope)
     tail = _parse_tail(request.GET.get("tail"))
     keyword = request.GET.get("q", "").strip()
     chain_id = request.GET.get("chain_id", "").strip()
@@ -1268,32 +1316,30 @@ def system_logs_view(request):
     search_paths: list[Path] = []
     error_message = None
 
-    # The admin viewer intentionally treats application logs as a single family.
-    # This keeps the UI stable and avoids exposing per-file rotation details.
-    family_root = "app.log"
+    family_roots = _log_scope_family_roots(scope)
     effective_tail = None if (keyword or chain_id or tenant_code) else tail
     search_paths = _resolve_log_paths(
         log_dir,
-        family_root=family_root,
-        include_family=True,
+        family_roots=family_roots,
     )
     if search_paths:
         entries = _load_log_entries(search_paths, tail=effective_tail)
         entries = _apply_keyword_filter(entries, keyword=keyword)
-        rows = _build_log_rows(entries, newest_first=newest_first, include_details=show_details)
+        rows = _build_log_rows(entries, newest_first=newest_first, include_details=show_details, scope=scope)
         if chain_id:
             rows = [row for row in rows if row.get("chain_id") == chain_id]
         rows = _apply_tenant_code_filter(rows, tenant_code=tenant_code)
         chains = _build_log_chains(rows)
     else:
-        error_message = "日志文件不存在: app.log*"
+        error_message = f"日志文件不存在: {scope_label}"
 
     summary = _summarize_log_rows(rows)
     context = {
         **admin.site.each_context(request),
         "title": "系统日志",
         "log_dir": str(log_dir),
-        "log_scope": "app.log*",
+        "log_scope": scope_label,
+        "scope": scope,
         "tail": tail,
         "query_text": keyword,
         "chain_id": chain_id,
@@ -1304,7 +1350,6 @@ def system_logs_view(request):
         "rows": rows,
         "chains": chains,
         "lines": [row["raw"] for row in rows],
-        "searched_files": [path.name for path in search_paths],
         "total_rows": len(rows),
         "json_rows": sum(1 for row in rows if row["is_json"]),
         "chain_count": len(chains),

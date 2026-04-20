@@ -32,8 +32,10 @@ class LoggingConfigTests(SimpleTestCase):
         self.assertEqual(config["handlers"]["app_file"]["class"], "logging.handlers.RotatingFileHandler")
         self.assertEqual(config["handlers"]["app_file"]["filename"], "/tmp/dikong/logs/app.log")
         self.assertEqual(config["handlers"]["error_file"]["filename"], "/tmp/dikong/logs/error.log")
+        self.assertEqual(config["handlers"]["sync_file"]["filename"], "/tmp/dikong/logs/sync.log")
+        self.assertEqual(config["handlers"]["sync_error_file"]["filename"], "/tmp/dikong/logs/sync.error.log")
         self.assertEqual(config["handlers"]["console"]["class"], "logging.StreamHandler")
-        self.assertEqual(config["root"]["handlers"], ["app_file", "error_file"])
+        self.assertEqual(config["root"]["handlers"], ["app_file", "error_file", "sync_file", "sync_error_file"])
         self.assertEqual(config["loggers"]["django.server"]["handlers"], ["console"])
 
 
