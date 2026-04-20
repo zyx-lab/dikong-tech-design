@@ -1,18 +1,18 @@
-# 宿主机 Django 切换到 Docker PostgreSQL 操作手册
+# 现网原地迁移：宿主机 Django 切换到 Docker PostgreSQL
 
-适用场景：Django 运行在宿主机，PostgreSQL 运行在 Docker 容器里。目标是把现有 SQLite 里的业务数据完整迁移到 PostgreSQL，不丢数据。整个过程会短暂停机。
+适用场景：Django 已经在服务器上运行，线上已有账号和业务数据；PostgreSQL 准备用 Docker 容器承载。目标是把当前 SQLite 原地切到 PostgreSQL，不重建账号体系，不修改现有登录信息。迁移期间允许短暂停机。
 
 下面的命令按顺序执行。每做完一步，再看下一步。
 
 ## 0. 先看清楚这几条
 
-1. 导出 SQLite 数据之前，不要把 `DB_ENGINE` 改成 `postgres`。
-2. `POSTGRES_PASSWORD` 只在 PostgreSQL 数据卷第一次初始化时生效。
-3. 如果 5432 端口已经被占用，就把下面所有 `5432` 改成一个新端口，比如 `15432`，并且 Django 也要用同一个新端口。
-4. 如果 `docker` 命令报权限问题，前面加 `sudo` 再试一次。
-5. 这份手册只迁数据库里的数据，不迁本地文件。
+1. 只迁数据库里的业务数据和账号数据，不迁本地文件。
+2. 不执行 `createsuperuser`、`create_business_admin_account`、`seed_role_permissions` 这类初始化命令。
+3. 不改现有业务账号、管理员账号和密码。
+4. `POSTGRES_PASSWORD` 是 PostgreSQL 数据库用户密码，不是应用登录密码。
+5. 先停掉所有会写数据库的进程，再导出 SQLite；导入完成后，再把 Django 切到 PostgreSQL。
 
-## 1. 先进入项目目录
+## 1. 进入项目目录
 
 把下面这行里的路径改成你服务器上的实际项目路径。
 
@@ -20,7 +20,7 @@
 cd /path/to/dikong-tech-design
 ```
 
-## 2. 停掉 Django 和后台写入任务
+## 2. 停掉所有写入进程
 
 先确认当前有哪些相关进程：
 
@@ -28,7 +28,19 @@ cd /path/to/dikong-tech-design
 ps -ef | grep -E 'gunicorn|manage.py runserver|run_dji_sync_scheduler' | grep -v grep
 ```
 
-如果有输出，先停掉它们：
+如果你是用 `systemd` 管理 Django 服务，先停掉它：
+
+```bash
+sudo systemctl stop <你的 Django 服务名>
+```
+
+如果同步脚本也是 `systemd` 服务，也一并停掉：
+
+```bash
+sudo systemctl stop <你的同步脚本服务名>
+```
+
+不是 `systemd` 管理的进程，直接 `pkill`：
 
 ```bash
 pkill -f "manage.py runserver" || true
@@ -42,13 +54,7 @@ pkill -f "run_dji_sync_scheduler" || true
 ps -ef | grep -E 'gunicorn|manage.py runserver|run_dji_sync_scheduler' | grep -v grep
 ```
 
-如果你是用 `systemd` 启动的，把上面的 `pkill` 换成你自己的停止命令，例如：
-
-```bash
-sudo systemctl stop <你的服务名>
-```
-
-## 3. 备份 SQLite 文件
+## 3. 备份当前 SQLite 文件
 
 先准备一个放备份的目录。这个目录放在项目外面，避免误提交。
 
@@ -67,9 +73,9 @@ done
 ls -lh "$BACKUP_DIR"
 ```
 
-## 4. 导出 SQLite 里的业务数据
+## 4. 导出现网业务数据
 
-这一条命令会把业务应用的数据导成 JSON 文件。请在 **还没有切到 PostgreSQL** 之前执行。
+这一条命令会把当前业务数据导成 JSON 文件。`access` app 里包含你现有的账号、会话、角色和权限相关数据，所以这一步会把这些内容一起带走。请在 **还没有切到 PostgreSQL** 之前执行。
 
 ```bash
 DB_ENGINE=sqlite .venv/bin/python manage.py dumpdata \
@@ -82,39 +88,21 @@ DB_ENGINE=sqlite .venv/bin/python manage.py dumpdata \
 
 ## 5. 启动 PostgreSQL 容器
 
-先输入数据库密码。请记住这个密码，后面 Django 也要用同一个密码。
-
 ```bash
 read -s -p "请输入 PostgreSQL 密码: " POSTGRES_PASSWORD; echo
-```
 
-再设置容器变量：
-
-```bash
 export POSTGRES_CONTAINER=dikong-postgres
 export POSTGRES_DB=dikong
 export POSTGRES_USER=postgres
 export POSTGRES_PORT=5432
-```
 
-如果你怀疑 5432 可能被占用，可以先看一下：
-
-```bash
 ss -ltnp | grep ":${POSTGRES_PORT} " || true
-```
 
-如果 5432 已经被占用，就把 `POSTGRES_PORT` 改成 `15432`，然后后面的命令里也要一起改。
+如果 5432 已经被占用，就把 `POSTGRES_PORT` 改成一个新端口，比如 `15432`，然后后面的命令里也保持一致。
 
-启动容器前，先清掉同名旧容器，不要删数据卷，除非你明确要重来：
-
-```bash
 docker rm -f "$POSTGRES_CONTAINER" 2>/dev/null || true
 docker volume create dikong_pgdata >/dev/null
-```
 
-启动 PostgreSQL：
-
-```bash
 docker run -d \
   --name "$POSTGRES_CONTAINER" \
   --restart unless-stopped \
@@ -136,7 +124,7 @@ docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" -i "$POSTGRES_CONTAINER" \
 
 看到 `SELECT 1` 正常返回后，再继续。
 
-## 6. 把 Django 切到 PostgreSQL
+## 6. 切 Django 到 PostgreSQL 并创建表结构
 
 从这一步开始，后面的 `manage.py` 命令都要连 PostgreSQL。
 
@@ -148,6 +136,8 @@ export DB_NAME="$POSTGRES_DB"
 export DB_USER="$POSTGRES_USER"
 export DB_PASSWORD="$POSTGRES_PASSWORD"
 ```
+
+如果你是通过 `systemd`、`gunicorn` 或 Docker 启动 Django，就把同样的 `DB_*` 环境变量写回原来的启动配置。现在先不要重启服务，等数据导入和校验完成后再切。
 
 先让 Django 创建 PostgreSQL 里的表结构：
 
@@ -173,9 +163,7 @@ export DB_PASSWORD="$POSTGRES_PASSWORD"
 
 如果这里报 `IntegrityError`、`foreign key`、`relation already exists` 之类的错误，先停下来，不要硬往下走。
 
-## 8. 重置自增序列
-
-导入完数据后，PostgreSQL 的自增序列要重新对齐，不然下一次插入可能撞主键。
+导入完数据后，PostgreSQL 的自增序列要重新对齐，不然下一次插入可能撞主键：
 
 ```bash
 .venv/bin/python manage.py sqlsequencereset \
@@ -193,7 +181,7 @@ docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" -i "$POSTGRES_CONTAINER" \
 
 如果 `reset_sequences.sql` 是空文件，也可以继续，说明这些表没有需要重置的序列。
 
-## 9. 核对数据是否一致
+## 8. 核对数据是否一致
 
 最稳妥的办法是把 PostgreSQL 再导出一次，然后和 SQLite 的导出结果直接比对。
 
@@ -214,7 +202,7 @@ fi
 
 如果这里通过，说明业务数据已经对齐。
 
-## 10. 重启 Django
+## 9. 恢复线上服务
 
 如果你是手动启动 Django，就在同一个终端里继续启动：
 
@@ -233,7 +221,7 @@ curl -I http://127.0.0.1:8000/api/v1/docs/
 能返回正常响应，说明 Django 已经成功连上 PostgreSQL。
 如果你的 Django 不是跑在 8000 端口，把这个 URL 里的端口改成你自己的端口。
 
-## 11. 回滚方案
+## 10. 回滚方案
 
 如果切换后发现问题，而且 PostgreSQL 还没有接收新的业务写入，可以直接回滚回 SQLite。
 
@@ -267,17 +255,3 @@ done
 然后用原来的方式重新启动 Django。
 
 重要提醒：如果 PostgreSQL 已经开始接收新的写入，回滚回 SQLite 就不再是零损失了。这个时候不要随便回滚，先确认是否接受丢掉切换后的新增数据。
-
-## 12. 常见问题
-
-1. `database is locked` 还在出现，通常是旧的 Django 进程没停干净，或者你其实还在连 SQLite。先回到第 2 步和第 6 步检查。
-2. `password authentication failed`，通常是 `POSTGRES_PASSWORD` 没写对，或者 Django 没用同一个密码。
-3. `could not connect to server`，通常是 PostgreSQL 容器没起来，或者端口映射写错了。
-4. `relation already exists`，通常是你在旧的 PostgreSQL 数据卷上重复初始化了。只有在你明确要重来时，才执行：
-
-```bash
-docker rm -f "$POSTGRES_CONTAINER" || true
-docker volume rm dikong_pgdata
-```
-
-然后从第 5 步重新开始。
