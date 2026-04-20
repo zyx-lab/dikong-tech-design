@@ -16,6 +16,7 @@ from tools.sqlite_postgres_migration import (
     migrate_postgres_schema,
     read_state,
     reset_postgres_sequences,
+    require_state_file,
     state_file_path,
 )
 
@@ -49,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     backup_dir = Path(args.backup_dir).expanduser().resolve()
-    state = read_state(state_file_path(backup_dir))
+    state = read_state(require_state_file(backup_dir))
     password = args.postgres_password or getpass.getpass("PostgreSQL password: ")
 
     ensure_postgres_container(
@@ -68,4 +69,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except FileNotFoundError as exc:
+        print(exc, file=sys.stderr)
+        raise SystemExit(1)

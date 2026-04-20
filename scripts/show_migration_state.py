@@ -9,7 +9,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from tools.sqlite_postgres_migration import read_state, render_state_json, state_file_path
+from tools.sqlite_postgres_migration import read_state, render_state_json, require_state_file
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     backup_dir = Path(args.backup_dir).expanduser().resolve()
-    state_path = state_file_path(backup_dir)
+    state_path = require_state_file(backup_dir)
     state = read_state(state_path)
 
     if args.summary:
@@ -53,5 +53,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
-
+    try:
+        raise SystemExit(main())
+    except FileNotFoundError as exc:
+        print(exc, file=sys.stderr)
+        raise SystemExit(1)

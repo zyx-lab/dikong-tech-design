@@ -18,8 +18,8 @@ from tools.sqlite_postgres_migration import (
     dump_postgres_data,
     read_state,
     restore_sqlite_backups,
+    require_state_file,
     start_background_command,
-    state_file_path,
     stop_matching_processes,
 )
 
@@ -68,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     backup_dir = Path(args.backup_dir).expanduser().resolve()
-    state = read_state(state_file_path(backup_dir))
+    state = read_state(require_state_file(backup_dir))
     log_file = Path(args.log_file).expanduser().resolve() if args.log_file else backup_dir / "runserver.log"
 
     if args.mode == "rollback":
@@ -123,4 +123,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except FileNotFoundError as exc:
+        print(exc, file=sys.stderr)
+        raise SystemExit(1)

@@ -78,6 +78,17 @@ def state_file_path(backup_dir: Path) -> Path:
     return backup_dir / "migration_state.json"
 
 
+def require_state_file(backup_dir: Path) -> Path:
+    path = state_file_path(backup_dir)
+    if path.exists():
+        return path
+    raise FileNotFoundError(
+        f"migration state file not found: {path}. "
+        f"Run `python scripts/precheck_backup_export.py --backup-dir {backup_dir}` first, "
+        f"and make sure the later scripts use the same --backup-dir."
+    )
+
+
 def write_state(state: MigrationState, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -327,6 +338,12 @@ def ensure_postgres_container(
 
     if running is False and not recreate:
         run_command(["docker", "start", state.postgres_container], dry_run=dry_run)
+        wait_for_postgres_ready(state, password, dry_run=dry_run)
+        return
+
+    if running is None and not recreate:
+        run_command(["docker", "volume", "create", state.postgres_volume], dry_run=dry_run)
+        run_command(build_postgres_container_run_command(state, password), dry_run=dry_run)
         wait_for_postgres_ready(state, password, dry_run=dry_run)
         return
 

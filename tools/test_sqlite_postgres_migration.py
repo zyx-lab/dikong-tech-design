@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 from unittest import TestCase
 
 from tools.sqlite_postgres_migration import (
@@ -12,8 +13,10 @@ from tools.sqlite_postgres_migration import (
     build_runserver_command,
     copy_sqlite_backups,
     default_backup_dir,
+    ensure_postgres_container,
     read_state,
     render_state_json,
+    require_state_file,
     sqlite_backup_candidates,
     state_file_path,
     write_state,
@@ -153,3 +156,38 @@ class SQLitePostgresMigrationHelperTests(TestCase):
         self.assertTrue(text.endswith("\n"))
         self.assertIn('"backup_dir": "/tmp/dikong/2026-04-20_164000"', text)
         self.assertIn('"apps": [\n    "access",\n    "dji_bff"\n  ]', text)
+
+    def test_require_state_file_raises_with_next_step_hint(self):
+        missing_backup_dir = Path("/tmp/dikong/2026-04-20_181825")
+
+        with self.assertRaises(FileNotFoundError) as exc_info:
+            require_state_file(missing_backup_dir)
+
+        self.assertIn("migration state file not found", str(exc_info.exception))
+        self.assertIn("scripts/precheck_backup_export.py", str(exc_info.exception))
+        self.assertIn(str(missing_backup_dir), str(exc_info.exception))
+
+    @patch("tools.sqlite_postgres_migration.wait_for_postgres_ready")
+    @patch("tools.sqlite_postgres_migration.run_command")
+    @patch("tools.sqlite_postgres_migration.docker_container_is_running", return_value=None)
+    def test_ensure_postgres_container_creates_missing_container(self, mock_is_running, mock_run_command, mock_wait):
+        state = MigrationState(
+            root_dir="/repo",
+            backup_dir="/tmp/backups",
+            dump_path="/tmp/backups/business-data.json",
+            postgres_container="dikong-postgres",
+            postgres_db="dikong",
+            postgres_user="postgres",
+            postgres_host="127.0.0.1",
+            postgres_port="5432",
+            postgres_volume="dikong_pgdata",
+            django_settings_module="config.settings",
+        )
+
+        ensure_postgres_container(state, "secret")
+
+        self.assertTrue(mock_is_running.called)
+        self.assertEqual(mock_run_command.call_count, 2)
+        self.assertEqual(mock_run_command.call_args_list[0].args[0], ["docker", "volume", "create", "dikong_pgdata"])
+        self.assertEqual(mock_run_command.call_args_list[1].args[0][:3], ["docker", "run", "-d"])
+        mock_wait.assert_called_once()
