@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
 from django.db import transaction
@@ -17,7 +17,7 @@ from apps.flight_record.models import FlightRecord
 from apps.media_file.models import MediaFile, MediaType
 from apps.mission.models import Mission, MissionStatus
 
-MISSION_MEDIA_FINISH_GRACE_SECONDS = 5
+MISSION_MEDIA_FINISH_GRACE_SECONDS = 60
 
 
 @dataclass
@@ -106,7 +106,9 @@ def _match_mission_for_media(*, tenant, device_sn: str, captured_at):
     ).exclude(status=MissionStatus.PENDING)
 
     for mission in queryset:
-        window_end = mission.finished_at + timedelta(seconds=MISSION_MEDIA_FINISH_GRACE_SECONDS)
+        window_end = mission.finished_at + timedelta(
+            seconds=MISSION_MEDIA_FINISH_GRACE_SECONDS
+        )
         if mission.started_at <= captured_at <= window_end:
             matched.append(mission)
 
@@ -125,7 +127,9 @@ def _sync_video_count_for_flight_record(*, flight_record: FlightRecord | None):
     FlightRecord.sync_video_count_from_media(flight_record=flight_record)
 
 
-def sync_device_indexes(*, gateway: DjiGateway | None = None, sync_run_id: str | None = None) -> dict[str, int]:
+def sync_device_indexes(
+    *, gateway: DjiGateway | None = None, sync_run_id: str | None = None
+) -> dict[str, int]:
     with sync_log_context(sync_run_id):
         gateway = gateway or DjiGateway()
         summary = SyncSummary()
@@ -149,11 +153,20 @@ def sync_device_indexes(*, gateway: DjiGateway | None = None, sync_run_id: str |
 
             defaults = {
                 "last_payload": payload,
-                "last_seen_at": _datetime_value(payload, "last_seen_at", "lastSeenAt", "updated_at", "updatedAt") or now,
-                "firmware_version": _string(payload, "firmware_version", "firmwareVersion"),
-                "firmware_status": _string(payload, "firmware_status", "firmwareStatus"),
+                "last_seen_at": _datetime_value(
+                    payload, "last_seen_at", "lastSeenAt", "updated_at", "updatedAt"
+                )
+                or now,
+                "firmware_version": _string(
+                    payload, "firmware_version", "firmwareVersion"
+                ),
+                "firmware_status": _string(
+                    payload, "firmware_status", "firmwareStatus"
+                ),
             }
-            _, created = DjiDeviceIndex.objects.update_or_create(device_sn=device_sn, defaults=defaults)
+            _, created = DjiDeviceIndex.objects.update_or_create(
+                device_sn=device_sn, defaults=defaults
+            )
             seen_device_sns.add(device_sn)
             summary.synced_count += 1
             if created:
@@ -165,11 +178,17 @@ def sync_device_indexes(*, gateway: DjiGateway | None = None, sync_run_id: str |
         Drone.objects.filter(device_sn__in=seen_device_sns).update(dji_online=True)
         Drone.objects.exclude(device_sn__in=seen_device_sns).update(dji_online=False)
 
-        log_action(action="DJI_DEVICE_SYNC", target_type="dji_device_index", after_data=summary.asdict())
+        log_action(
+            action="DJI_DEVICE_SYNC",
+            target_type="dji_device_index",
+            after_data=summary.asdict(),
+        )
         return summary.asdict()
 
 
-def sync_media_indexes(*, gateway: DjiGateway | None = None, sync_run_id: str | None = None) -> dict[str, int]:
+def sync_media_indexes(
+    *, gateway: DjiGateway | None = None, sync_run_id: str | None = None
+) -> dict[str, int]:
     with sync_log_context(sync_run_id):
         gateway = gateway or DjiGateway()
         summary = SyncSummary()
@@ -210,7 +229,9 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None, sync_run_id: str | 
                 "file_size": _int(payload, "file_size", "fileSize"),
                 "latitude": payload.get("latitude"),
                 "longitude": payload.get("longitude"),
-                "captured_at": _datetime_value(payload, "captured_at", "capturedAt", "create_time", "createTime"),
+                "captured_at": _datetime_value(
+                    payload, "captured_at", "capturedAt", "create_time", "createTime"
+                ),
             }
             matched_mission = _match_mission_for_media(
                 tenant=tenant,
@@ -224,7 +245,9 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None, sync_run_id: str | 
                     .first()
                 )
                 if media_index is None:
-                    resolved_flight_record = _flight_record_for_mission(mission=matched_mission)
+                    resolved_flight_record = _flight_record_for_mission(
+                        mission=matched_mission
+                    )
                     media_file = MediaFile.objects.create(
                         **media_fields,
                         mission=matched_mission,
@@ -240,7 +263,9 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None, sync_run_id: str | 
                         last_sync_at=media_fields["captured_at"] or now,
                         error_msg="",
                     )
-                    _sync_video_count_for_flight_record(flight_record=resolved_flight_record)
+                    _sync_video_count_for_flight_record(
+                        flight_record=resolved_flight_record
+                    )
                     summary.created_count += 1
                 else:
                     media_file = media_index.media_file
@@ -248,10 +273,17 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None, sync_run_id: str | 
                     preserved_mission = (
                         media_index.mission
                         or media_file.mission
-                        or (previous_flight_record.mission if previous_flight_record is not None else None)
+                        or (
+                            previous_flight_record.mission
+                            if previous_flight_record is not None
+                            else None
+                        )
                     )
                     resolved_mission = preserved_mission or matched_mission
-                    resolved_flight_record = previous_flight_record or _flight_record_for_mission(mission=resolved_mission)
+                    resolved_flight_record = (
+                        previous_flight_record
+                        or _flight_record_for_mission(mission=resolved_mission)
+                    )
                     for field, value in media_fields.items():
                         setattr(media_file, field, value)
                     media_file.mission = resolved_mission
@@ -278,14 +310,29 @@ def sync_media_indexes(*, gateway: DjiGateway | None = None, sync_run_id: str | 
                     media_index.last_sync_at = media_fields["captured_at"] or now
                     media_index.error_msg = ""
                     media_index.save(
-                        update_fields=["mission", "device_sn", "sync_status", "last_sync_at", "error_msg", "updated_at"]
+                        update_fields=[
+                            "mission",
+                            "device_sn",
+                            "sync_status",
+                            "last_sync_at",
+                            "error_msg",
+                            "updated_at",
+                        ]
                     )
-                    _sync_video_count_for_flight_record(flight_record=previous_flight_record)
+                    _sync_video_count_for_flight_record(
+                        flight_record=previous_flight_record
+                    )
                     if resolved_flight_record != previous_flight_record:
-                        _sync_video_count_for_flight_record(flight_record=resolved_flight_record)
+                        _sync_video_count_for_flight_record(
+                            flight_record=resolved_flight_record
+                        )
                     summary.updated_count += 1
 
             summary.synced_count += 1
 
-        log_action(action="DJI_MEDIA_SYNC", target_type="tenant_media_index", after_data=summary.asdict())
+        log_action(
+            action="DJI_MEDIA_SYNC",
+            target_type="tenant_media_index",
+            after_data=summary.asdict(),
+        )
         return summary.asdict()
