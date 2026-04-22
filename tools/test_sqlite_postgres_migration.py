@@ -9,6 +9,7 @@ from unittest import TestCase
 
 from tools.sqlite_postgres_migration import (
     MigrationState,
+    _run_docker_container_command,
     build_postgres_container_run_command,
     build_postgres_env,
     build_runserver_command,
@@ -182,9 +183,16 @@ class SQLitePostgresMigrationHelperTests(TestCase):
         self.assertIsNone(docker_container_is_running("dikong-postgres"))
 
     @patch("tools.sqlite_postgres_migration.wait_for_postgres_ready")
+    @patch("tools.sqlite_postgres_migration._run_docker_container_command")
     @patch("tools.sqlite_postgres_migration.run_command")
     @patch("tools.sqlite_postgres_migration.docker_container_is_running", return_value=None)
-    def test_ensure_postgres_container_creates_missing_container(self, mock_is_running, mock_run_command, mock_wait):
+    def test_ensure_postgres_container_creates_missing_container(
+        self,
+        mock_is_running,
+        mock_run_command,
+        mock_run_docker_container_command,
+        mock_wait,
+    ):
         state = MigrationState(
             root_dir="/repo",
             backup_dir="/tmp/backups",
@@ -201,7 +209,45 @@ class SQLitePostgresMigrationHelperTests(TestCase):
         ensure_postgres_container(state, "secret")
 
         self.assertTrue(mock_is_running.called)
-        self.assertEqual(mock_run_command.call_count, 2)
+        self.assertEqual(mock_run_command.call_count, 1)
         self.assertEqual(mock_run_command.call_args_list[0].args[0], ["docker", "volume", "create", "dikong_pgdata"])
-        self.assertEqual(mock_run_command.call_args_list[1].args[0][:3], ["docker", "run", "-d"])
+        self.assertEqual(mock_run_docker_container_command.call_count, 1)
+        self.assertEqual(mock_run_docker_container_command.call_args.args[0][:3], ["docker", "run", "-d"])
         mock_wait.assert_called_once()
+
+    @patch("tools.sqlite_postgres_migration.run_command")
+    @patch("tools.sqlite_postgres_migration.subprocess.run")
+    def test_run_docker_container_command_cleans_up_and_explains_port_conflict(self, mock_subprocess_run, mock_run_command):
+        state = MigrationState(
+            root_dir="/repo",
+            backup_dir="/tmp/backups",
+            dump_path="/tmp/backups/business-data.json",
+            postgres_container="dikong-postgres",
+            postgres_db="dikong",
+            postgres_user="postgres",
+            postgres_host="127.0.0.1",
+            postgres_port="5432",
+            postgres_volume="dikong_pgdata",
+            django_settings_module="config.settings",
+        )
+
+        mock_subprocess_run.return_value = subprocess.CompletedProcess(
+            args=["docker", "run", "-d"],
+            returncode=125,
+            stdout="d758ab4b15189acf2ec3eca673b4dbedab7736bd070aaeba2a88be3457211b75\n",
+            stderr=(
+                "docker: Error response from daemon: failed to set up container networking: "
+                "failed to bind host port 127.0.0.1:5432/tcp: address already in use"
+            ),
+        )
+
+        with self.assertRaises(RuntimeError) as exc_info:
+            _run_docker_container_command(
+                build_postgres_container_run_command(state, "secret"),
+                state=state,
+                cleanup_container_name=state.postgres_container,
+            )
+
+        self.assertIn("5432", str(exc_info.exception))
+        self.assertIn("--postgres-port", str(exc_info.exception))
+        self.assertEqual(mock_run_command.call_args.args[0], ["docker", "rm", "-f", "dikong-postgres"])

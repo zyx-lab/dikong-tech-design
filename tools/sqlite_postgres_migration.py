@@ -317,6 +317,59 @@ def wait_for_postgres_ready(state: MigrationState, password: str, *, timeout_sec
     )
 
 
+def _is_docker_port_conflict(output: str, *, host_port: str) -> bool:
+    normalized = output.lower()
+    return (
+        "port is already allocated" in normalized
+        or "address already in use" in normalized
+        or f"bind for 0.0.0.0:{host_port}" in normalized
+        or f"bind host port 127.0.0.1:{host_port}" in normalized
+    )
+
+
+def _port_conflict_error_message(state: MigrationState) -> str:
+    return (
+        f"host port {state.postgres_port} is already in use, so PostgreSQL container "
+        f"`{state.postgres_container}` could not start. "
+        f"Free that port first, or rerun `python scripts/precheck_backup_export.py --backup-dir {state.backup_dir} "
+        f"--postgres-port <free-port>` and then rerun the later migration steps with the same --backup-dir."
+    )
+
+
+def _run_docker_container_command(
+    command: Sequence[str],
+    *,
+    state: MigrationState,
+    cleanup_container_name: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    print("+", quote_command(command))
+    result = subprocess.run(
+        [str(part) for part in command],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    if result.returncode == 0:
+        return result
+
+    output = f"{result.stdout or ''}\n{result.stderr or ''}"
+    if _is_docker_port_conflict(output, host_port=state.postgres_port):
+        if cleanup_container_name:
+            run_command(["docker", "rm", "-f", cleanup_container_name], check=False)
+        raise RuntimeError(_port_conflict_error_message(state))
+
+    raise subprocess.CalledProcessError(
+        result.returncode,
+        result.args,
+        output=result.stdout,
+        stderr=result.stderr,
+    )
+
+
 def ensure_postgres_container(
     state: MigrationState,
     password: str,
@@ -338,13 +391,17 @@ def ensure_postgres_container(
         return
 
     if running is False and not recreate:
-        run_command(["docker", "start", state.postgres_container], dry_run=dry_run)
+        _run_docker_container_command(["docker", "start", state.postgres_container], state=state)
         wait_for_postgres_ready(state, password, dry_run=dry_run)
         return
 
     if running is None and not recreate:
         run_command(["docker", "volume", "create", state.postgres_volume], dry_run=dry_run)
-        run_command(build_postgres_container_run_command(state, password), dry_run=dry_run)
+        _run_docker_container_command(
+            build_postgres_container_run_command(state, password),
+            state=state,
+            cleanup_container_name=state.postgres_container,
+        )
         wait_for_postgres_ready(state, password, dry_run=dry_run)
         return
 
@@ -352,7 +409,11 @@ def ensure_postgres_container(
         run_command(["docker", "rm", "-f", state.postgres_container], check=False, dry_run=dry_run)
 
     run_command(["docker", "volume", "create", state.postgres_volume], dry_run=dry_run)
-    run_command(build_postgres_container_run_command(state, password), dry_run=dry_run)
+    _run_docker_container_command(
+        build_postgres_container_run_command(state, password),
+        state=state,
+        cleanup_container_name=state.postgres_container,
+    )
     wait_for_postgres_ready(state, password, dry_run=dry_run)
 
 
