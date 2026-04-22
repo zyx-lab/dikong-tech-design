@@ -24,6 +24,8 @@ from apps.access.models import (
     TenantMemberRoleStatus,
     User,
 )
+from apps.media_file.models import MediaFile
+from apps.mission.models import Mission
 
 
 def pretty_json(value):
@@ -115,6 +117,18 @@ class HasQualificationFilter(YesNoListFilter):
             return queryset.filter(qualifications__isnull=False).distinct()
         if self.value() == "no":
             return queryset.filter(qualifications__isnull=True).distinct()
+        return queryset
+
+
+class HasBoundMissionFilter(YesNoListFilter):
+    title = "已绑定任务"
+    parameter_name = "has_bound_mission"
+
+    def queryset(self, request, queryset):
+        if self.value() == "yes":
+            return queryset.filter(mission__isnull=False).distinct()
+        if self.value() == "no":
+            return queryset.filter(mission__isnull=True).distinct()
         return queryset
 
 
@@ -914,6 +928,216 @@ class AuditLogAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     @admin.display(description="变更后")
     def after_data_pretty(self, obj):
         return pretty_json(obj.after_data)
+
+
+@admin.register(Mission)
+class MissionAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    list_display = (
+        "id",
+        "tenant_link",
+        "name",
+        "status_label",
+        "pilot_link",
+        "device_sn",
+        "scheduled_at",
+        "started_at",
+        "finished_at",
+        "media_count",
+    )
+    list_filter = ("tenant", "status", "is_deleted")
+    search_fields = (
+        "tenant__code",
+        "tenant__name",
+        "name",
+        "route_name",
+        "drone_name",
+        "device_sn",
+        "pilot_name",
+    )
+    readonly_fields = ("tenant_link", "pilot_link", "media_file_summary")
+    fields = (
+        "tenant_link",
+        "name",
+        "status",
+        "pilot_link",
+        "pilot_name",
+        "route",
+        "route_name",
+        "drone",
+        "drone_name",
+        "device_sn",
+        "scheduled_at",
+        "started_at",
+        "finished_at",
+        "remark",
+        "media_file_summary",
+        "created_at",
+        "updated_at",
+    )
+    list_per_page = 50
+
+    def get_queryset(self, request):
+        return (
+            super()
+            .get_queryset(request)
+            .select_related("tenant", "pilot", "pilot__user", "pilot__user__staff_profile", "route", "drone")
+            .annotate(media_total=Count("media_files", distinct=True))
+        )
+
+    @admin.display(description="租户", ordering="tenant__code")
+    def tenant_link(self, obj):
+        return admin_change_link(obj.tenant, f"{obj.tenant.code}:{obj.tenant.name}")
+
+    @admin.display(description="状态", ordering="status")
+    def status_label(self, obj):
+        return obj.get_status_display()
+
+    @admin.display(description="飞手", ordering="pilot__user__staff_profile__name")
+    def pilot_link(self, obj):
+        label = obj.pilot_name or obj.pilot.display_name or obj.pilot.user.username
+        return admin_change_link(obj.pilot, label)
+
+    @admin.display(description="关联媒体数", ordering="media_total")
+    def media_count(self, obj):
+        return getattr(obj, "media_total", obj.media_files.count())
+
+    @admin.display(description="关联媒体")
+    def media_file_summary(self, obj):
+        media_files = obj.media_files.select_related("dji_index").order_by("-captured_at", "-id")[:10]
+        items = []
+        for media in media_files:
+            sync_status = ""
+            if hasattr(media, "dji_index"):
+                sync_status = media.dji_index.get_sync_status_display()
+            suffix = f" / {sync_status}" if sync_status else ""
+            items.append(admin_change_link(media, f"{media.file_name}{suffix}"))
+        return render_lines(items)
+
+
+@admin.register(MediaFile)
+class MediaFileAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    list_display = (
+        "id",
+        "tenant_link",
+        "file_name",
+        "media_type_label",
+        "device_sn",
+        "captured_at",
+        "mission_link",
+        "sync_status_display",
+        "dji_file_id_display",
+        "last_sync_at_display",
+        "created_at",
+    )
+    list_filter = ("tenant", "media_type", "is_deleted", HasBoundMissionFilter, "dji_index__sync_status")
+    search_fields = (
+        "tenant__code",
+        "tenant__name",
+        "file_name",
+        "device_sn",
+        "mission__name",
+        "dji_index__dji_file_id",
+    )
+    readonly_fields = (
+        "tenant_link",
+        "mission_link",
+        "file_url_link",
+        "thumbnail_url_link",
+        "capture_location",
+        "sync_status_display",
+        "dji_file_id_display",
+        "last_sync_at_display",
+        "sync_error_display",
+    )
+    fields = (
+        "tenant_link",
+        "mission_link",
+        "file_name",
+        "media_type",
+        "device_sn",
+        "captured_at",
+        "file_size",
+        "capture_location",
+        "file_url_link",
+        "thumbnail_url_link",
+        "sync_status_display",
+        "dji_file_id_display",
+        "last_sync_at_display",
+        "sync_error_display",
+        "is_deleted",
+        "deleted_at",
+        "created_at",
+    )
+    list_per_page = 50
+
+    def get_queryset(self, request):
+        return (
+            super()
+            .get_queryset(request)
+            .select_related("tenant", "mission", "dji_index")
+        )
+
+    def get_fields(self, request, obj=None):
+        fields = list(super().get_fields(request, obj))
+        if obj is not None and obj.mission_id is None and "mission_link" in fields:
+            fields.remove("mission_link")
+        return fields
+
+    @admin.display(description="租户", ordering="tenant__code")
+    def tenant_link(self, obj):
+        return admin_change_link(obj.tenant, f"{obj.tenant.code}:{obj.tenant.name}")
+
+    @admin.display(description="媒体类型", ordering="media_type")
+    def media_type_label(self, obj):
+        return obj.get_media_type_display()
+
+    @admin.display(description="关联任务", ordering="mission__id")
+    def mission_link(self, obj):
+        if obj.mission_id is None or obj.mission is None:
+            return ""
+        return admin_change_link(obj.mission, f"{obj.mission.id}:{obj.mission.name}")
+
+    @admin.display(description="同步状态", ordering="dji_index__sync_status")
+    def sync_status_display(self, obj):
+        if not hasattr(obj, "dji_index"):
+            return ""
+        return obj.dji_index.get_sync_status_display()
+
+    @admin.display(description="DJI 文件 ID", ordering="dji_index__dji_file_id")
+    def dji_file_id_display(self, obj):
+        if not hasattr(obj, "dji_index"):
+            return ""
+        return obj.dji_index.dji_file_id
+
+    @admin.display(description="最近同步时间", ordering="dji_index__last_sync_at")
+    def last_sync_at_display(self, obj):
+        if not hasattr(obj, "dji_index"):
+            return ""
+        return obj.dji_index.last_sync_at
+
+    @admin.display(description="同步错误")
+    def sync_error_display(self, obj):
+        if not hasattr(obj, "dji_index"):
+            return ""
+        return obj.dji_index.error_msg or ""
+
+    @admin.display(description="拍摄位置")
+    def capture_location(self, obj):
+        if obj.latitude is None or obj.longitude is None:
+            return ""
+        return f"{obj.latitude}, {obj.longitude}"
+
+    @admin.display(description="文件 URL")
+    def file_url_link(self, obj):
+        if not obj.file_url:
+            return ""
+        return format_html('<a href="{}" target="_blank" rel="noreferrer">打开文件</a>', obj.file_url)
+
+    @admin.display(description="缩略图 URL")
+    def thumbnail_url_link(self, obj):
+        if not obj.thumbnail_url:
+            return ""
+        return format_html('<a href="{}" target="_blank" rel="noreferrer">打开缩略图</a>', obj.thumbnail_url)
 
 
 def _superuser_only_admin_permission(self, request):

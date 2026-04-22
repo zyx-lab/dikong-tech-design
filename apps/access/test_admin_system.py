@@ -4,7 +4,12 @@ from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from django.utils import timezone
 
+from apps.access.test_support import ensure_tenant_role_binding
+from apps.dji_bff.models import SyncStatus, TenantMediaIndex
+from apps.media_file.models import MediaFile, MediaType
+from apps.mission.models import Mission
 
 User = get_user_model()
 
@@ -395,3 +400,96 @@ class AdminLogViewerTests(TestCase):
         self.assertContains(response, "默认只显示链路总览")
         self.assertNotContains(response, "日志明细")
         self.assertNotContains(response, "id_file")
+
+
+class AdminSyncedMediaTests(TestCase):
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(username="admin_media", password="pass1234")
+        self.pilot_user = User.objects.create_user(username="media_pilot", password="pass1234")
+        self.tenant, self.pilot_member, _ = ensure_tenant_role_binding(
+            self.pilot_user,
+            tenant_code="admin_media_tenant",
+            role_code="pilot_operator",
+            role_name="飞手",
+            display_name="飞手张三",
+            member_no="P-001",
+        )
+        self.mission = Mission.objects.create(
+            tenant=self.tenant,
+            name="巡检任务A",
+            pilot=self.pilot_member,
+            pilot_name="飞手张三",
+        )
+        self.captured_at = timezone.now()
+        self.bound_media = MediaFile.objects.create(
+            tenant=self.tenant,
+            mission=self.mission,
+            device_sn="SN-001",
+            media_type=MediaType.VIDEO,
+            file_name="bound-video.mp4",
+            file_url="https://example.com/media/bound-video.mp4",
+            captured_at=self.captured_at,
+            file_size=1024,
+        )
+        TenantMediaIndex.objects.create(
+            tenant=self.tenant,
+            media_file=self.bound_media,
+            dji_file_id="DJI-FILE-001",
+            device_sn="SN-001",
+            mission=self.mission,
+            sync_status=SyncStatus.SYNCED,
+            last_sync_at=self.captured_at,
+        )
+        self.unbound_media = MediaFile.objects.create(
+            tenant=self.tenant,
+            device_sn="SN-002",
+            media_type=MediaType.PHOTO,
+            file_name="unbound-photo.jpg",
+            file_url="https://example.com/media/unbound-photo.jpg",
+            captured_at=self.captured_at,
+            file_size=256,
+        )
+        TenantMediaIndex.objects.create(
+            tenant=self.tenant,
+            media_file=self.unbound_media,
+            dji_file_id="DJI-FILE-002",
+            device_sn="SN-002",
+            sync_status=SyncStatus.PENDING,
+            last_sync_at=self.captured_at,
+        )
+
+    def test_admin_index_should_include_media_and_mission_entries(self):
+        self.client.force_login(self.superuser)
+
+        response = self.client.get("/admin/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "/admin/media_file/mediafile/")
+        self.assertContains(response, "/admin/mission/mission/")
+
+    def test_media_file_admin_changelist_should_show_sync_metadata_and_bound_mission(self):
+        self.client.force_login(self.superuser)
+
+        response = self.client.get("/admin/media_file/mediafile/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "bound-video.mp4")
+        self.assertContains(response, "unbound-photo.jpg")
+        self.assertContains(response, "DJI-FILE-001")
+        self.assertContains(response, "DJI-FILE-002")
+        self.assertContains(response, "同步成功")
+        self.assertContains(response, "同步中")
+        self.assertContains(response, "巡检任务A")
+        self.assertContains(response, f"/admin/mission/mission/{self.mission.id}/change/")
+
+    def test_media_file_admin_change_form_should_hide_mission_when_media_is_unbound(self):
+        self.client.force_login(self.superuser)
+
+        bound_response = self.client.get(f"/admin/media_file/mediafile/{self.bound_media.id}/change/")
+        unbound_response = self.client.get(f"/admin/media_file/mediafile/{self.unbound_media.id}/change/")
+
+        self.assertEqual(bound_response.status_code, 200)
+        self.assertContains(bound_response, "关联任务")
+        self.assertContains(bound_response, "巡检任务A")
+        self.assertEqual(unbound_response.status_code, 200)
+        self.assertNotContains(unbound_response, "关联任务")
