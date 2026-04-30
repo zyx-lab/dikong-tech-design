@@ -1,4 +1,5 @@
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -1247,6 +1248,86 @@ def _apply_keyword_filter(entries: list[tuple[str, int, str]], *, keyword: str) 
     return [entry for entry in entries if normalized in entry[2].lower()]
 
 
+def _looks_like_json_log_line(raw_line: str) -> bool:
+    stripped = raw_line.lstrip()
+    return stripped.startswith("{") or stripped.startswith("[")
+
+
+def _line_starts_python_traceback(raw_line: str) -> bool:
+    stripped = raw_line.strip()
+    return stripped == "Traceback (most recent call last):"
+
+
+def _line_starts_exception(raw_line: str) -> bool:
+    stripped = raw_line.strip()
+    if not stripped:
+        return False
+    if stripped.startswith(("File ", "raise ", "During handling of the above exception")):
+        return False
+    return bool(re.match(r"^[A-Za-z_][\w.]*:\s", stripped))
+
+
+def _block_looks_like_python_traceback(block_entries: list[tuple[str, int, str]]) -> bool:
+    if len(block_entries) <= 1:
+        return False
+    lines = [entry[2] for entry in block_entries]
+    has_traceback_header = any(_line_starts_python_traceback(line) for line in lines)
+    has_frame = any(line.strip().startswith("File ") for line in lines)
+    has_exception = any(_line_starts_exception(line) for line in lines)
+    return (has_traceback_header and has_frame) or (has_frame and has_exception)
+
+
+def _coalesce_multiline_log_entries(entries: list[tuple[str, int, str]]) -> list[dict]:
+    rows: list[dict] = []
+    index = 0
+    while index < len(entries):
+        source_file, line_no, raw_line = entries[index]
+        if not _looks_like_json_log_line(raw_line):
+            block_entries = [entries[index]]
+            index += 1
+            while index < len(entries):
+                next_source_file, next_line_no, next_raw_line = entries[index]
+                if next_source_file != source_file or _looks_like_json_log_line(next_raw_line):
+                    break
+                if next_line_no != block_entries[-1][1] + 1:
+                    break
+                block_entries.append(entries[index])
+                index += 1
+            if _block_looks_like_python_traceback(block_entries):
+                rows.append(
+                    {
+                        "source_file": source_file,
+                        "line_no": line_no,
+                        "line_no_end": block_entries[-1][1],
+                        "raw": "\n".join(entry[2] for entry in block_entries),
+                        "is_multiline": len(block_entries) > 1,
+                    }
+                )
+                continue
+            for block_source_file, block_line_no, block_raw_line in block_entries:
+                rows.append(
+                    {
+                        "source_file": block_source_file,
+                        "line_no": block_line_no,
+                        "line_no_end": block_line_no,
+                        "raw": block_raw_line,
+                        "is_multiline": False,
+                    }
+                )
+            continue
+        rows.append(
+            {
+                "source_file": source_file,
+                "line_no": line_no,
+                "line_no_end": line_no,
+                "raw": raw_line,
+                "is_multiline": False,
+            }
+        )
+        index += 1
+    return rows
+
+
 def _safe_text(value) -> str:
     if value is None:
         return ""
@@ -1360,11 +1441,23 @@ def _build_row_summary(*, payload: dict, row: dict, request_payload: dict, respo
     return _safe_text(payload.get("message") or payload.get("msg") or row["event"] or row["raw"])[:200]
 
 
-def _parse_log_row(*, source_file: str, line_no: int, raw_line: str, include_details: bool, scope: str) -> dict:
+def _parse_log_row(
+    *,
+    source_file: str,
+    line_no: int,
+    raw_line: str,
+    include_details: bool,
+    scope: str,
+    line_no_end: int | None = None,
+    is_multiline: bool = False,
+) -> dict:
     row = {
         "source_file": source_file,
         "line_no": line_no,
+        "line_no_end": line_no_end or line_no,
+        "source_pos": source_file,
         "raw": raw_line,
+        "is_multiline": is_multiline,
         "is_json": False,
         "timestamp": "",
         "level": "",
@@ -1384,9 +1477,20 @@ def _parse_log_row(*, source_file: str, line_no: int, raw_line: str, include_det
         "summary": raw_line[:200],
         "pretty_json": "",
     }
+    if row["line_no_end"] > line_no:
+        row["source_pos"] = f"{source_file}#{line_no}-{row['line_no_end']}"
+    else:
+        row["source_pos"] = f"{source_file}#{line_no}"
     try:
         payload = json.loads(raw_line)
     except (TypeError, ValueError):
+        if is_multiline:
+            non_empty_lines = [line.strip() for line in raw_line.splitlines() if line.strip()]
+            row["level"] = "ERROR"
+            row["event"] = "multiline_traceback"
+            row["stage"] = "异常栈"
+            row["is_error"] = True
+            row["summary"] = (non_empty_lines[-1] if non_empty_lines else raw_line)[:200]
         return row
 
     row["is_json"] = True
@@ -1427,12 +1531,20 @@ def _parse_log_row(*, source_file: str, line_no: int, raw_line: str, include_det
 
 
 def _build_log_rows(entries: list[tuple[str, int, str]], *, newest_first: bool, include_details: bool, scope: str) -> list[dict]:
-    indexed_entries = list(entries)
+    indexed_entries = _coalesce_multiline_log_entries(entries)
     if newest_first:
         indexed_entries.reverse()
     return [
-        _parse_log_row(source_file=source_file, line_no=line_no, raw_line=raw_line, include_details=include_details, scope=scope)
-        for source_file, line_no, raw_line in indexed_entries
+        _parse_log_row(
+            source_file=entry["source_file"],
+            line_no=entry["line_no"],
+            line_no_end=entry["line_no_end"],
+            raw_line=entry["raw"],
+            is_multiline=entry["is_multiline"],
+            include_details=include_details,
+            scope=scope,
+        )
+        for entry in indexed_entries
     ]
 
 

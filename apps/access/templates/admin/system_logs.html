@@ -216,7 +216,7 @@
               {% if step.method or step.path %}<span class="mono">{{ step.method }} {{ step.path }}</span>{% endif %}
               {% if step.status_code %}<span class="pill">status={{ step.status_code }}</span>{% endif %}
               {% if step.logger %}<span class="subtle">{{ step.logger }}</span>{% endif %}
-              <span class="subtle">{{ step.source_file }}#{{ step.line_no }}</span>
+              <span class="subtle">{{ step.source_pos }}</span>
             </div>
             <div class="step-summary">{{ step.summary }}</div>
             {% if step.pretty_json %}
@@ -252,7 +252,7 @@
     <tbody>
       {% for row in rows %}
         <tr class="{% if row.is_error %}row-error{% endif %}">
-          <td class="mono">{{ row.source_file }}#{{ row.line_no }}</td>
+          <td class="mono">{{ row.source_pos }}</td>
           <td class="mono">{{ row.timestamp|default:"-" }}</td>
           <td>{{ row.level|default:"-" }}</td>
           <td>{{ row.stage|default:row.event|default:"-" }}</td>
@@ -268,7 +268,7 @@
               </details>
             {% elif row.raw %}
               <details>
-                <summary class="subtle">展开原始行</summary>
+                <summary class="subtle">{% if row.is_multiline %}展开原始块{% else %}展开原始行{% endif %}</summary>
                 <pre class="json-box">{{ row.raw }}</pre>
               </details>
             {% endif %}

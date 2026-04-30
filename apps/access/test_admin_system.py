@@ -163,6 +163,32 @@ class AdminLogViewerTests(TestCase):
         self.assertNotContains(response, "sync-run-1")
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_group_multiline_traceback_error_block(self):
+        self.client.force_login(self.superuser)
+        traceback_lines = [
+            "Traceback (most recent call last):",
+            '  File "/www/wwwroot/dikong-tech-design/.venv/lib/python3.13/site-packages/django/middleware/common.py", line 48, in process_request',
+            "    host = request.get_host()",
+            '  File "/www/wwwroot/dikong-tech-design/.venv/lib/python3.13/site-packages/django/http/request.py", line 151, in get_host',
+            "    raise DisallowedHost(msg)",
+            "django.core.exceptions.DisallowedHost: Invalid HTTP_HOST header: '110.42.32.122:8000'. You may need to add '110.42.32.122' to ALLOWED_HOSTS.",
+        ]
+        (self.log_dir / "error.log").write_text("\n".join(traceback_lines) + "\n", encoding="utf-8")
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"scope": "error", "show_details": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        rows = response.context["rows"]
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["is_multiline"])
+        self.assertEqual(rows[0]["line_no"], 1)
+        self.assertEqual(rows[0]["line_no_end"], 6)
+        self.assertIn("DisallowedHost", rows[0]["summary"])
+        self.assertIn("Traceback (most recent call last):", rows[0]["raw"])
+        self.assertContains(response, "error.log#1-6")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
     def test_admin_logs_view_should_support_keyword_filter(self):
         self.client.force_login(self.superuser)
 
