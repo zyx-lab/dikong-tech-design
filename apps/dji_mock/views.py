@@ -359,6 +359,17 @@ def media_playback_url(request, workspace_id: str, file_id: str):
     return HttpResponseRedirect(f"/__mock-dji__/_downloads/media/{file_id}")
 
 
+@protected_mock_dji_view
+def media_preview_url(request, workspace_id: str, file_id: str):
+    if request.method != "GET":
+        raise Http404
+    if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
+        return _error("C0404", "workspace not found", status=404)
+    if file_id not in mock_dji_state.media_files:
+        return _error("C0404", "media file not found", status=404)
+    return HttpResponseRedirect(f"/__mock-dji__/_downloads/media/{file_id}")
+
+
 @mock_dji_view
 def download_wayline_binary(request, filename: str):
     if request.method != "GET":

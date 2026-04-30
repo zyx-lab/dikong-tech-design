@@ -52,6 +52,14 @@ MEDIA_FILE_PLAYBACK_URL_RESPONSE = object_envelope_serializer(
     "MediaFilePlaybackUrlResponse",
     MEDIA_FILE_PLAYBACK_URL_RESULT_SERIALIZER,
 )
+MEDIA_FILE_PREVIEW_URL_RESULT_SERIALIZER = inline_serializer(
+    name="MediaFilePreviewUrlResult",
+    fields={"preview_url": serializers.CharField(help_text="DJI 侧图片预览地址。")},
+)
+MEDIA_FILE_PREVIEW_URL_RESPONSE = object_envelope_serializer(
+    "MediaFilePreviewUrlResponse",
+    MEDIA_FILE_PREVIEW_URL_RESULT_SERIALIZER,
+)
 
 MEDIA_FILE_FILTER_PARAMETERS = [
     TENANT_CODE_HEADER_PARAMETER,
@@ -129,6 +137,7 @@ class MediaFileViewSet(
         "download": "media_file.view_media_file",
         "playback": "media_file.view_media_file",
         "playback_url": "media_file.view_media_file",
+        "preview_url": "media_file.view_media_file",
         "destroy": "media_file.manage_media_file",
         "bind_mission": "media_file.manage_media_file",
     }
@@ -269,6 +278,30 @@ class MediaFileViewSet(
             )
         playback_url = DjiGateway().get_media_playback_url(media_file.dji_index.dji_file_id)
         return Response({"playback_url": playback_url}, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="获取媒体图片预览地址（JSON）",
+        parameters=[TENANT_CODE_HEADER_PARAMETER],
+        responses={
+            200: OpenApiResponse(response=MEDIA_FILE_PREVIEW_URL_RESPONSE),
+            400: BUSINESS_INVALID_PARAMS_RESPONSE,
+            401: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            403: BUSINESS_PERMISSION_DENIED_RESPONSE,
+            404: BUSINESS_NOT_FOUND_RESPONSE,
+            500: BUSINESS_INTERNAL_ERROR_RESPONSE,
+        },
+        tags=["Business API - Media File"],
+    )
+    @action(detail=True, methods=["get"], url_path="preview-url")
+    def preview_url(self, request, *args, **kwargs):
+        media_file = self.get_object()
+        if media_file.media_type != MediaType.PHOTO:
+            return Response(
+                validation_error_payload({"media_type": ["该媒体不支持 preview"]}),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        preview_url = DjiGateway().get_media_preview_url(media_file.dji_index.dji_file_id)
+        return Response({"preview_url": preview_url}, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="批量绑定媒体到任务",

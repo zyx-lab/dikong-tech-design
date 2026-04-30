@@ -332,6 +332,26 @@ class DjiGateway:
                 return playback_url
         raise DjiGatewayUpstreamError("未获取到媒体播放地址", status_code=502, data=payload)
 
+    def get_media_preview_url(self, dji_file_id: str):
+        workspace_id = self._workspace_id()
+        response = self._request_json(
+            "GET",
+            f"/api/v1/media/workspaces/{workspace_id}/files/{dji_file_id}/preview-url",
+            follow_redirects=False,
+        )
+        if "Location" in response.headers:
+            return response.headers["Location"]
+        payload = response.data
+        if isinstance(payload, str):
+            preview_url = payload.strip()
+            if preview_url:
+                return preview_url
+        if isinstance(payload, dict):
+            preview_url = self._extract_download_url(payload)
+            if preview_url:
+                return preview_url
+        raise DjiGatewayUpstreamError("未获取到媒体预览地址", status_code=502, data=payload)
+
     def list_media_files(self) -> list[dict]:
         workspace_id = self._workspace_id()
         return self._request_paginated_items(f"/api/v1/media/workspaces/{workspace_id}/files")

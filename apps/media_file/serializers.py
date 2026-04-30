@@ -1,11 +1,12 @@
 from datetime import datetime
 
 from rest_framework import serializers
+from rest_framework.reverse import reverse
 
 from apps.access.models import ScopeType
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.api_v1.tenant_scope import require_request_tenant
-from apps.media_file.models import MediaFile
+from apps.media_file.models import MediaFile, MediaType
 from apps.mission.models import Mission
 
 
@@ -15,6 +16,7 @@ class MediaFileReadSerializer(serializers.ModelSerializer):
     dji_file_id = serializers.SerializerMethodField()
     sync_status = serializers.SerializerMethodField()
     last_sync_at = serializers.SerializerMethodField()
+    preview_url = serializers.SerializerMethodField()
 
     class Meta:
         model = MediaFile
@@ -33,6 +35,7 @@ class MediaFileReadSerializer(serializers.ModelSerializer):
             "dji_file_id",
             "sync_status",
             "last_sync_at",
+            "preview_url",
             "created_at",
         ]
         read_only_fields = fields
@@ -45,6 +48,11 @@ class MediaFileReadSerializer(serializers.ModelSerializer):
 
     def get_last_sync_at(self, obj) -> datetime | None:
         return getattr(getattr(obj, "dji_index", None), "last_sync_at", None)
+
+    def get_preview_url(self, obj) -> str:
+        if obj.media_type != MediaType.PHOTO:
+            return ""
+        return reverse("media-file-preview-url", kwargs={"pk": obj.id})
 
 
 class MediaFileBindMissionSerializer(RejectUnknownFieldsMixin, serializers.Serializer):

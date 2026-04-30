@@ -169,6 +169,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(payload["dji_file_id"], "dji-IMG_FIELDS.JPG")
         self.assertEqual(payload["sync_status"], SyncStatus.SYNCED)
         self.assertIsNotNone(payload["last_sync_at"])
+        self.assertEqual(payload["preview_url"], f"/api/v1/media-files/{media_file.id}/preview-url")
 
     def test_read_serializer_should_expose_empty_sync_fields_when_dji_index_missing(self):
         media_file = MediaFile.objects.create(
@@ -189,6 +190,7 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(payload["dji_file_id"], "")
         self.assertEqual(payload["sync_status"], "")
         self.assertIsNone(payload["last_sync_at"])
+        self.assertEqual(payload["preview_url"], f"/api/v1/media-files/{media_file.id}/preview-url")
 
     def test_download_should_redirect_to_dji_url(self):
         media_file = self._create_media(file_name="IMG_DL.JPG", device_sn="MEDIA-SN-001")
@@ -251,6 +253,35 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], "B0001")
         self.assertEqual(response.data["data"], {"media_type": ["该媒体不支持 playback"]})
+
+    def test_preview_url_should_return_standard_json_for_photo(self):
+        media_file = self._create_media(file_name="IMG_PREVIEW_URL.JPG", device_sn="MEDIA-SN-001")
+
+        with patch(
+            "apps.media_file.views.DjiGateway.get_media_preview_url",
+            return_value="https://preview.example/dji-IMG_PREVIEW_URL.JPG",
+        ) as get_media_preview_url:
+            response = self.client.get(f"/api/v1/media-files/{media_file.id}/preview-url")
+
+        get_media_preview_url.assert_called_once_with("dji-IMG_PREVIEW_URL.JPG")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["code"], "00000")
+        self.assertEqual(response.data["msg"], "success")
+        self.assertEqual(
+            response.data["data"],
+            {"preview_url": "https://preview.example/dji-IMG_PREVIEW_URL.JPG"},
+        )
+
+    def test_preview_url_should_reject_video_media_file(self):
+        media_file = self._create_media(file_name="VID_PREVIEW_URL.MP4", device_sn="MEDIA-SN-001")
+        media_file.media_type = MediaType.VIDEO
+        media_file.save(update_fields=["media_type"])
+
+        response = self.client.get(f"/api/v1/media-files/{media_file.id}/preview-url")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "B0001")
+        self.assertEqual(response.data["data"], {"media_type": ["该媒体不支持 preview"]})
 
     def test_playback_should_reject_photo_media_file(self):
         media_file = self._create_media(file_name="IMG_PLAYBACK.JPG", device_sn="MEDIA-SN-001")

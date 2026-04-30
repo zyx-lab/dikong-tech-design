@@ -37,6 +37,7 @@ class FlightRecordSummarySerializer(serializers.ModelSerializer):
 class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField(help_text="平台媒体下载接口。")
     playback_url = serializers.SerializerMethodField(help_text="平台媒体播放地址查询接口；仅视频媒体返回非空。")
+    preview_url = serializers.SerializerMethodField(help_text="平台图片预览地址查询接口；仅图片媒体返回非空。")
 
     class Meta:
         model = MediaFile
@@ -48,6 +49,7 @@ class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
             "captured_at",
             "download_url",
             "playback_url",
+            "preview_url",
         ]
         read_only_fields = fields
 
@@ -58,6 +60,11 @@ class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
         if obj.media_type != MediaType.VIDEO:
             return ""
         return reverse("media-file-playback-url", kwargs={"pk": obj.id})
+
+    def get_preview_url(self, obj: MediaFile) -> str:
+        if obj.media_type != MediaType.PHOTO:
+            return ""
+        return reverse("media-file-preview-url", kwargs={"pk": obj.id})
 
 
 class FlightRecordDetailSerializer(FlightRecordSummarySerializer):

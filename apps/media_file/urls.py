@@ -7,6 +7,7 @@ media_file_detail = MediaFileViewSet.as_view({"get": "retrieve", "delete": "dest
 media_file_download = MediaFileViewSet.as_view({"get": "download"})
 media_file_playback = MediaFileViewSet.as_view({"get": "playback"})
 media_file_playback_url = MediaFileViewSet.as_view({"get": "playback_url"})
+media_file_preview_url = MediaFileViewSet.as_view({"get": "preview_url"})
 media_file_bind_mission = MediaFileViewSet.as_view({"post": "bind_mission"})
 
 urlpatterns = [
@@ -16,4 +17,5 @@ urlpatterns = [
     path("media-files/<int:pk>/download", media_file_download, name="media-file-download"),
     path("media-files/<int:pk>/playback", media_file_playback, name="media-file-playback"),
     path("media-files/<int:pk>/playback-url", media_file_playback_url, name="media-file-playback-url"),
+    path("media-files/<int:pk>/preview-url", media_file_preview_url, name="media-file-preview-url"),
 ]

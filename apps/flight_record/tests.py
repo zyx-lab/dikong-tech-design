@@ -444,6 +444,7 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual(payload["media_files"][0]["file_name"], "VISIBLE.MP4")
         self.assertEqual(payload["media_files"][0]["download_url"], f"/api/v1/media-files/{visible.id}/download")
         self.assertEqual(payload["media_files"][0]["playback_url"], f"/api/v1/media-files/{visible.id}/playback-url")
+        self.assertEqual(payload["media_files"][0]["preview_url"], "")
 
     def test_retrieve_flight_record_should_expose_blank_playback_url_for_photo_media(self):
         self._grant_permission("flight_record.view_flight_record")
@@ -464,6 +465,7 @@ class FlightRecordApiTests(TestCase):
         self.assertEqual([item["id"] for item in payload["media_files"]], [photo.id])
         self.assertEqual(payload["media_files"][0]["download_url"], f"/api/v1/media-files/{photo.id}/download")
         self.assertEqual(payload["media_files"][0]["playback_url"], "")
+        self.assertEqual(payload["media_files"][0]["preview_url"], f"/api/v1/media-files/{photo.id}/preview-url")
 
     def test_list_flight_records_should_not_include_media_files_field(self):
         self._grant_permission("flight_record.view_flight_record")

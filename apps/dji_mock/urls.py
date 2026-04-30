@@ -37,6 +37,7 @@ urlpatterns = [
     path("api/v1/media/workspaces/<str:workspace_id>/files", views.list_media_files),
     path("api/v1/media/workspaces/<str:workspace_id>/files/<str:file_id>/url", views.media_download_url),
     path("api/v1/media/workspaces/<str:workspace_id>/files/<str:file_id>/playback-url", views.media_playback_url),
+    path("api/v1/media/workspaces/<str:workspace_id>/files/<str:file_id>/preview-url", views.media_preview_url),
     path("_downloads/waylines/<str:filename>", views.download_wayline_binary),
     path("_downloads/media/<path:file_id>", views.download_media_binary),
 ]
