@@ -1490,7 +1490,8 @@ def _build_row_summary(*, payload: dict, row: dict, request_payload: dict, respo
         error_payload = payload.get("error") if isinstance(payload.get("error"), dict) else {}
         err_type = _safe_text(error_payload.get("type")) or "upstream_error"
         message = _safe_text(error_payload.get("message") or error_payload.get("msg")) or "上游调用失败"
-        return f"{err_type}: {message}"
+        detail = _format_upstream_error_detail(error_payload)
+        return f"{err_type}: {message}{detail}"
     if event in {"request_finished", "request_exception", "request_started"}:
         method = row["method"] or "-"
         path = row["path"] or "-"
@@ -1499,6 +1500,19 @@ def _build_row_summary(*, payload: dict, row: dict, request_payload: dict, respo
             return f"{method} {path} -> {status}"
         return f"{method} {path}"
     return _safe_text(payload.get("message") or payload.get("msg") or row["event"] or row["raw"])[:200]
+
+
+def _format_upstream_error_detail(error_payload: dict) -> str:
+    data_payload = error_payload.get("data") if isinstance(error_payload.get("data"), dict) else {}
+    code = _safe_text(data_payload.get("code")).strip()
+    message = _safe_text(data_payload.get("msg") or data_payload.get("message")).strip()
+    if code and message:
+        return f" ({code}: {message})"
+    if code:
+        return f" ({code})"
+    if message:
+        return f" ({message})"
+    return ""
 
 
 def _parse_log_row(

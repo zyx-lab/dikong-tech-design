@@ -151,6 +151,39 @@ class AdminLogViewerTests(TestCase):
         self.assertNotContains(response, "err-1")
 
     @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
+    def test_admin_logs_view_should_include_upstream_business_error_code_and_message_in_summary(self):
+        self.client.force_login(self.superuser)
+        sync_error_line = json.dumps(
+            {
+                "timestamp": "2026-05-06T04:22:51+00:00",
+                "event": "upstream_error",
+                "level": "ERROR",
+                "sync_run_id": "sync-run-2",
+                "request": {
+                    "method": "GET",
+                    "path": "/api/v1/media/workspaces/ws-1/files/file-1/preview-url",
+                },
+                "error": {
+                    "type": "business_error",
+                    "message": "DJI upstream business error",
+                    "status_code": 200,
+                    "data": {
+                        "code": "M400404",
+                        "msg": "media file not found",
+                    },
+                },
+            },
+            ensure_ascii=False,
+        )
+        (self.log_dir / "sync.error.log").write_text(f"{sync_error_line}\n", encoding="utf-8")
+
+        with override_settings(DJANGO_LOG_DIR=self.log_dir):
+            response = self.client.get("/admin/system/logs/", {"scope": "sync", "show_details": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "business_error: DJI upstream business error (M400404: media file not found)")
+
+    @override_settings(DJANGO_LOG_DIR=Path("/tmp/will_be_overridden"))
     def test_admin_logs_view_should_render_error_scope_from_error_family(self):
         self.client.force_login(self.superuser)
 
