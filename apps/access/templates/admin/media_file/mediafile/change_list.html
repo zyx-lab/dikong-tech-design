@@ -1,0 +1,174 @@
+{% extends "admin/change_list.html" %}
+
+{% block extrahead %}
+  {{ block.super }}
+  <style>
+    .media-preview-overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.72);
+      z-index: 1000;
+      padding: 24px;
+    }
+    .media-preview-overlay.is-open {
+      display: flex;
+    }
+    .media-preview-dialog {
+      width: min(92vw, 1120px);
+      max-height: 92vh;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.3);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .media-preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid #e5e5e5;
+    }
+    .media-preview-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0;
+      word-break: break-word;
+    }
+    .media-preview-body {
+      flex: 1;
+      min-height: 320px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0f172a;
+      padding: 12px;
+      overflow: auto;
+    }
+    .media-preview-body img,
+    .media-preview-body video {
+      max-width: 100%;
+      max-height: calc(92vh - 100px);
+      object-fit: contain;
+      background: #000;
+    }
+    .media-preview-body video {
+      width: 100%;
+    }
+    .media-preview-error {
+      color: #fecaca;
+      font-size: 14px;
+      padding: 8px 0;
+    }
+    .media-preview-close {
+      border: 0;
+      background: #f3f4f6;
+      color: #111827;
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  {{ block.super }}
+  <div id="media-preview-modal" class="media-preview-overlay" aria-hidden="true">
+    <div class="media-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="media-preview-title">
+      <div class="media-preview-header">
+        <h2 id="media-preview-title" class="media-preview-title">媒体预览</h2>
+        <button type="button" class="media-preview-close" data-media-preview-close>关闭</button>
+      </div>
+      <div class="media-preview-body" data-media-preview-body>
+        <div class="media-preview-error" data-media-preview-status>正在加载预览...</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const overlay = document.getElementById("media-preview-modal");
+      if (!overlay) {
+        return;
+      }
+      const dialogTitle = document.getElementById("media-preview-title");
+      const body = overlay.querySelector("[data-media-preview-body]");
+      const closeButtons = overlay.querySelectorAll("[data-media-preview-close]");
+
+      function closeModal() {
+        overlay.classList.remove("is-open");
+        overlay.setAttribute("aria-hidden", "true");
+        body.innerHTML = '<div class="media-preview-error" data-media-preview-status>正在加载预览...</div>';
+      }
+
+      function renderPreview(payload) {
+        const title = payload.file_name || "媒体预览";
+        dialogTitle.textContent = title;
+        body.innerHTML = "";
+        if (payload.media_type === "video") {
+          const video = document.createElement("video");
+          video.controls = true;
+          video.autoplay = true;
+          video.playsInline = true;
+          video.src = payload.url;
+          body.appendChild(video);
+          return;
+        }
+        const img = document.createElement("img");
+        img.alt = title;
+        img.src = payload.url;
+        body.appendChild(img);
+      }
+
+      async function openPreview(trigger) {
+        const previewUrl = trigger.getAttribute("data-preview-url");
+        const title = trigger.getAttribute("data-media-title") || "媒体预览";
+        dialogTitle.textContent = title;
+        body.innerHTML = '<div class="media-preview-error" data-media-preview-status>正在加载预览...</div>';
+        overlay.classList.add("is-open");
+        overlay.setAttribute("aria-hidden", "false");
+        try {
+          const response = await fetch(previewUrl, {
+            headers: {
+              "X-Requested-With": "XMLHttpRequest",
+            },
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.message || "获取预览失败");
+          }
+          renderPreview(payload);
+        } catch (error) {
+          const message = (error && error.message) || "获取预览失败";
+          body.innerHTML = '<div class="media-preview-error">' + message + "</div>";
+        }
+      }
+
+      document.addEventListener("click", function (event) {
+        const trigger = event.target.closest(".js-media-preview-trigger");
+        if (trigger) {
+          event.preventDefault();
+          openPreview(trigger);
+          return;
+        }
+        if (event.target === overlay) {
+          closeModal();
+        }
+      });
+
+      closeButtons.forEach(function (button) {
+        button.addEventListener("click", closeModal);
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && overlay.classList.contains("is-open")) {
+          closeModal();
+        }
+      });
+    })();
+  </script>
+{% endblock %}

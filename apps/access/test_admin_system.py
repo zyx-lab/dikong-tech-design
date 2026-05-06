@@ -1,6 +1,7 @@
 import tempfile
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -519,3 +520,51 @@ class AdminSyncedMediaTests(TestCase):
         self.assertContains(bound_response, "巡检任务A")
         self.assertEqual(unbound_response.status_code, 200)
         self.assertNotContains(unbound_response, "关联任务")
+
+    def test_media_file_admin_changelist_should_render_preview_buttons_and_modal(self):
+        self.client.force_login(self.superuser)
+
+        response = self.client.get("/admin/media_file/mediafile/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'/admin/media_file/mediafile/{self.bound_media.id}/preview/')
+        self.assertContains(response, f'/admin/media_file/mediafile/{self.unbound_media.id}/preview/')
+        self.assertContains(response, 'id="media-preview-modal"', html=False)
+
+    def test_media_file_admin_preview_endpoint_should_return_preview_payload_for_photo_and_video(self):
+        self.client.force_login(self.superuser)
+
+        with (
+            patch(
+                "apps.access.admin.DjiGateway.get_media_playback_url",
+                return_value="https://playback.example/bound-video.m3u8",
+            ) as get_media_playback_url,
+            patch(
+                "apps.access.admin.DjiGateway.get_media_preview_url",
+                return_value="https://preview.example/unbound-photo.jpg",
+            ) as get_media_preview_url,
+        ):
+            video_response = self.client.get(f"/admin/media_file/mediafile/{self.bound_media.id}/preview/")
+            photo_response = self.client.get(f"/admin/media_file/mediafile/{self.unbound_media.id}/preview/")
+
+        get_media_playback_url.assert_called_once_with("DJI-FILE-001")
+        get_media_preview_url.assert_called_once_with("DJI-FILE-002")
+
+        self.assertEqual(video_response.status_code, 200)
+        self.assertEqual(
+            video_response.json(),
+            {
+                "media_type": "video",
+                "file_name": "bound-video.mp4",
+                "url": "https://playback.example/bound-video.m3u8",
+            },
+        )
+        self.assertEqual(photo_response.status_code, 200)
+        self.assertEqual(
+            photo_response.json(),
+            {
+                "media_type": "photo",
+                "file_name": "unbound-photo.jpg",
+                "url": "https://preview.example/unbound-photo.jpg",
+            },
+        )

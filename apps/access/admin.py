@@ -6,6 +6,7 @@ from pathlib import Path
 from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
+from django.http import JsonResponse
 from django.db.models import Count, Prefetch, Q
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
@@ -26,7 +27,9 @@ from apps.access.models import (
     User,
 )
 from apps.media_file.models import MediaFile
+from apps.media_file.models import MediaType
 from apps.mission.models import Mission
+from apps.dji_bff.gateway import DjiGateway, DjiGatewayError
 
 
 def pretty_json(value):
@@ -1017,10 +1020,12 @@ class MissionAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
 
 @admin.register(MediaFile)
 class MediaFileAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    change_list_template = "admin/media_file/mediafile/change_list.html"
     list_display = (
         "id",
         "tenant_link",
         "file_name",
+        "preview_button",
         "media_type_label",
         "device_sn",
         "captured_at",
@@ -1078,6 +1083,16 @@ class MediaFileAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
             .select_related("tenant", "mission", "dji_index")
         )
 
+    def get_urls(self):
+        custom_urls = [
+            path(
+                "<int:object_id>/preview/",
+                self.admin_site.admin_view(self.preview_view),
+                name=f"{self.model._meta.app_label}_{self.model._meta.model_name}_preview",
+            )
+        ]
+        return custom_urls + super().get_urls()
+
     def get_fields(self, request, obj=None):
         fields = list(super().get_fields(request, obj))
         if obj is not None and obj.mission_id is None and "mission_link" in fields:
@@ -1087,6 +1102,18 @@ class MediaFileAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     @admin.display(description="租户", ordering="tenant__code")
     def tenant_link(self, obj):
         return admin_change_link(obj.tenant, f"{obj.tenant.code}:{obj.tenant.name}")
+
+    @admin.display(description="预览")
+    def preview_button(self, obj):
+        preview_url = reverse(
+            f"admin:{self.model._meta.app_label}_{self.model._meta.model_name}_preview",
+            args=[obj.pk],
+        )
+        return format_html(
+            '<button type="button" class="button js-media-preview-trigger" data-preview-url="{}" data-media-title="{}">预览</button>',
+            preview_url,
+            obj.file_name,
+        )
 
     @admin.display(description="媒体类型", ordering="media_type")
     def media_type_label(self, obj):
@@ -1139,6 +1166,39 @@ class MediaFileAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         if not obj.thumbnail_url:
             return ""
         return format_html('<a href="{}" target="_blank" rel="noreferrer">打开缩略图</a>', obj.thumbnail_url)
+
+    def preview_view(self, request, object_id):
+        media_file = self.get_object(request, object_id)
+        if media_file is None:
+            return JsonResponse({"message": "媒体文件不存在"}, status=404, json_dumps_params={"ensure_ascii": False})
+
+        if not hasattr(media_file, "dji_index"):
+            return JsonResponse({"message": "媒体文件缺少同步信息"}, status=400, json_dumps_params={"ensure_ascii": False})
+
+        try:
+            if media_file.media_type == MediaType.PHOTO:
+                preview_url = DjiGateway().get_media_preview_url(media_file.dji_index.dji_file_id)
+                media_type = "photo"
+            elif media_file.media_type == MediaType.VIDEO:
+                preview_url = DjiGateway().get_media_playback_url(media_file.dji_index.dji_file_id)
+                media_type = "video"
+            else:
+                return JsonResponse({"message": "该媒体不支持预览"}, status=400, json_dumps_params={"ensure_ascii": False})
+        except DjiGatewayError as exc:
+            return JsonResponse(
+                {"message": str(exc) or "获取预览失败"},
+                status=exc.status_code if 400 <= exc.status_code < 600 else 502,
+                json_dumps_params={"ensure_ascii": False},
+            )
+
+        return JsonResponse(
+            {
+                "media_type": media_type,
+                "file_name": media_file.file_name,
+                "url": preview_url,
+            },
+            json_dumps_params={"ensure_ascii": False},
+        )
 
 
 def _superuser_only_admin_permission(self, request):
