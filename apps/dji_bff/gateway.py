@@ -22,6 +22,10 @@ from apps.dji_bff.models import DjiWorkspaceConfig
 
 logger = logging.getLogger(__name__)
 
+# 缓存 workspace 验证结果，避免频繁调用登录接口
+_workspace_validated_at: dict[str, datetime] = {}
+_WORKSPACE_VALIDATE_INTERVAL_SECONDS = 300  # 5 分钟验证一次
+
 
 @dataclass
 class GatewayResponse:
@@ -370,11 +374,21 @@ class DjiGateway:
 
     def _validate_workspace(self, config: DjiWorkspaceConfig) -> bool:
         """验证 workspace_id 是否仍然有效。如果无效返回 False。"""
+        import urllib.request
+        import json as _json
+        from datetime import timedelta
+
+        # 检查缓存：5 分钟内已验证过则跳过
+        cache_key = f"{config.workspace_id}_{id(config)}"
+        now = timezone.now()
+        last_validated = _workspace_validated_at.get(cache_key)
+
+        if last_validated and (now - last_validated) < timedelta(seconds=_WORKSPACE_VALIDATE_INTERVAL_SECONDS):
+            return True
+
         try:
             # 获取登录时返回的 workspace_id
             username, password = self._configured_credentials()
-            import urllib.request
-            import json as _json
 
             login_url = f"{self.base_url}/api/v1/manage/login"
             login_data = _json.dumps({
@@ -390,6 +404,9 @@ class DjiGateway:
             with urllib.request.urlopen(login_req, timeout=self.timeout) as resp:
                 login_resp = _json.loads(resp.read().decode("utf-8"))
                 current_workspace_id = login_resp.get("data", {}).get("workspace_id")
+
+            # 更新缓存时间
+            _workspace_validated_at[cache_key] = now
 
             # 比较是否一致
             if current_workspace_id and current_workspace_id != config.workspace_id:
