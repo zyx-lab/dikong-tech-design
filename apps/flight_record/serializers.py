@@ -1,6 +1,5 @@
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
-from rest_framework.reverse import reverse
 
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.flight_record.models import FlightRecord
