@@ -115,20 +115,22 @@ def _upload_route_to_upstream(*, gateway: DjiGateway, route_id: int, route_name:
     return payload["dji_wayline_id"], str(payload["download_url"])
 
 
-def _sync_route_index(*, tenant, route: Route, dji_wayline_id: str, download_url: str, route_index: TenantRouteIndex | None = None):
+def _sync_route_index(*, tenant, route: Route, dji_wayline_id: str, download_url: str, workspace_id: str, route_index: TenantRouteIndex | None = None):
     if route_index is None:
         route_index = TenantRouteIndex.objects.create(
             tenant=tenant,
             route=route,
+            workspace_id=workspace_id,
             dji_wayline_id=dji_wayline_id,
             download_url=download_url,
             is_published=True,
         )
     else:
+        route_index.workspace_id = workspace_id
         route_index.dji_wayline_id = dji_wayline_id
         route_index.download_url = download_url
         route_index.is_published = True
-        route_index.save(update_fields=["dji_wayline_id", "download_url", "is_published", "updated_at"])
+        route_index.save(update_fields=["workspace_id", "dji_wayline_id", "download_url", "is_published", "updated_at"])
     route.dji_index = route_index
     return route_index
 
@@ -319,12 +321,13 @@ class RouteViewSet(
         return refreshed_download_url
 
     @transaction.atomic
-    def _finalize_create(self, *, route: Route, tenant, dji_wayline_id: str, download_url: str):
+    def _finalize_create(self, *, route: Route, tenant, dji_wayline_id: str, download_url: str, workspace_id: str):
         _sync_route_index(
             tenant=tenant,
             route=route,
             dji_wayline_id=dji_wayline_id,
             download_url=download_url,
+            workspace_id=workspace_id,
         )
         log_action(
             request=self.request,
@@ -359,6 +362,7 @@ class RouteViewSet(
             tenant=tenant,
             dji_wayline_id=dji_wayline_id,
             download_url=download_url,
+            workspace_id=gateway._workspace_id(),
         )
         cleanup_state["wayline_id"] = ""
         cleanup_state["route_id"] = None
@@ -405,6 +409,7 @@ class RouteViewSet(
             route=route,
             dji_wayline_id=new_wayline_id,
             download_url=new_download_url,
+            workspace_id=gateway._workspace_id(),
             route_index=route_index,
         )
         log_action(

@@ -76,7 +76,12 @@ class FlightRecordDetailSerializer(FlightRecordSummarySerializer):
 
     @extend_schema_field(FlightRecordMediaFileSerializer(many=True))
     def get_media_files(self, obj: FlightRecord) -> list[dict]:
-        media_queryset = obj.media_files.filter(is_deleted=False, dji_index__isnull=False).order_by("-captured_at", "-id")
+        from apps.dji_bff.gateway import DjiGateway
+
+        workspace_id = DjiGateway()._workspace_id()
+        media_queryset = obj.media_files.filter(
+            is_deleted=False, dji_index__isnull=False, dji_index__workspace_id=workspace_id
+        ).order_by("-captured_at", "-id")
         return FlightRecordMediaFileSerializer(media_queryset, many=True, context=self.context).data
 
 

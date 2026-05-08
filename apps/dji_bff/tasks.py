@@ -193,6 +193,7 @@ def sync_media_indexes(
         gateway = gateway or DjiGateway()
         summary = SyncSummary()
         now = timezone.now()
+        workspace_id = gateway._workspace_id()
 
         for payload in gateway.list_media_files():
             if not isinstance(payload, dict):
@@ -256,6 +257,7 @@ def sync_media_indexes(
                     TenantMediaIndex.objects.create(
                         tenant=tenant,
                         media_file=media_file,
+                        workspace_id=workspace_id,
                         dji_file_id=dji_file_id,
                         device_sn=device_sn,
                         mission=matched_mission,
@@ -304,6 +306,7 @@ def sync_media_indexes(
                             "captured_at",
                         ]
                     )
+                    media_index.workspace_id = workspace_id
                     media_index.mission = resolved_mission
                     media_index.device_sn = device_sn
                     media_index.sync_status = SyncStatus.SYNCED
@@ -311,6 +314,7 @@ def sync_media_indexes(
                     media_index.error_msg = ""
                     media_index.save(
                         update_fields=[
+                            "workspace_id",
                             "mission",
                             "device_sn",
                             "sync_status",

@@ -43,6 +43,7 @@ class DjiDeviceIndex(models.Model):
 class TenantRouteIndex(models.Model):
     tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="dji_route_indexes")
     route = models.OneToOneField("route.Route", on_delete=models.CASCADE, related_name="dji_index")
+    workspace_id = models.CharField("DJI workspace ID", max_length=128, blank=True, default="")
     dji_wayline_id = models.CharField("DJI 航线 ID", max_length=128, blank=True, default="")
     download_url = models.CharField("DJI 航线下载地址", max_length=500, blank=True, default="")
     is_published = models.BooleanField("是否已发布", default=False)
@@ -64,6 +65,7 @@ class TenantRouteIndex(models.Model):
 class TenantMediaIndex(models.Model):
     tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="dji_media_indexes")
     media_file = models.OneToOneField("media_file.MediaFile", on_delete=models.CASCADE, related_name="dji_index")
+    workspace_id = models.CharField("DJI workspace ID", max_length=128, blank=True, default="")
     dji_file_id = models.CharField("DJI 文件 ID", max_length=128)
     device_sn = models.CharField("设备序列号", max_length=128, blank=True, default="")
     mission = models.ForeignKey(

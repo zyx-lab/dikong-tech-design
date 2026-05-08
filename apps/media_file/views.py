@@ -173,7 +173,13 @@ class MediaFileViewSet(
         return super().apply_scope(queryset)
 
     def get_queryset(self):
-        queryset = self.scope_queryset_to_tenant(super().get_queryset()).filter(is_deleted=False, dji_index__isnull=False)
+        from apps.dji_bff.gateway import DjiGateway
+
+        workspace_id = DjiGateway()._workspace_id()
+        queryset = (
+            self.scope_queryset_to_tenant(super().get_queryset())
+            .filter(is_deleted=False, dji_index__isnull=False, dji_index__workspace_id=workspace_id)
+        )
         params = self.request.query_params
 
         for query_key, model_field in (
