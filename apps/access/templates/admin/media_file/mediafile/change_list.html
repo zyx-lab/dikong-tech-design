@@ -118,10 +118,19 @@
           body.appendChild(video);
           return;
         }
-        const img = document.createElement("img");
-        img.alt = title;
-        img.src = payload.url;
-        body.appendChild(img);
+        // 图片直接使用 <img> 会因 Mixed Content 被浏览器阻止
+        // 改为显示链接，点击后在新窗口打开
+        const wrapper = document.createElement("div");
+        wrapper.style.textAlign = "center";
+        wrapper.style.padding = "24px";
+        wrapper.innerHTML = `
+          <p style="color: #fecaca; margin-bottom: 16px;">由于浏览器安全限制，无法在当前页面直接显示 HTTP 图片。</p>
+          <a href="${payload.url}" target="_blank" rel="noopener noreferrer"
+             style="display: inline-block; padding: 10px 20px; background: #3b82f6; color: #fff; border-radius: 6px; text-decoration: none; font-size: 14px;">
+            在新窗口打开图片
+          </a>
+        `;
+        body.appendChild(wrapper);
       }
 
       async function openPreview(trigger) {
