@@ -371,21 +371,45 @@ class DjiGateway:
     def _validate_workspace(self, config: DjiWorkspaceConfig) -> bool:
         """验证 workspace_id 是否仍然有效。如果无效返回 False。"""
         try:
-            # 直接用 urllib 发起请求，避免递归调用 _ensure_authenticated
+            # 获取登录时返回的 workspace_id
+            username, password = self._configured_credentials()
             import urllib.request
+            import json as _json
 
-            url = f"{self.base_url}/api/v1/media/workspaces/{config.workspace_id}/files?page_size=1"
-            req = urllib.request.Request(url, headers={"x-auth-token": config.access_token})
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return resp.status == 200
+            login_url = f"{self.base_url}/api/v1/manage/login"
+            login_data = _json.dumps({
+                "username": username,
+                "password": password,
+                "flag": self._configured_login_flag(),
+            }).encode("utf-8")
+            login_req = urllib.request.Request(
+                login_url,
+                data=login_data,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(login_req, timeout=self.timeout) as resp:
+                login_resp = _json.loads(resp.read().decode("utf-8"))
+                current_workspace_id = login_resp.get("data", {}).get("workspace_id")
+
+            # 比较是否一致
+            if current_workspace_id and current_workspace_id != config.workspace_id:
+                self._log_upstream_event(
+                    "workspace_mismatch",
+                    level=logging.WARNING,
+                    stored_workspace_id=config.workspace_id,
+                    current_workspace_id=current_workspace_id,
+                )
+                return False
+
+            return True
         except Exception as exc:
             self._log_upstream_event(
-                "workspace_invalid",
+                "workspace_validate_error",
                 level=logging.WARNING,
                 workspace_id=config.workspace_id,
                 error=str(exc),
             )
-            return False
+            return True  # 验证失败时假设 workspace 仍然有效，避免频繁重新登录
 
     def _ensure_authenticated(self) -> DjiWorkspaceConfig:
         config = self._current_config()
