@@ -35,9 +35,9 @@ class FlightRecordSummarySerializer(serializers.ModelSerializer):
 
 
 class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
-    download_url = serializers.SerializerMethodField(help_text="平台媒体下载接口。")
-    playback_url = serializers.SerializerMethodField(help_text="平台媒体播放地址查询接口；仅视频媒体返回非空。")
-    preview_url = serializers.SerializerMethodField(help_text="平台图片预览地址查询接口；仅图片媒体返回非空。")
+    download_url = serializers.SerializerMethodField(help_text="MinIO 媒体下载地址。")
+    playback_url = serializers.SerializerMethodField(help_text="MinIO 视频播放地址；仅视频媒体返回非空。")
+    preview_url = serializers.SerializerMethodField(help_text="MinIO 图片预览地址；仅图片媒体返回非空。")
 
     class Meta:
         model = MediaFile
@@ -54,17 +54,32 @@ class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_download_url(self, obj: MediaFile) -> str:
-        return reverse("media-file-download", kwargs={"pk": obj.id})
+        from apps.dji_bff.gateway import DjiGateway, DjiGatewayError
+
+        try:
+            return DjiGateway().get_media_url(obj.dji_index.dji_file_id)
+        except DjiGatewayError:
+            return ""
 
     def get_playback_url(self, obj: MediaFile) -> str:
+        from apps.dji_bff.gateway import DjiGateway, DjiGatewayError
+
         if obj.media_type != MediaType.VIDEO:
             return ""
-        return reverse("media-file-playback-url", kwargs={"pk": obj.id})
+        try:
+            return DjiGateway().get_media_playback_url(obj.dji_index.dji_file_id)
+        except DjiGatewayError:
+            return ""
 
     def get_preview_url(self, obj: MediaFile) -> str:
+        from apps.dji_bff.gateway import DjiGateway, DjiGatewayError
+
         if obj.media_type != MediaType.PHOTO:
             return ""
-        return reverse("media-file-preview-url", kwargs={"pk": obj.id})
+        try:
+            return DjiGateway().get_media_preview_url(obj.dji_index.dji_file_id)
+        except DjiGatewayError:
+            return ""
 
 
 class FlightRecordDetailSerializer(FlightRecordSummarySerializer):
