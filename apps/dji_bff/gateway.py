@@ -368,6 +368,31 @@ class DjiGateway:
     def _current_config(self) -> DjiWorkspaceConfig | None:
         return DjiWorkspaceConfig.objects.order_by("-id").first()
 
+    def _validate_workspace(self, config: DjiWorkspaceConfig) -> bool:
+        """验证 workspace_id 是否仍然有效。如果无效返回 False。"""
+        try:
+            # 使用现有的 token 验证 workspace
+            self._request_json(
+                "GET",
+                f"/api/v1/media/workspaces/{config.workspace_id}/files?page_size=1",
+                authenticate=True,
+                request_event="workspace_validate_request",
+                response_event="workspace_validate_response",
+            )
+            return True
+        except DjiGatewayUpstreamError as exc:
+            if exc.status_code == 401:
+                # Token 过期，会在后续重新登录
+                return False
+            # 其他错误（如 workspace 不存在）也重新登录
+            self._log_upstream_event(
+                "workspace_invalid",
+                level=logging.WARNING,
+                workspace_id=config.workspace_id,
+                error=str(exc),
+            )
+            return False
+
     def _ensure_authenticated(self) -> DjiWorkspaceConfig:
         config = self._current_config()
         if config is None or not config.access_token or not config.workspace_id:
@@ -377,6 +402,9 @@ class DjiGateway:
                 return self._refresh_session(config)
             except DjiGatewayUpstreamError:
                 return self._login_session(config=config)
+        # 验证 workspace 是否仍然有效
+        if not self._validate_workspace(config):
+            return self._login_session(config=config)
         return config
 
     def _reauthenticate(self) -> DjiWorkspaceConfig:
