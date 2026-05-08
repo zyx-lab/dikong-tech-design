@@ -1168,11 +1168,13 @@ class MediaFileAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         return format_html('<a href="{}" target="_blank" rel="noreferrer">打开缩略图</a>', obj.thumbnail_url)
 
     def preview_view(self, request, object_id):
+        import traceback
+
         media_file = self.get_object(request, object_id)
         if media_file is None:
             return JsonResponse({"message": "媒体文件不存在"}, status=404, json_dumps_params={"ensure_ascii": False})
 
-        if not hasattr(media_file, "dji_index"):
+        if not hasattr(media_file, "dji_index") or media_file.dji_index is None:
             return JsonResponse({"message": "媒体文件缺少同步信息"}, status=400, json_dumps_params={"ensure_ascii": False})
 
         try:
@@ -1188,6 +1190,14 @@ class MediaFileAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
             return JsonResponse(
                 {"message": str(exc) or "获取预览失败"},
                 status=exc.status_code if 400 <= exc.status_code < 600 else 502,
+                json_dumps_params={"ensure_ascii": False},
+            )
+        except Exception as exc:
+            # 捕获其他意外错误，返回友好信息
+            error_msg = f"服务器错误: {str(exc)}"
+            return JsonResponse(
+                {"message": error_msg, "detail": traceback.format_exc()},
+                status=500,
                 json_dumps_params={"ensure_ascii": False},
             )
 
