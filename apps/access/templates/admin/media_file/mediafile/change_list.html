@@ -109,7 +109,23 @@
         const title = payload.file_name || "媒体预览";
         dialogTitle.textContent = title;
         body.innerHTML = "";
+        // 检查 URL 是否为 HTTP（在 HTTPS 页面无法直接嵌入）
+        const isInsecure = payload.url && payload.url.startsWith("http://");
         if (payload.media_type === "video") {
+          if (isInsecure) {
+            const wrapper = document.createElement("div");
+            wrapper.style.textAlign = "center";
+            wrapper.style.padding = "24px";
+            wrapper.innerHTML = `
+              <p style="color: #fecaca; margin-bottom: 16px;">由于浏览器安全限制，无法在当前页面直接播放 HTTP 视频。</p>
+              <a href="${payload.url}" target="_blank" rel="noopener noreferrer"
+                 style="display: inline-block; padding: 10px 20px; background: #3b82f6; color: #fff; border-radius: 6px; text-decoration: none; font-size: 14px;">
+                在新窗口播放视频
+              </a>
+            `;
+            body.appendChild(wrapper);
+            return;
+          }
           const video = document.createElement("video");
           video.controls = true;
           video.autoplay = true;
@@ -118,19 +134,25 @@
           body.appendChild(video);
           return;
         }
-        // 图片直接使用 <img> 会因 Mixed Content 被浏览器阻止
-        // 改为显示链接，点击后在新窗口打开
-        const wrapper = document.createElement("div");
-        wrapper.style.textAlign = "center";
-        wrapper.style.padding = "24px";
-        wrapper.innerHTML = `
-          <p style="color: #fecaca; margin-bottom: 16px;">由于浏览器安全限制，无法在当前页面直接显示 HTTP 图片。</p>
-          <a href="${payload.url}" target="_blank" rel="noopener noreferrer"
-             style="display: inline-block; padding: 10px 20px; background: #3b82f6; color: #fff; border-radius: 6px; text-decoration: none; font-size: 14px;">
-            在新窗口打开图片
-          </a>
-        `;
-        body.appendChild(wrapper);
+        // 图片
+        if (isInsecure) {
+          const wrapper = document.createElement("div");
+          wrapper.style.textAlign = "center";
+          wrapper.style.padding = "24px";
+          wrapper.innerHTML = `
+            <p style="color: #fecaca; margin-bottom: 16px;">由于浏览器安全限制，无法在当前页面直接显示 HTTP 图片。</p>
+            <a href="${payload.url}" target="_blank" rel="noopener noreferrer"
+               style="display: inline-block; padding: 10px 20px; background: #3b82f6; color: #fff; border-radius: 6px; text-decoration: none; font-size: 14px;">
+              在新窗口打开图片
+            </a>
+          `;
+          body.appendChild(wrapper);
+          return;
+        }
+        const img = document.createElement("img");
+        img.alt = title;
+        img.src = payload.url;
+        body.appendChild(img);
       }
 
       async function openPreview(trigger) {
