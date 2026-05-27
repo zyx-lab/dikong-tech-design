@@ -28,6 +28,7 @@ def normalize_mission_drone_snapshot_fields(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
+        ("drone", "0007_refactor_claimed_drone_schema"),
         ("mission", "0006_mission_deleted_at_mission_device_sn_and_more"),
     ]
 

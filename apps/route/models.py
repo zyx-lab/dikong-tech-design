@@ -10,6 +10,14 @@ class Route(models.Model):
         related_name="routes",
         verbose_name="租户",
     )
+    dji_platform = models.ForeignKey(
+        "dji_bff.DjiCloudPlatform",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="routes",
+        verbose_name="DJI 平台",
+    )
     name = models.CharField("航线名称", max_length=100)
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
     updated_at = models.DateTimeField("更新时间", auto_now=True)

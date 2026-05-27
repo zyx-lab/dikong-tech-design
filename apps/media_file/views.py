@@ -28,7 +28,7 @@ from apps.api_v1.schema import (
     paginated_envelope_serializer,
 )
 from apps.api_v1.tenant_scope import TenantScopedBusinessMixin
-from apps.dji_bff.gateway import DjiGateway
+from apps.dji_bff.gateway import DjiGateway, DjiGatewayError
 from apps.flight_record.models import FlightRecord
 from apps.media_file.models import MediaFile, MediaType
 from apps.media_file.serializers import (
@@ -175,10 +175,15 @@ class MediaFileViewSet(
     def get_queryset(self):
         from apps.dji_bff.gateway import DjiGateway
 
-        workspace_id = DjiGateway()._workspace_id()
+        try:
+            workspace_id = DjiGateway()._workspace_id()
+        except DjiGatewayError:
+            workspace_id = ""
+        workspace_filter = Q(dji_index__workspace_id=workspace_id) | Q(dji_index__workspace_id="")
         queryset = (
             self.scope_queryset_to_tenant(super().get_queryset())
-            .filter(is_deleted=False, dji_index__isnull=False, dji_index__workspace_id=workspace_id)
+            .filter(is_deleted=False, dji_index__isnull=False)
+            .filter(workspace_filter)
         )
         params = self.request.query_params
 

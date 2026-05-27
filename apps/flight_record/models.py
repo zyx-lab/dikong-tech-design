@@ -24,6 +24,14 @@ class FlightRecord(models.Model):
         related_name="flight_records",
         verbose_name="租户",
     )
+    dji_platform = models.ForeignKey(
+        "dji_bff.DjiCloudPlatform",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="flight_records",
+        verbose_name="DJI 平台",
+    )
     flight_no = models.CharField("架次编号", max_length=50)
     mission = models.ForeignKey(
         "mission.Mission",
@@ -118,6 +126,7 @@ class FlightRecord(models.Model):
 
         return {
             "tenant": mission.tenant,
+            "dji_platform": mission.dji_platform,
             "flight_no": f"FR-{mission.id}",
             "mission_name": mission.name,
             "route_name": mission.route_name,
@@ -186,6 +195,15 @@ class FlightRecord(models.Model):
             raise ValidationError({"drone": "drone 与 mission 绑定关系不一致"})
         if self.mission_id and self.pilot_id and self.mission.pilot_id and self.mission.pilot_id != self.pilot_id:
             raise ValidationError({"pilot": "pilot 与 mission 绑定关系不一致"})
+        if self.dji_platform_id:
+            if self.mission_id and self.mission is not None and self.mission.dji_platform_id != self.dji_platform_id:
+                raise ValidationError({"mission": "mission 必须属于当前 DJI 平台"})
+            if self.drone_id and self.drone is not None and self.drone.dji_platform_id != self.dji_platform_id:
+                raise ValidationError({"drone": "drone 必须属于当前 DJI 平台"})
+        elif self.mission_id and self.mission is not None:
+            self.dji_platform = self.mission.dji_platform
+        elif self.drone_id and self.drone is not None:
+            self.dji_platform = self.drone.dji_platform
 
     def save(self, *args, **kwargs):
         self.full_clean()

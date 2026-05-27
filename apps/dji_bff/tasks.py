@@ -17,7 +17,7 @@ from apps.flight_record.models import FlightRecord
 from apps.media_file.models import MediaFile, MediaType
 from apps.mission.models import Mission, MissionStatus
 
-MISSION_MEDIA_FINISH_GRACE_SECONDS = 60
+MISSION_MEDIA_FINISH_GRACE_SECONDS = 5
 
 
 @dataclass
@@ -183,7 +183,9 @@ def sync_device_indexes(
                 ),
             }
             _, created = DjiDeviceIndex.objects.update_or_create(
-                device_sn=device_sn, defaults=defaults
+                dji_platform=None,
+                device_sn=device_sn,
+                defaults=defaults,
             )
             seen_device_sns.add(device_sn)
             if _device_is_online(payload):
@@ -194,9 +196,10 @@ def sync_device_indexes(
             else:
                 summary.updated_count += 1
 
-        DjiDeviceIndex.objects.exclude(device_sn__in=seen_device_sns).delete()
-        Drone.objects.filter(device_sn__in=online_device_sns).update(dji_online=True)
-        Drone.objects.exclude(device_sn__in=online_device_sns).update(dji_online=False)
+        DjiDeviceIndex.objects.filter(dji_platform__isnull=True).exclude(device_sn__in=seen_device_sns).delete()
+        legacy_claimed_drones = Drone.objects.filter(dji_platform__isnull=True)
+        legacy_claimed_drones.filter(device_sn__in=online_device_sns).update(dji_online=True)
+        legacy_claimed_drones.exclude(device_sn__in=online_device_sns).update(dji_online=False)
 
         log_action(
             action="DJI_DEVICE_SYNC",
@@ -213,7 +216,7 @@ def sync_media_indexes(
         gateway = gateway or DjiGateway()
         summary = SyncSummary()
         now = timezone.now()
-        workspace_id = gateway._workspace_id()
+        workspace_id = gateway._workspace_id() if hasattr(gateway, "_workspace_id") else ""
 
         for payload in gateway.list_media_files():
             if not isinstance(payload, dict):
@@ -232,7 +235,7 @@ def sync_media_indexes(
 
             claimed_drone = (
                 Drone.objects.select_related("tenant")
-                .filter(device_sn=device_sn, status=DroneStatus.CLAIMED)
+                .filter(dji_platform__isnull=True, device_sn=device_sn, status=DroneStatus.CLAIMED)
                 .first()
             )
             if claimed_drone is None:
@@ -262,7 +265,7 @@ def sync_media_indexes(
             with transaction.atomic():
                 media_index = (
                     TenantMediaIndex.objects.select_related("media_file")
-                    .filter(tenant=tenant, dji_file_id=dji_file_id)
+                    .filter(tenant=tenant, dji_platform__isnull=True, dji_file_id=dji_file_id)
                     .first()
                 )
                 if media_index is None:
@@ -276,6 +279,7 @@ def sync_media_indexes(
                     )
                     TenantMediaIndex.objects.create(
                         tenant=tenant,
+                        dji_platform=None,
                         media_file=media_file,
                         workspace_id=workspace_id,
                         dji_file_id=dji_file_id,

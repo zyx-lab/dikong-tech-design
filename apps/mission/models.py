@@ -23,6 +23,14 @@ class Mission(models.Model):
         related_name="missions",
         verbose_name="租户",
     )
+    dji_platform = models.ForeignKey(
+        "dji_bff.DjiCloudPlatform",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="missions",
+        verbose_name="DJI 平台",
+    )
     name = models.CharField("任务名称", max_length=100)
     route = models.ForeignKey(
         "route.Route",
@@ -94,6 +102,15 @@ class Mission(models.Model):
             mismatch_message="drone 必须属于当前 tenant",
             error_cls=ValidationError,
         )
+        if self.dji_platform_id:
+            if self.route_id and self.route is not None and self.route.dji_platform_id != self.dji_platform_id:
+                raise ValidationError({"route": "route 必须属于当前 DJI 平台"})
+            if self.drone_id and self.drone is not None and self.drone.dji_platform_id != self.dji_platform_id:
+                raise ValidationError({"drone": "drone 必须属于当前 DJI 平台"})
+        elif self.route_id and self.drone_id and self.route is not None and self.drone is not None:
+            if self.route.dji_platform_id != self.drone.dji_platform_id:
+                raise ValidationError({"dji_platform": "route 与 drone 必须属于同一 DJI 平台"})
+            self.dji_platform = self.route.dji_platform
         self.route_name = self.route.name if self.route_id and self.route is not None else ""
         if self.drone_id and self.drone is not None:
             self.device_sn = self.drone.device_sn

@@ -115,22 +115,33 @@ def _upload_route_to_upstream(*, gateway: DjiGateway, route_id: int, route_name:
     return payload["dji_wayline_id"], str(payload["download_url"])
 
 
-def _sync_route_index(*, tenant, route: Route, dji_wayline_id: str, download_url: str, workspace_id: str, route_index: TenantRouteIndex | None = None):
+def _sync_route_index(
+    *,
+    tenant,
+    route: Route,
+    dji_wayline_id: str,
+    download_url: str,
+    workspace_id: str,
+    route_index: TenantRouteIndex | None = None,
+    dji_platform=None,
+):
     if route_index is None:
         route_index = TenantRouteIndex.objects.create(
             tenant=tenant,
             route=route,
+            dji_platform=dji_platform or route.dji_platform,
             workspace_id=workspace_id,
             dji_wayline_id=dji_wayline_id,
             download_url=download_url,
             is_published=True,
         )
     else:
+        route_index.dji_platform = dji_platform or route.dji_platform
         route_index.workspace_id = workspace_id
         route_index.dji_wayline_id = dji_wayline_id
         route_index.download_url = download_url
         route_index.is_published = True
-        route_index.save(update_fields=["workspace_id", "dji_wayline_id", "download_url", "is_published", "updated_at"])
+        route_index.save(update_fields=["dji_platform", "workspace_id", "dji_wayline_id", "download_url", "is_published", "updated_at"])
     route.dji_index = route_index
     return route_index
 
@@ -276,6 +287,9 @@ class RouteViewSet(
             self._delete_upstream_wayline_if_exists(gateway=gateway, wayline_id=wayline_id, best_effort=True)
         except Exception:
             logger.exception("route upload cleanup failed after rollback", extra={"wayline_id": wayline_id})
+
+    def _gateway_for_route(self, route: Route | None = None) -> DjiGateway:
+        return DjiGateway()
 
     def _verify_uploaded_route_file(self, *, gateway: DjiGateway, dji_wayline_id: str, download_url: str) -> str:
         current_download_url = str(download_url or "").strip()
@@ -517,7 +531,7 @@ class RouteViewSet(
                 self.request,
                 http_status=status.HTTP_200_OK,
             )
-        gateway = DjiGateway()
+        gateway = self._gateway_for_route(route)
         cleanup_state = {"wayline_id": ""}
         try:
             route = self.perform_update(serializer, gateway=gateway, cleanup_state=cleanup_state)
@@ -547,7 +561,7 @@ class RouteViewSet(
     def kmz(self, request, *args, **kwargs):
         route = self.get_object()
         route_index = getattr(route, "dji_index", None)
-        gateway = DjiGateway()
+        gateway = self._gateway_for_route(route)
         download_url = str(getattr(route_index, "download_url", "") or "").strip()
         if not download_url:
             try:
@@ -637,7 +651,7 @@ class RouteViewSet(
 
         before_data = build_instance_payload(RouteReadSerializer, route, self.request)
         route_index = getattr(route, "dji_index", None)
-        gateway = DjiGateway()
+        gateway = self._gateway_for_route(route)
         route_id = route.id
         wayline_id = route_index.dji_wayline_id if route_index is not None else ""
         # `waypoints` 仅保留为历史内部表；删除 route 时一并清理残留行。

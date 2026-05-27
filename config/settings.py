@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "apps.access",
     "apps.api_v1",
+    "apps.api_v2",
     "apps.drone",
     "apps.drone_assignment",
     "apps.route",

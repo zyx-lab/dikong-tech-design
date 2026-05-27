@@ -1,5 +1,7 @@
 from drf_spectacular.utils import extend_schema_field
+from django.db.models import Q
 from rest_framework import serializers
+from rest_framework.reverse import reverse
 
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.flight_record.models import FlightRecord
@@ -53,32 +55,17 @@ class FlightRecordMediaFileSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_download_url(self, obj: MediaFile) -> str:
-        from apps.dji_bff.gateway import DjiGateway, DjiGatewayError
-
-        try:
-            return DjiGateway().get_media_url(obj.dji_index.dji_file_id)
-        except DjiGatewayError:
-            return ""
+        return reverse("media-file-download", kwargs={"pk": obj.id})
 
     def get_playback_url(self, obj: MediaFile) -> str:
-        from apps.dji_bff.gateway import DjiGateway, DjiGatewayError
-
         if obj.media_type != MediaType.VIDEO:
             return ""
-        try:
-            return DjiGateway().get_media_playback_url(obj.dji_index.dji_file_id)
-        except DjiGatewayError:
-            return ""
+        return reverse("media-file-playback-url", kwargs={"pk": obj.id})
 
     def get_preview_url(self, obj: MediaFile) -> str:
-        from apps.dji_bff.gateway import DjiGateway, DjiGatewayError
-
         if obj.media_type != MediaType.PHOTO:
             return ""
-        try:
-            return DjiGateway().get_media_preview_url(obj.dji_index.dji_file_id)
-        except DjiGatewayError:
-            return ""
+        return reverse("media-file-preview-url", kwargs={"pk": obj.id})
 
 
 class FlightRecordDetailSerializer(FlightRecordSummarySerializer):
@@ -90,11 +77,17 @@ class FlightRecordDetailSerializer(FlightRecordSummarySerializer):
 
     @extend_schema_field(FlightRecordMediaFileSerializer(many=True))
     def get_media_files(self, obj: FlightRecord) -> list[dict]:
-        from apps.dji_bff.gateway import DjiGateway
+        from apps.dji_bff.gateway import DjiGateway, DjiGatewayError
 
-        workspace_id = DjiGateway()._workspace_id()
+        try:
+            workspace_id = DjiGateway()._workspace_id()
+        except DjiGatewayError:
+            workspace_id = ""
+        workspace_filter = Q(dji_index__workspace_id=workspace_id) | Q(dji_index__workspace_id="")
         media_queryset = obj.media_files.filter(
-            is_deleted=False, dji_index__isnull=False, dji_index__workspace_id=workspace_id
+            is_deleted=False, dji_index__isnull=False
+        ).filter(
+            workspace_filter
         ).order_by("-captured_at", "-id")
         return FlightRecordMediaFileSerializer(media_queryset, many=True, context=self.context).data
 

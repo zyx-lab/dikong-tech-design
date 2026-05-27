@@ -16,6 +16,14 @@ class Drone(models.Model):
         related_name="drones",
         verbose_name="租户",
     )
+    dji_platform = models.ForeignKey(
+        "dji_bff.DjiCloudPlatform",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="drones",
+        verbose_name="DJI 平台",
+    )
     code = models.CharField("业务编码", max_length=64)
     name = models.CharField("无人机名称", max_length=128)
     model = models.CharField("型号", max_length=128)
@@ -40,14 +48,19 @@ class Drone(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["tenant", "code"], name="uniq_drone_tenant_code"),
             models.UniqueConstraint(
+                fields=["tenant", "dji_platform", "device_sn"],
+                condition=Q(dji_platform__isnull=False) & ~Q(status=DroneStatus.RELEASED),
+                name="uniq_drone_tenant_platform_device_sn",
+            ),
+            models.UniqueConstraint(
                 fields=["tenant", "device_sn"],
-                condition=~Q(status=DroneStatus.RELEASED),
-                name="uniq_drone_tenant_device_sn",
+                condition=Q(dji_platform__isnull=True) & ~Q(status=DroneStatus.RELEASED),
+                name="uniq_drone_tenant_device_sn_legacy",
             ),
             models.UniqueConstraint(
                 fields=["device_sn"],
-                condition=~Q(status=DroneStatus.RELEASED),
-                name="uniq_drone_device_sn_global",
+                condition=Q(dji_platform__isnull=True) & ~Q(status=DroneStatus.RELEASED),
+                name="uniq_drone_device_sn_global_legacy",
             ),
         ]
         permissions = [

@@ -16,6 +16,14 @@ class MediaFile(models.Model):
         related_name="media_files",
         verbose_name="租户",
     )
+    dji_platform = models.ForeignKey(
+        "dji_bff.DjiCloudPlatform",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="media_files",
+        verbose_name="DJI 平台",
+    )
     flight_record = models.ForeignKey(
         "flight_record.FlightRecord",
         on_delete=models.PROTECT,
@@ -76,6 +84,15 @@ class MediaFile(models.Model):
             raise ValidationError({"mission": "mission 必须属于当前 tenant"})
         if self.flight_record_id and self.mission_id and self.flight_record.mission_id and self.flight_record.mission_id != self.mission_id:
             raise ValidationError({"mission": "mission 与 flight_record 绑定关系不一致"})
+        if self.dji_platform_id:
+            if self.flight_record_id and self.flight_record.dji_platform_id != self.dji_platform_id:
+                raise ValidationError({"flight_record": "flight_record 必须属于当前 DJI 平台"})
+            if self.mission_id and self.mission.dji_platform_id != self.dji_platform_id:
+                raise ValidationError({"mission": "mission 必须属于当前 DJI 平台"})
+        elif self.flight_record_id and self.flight_record is not None:
+            self.dji_platform = self.flight_record.dji_platform
+        elif self.mission_id and self.mission is not None:
+            self.dji_platform = self.mission.dji_platform
         if self.is_deleted and self.deleted_at is None:
             raise ValidationError({"deleted_at": "逻辑删除记录必须提供 deleted_at"})
         if not self.is_deleted and self.deleted_at is not None:

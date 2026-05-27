@@ -31,7 +31,7 @@ def _payload_string(payload: dict, *keys: str) -> str:
 def _device_index_for_sn(device_sn: str) -> DjiDeviceIndex | None:
     if not device_sn:
         return None
-    return DjiDeviceIndex.objects.filter(device_sn=device_sn).first()
+    return DjiDeviceIndex.objects.filter(dji_platform__isnull=True, device_sn=device_sn).first()
 
 
 class DroneReadSerializer(serializers.ModelSerializer):
@@ -126,7 +126,11 @@ class DroneClaimSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializer
         if code and Drone.objects.filter(tenant=current_tenant, code=code).exclude(pk=getattr(released_drone, "pk", None)).exists():
             raise serializers.ValidationError({"code": "当前租户下已存在相同业务编码"})
 
-        claimed_drone = Drone.objects.exclude(status=DroneStatus.RELEASED).filter(device_sn=device_sn).first()
+        claimed_drone = (
+            Drone.objects.exclude(status=DroneStatus.RELEASED)
+            .filter(dji_platform__isnull=True, device_sn=device_sn)
+            .first()
+        )
         if claimed_drone is not None:
             if claimed_drone.tenant_id == current_tenant.id:
                 raise serializers.ValidationError({"device_sn": "当前租户下已认领该设备"})

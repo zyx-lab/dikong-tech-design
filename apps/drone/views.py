@@ -333,7 +333,11 @@ class DroneViewSet(
         error_text = str(exc).lower()
         if any(marker in error_text for marker in ("uniq_drone_device_sn_global", "drones.device_sn")):
             device_sn = serializer.validated_data.get("device_sn")
-            existing_drone = Drone.objects.exclude(status=DroneStatus.RELEASED).filter(device_sn=device_sn).first()
+            existing_drone = (
+                Drone.objects.exclude(status=DroneStatus.RELEASED)
+                .filter(dji_platform__isnull=True, device_sn=device_sn)
+                .first()
+            )
             current_tenant = self.get_current_tenant()
             if existing_drone is not None and existing_drone.tenant_id == current_tenant.id:
                 errors = {"device_sn": ["当前租户下已认领该设备"]}
@@ -421,9 +425,15 @@ class DroneViewSet(
             return Response({"list": [], "total": 0}, status=status.HTTP_200_OK)
 
         claimed_device_sns = list(
-            Drone.objects.exclude(status=DroneStatus.RELEASED).values_list("device_sn", flat=True)
+            Drone.objects.exclude(status=DroneStatus.RELEASED)
+            .filter(dji_platform__isnull=True)
+            .values_list("device_sn", flat=True)
         )
-        queryset = DjiDeviceIndex.objects.exclude(device_sn__in=claimed_device_sns).order_by("device_sn")
+        queryset = (
+            DjiDeviceIndex.objects.filter(dji_platform__isnull=True)
+            .exclude(device_sn__in=claimed_device_sns)
+            .order_by("device_sn")
+        )
         page = self.paginate_queryset(queryset)
         serializer = AvailableDroneReadSerializer(page, many=True, context={"request": request})
         return self.get_paginated_response(serializer.data)

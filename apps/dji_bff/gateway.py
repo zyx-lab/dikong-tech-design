@@ -18,7 +18,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.access.request_logging import log_json, redact_payload
-from apps.dji_bff.models import DjiWorkspaceConfig
+from apps.dji_bff.models import DjiCloudPlatform, DjiCloudPlatformStatus, DjiWorkspaceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,16 @@ class DjiGateway:
     DEFAULT_RTH_ALTITUDE = 30
     DEFAULT_OUT_OF_CONTROL_ACTION = 0
 
-    def __init__(self, *, base_url: str | None = None, timeout: int | None = None):
-        self.base_url = (base_url or getattr(settings, "DJI_UPSTREAM_BASE_URL", "")).rstrip("/")
+    def __init__(
+        self,
+        *,
+        platform: DjiCloudPlatform | None = None,
+        base_url: str | None = None,
+        timeout: int | None = None,
+    ):
+        self.platform = platform
+        configured_base_url = getattr(platform, "base_url", "") if platform is not None else ""
+        self.base_url = (base_url or configured_base_url or getattr(settings, "DJI_UPSTREAM_BASE_URL", "")).rstrip("/")
         self.timeout = timeout or int(getattr(settings, "DJI_UPSTREAM_TIMEOUT_SECONDS", 10))
 
     def _log_upstream_event(self, event: str, *, level: int = logging.INFO, **payload: Any) -> None:
@@ -360,7 +368,7 @@ class DjiGateway:
         workspace_id = self._workspace_id()
         return self._request_paginated_items(f"/api/v1/media/workspaces/{workspace_id}/files")
 
-    def get_workspace_config(self) -> DjiWorkspaceConfig:
+    def get_workspace_config(self) -> DjiWorkspaceConfig | DjiCloudPlatform:
         return self._ensure_authenticated()
 
     def _workspace_id(self) -> str:
@@ -369,17 +377,21 @@ class DjiGateway:
             raise DjiGatewayConfigurationError("DJI workspace 未配置", status_code=500)
         return config.workspace_id
 
-    def _current_config(self) -> DjiWorkspaceConfig | None:
+    def _current_config(self) -> DjiWorkspaceConfig | DjiCloudPlatform | None:
+        if self.platform is not None:
+            if self.platform.pk is not None:
+                self.platform.refresh_from_db()
+            return self.platform
         return DjiWorkspaceConfig.objects.order_by("-id").first()
 
-    def _validate_workspace(self, config: DjiWorkspaceConfig) -> bool:
+    def _validate_workspace(self, config: DjiWorkspaceConfig | DjiCloudPlatform) -> bool:
         """验证 workspace_id 是否仍然有效。如果无效返回 False。"""
         import urllib.request
         import json as _json
         from datetime import timedelta
 
         # 检查缓存：5 分钟内已验证过则跳过
-        cache_key = f"{config.workspace_id}_{id(config)}"
+        cache_key = f"{config.__class__.__name__}_{getattr(config, 'pk', '')}_{config.workspace_id}"
         now = timezone.now()
         last_validated = _workspace_validated_at.get(cache_key)
 
@@ -428,7 +440,7 @@ class DjiGateway:
             )
             return True  # 验证失败时假设 workspace 仍然有效，避免频繁重新登录
 
-    def _ensure_authenticated(self) -> DjiWorkspaceConfig:
+    def _ensure_authenticated(self) -> DjiWorkspaceConfig | DjiCloudPlatform:
         config = self._current_config()
         if config is None or not config.access_token or not config.workspace_id:
             return self._login_session(config=config)
@@ -442,7 +454,7 @@ class DjiGateway:
             return self._login_session(config=config)
         return config
 
-    def _reauthenticate(self) -> DjiWorkspaceConfig:
+    def _reauthenticate(self) -> DjiWorkspaceConfig | DjiCloudPlatform:
         config = self._current_config()
         if config is not None and config.access_token:
             try:
@@ -451,7 +463,11 @@ class DjiGateway:
                 pass
         return self._login_session(config=config)
 
-    def _login_session(self, *, config: DjiWorkspaceConfig | None = None) -> DjiWorkspaceConfig:
+    def _login_session(
+        self,
+        *,
+        config: DjiWorkspaceConfig | DjiCloudPlatform | None = None,
+    ) -> DjiWorkspaceConfig | DjiCloudPlatform:
         username, password = self._configured_credentials()
         payload = {
             "username": username,
@@ -509,7 +525,7 @@ class DjiGateway:
             )
             raise
 
-    def _refresh_session(self, config: DjiWorkspaceConfig) -> DjiWorkspaceConfig:
+    def _refresh_session(self, config: DjiWorkspaceConfig | DjiCloudPlatform) -> DjiWorkspaceConfig | DjiCloudPlatform:
         if not config.access_token:
             raise DjiGatewayUpstreamError("DJI access_token 缺失，无法续期", status_code=401)
         headers = self._headers(content_type="application/json", auth_token=config.access_token)
@@ -562,16 +578,24 @@ class DjiGateway:
             )
             raise
 
-    def _save_session(self, payload, *, config: DjiWorkspaceConfig | None = None) -> DjiWorkspaceConfig:
+    def _save_session(
+        self,
+        payload,
+        *,
+        config: DjiWorkspaceConfig | DjiCloudPlatform | None = None,
+    ) -> DjiWorkspaceConfig | DjiCloudPlatform:
         if not isinstance(payload, dict):
             raise DjiGatewayUpstreamError("DJI 登录态响应格式不正确", status_code=502, data=payload)
 
+        config = config or self.platform
         workspace_id = self._string_value(payload.get("workspace_id")) or getattr(config, "workspace_id", "")
         access_token = self._string_value(payload.get("access_token"))
         if not workspace_id or not access_token:
             raise DjiGatewayUpstreamError("DJI 登录态响应缺少关键字段", status_code=502, data=payload)
 
-        DjiWorkspaceConfig.objects.exclude(pk=getattr(config, "pk", None)).delete()
+        is_platform_config = isinstance(config, DjiCloudPlatform)
+        if not is_platform_config:
+            DjiWorkspaceConfig.objects.exclude(pk=getattr(config, "pk", None)).delete()
         workspace_config = config or DjiWorkspaceConfig()
         workspace_config.workspace_id = workspace_id
         workspace_config.dji_user_id = self._string_value(payload.get("user_id"))
@@ -582,26 +606,36 @@ class DjiGateway:
         workspace_config.mqtt_password = self._string_value(payload.get("mqtt_password"))
         workspace_config.mqtt_addr = self._string_value(payload.get("mqtt_addr"))
         workspace_config.expires_at = self._token_expires_at(access_token)
+        if is_platform_config:
+            workspace_config.status = DjiCloudPlatformStatus.ACTIVE
+            workspace_config.last_checked_at = timezone.now()
         if workspace_config.pk is None:
             workspace_config.save()
         else:
-            workspace_config.save(
-                update_fields=[
-                    "workspace_id",
-                    "dji_user_id",
-                    "dji_username",
-                    "dji_user_type",
-                    "access_token",
-                    "mqtt_username",
-                    "mqtt_password",
-                    "mqtt_addr",
-                    "expires_at",
-                    "updated_at",
-                ]
-            )
+            update_fields = [
+                "workspace_id",
+                "dji_user_id",
+                "dji_username",
+                "dji_user_type",
+                "access_token",
+                "mqtt_username",
+                "mqtt_password",
+                "mqtt_addr",
+                "expires_at",
+                "updated_at",
+            ]
+            if is_platform_config:
+                update_fields.extend(["status", "last_checked_at"])
+            workspace_config.save(update_fields=update_fields)
         return workspace_config
 
     def _configured_credentials(self) -> tuple[str, str]:
+        if self.platform is not None:
+            username = str(self.platform.username or "").strip()
+            password = str(self.platform.password or "")
+            if not username or not password:
+                raise DjiGatewayConfigurationError("DJI upstream 账号或密码未配置", status_code=500)
+            return username, password
         username = str(getattr(settings, "DJI_UPSTREAM_USERNAME", "") or "").strip()
         password = str(getattr(settings, "DJI_UPSTREAM_PASSWORD", "") or "")
         if not username or not password:
@@ -609,7 +643,10 @@ class DjiGateway:
         return username, password
 
     def _configured_login_flag(self) -> int:
-        raw = getattr(settings, "DJI_UPSTREAM_LOGIN_FLAG", 1)
+        if self.platform is not None:
+            raw = self.platform.login_flag
+        else:
+            raw = getattr(settings, "DJI_UPSTREAM_LOGIN_FLAG", 1)
         try:
             return int(raw)
         except (TypeError, ValueError) as exc:
