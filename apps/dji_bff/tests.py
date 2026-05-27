@@ -494,6 +494,26 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(visible_drone.status, DroneStatus.CLAIMED)
         self.assertFalse(visible_drone.dji_online)
 
+    def test_sync_device_indexes_should_mark_bound_status_false_device_offline(self):
+        visible_drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="SYNC-OFFLINE-DRONE-001",
+            name="已关机无人机",
+            model="M30",
+            device_sn="MOCK-DRONE-001",
+            status=DroneStatus.CLAIMED,
+            dji_online=True,
+        )
+        mock_dji_state.devices["MOCK-DRONE-001"]["status"] = False
+
+        summary = sync_device_indexes()
+
+        self.assertGreaterEqual(summary["synced_count"], 1)
+        visible_drone.refresh_from_db()
+        self.assertEqual(visible_drone.status, DroneStatus.CLAIMED)
+        self.assertFalse(visible_drone.dji_online)
+        self.assertTrue(DjiDeviceIndex.objects.filter(device_sn="MOCK-DRONE-001").exists())
+
     def test_sync_device_indexes_should_delete_stale_shared_device_indexes(self):
         DjiDeviceIndex.objects.create(device_sn="STALE-DRONE-001", last_payload={"name": "stale"})
         DjiDeviceIndex.objects.create(device_sn="MOCK-DRONE-001", last_payload={"name": "old visible"})

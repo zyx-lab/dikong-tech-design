@@ -78,6 +78,23 @@ def _device_sn_from_payload(payload: dict) -> str:
     return _string(payload, "device_sn", "deviceSn", "sn", "drone")
 
 
+def _device_is_online(payload: dict) -> bool:
+    status = payload.get("status")
+    if status is None:
+        return True
+    if isinstance(status, bool):
+        return status
+    if isinstance(status, int):
+        return status != 0
+    if isinstance(status, str):
+        normalized = status.strip().lower()
+        if normalized in {"false", "0", "offline", "off"}:
+            return False
+        if normalized in {"true", "1", "online", "on"}:
+            return True
+    return True
+
+
 def _file_name(payload: dict) -> str:
     return _string(payload, "name", "file_name", "fileName") or "unknown"
 
@@ -134,6 +151,7 @@ def sync_device_indexes(
         gateway = gateway or DjiGateway()
         summary = SyncSummary()
         seen_device_sns: set[str] = set()
+        online_device_sns: set[str] = set()
         now = timezone.now()
 
         for payload in gateway.list_devices():
@@ -168,6 +186,8 @@ def sync_device_indexes(
                 device_sn=device_sn, defaults=defaults
             )
             seen_device_sns.add(device_sn)
+            if _device_is_online(payload):
+                online_device_sns.add(device_sn)
             summary.synced_count += 1
             if created:
                 summary.created_count += 1
@@ -175,8 +195,8 @@ def sync_device_indexes(
                 summary.updated_count += 1
 
         DjiDeviceIndex.objects.exclude(device_sn__in=seen_device_sns).delete()
-        Drone.objects.filter(device_sn__in=seen_device_sns).update(dji_online=True)
-        Drone.objects.exclude(device_sn__in=seen_device_sns).update(dji_online=False)
+        Drone.objects.filter(device_sn__in=online_device_sns).update(dji_online=True)
+        Drone.objects.exclude(device_sn__in=online_device_sns).update(dji_online=False)
 
         log_action(
             action="DJI_DEVICE_SYNC",
