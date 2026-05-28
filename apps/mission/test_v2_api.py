@@ -1,7 +1,10 @@
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
+from datetime import timedelta
+from unittest.mock import patch
 
 from apps.access.models import EmploymentStatus, ScopeType
 from apps.access.test_support import (
@@ -11,6 +14,9 @@ from apps.access.test_support import (
     grant_role_permissions,
 )
 from apps.drone.models import Drone
+from apps.flight_record.models import FlightRecord
+from apps.media_file.models import MediaFile
+from apps.mission.models import Mission, MissionStatus
 from apps.route.models import Route
 
 User = get_user_model()
@@ -20,9 +26,26 @@ def DjiCloudPlatform():
     return apps.get_model("dji_bff", "DjiCloudPlatform")
 
 
+class FakeV2MissionMediaGateway:
+    media_by_platform_id = {}
+    calls = []
+
+    def __init__(self, *, platform=None, **kwargs):
+        self.platform = platform
+        self.calls.append(platform.id if platform is not None else None)
+
+    def _workspace_id(self):
+        return f"workspace-{self.platform.id}"
+
+    def list_media_files(self):
+        return list(self.media_by_platform_id.get(self.platform.id, []))
+
+
 class V2MissionApiTests(TestCase):
     def setUp(self):
         super().setUp()
+        FakeV2MissionMediaGateway.media_by_platform_id = {}
+        FakeV2MissionMediaGateway.calls = []
         self.client = APIClient()
         self.user = User.objects.create_user(username="v2_mission_admin", password="pass1234", status=1)
         ensure_staff_profile(self.user, name="V2 任务调度员", employment_status=EmploymentStatus.ACTIVE)
@@ -111,3 +134,47 @@ class V2MissionApiTests(TestCase):
 
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
         self.assertEqual(response.data["data"]["dji_platform"], self.platform_a.id)
+
+    @patch("apps.api_v2.views.DjiGateway", FakeV2MissionMediaGateway)
+    def test_complete_should_refresh_platform_media_and_bind_to_created_flight_record(self):
+        started_at = timezone.now() - timedelta(minutes=10)
+        captured_at = started_at + timedelta(minutes=2)
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            dji_platform=self.platform_a,
+            name="完成后刷新媒体任务",
+            route=self.route_a,
+            drone=self.drone_a,
+            pilot=self.pilot_member,
+            status=MissionStatus.RUNNING,
+            started_at=started_at,
+        )
+        FakeV2MissionMediaGateway.media_by_platform_id = {
+            self.platform_a.id: [
+                {
+                    "file_id": "mission-photo-001",
+                    "file_name": "MISSION_PHOTO.JPG",
+                    "device_sn": self.drone_a.device_sn,
+                    "media_type": 1,
+                    "captured_at": captured_at.isoformat(),
+                },
+                {
+                    "file_id": "mission-video-001",
+                    "file_name": "MISSION_VIDEO.MP4",
+                    "device_sn": self.drone_a.device_sn,
+                    "media_type": 2,
+                    "captured_at": captured_at.isoformat(),
+                },
+            ]
+        }
+
+        response = self.client.post(f"/api/v2/missions/{mission.id}/advance")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(FakeV2MissionMediaGateway.calls, [self.platform_a.id])
+        flight_record = FlightRecord.objects.get(mission=mission)
+        self.assertEqual(flight_record.dji_platform_id, self.platform_a.id)
+        self.assertEqual(flight_record.photo_count, 1)
+        self.assertEqual(flight_record.video_count, 1)
+        media_files = MediaFile.objects.filter(mission=mission, flight_record=flight_record).order_by("file_name")
+        self.assertEqual(list(media_files.values_list("file_name", flat=True)), ["MISSION_PHOTO.JPG", "MISSION_VIDEO.MP4"])

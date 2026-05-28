@@ -1,4 +1,5 @@
 from django.db import IntegrityError, transaction
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers, status
@@ -10,9 +11,11 @@ from apps.access.models import ScopeType
 from apps.access.api_v1.authentication import BearerAuthSessionAuthentication
 from apps.access.api_v1.context import resolve_tenant_request_context
 from apps.access.exceptions import StandardForbidden
+from apps.access.services import log_action, snapshot
 from apps.api_v1.business_response import (
     BusinessApiResponseMixin,
     StandardCode,
+    reject_request_body_if_present,
     standard_error_payload,
     validation_error_payload,
 )
@@ -36,7 +39,7 @@ from apps.flight_record.views import FlightRecordViewSet
 from apps.media_file.models import MediaFile, MediaType
 from apps.media_file.views import MediaFileViewSet
 from apps.mission.models import Mission, MissionStatus
-from apps.mission.views import MissionViewSet
+from apps.mission.views import MissionViewSet, _mission_state_conflict_response
 from apps.route.views import (
     RouteViewSet,
     _require_kmz_file,
@@ -581,6 +584,57 @@ class V2MissionViewSet(MissionViewSet):
         mission = self.perform_create(serializer)
         return Response(V2MissionReadSerializer(mission, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["post"], url_path="advance")
+    @transaction.atomic
+    def advance(self, request, *args, **kwargs):
+        error_response = reject_request_body_if_present(request, message="advance 请求不支持请求体")
+        if error_response is not None:
+            return error_response
+
+        mission = get_object_or_404(
+            self.get_queryset().select_for_update().select_related("tenant", "dji_platform"),
+            pk=kwargs["pk"],
+        )
+        before_data = snapshot(mission)
+
+        if mission.status == MissionStatus.PENDING:
+            occupied = (
+                self.get_queryset()
+                .select_for_update()
+                .filter(drone_id=mission.drone_id, status=MissionStatus.RUNNING)
+                .exclude(pk=mission.pk)
+                .exists()
+            )
+            if occupied:
+                return _mission_state_conflict_response(mission=mission, message="当前无人机已有执行中的任务")
+
+            mission.status = MissionStatus.RUNNING
+            mission.started_at = timezone.now()
+            mission.finished_at = None
+            mission.save(update_fields=["status", "started_at", "finished_at", "updated_at"])
+        elif mission.status == MissionStatus.RUNNING:
+            mission.status = MissionStatus.COMPLETED
+            mission.finished_at = timezone.now()
+            mission.save(update_fields=["status", "finished_at", "updated_at"])
+            flight_record = FlightRecord.create_from_completed_mission(mission=mission)
+            if mission.dji_platform_id:
+                refresh_platform_media_indexes(tenant=mission.tenant, platform=mission.dji_platform)
+            FlightRecord.sync_media_counts_from_media(flight_record=flight_record)
+        else:
+            return _mission_state_conflict_response(mission=mission, message="当前任务状态不允许继续推进")
+
+        mission.refresh_from_db()
+        after_data = snapshot(mission)
+        log_action(
+            request=request,
+            action="MISSION_ADVANCE",
+            target_type="mission",
+            target_id=mission.id,
+            before_data=before_data,
+            after_data=after_data,
+        )
+        return Response(V2MissionReadSerializer(mission, context={"request": request}).data, status=status.HTTP_200_OK)
+
 
 class V2FlightRecordViewSet(FlightRecordViewSet):
     def get_serializer_class(self):
@@ -594,6 +648,14 @@ class V2FlightRecordViewSet(FlightRecordViewSet):
         if platform_id:
             queryset = queryset.filter(dji_platform_id=platform_id)
         return queryset
+
+    def retrieve(self, request, *args, **kwargs):
+        record = self.get_object()
+        if record.dji_platform_id:
+            refresh_platform_media_indexes(tenant=record.tenant, platform=record.dji_platform)
+            record.refresh_from_db()
+        serializer = self.get_serializer(record)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class V2MediaFileViewSet(MediaFileViewSet):
@@ -712,14 +774,37 @@ class V2MediaFileViewSet(MediaFileViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        conflicting_ids = [
+            item.id
+            for item in media_files
+            if item.flight_record_id
+            and item.flight_record
+            and item.flight_record.mission_id
+            and item.flight_record.mission_id != mission.id
+        ]
+        if conflicting_ids:
+            return Response(
+                validation_error_payload(
+                    {"media_file_ids": [f"以下媒体已被 flight_record 锁定到其他任务: {conflicting_ids}"]}
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        resolved_flight_record = _flight_record_for_mission(mission=mission)
+        affected_flight_records = {resolved_flight_record}
         updated_ids = []
         for media_file in media_files:
+            affected_flight_records.add(media_file.flight_record)
             media_file.mission = mission
-            media_file.save(update_fields=["mission"])
+            media_file.flight_record = resolved_flight_record
+            media_file.save(update_fields=["mission", "flight_record"])
             if getattr(media_file, "dji_index", None) is not None:
                 media_file.dji_index.mission = mission
                 media_file.dji_index.save(update_fields=["mission", "updated_at"])
             updated_ids.append(media_file.id)
+
+        for flight_record in affected_flight_records:
+            FlightRecord.sync_media_counts_from_media(flight_record=flight_record)
 
         return Response(
             {"mission_id": mission.id, "media_file_ids": updated_ids, "updated_count": len(updated_ids)},

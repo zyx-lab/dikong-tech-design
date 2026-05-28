@@ -320,11 +320,13 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(detail_response.status_code, 404)
         self.assertEqual(detail_response.data["code"], "C0404")
 
-    def test_delete_should_recalculate_flight_record_video_count_for_bound_dji_video(self):
+    def test_delete_should_recalculate_flight_record_media_counts_for_bound_dji_media(self):
         grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})
-        media_file = self._create_media(file_name="VID_DELETE.MP4", device_sn="MEDIA-SN-001")
-        media_file.media_type = MediaType.VIDEO
-        media_file.save(update_fields=["media_type"])
+        media_file = self._create_media(file_name="IMG_DELETE.JPG", device_sn="MEDIA-SN-001")
+        video_file = self._create_media(file_name="VID_KEEP.MP4", device_sn="MEDIA-SN-001")
+        video_file.media_type = MediaType.VIDEO
+        video_file.save(update_fields=["media_type"])
+        self.flight_record.photo_count = 1
         self.flight_record.video_count = 1
         self.flight_record.save()
 
@@ -334,7 +336,8 @@ class MediaFileApiTests(MockDjiUpstreamTestMixin, TestCase):
         media_file.refresh_from_db()
         self.assertTrue(media_file.is_deleted)
         self.flight_record.refresh_from_db()
-        self.assertEqual(self.flight_record.video_count, 0)
+        self.assertEqual(self.flight_record.photo_count, 0)
+        self.assertEqual(self.flight_record.video_count, 1)
 
     def test_delete_should_reject_request_body(self):
         grant_role_permissions(self.role, {"media_file.manage_media_file": ScopeType.ALL})

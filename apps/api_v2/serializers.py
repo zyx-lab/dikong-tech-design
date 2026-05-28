@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework.reverse import reverse
 
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.api_v1.tenant_scope import require_request_tenant
@@ -6,6 +7,7 @@ from apps.dji_bff.models import DjiCloudPlatform
 from apps.drone.models import Drone, DroneStatus
 from apps.drone.serializers import AvailableDroneReadSerializer, DroneReadSerializer, DroneUpdateSerializer, _payload_string
 from apps.flight_record.serializers import FlightRecordDetailSerializer, FlightRecordSummarySerializer
+from apps.media_file.models import MediaFile, MediaType
 from apps.media_file.serializers import MediaFileBindMissionSerializer, MediaFileReadSerializer
 from apps.mission.serializers import MissionCreateSerializer, MissionReadSerializer, MissionUpdateSerializer
 from apps.route.serializers import RouteCreateSerializer, RouteReadSerializer, RouteUpdateJsonSerializer, RouteUpdateSerializer
@@ -309,10 +311,53 @@ class V2FlightRecordSummarySerializer(FlightRecordSummarySerializer):
         read_only_fields = fields
 
 
+class V2FlightRecordMediaFileSerializer(serializers.ModelSerializer):
+    download_url = serializers.SerializerMethodField()
+    playback_url = serializers.SerializerMethodField()
+    preview_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MediaFile
+        fields = [
+            "id",
+            "media_type",
+            "file_name",
+            "thumbnail_url",
+            "captured_at",
+            "download_url",
+            "playback_url",
+            "preview_url",
+        ]
+        read_only_fields = fields
+
+    def get_download_url(self, obj: MediaFile) -> str:
+        return reverse("v2-media-file-download", kwargs={"pk": obj.id})
+
+    def get_playback_url(self, obj: MediaFile) -> str:
+        if obj.media_type != MediaType.VIDEO:
+            return ""
+        return reverse("v2-media-file-playback-url", kwargs={"pk": obj.id})
+
+    def get_preview_url(self, obj: MediaFile) -> str:
+        if obj.media_type != MediaType.PHOTO:
+            return ""
+        return reverse("v2-media-file-preview-url", kwargs={"pk": obj.id})
+
+
 class V2FlightRecordDetailSerializer(FlightRecordDetailSerializer):
+    media_files = serializers.SerializerMethodField()
+
     class Meta(FlightRecordDetailSerializer.Meta):
         fields = ["dji_platform", *FlightRecordDetailSerializer.Meta.fields]
         read_only_fields = fields
+
+    def get_media_files(self, obj) -> list[dict]:
+        media_queryset = obj.media_files.filter(
+            dji_platform=obj.dji_platform,
+            is_deleted=False,
+            dji_index__isnull=False,
+        ).order_by("-captured_at", "-id")
+        return V2FlightRecordMediaFileSerializer(media_queryset, many=True, context=self.context).data
 
 
 class V2MediaFileReadSerializer(MediaFileReadSerializer):

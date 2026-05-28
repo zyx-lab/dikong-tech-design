@@ -99,7 +99,7 @@ class FlightRecord(models.Model):
         return self.pilot_id
 
     @classmethod
-    def sync_video_count_from_media(cls, *, flight_record):
+    def sync_media_counts_from_media(cls, *, flight_record):
         if flight_record is None:
             return
         from apps.media_file.models import MediaFile, MediaType
@@ -110,13 +110,18 @@ class FlightRecord(models.Model):
         ).first()
         if locked_flight_record is None:
             return
-        locked_flight_record.video_count = MediaFile.objects.filter(
+        media_queryset = MediaFile.objects.filter(
             flight_record=locked_flight_record,
             is_deleted=False,
-            media_type=MediaType.VIDEO,
             dji_index__isnull=False,
-        ).count()
-        locked_flight_record.save(update_fields=["video_count", "updated_at"])
+        )
+        locked_flight_record.photo_count = media_queryset.filter(media_type=MediaType.PHOTO).count()
+        locked_flight_record.video_count = media_queryset.filter(media_type=MediaType.VIDEO).count()
+        locked_flight_record.save(update_fields=["photo_count", "video_count", "updated_at"])
+
+    @classmethod
+    def sync_video_count_from_media(cls, *, flight_record):
+        cls.sync_media_counts_from_media(flight_record=flight_record)
 
     @classmethod
     def build_snapshot_defaults(cls, *, mission):
