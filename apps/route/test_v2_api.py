@@ -1,4 +1,7 @@
 import os
+import socket
+import subprocess
+import time
 import unittest
 import uuid
 from io import BytesIO
@@ -306,10 +309,16 @@ class V2RouteApiTests(TestCase):
 
 @unittest.skipUnless(
     _object_storage_tests_enabled(),
-    "set OBJECT_STORAGE_INTEGRATION_TESTS=true and S3/MinIO env vars to run object storage integration tests",
+    "set OBJECT_STORAGE_INTEGRATION_TESTS=true to run object storage integration tests",
 )
 class V2RouteObjectStorageIntegrationTests(TestCase):
     KMZ_CONTENT_TYPE = "application/vnd.google-earth.kmz"
+    MINIO_IMAGE = "minio/minio:latest"
+    MINIO_ACCESS_KEY = "minioadmin"
+    MINIO_SECRET_KEY = "minioadmin"
+    MINIO_BUCKET = "dikong-route-tests"
+    minio_container_name = ""
+    started_minio_container = False
 
     @classmethod
     def setUpClass(cls):
@@ -324,9 +333,11 @@ class V2RouteObjectStorageIntegrationTests(TestCase):
         cls.boto3 = boto3
         cls.Config = Config
         cls.s3_storage_module = storages.backends.s3
-        cls.bucket_name = os.getenv("OBJECT_STORAGE_TEST_BUCKET") or os.getenv("AWS_STORAGE_BUCKET_NAME")
-        if not cls.bucket_name:
-            raise unittest.SkipTest("OBJECT_STORAGE_TEST_BUCKET or AWS_STORAGE_BUCKET_NAME is required")
+        cls.bucket_name = (
+            os.getenv("OBJECT_STORAGE_TEST_BUCKET")
+            or os.getenv("AWS_STORAGE_BUCKET_NAME")
+            or cls.MINIO_BUCKET
+        )
 
         cls.endpoint_url = (
             os.getenv("OBJECT_STORAGE_TEST_ENDPOINT_URL")
@@ -355,8 +366,109 @@ class V2RouteObjectStorageIntegrationTests(TestCase):
         cls.addressing_style = (
             os.getenv("OBJECT_STORAGE_TEST_ADDRESSING_STYLE")
             or os.getenv("AWS_S3_ADDRESSING_STYLE")
-            or ("path" if cls.endpoint_url else "")
+            or "path"
         )
+        if cls.endpoint_url is None and cls._autostart_minio_enabled():
+            cls._start_minio_container()
+        if cls.endpoint_url is None:
+            raise unittest.SkipTest("object storage endpoint is required when MinIO autostart is disabled")
+
+        cls.access_key = cls.access_key or cls.MINIO_ACCESS_KEY
+        cls.secret_key = cls.secret_key or cls.MINIO_SECRET_KEY
+        cls.region_name = cls.region_name or "us-east-1"
+        cls._ensure_bucket()
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls.started_minio_container:
+            subprocess.run(["docker", "rm", "-f", cls.minio_container_name], check=False, capture_output=True, text=True)
+        super().tearDownClass()
+
+    @classmethod
+    def _autostart_minio_enabled(cls) -> bool:
+        return os.getenv("OBJECT_STORAGE_TEST_AUTOSTART_MINIO", "true").lower() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _find_free_port(cls) -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    @classmethod
+    def _start_minio_container(cls):
+        port = cls._find_free_port()
+        cls.endpoint_url = f"http://127.0.0.1:{port}"
+        cls.access_key = cls.access_key or cls.MINIO_ACCESS_KEY
+        cls.secret_key = cls.secret_key or cls.MINIO_SECRET_KEY
+        cls.region_name = cls.region_name or "us-east-1"
+        cls.minio_container_name = f"dikong-route-minio-test-{uuid.uuid4().hex[:12]}"
+        image = os.getenv("OBJECT_STORAGE_TEST_MINIO_IMAGE", cls.MINIO_IMAGE)
+        try:
+            subprocess.run(
+                [
+                    "docker",
+                    "run",
+                    "-d",
+                    "--rm",
+                    "--name",
+                    cls.minio_container_name,
+                    "-e",
+                    f"MINIO_ROOT_USER={cls.access_key}",
+                    "-e",
+                    f"MINIO_ROOT_PASSWORD={cls.secret_key}",
+                    "-p",
+                    f"127.0.0.1:{port}:9000",
+                    image,
+                    "server",
+                    "/data",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+            raise unittest.SkipTest(f"unable to start MinIO Docker container: {exc}") from exc
+        cls.started_minio_container = True
+        try:
+            cls._wait_for_minio()
+        except Exception:
+            subprocess.run(["docker", "rm", "-f", cls.minio_container_name], check=False, capture_output=True, text=True)
+            cls.started_minio_container = False
+            raise
+
+    @classmethod
+    def _build_class_s3_client(cls):
+        return cls.boto3.client(
+            service_name="s3",
+            endpoint_url=cls.endpoint_url,
+            aws_access_key_id=cls.access_key,
+            aws_secret_access_key=cls.secret_key,
+            region_name=cls.region_name,
+            config=cls.Config(s3={"addressing_style": cls.addressing_style or "path"}),
+        )
+
+    @classmethod
+    def _wait_for_minio(cls):
+        deadline = time.time() + 30
+        last_error = None
+        while time.time() < deadline:
+            try:
+                cls._build_class_s3_client().list_buckets()
+                return
+            except Exception as exc:
+                last_error = exc
+                time.sleep(0.5)
+        raise unittest.SkipTest(f"MinIO Docker container did not become ready: {last_error}")
+
+    @classmethod
+    def _ensure_bucket(cls):
+        client = cls._build_class_s3_client()
+        try:
+            client.head_bucket(Bucket=cls.bucket_name)
+            return
+        except Exception:
+            pass
+        client.create_bucket(Bucket=cls.bucket_name)
 
     def setUp(self):
         super().setUp()
