@@ -3,7 +3,7 @@ from rest_framework.reverse import reverse
 
 from apps.api_v1.serializers import RejectUnknownFieldsMixin
 from apps.api_v1.tenant_scope import require_request_tenant
-from apps.dji_bff.models import DjiCloudPlatform
+from apps.dji_bff.models import DjiCloudPlatform, TenantRouteIndex
 from apps.drone.models import Drone, DroneStatus
 from apps.drone.serializers import AvailableDroneReadSerializer, DroneReadSerializer, DroneUpdateSerializer, _payload_string
 from apps.flight_record.serializers import FlightRecordDetailSerializer, FlightRecordSummarySerializer
@@ -216,30 +216,68 @@ class V2DroneClaimSerializer(RejectUnknownFieldsMixin, serializers.ModelSerializ
 V2DroneUpdateSerializer = DroneUpdateSerializer
 
 
-class V2RouteReadSerializer(RouteReadSerializer):
-    class Meta(RouteReadSerializer.Meta):
-        fields = ["id", "dji_platform", "name", "is_published", "created_at", "updated_at"]
+class V2RouteDispatchReadSerializer(serializers.ModelSerializer):
+    dji_platform = serializers.IntegerField(source="dji_platform_id", read_only=True)
+
+    class Meta:
+        model = TenantRouteIndex
+        fields = [
+            "dji_platform",
+            "workspace_id",
+            "dji_wayline_id",
+            "download_url",
+            "is_published",
+            "updated_at",
+        ]
         read_only_fields = fields
 
 
-class V2RouteCreateSerializer(RouteCreateSerializer):
-    platform_id = serializers.IntegerField(write_only=True, min_value=1)
+class V2RouteReadSerializer(RouteReadSerializer):
+    dispatches = serializers.SerializerMethodField()
 
+    class Meta(RouteReadSerializer.Meta):
+        fields = ["id", "name", "kmz_file", "is_published", "dispatches", "created_at", "updated_at"]
+        read_only_fields = fields
+
+    def get_is_published(self, obj) -> bool:
+        return obj.dji_indexes.filter(dji_platform__isnull=False, is_published=True).exists()
+
+    def get_dispatches(self, obj) -> list[dict]:
+        queryset = obj.dji_indexes.filter(dji_platform__isnull=False).order_by("dji_platform_id", "id")
+        return V2RouteDispatchReadSerializer(queryset, many=True, context=self.context).data
+
+
+class V2RouteCreateSerializer(RouteCreateSerializer):
     class Meta(RouteCreateSerializer.Meta):
-        fields = ["platform_id", "name", "kmz_file"]
+        fields = ["name", "kmz_file"]
 
     def create(self, validated_data):
-        validated_data.pop("platform_id", None)
-        return super().create(validated_data)
+        return serializers.ModelSerializer.create(self, validated_data)
 
 
 class V2RouteUpdateSerializer(RouteUpdateSerializer):
     class Meta(RouteUpdateSerializer.Meta):
         fields = ["name", "kmz_file"]
 
+    def update(self, instance, validated_data):
+        return serializers.ModelSerializer.update(self, instance, validated_data)
+
 
 class V2RouteUpdateJsonSerializer(RouteUpdateJsonSerializer):
     pass
+
+
+class V2RouteDispatchSerializer(RejectUnknownFieldsMixin, serializers.Serializer):
+    platform_id = serializers.IntegerField(write_only=True, min_value=1)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        current_tenant = require_request_tenant(self.context)
+        platform = DjiCloudPlatform.objects.filter(tenant=current_tenant, id=attrs["platform_id"]).first()
+        if platform is None:
+            raise serializers.ValidationError({"platform_id": ["必须提供当前租户下有效的 DJI 平台 ID"]})
+        attrs["platform"] = platform
+        return attrs
 
 
 class V2MissionReadSerializer(MissionReadSerializer):
@@ -269,15 +307,21 @@ class V2MissionReadSerializer(MissionReadSerializer):
 class V2MissionCreateSerializer(MissionCreateSerializer):
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        current_tenant = require_request_tenant(self.context)
         route = attrs.get("route")
         drone = attrs.get("drone")
-        if route is not None and drone is not None and route.dji_platform_id != drone.dji_platform_id:
-            raise serializers.ValidationError({"dji_platform": ["route 与 drone 必须属于同一 DJI 平台"]})
-        if route is not None and route.dji_platform_id is None:
-            raise serializers.ValidationError({"route": ["v2 任务只能绑定带 DJI 平台的航线"]})
         if drone is not None and drone.dji_platform_id is None:
             raise serializers.ValidationError({"drone": ["v2 任务只能绑定带 DJI 平台的无人机"]})
-        self._platform = route.dji_platform if route is not None else None
+        if route is not None and drone is not None:
+            route_dispatched = TenantRouteIndex.objects.filter(
+                tenant=current_tenant,
+                route=route,
+                dji_platform=drone.dji_platform,
+                is_published=True,
+            ).exists()
+            if not route_dispatched:
+                raise serializers.ValidationError({"route": ["航线必须先下发到无人机所属 DJI 平台"]})
+        self._platform = drone.dji_platform if drone is not None else None
         return attrs
 
     def create(self, validated_data):
@@ -288,16 +332,22 @@ class V2MissionCreateSerializer(MissionCreateSerializer):
 class V2MissionUpdateSerializer(MissionUpdateSerializer):
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        current_tenant = require_request_tenant(self.context)
         instance = getattr(self, "instance", None)
         route = attrs.get("route", instance.route if instance is not None else None)
         drone = attrs.get("drone", instance.drone if instance is not None else None)
-        if route is not None and drone is not None and route.dji_platform_id != drone.dji_platform_id:
-            raise serializers.ValidationError({"dji_platform": ["route 与 drone 必须属于同一 DJI 平台"]})
-        if route is not None and route.dji_platform_id is None:
-            raise serializers.ValidationError({"route": ["v2 任务只能绑定带 DJI 平台的航线"]})
         if drone is not None and drone.dji_platform_id is None:
             raise serializers.ValidationError({"drone": ["v2 任务只能绑定带 DJI 平台的无人机"]})
-        self._platform = route.dji_platform if route is not None else None
+        if route is not None and drone is not None:
+            route_dispatched = TenantRouteIndex.objects.filter(
+                tenant=current_tenant,
+                route=route,
+                dji_platform=drone.dji_platform,
+                is_published=True,
+            ).exists()
+            if not route_dispatched:
+                raise serializers.ValidationError({"route": ["航线必须先下发到无人机所属 DJI 平台"]})
+        self._platform = drone.dji_platform if drone is not None else None
         return attrs
 
     def update(self, instance, validated_data):

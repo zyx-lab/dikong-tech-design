@@ -232,7 +232,7 @@ class RouteViewSet(
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
-    queryset = Route.objects.select_related("dji_index").all().order_by("-id")
+    queryset = Route.objects.prefetch_related("dji_indexes").all().order_by("-id")
     permission_classes = [ScopedActionPermission]
     parser_classes = [parsers.MultiPartParser, parsers.FormParser]
     http_method_names = ["get", "post", "put", "delete", "head", "options"]

@@ -1,4 +1,5 @@
 from django.db import IntegrityError, transaction
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -15,12 +16,13 @@ from apps.access.services import log_action, snapshot
 from apps.api_v1.business_response import (
     BusinessApiResponseMixin,
     StandardCode,
+    build_instance_payload,
     reject_request_body_if_present,
     standard_error_payload,
     validation_error_payload,
 )
 from apps.dji_bff.gateway import DjiGateway, DjiGatewayError
-from apps.dji_bff.models import DjiCloudPlatform, DjiCloudPlatformStatus, DjiDeviceIndex, SyncStatus, TenantMediaIndex
+from apps.dji_bff.models import DjiCloudPlatform, DjiCloudPlatformStatus, DjiDeviceIndex, SyncStatus, TenantMediaIndex, TenantRouteIndex
 from apps.dji_bff.tasks import (
     _device_is_online,
     _device_sn_from_payload,
@@ -42,7 +44,6 @@ from apps.mission.models import Mission, MissionStatus
 from apps.mission.views import MissionViewSet, _mission_state_conflict_response
 from apps.route.views import (
     RouteViewSet,
-    _require_kmz_file,
     _sync_route_index,
     _upload_route_to_upstream,
 )
@@ -63,6 +64,7 @@ from .serializers import (
     V2MissionReadSerializer,
     V2MissionUpdateSerializer,
     V2RouteCreateSerializer,
+    V2RouteDispatchSerializer,
     V2RouteReadSerializer,
     V2RouteUpdateJsonSerializer,
     V2RouteUpdateSerializer,
@@ -474,90 +476,195 @@ class V2DroneViewSet(DroneViewSet):
 
 
 class V2RouteViewSet(RouteViewSet):
+    permission_map = {**RouteViewSet.permission_map, "dispatch_route": "route.manage_route"}
+
     def get_serializer_class(self):
         if self.action == "create":
             return V2RouteCreateSerializer
         if self.action == "update":
             return V2RouteUpdateSerializer
+        if self.action == "dispatch_route":
+            return V2RouteDispatchSerializer
         return V2RouteReadSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset().filter(dji_platform__isnull=False)
+        queryset = super().get_queryset()
+        if self.action == "dispatch_route":
+            queryset = self.apply_scope(queryset)
         platform_id = self.request.query_params.get("platform_id")
         if platform_id:
-            queryset = queryset.filter(dji_platform_id=platform_id)
+            queryset = queryset.filter(dji_indexes__dji_platform_id=platform_id).distinct()
         return queryset
 
     def get_parsers(self):
         parser_classes = list(self.parser_classes)
-        if "put" in getattr(self, "action_map", {}) and "post" not in getattr(self, "action_map", {}):
+        mapped_action = getattr(self, "action", None) or getattr(self, "action_map", {}).get(
+            getattr(getattr(self, "request", None), "method", "").lower()
+        )
+        if mapped_action == "dispatch_route":
+            from rest_framework import parsers
+
+            parser_classes = [parsers.JSONParser, *parser_classes]
+        elif "put" in getattr(self, "action_map", {}) and "post" not in getattr(self, "action_map", {}):
             from rest_framework import parsers
 
             parser_classes = [parsers.JSONParser, *parser_classes]
         return [parser() for parser in parser_classes]
 
-    def _platform_from_create_serializer(self, serializer):
+    @transaction.atomic
+    def perform_create(self, serializer):
         tenant = self.get_current_tenant()
-        platform_id = serializer.validated_data.get("platform_id")
-        platform = _platform_for_tenant_or_none(tenant=tenant, platform_id=platform_id)
-        if platform is None:
-            raise serializers.ValidationError({"platform_id": ["必须提供当前租户下有效的 DJI 平台 ID"]})
-        return platform
-
-    def _gateway_for_route(self, route=None):
-        return DjiGateway(platform=getattr(route, "dji_platform", None))
-
-    def perform_create(self, serializer, *, gateway: DjiGateway, cleanup_state: dict[str, object]):
-        tenant = self.get_current_tenant()
-        platform = self._platform_from_create_serializer(serializer)
-        kmz_file = _require_kmz_file(serializer)
-
-        serializer.validated_data.pop("platform_id", None)
-        route = serializer.save(tenant=tenant, dji_platform=platform)
-        cleanup_state["route_id"] = route.id
-        dji_wayline_id, download_url = _upload_route_to_upstream(
-            gateway=gateway,
-            route_id=route.id,
-            route_name=route.name,
-            kmz_file=kmz_file,
+        route = serializer.save(tenant=tenant, dji_platform=None)
+        log_action(
+            request=self.request,
+            action="ROUTE_CREATE",
+            target_type="route",
+            target_id=route.id,
+            after_data=build_instance_payload(V2RouteReadSerializer, route, self.request),
         )
-        cleanup_state["wayline_id"] = dji_wayline_id
-        download_url = self._verify_uploaded_route_file(
-            gateway=gateway,
-            dji_wayline_id=dji_wayline_id,
-            download_url=download_url,
-        )
-        _sync_route_index(
-            tenant=tenant,
-            route=route,
-            dji_platform=platform,
-            dji_wayline_id=dji_wayline_id,
-            download_url=download_url,
-            workspace_id=gateway._workspace_id(),
-        )
-        cleanup_state["wayline_id"] = ""
-        cleanup_state["route_id"] = None
         return route
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        platform = self._platform_from_create_serializer(serializer)
-        gateway = DjiGateway(platform=platform)
-        cleanup_state: dict[str, object] = {"wayline_id": "", "route_id": None}
-        try:
-            route = self.perform_create(serializer, gateway=gateway, cleanup_state=cleanup_state)
-        except Exception:
-            self._cleanup_uploaded_wayline_after_failure(gateway=gateway, wayline_id=cleanup_state["wayline_id"])
-            self._cleanup_created_route_after_failure(route_id=cleanup_state["route_id"])
-            raise
+        route = self.perform_create(serializer)
         return Response(V2RouteReadSerializer(route, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
-    def update(self, request, *args, **kwargs):
-        return super().update(request, *args, **kwargs)
+    @transaction.atomic
+    def _finalize_dispatch(
+        self,
+        *,
+        route,
+        platform,
+        gateway,
+        dji_wayline_id: str,
+        download_url: str,
+        before_data: dict,
+    ):
+        route_index = (
+            TenantRouteIndex.objects.select_for_update()
+            .filter(route=route, dji_platform=platform)
+            .first()
+        )
+        old_wayline_id = getattr(route_index, "dji_wayline_id", "")
+        _sync_route_index(
+            tenant=self.get_current_tenant(),
+            route=route,
+            dji_platform=platform,
+            dji_wayline_id=dji_wayline_id,
+            download_url=download_url,
+            workspace_id=gateway._workspace_id(),
+            route_index=route_index,
+        )
+        log_action(
+            request=self.request,
+            action="ROUTE_DISPATCH",
+            target_type="route",
+            target_id=route.id,
+            before_data=before_data,
+            after_data=build_instance_payload(V2RouteReadSerializer, route, self.request),
+        )
+        if old_wayline_id and old_wayline_id != dji_wayline_id:
+            transaction.on_commit(
+                lambda wayline_id=old_wayline_id: self._delete_upstream_wayline_if_exists(
+                    gateway=gateway,
+                    wayline_id=wayline_id,
+                    best_effort=True,
+                ),
+                robust=True,
+            )
+        return route
 
-    def perform_update(self, serializer, *, gateway: DjiGateway | None = None, cleanup_state: dict[str, str]):
-        return super().perform_update(serializer, gateway=gateway, cleanup_state=cleanup_state)
+    @action(detail=True, methods=["post"], url_path="dispatch")
+    def dispatch_route(self, request, *args, **kwargs):
+        route = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        platform = serializer.validated_data["platform"]
+        if not route.kmz_file:
+            raise serializers.ValidationError({"kmz_file": ["航线未保存 KMZ 文件，无法下发"]})
+
+        gateway = DjiGateway(platform=platform)
+        cleanup_state = {"wayline_id": ""}
+        before_data = build_instance_payload(V2RouteReadSerializer, route, request)
+        try:
+            with route.kmz_file.open("rb") as kmz_file:
+                dji_wayline_id, download_url = _upload_route_to_upstream(
+                    gateway=gateway,
+                    route_id=route.id,
+                    route_name=route.name,
+                    kmz_file=kmz_file,
+                )
+            cleanup_state["wayline_id"] = dji_wayline_id
+            download_url = self._verify_uploaded_route_file(
+                gateway=gateway,
+                dji_wayline_id=dji_wayline_id,
+                download_url=download_url,
+            )
+            route = self._finalize_dispatch(
+                route=route,
+                platform=platform,
+                gateway=gateway,
+                dji_wayline_id=dji_wayline_id,
+                download_url=download_url,
+                before_data=before_data,
+            )
+            cleanup_state["wayline_id"] = ""
+        except Exception:
+            self._cleanup_uploaded_wayline_after_failure(gateway=gateway, wayline_id=cleanup_state["wayline_id"])
+            raise
+        return Response(V2RouteReadSerializer(route, context={"request": request}).data, status=status.HTTP_200_OK)
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        route = self.get_object()
+        if self._has_bound_mission_blocker(route):
+            return Response(
+                standard_error_payload(
+                    StandardCode.INVALID_PARAMS,
+                    "航线已被已绑定无人机的任务占用，无法更新",
+                    {"route_id": route.id},
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = self.get_serializer(route, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        if not serializer.validated_data:
+            return Response(V2RouteReadSerializer(route, context={"request": request}).data, status=status.HTTP_200_OK)
+
+        before_data = build_instance_payload(V2RouteReadSerializer, route, request)
+        kmz_replaced = "kmz_file" in serializer.validated_data
+        route = serializer.save()
+        if kmz_replaced:
+            TenantRouteIndex.objects.filter(route=route, dji_platform__isnull=False).update(
+                is_published=False,
+                updated_at=timezone.now(),
+            )
+        log_action(
+            request=request,
+            action="ROUTE_UPDATE",
+            target_type="route",
+            target_id=route.id,
+            before_data=before_data,
+            after_data=build_instance_payload(V2RouteReadSerializer, route, request),
+        )
+        return Response(V2RouteReadSerializer(route, context={"request": request}).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"], url_path="kmz")
+    def kmz(self, request, *args, **kwargs):
+        route = self.get_object()
+        if not route.kmz_file:
+            return _not_found_response()
+        try:
+            file_handle = route.kmz_file.open("rb")
+        except (FileNotFoundError, OSError):
+            return _not_found_response()
+        return FileResponse(
+            file_handle,
+            as_attachment=True,
+            filename=f"route-{route.id}.kmz",
+            content_type="application/vnd.google-earth.kmz",
+        )
 
 
 class V2MissionViewSet(MissionViewSet):

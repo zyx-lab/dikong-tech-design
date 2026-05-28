@@ -13,6 +13,7 @@ from apps.access.test_support import (
     ensure_tenant_role_binding,
     grant_role_permissions,
 )
+from apps.dji_bff.models import TenantRouteIndex
 from apps.drone.models import Drone
 from apps.flight_record.models import FlightRecord
 from apps.media_file.models import MediaFile
@@ -85,7 +86,16 @@ class V2MissionApiTests(TestCase):
             username="admin-b",
             password="secret",
         )
-        self.route_a = Route.objects.create(tenant=self.tenant, dji_platform=self.platform_a, name="平台 A 航线")
+        self.route_a = Route.objects.create(tenant=self.tenant, name="平台 A 航线")
+        TenantRouteIndex.objects.create(
+            tenant=self.tenant,
+            route=self.route_a,
+            dji_platform=self.platform_a,
+            workspace_id="workspace-a",
+            dji_wayline_id="wayline-a",
+            download_url="https://a.example.test/wayline-a.kmz",
+            is_published=True,
+        )
         self.drone_a = Drone.objects.create(
             tenant=self.tenant,
             dji_platform=self.platform_a,
@@ -105,11 +115,11 @@ class V2MissionApiTests(TestCase):
         self.client.force_authenticate(self.user)
         self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
 
-    def test_create_should_reject_route_and_drone_from_different_dji_platforms(self):
+    def test_create_should_reject_route_not_dispatched_to_drone_platform(self):
         response = self.client.post(
             "/api/v2/missions",
             {
-                "name": "平台不一致任务",
+                "name": "未下发到无人机平台任务",
                 "route": self.route_a.id,
                 "drone": self.drone_b.id,
                 "pilot": self.pilot_member.id,
@@ -118,7 +128,24 @@ class V2MissionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
-        self.assertIn("dji_platform", response.data["data"])
+        self.assertIn("route", response.data["data"])
+
+    def test_create_should_reject_route_without_any_platform_dispatch(self):
+        route = Route.objects.create(tenant=self.tenant, name="未下发航线")
+
+        response = self.client.post(
+            "/api/v2/missions",
+            {
+                "name": "未下发任务",
+                "route": route.id,
+                "drone": self.drone_a.id,
+                "pilot": self.pilot_member.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+        self.assertIn("route", response.data["data"])
 
     def test_create_should_bind_mission_to_route_and_drone_platform(self):
         response = self.client.post(

@@ -103,14 +103,23 @@ class Mission(models.Model):
             error_cls=ValidationError,
         )
         if self.dji_platform_id:
-            if self.route_id and self.route is not None and self.route.dji_platform_id != self.dji_platform_id:
+            if (
+                self.route_id
+                and self.route is not None
+                and self.route.dji_platform_id is not None
+                and self.route.dji_platform_id != self.dji_platform_id
+            ):
                 raise ValidationError({"route": "route 必须属于当前 DJI 平台"})
             if self.drone_id and self.drone is not None and self.drone.dji_platform_id != self.dji_platform_id:
                 raise ValidationError({"drone": "drone 必须属于当前 DJI 平台"})
         elif self.route_id and self.drone_id and self.route is not None and self.drone is not None:
-            if self.route.dji_platform_id != self.drone.dji_platform_id:
+            if (
+                self.route.dji_platform_id is not None
+                and self.drone.dji_platform_id is not None
+                and self.route.dji_platform_id != self.drone.dji_platform_id
+            ):
                 raise ValidationError({"dji_platform": "route 与 drone 必须属于同一 DJI 平台"})
-            self.dji_platform = self.route.dji_platform
+            self.dji_platform = self.drone.dji_platform or self.route.dji_platform
         self.route_name = self.route.name if self.route_id and self.route is not None else ""
         if self.drone_id and self.drone is not None:
             self.device_sn = self.drone.device_sn

@@ -111,7 +111,7 @@ class DjiDeviceIndex(models.Model):
 
 class TenantRouteIndex(models.Model):
     tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="dji_route_indexes")
-    route = models.OneToOneField("route.Route", on_delete=models.CASCADE, related_name="dji_index")
+    route = models.ForeignKey("route.Route", on_delete=models.CASCADE, related_name="dji_indexes")
     dji_platform = models.ForeignKey(
         "dji_bff.DjiCloudPlatform",
         on_delete=models.CASCADE,
@@ -131,6 +131,16 @@ class TenantRouteIndex(models.Model):
         db_table = "tenant_route_indexes"
         ordering = ["-id"]
         constraints = [
+            models.UniqueConstraint(
+                fields=["route"],
+                condition=Q(dji_platform__isnull=True),
+                name="uniq_route_legacy_index",
+            ),
+            models.UniqueConstraint(
+                fields=["route", "dji_platform"],
+                condition=Q(dji_platform__isnull=False),
+                name="uniq_route_platform_index",
+            ),
             models.UniqueConstraint(
                 fields=["dji_platform", "dji_wayline_id"],
                 condition=Q(dji_platform__isnull=False) & Q(dji_wayline_id__isnull=False) & ~Q(dji_wayline_id=""),
