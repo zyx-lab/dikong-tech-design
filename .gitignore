@@ -6,6 +6,7 @@ deprecated/
 *.pyd
 db.sqlite3
 db.sqlite3.bak.*
+db.regression.sqlite3*
 .env
 .DS_Store
 .lsp/

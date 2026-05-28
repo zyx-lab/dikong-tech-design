@@ -78,6 +78,21 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
+
+def _build_sqlite_database_config():
+    sqlite_db_name = os.getenv("SQLITE_DB_NAME", "db.sqlite3")
+    sqlite_db_path = Path(sqlite_db_name)
+    if not sqlite_db_path.is_absolute():
+        sqlite_db_path = BASE_DIR / sqlite_db_path
+    return {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": sqlite_db_path,
+        "OPTIONS": {
+            "timeout": 20,
+        },
+    }
+
+
 DB_ENGINE = os.getenv("DB_ENGINE", "sqlite").lower()
 if DB_ENGINE == "postgres":
     DATABASES = {
@@ -92,13 +107,7 @@ if DB_ENGINE == "postgres":
     }
 else:
     DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-            "OPTIONS": {
-                "timeout": 20,
-            },
-        }
+        "default": _build_sqlite_database_config(),
     }
 
 AUTH_PASSWORD_VALIDATORS = [

@@ -1,3 +1,7 @@
+import os
+from unittest.mock import patch
+
+import config.settings as project_settings
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -22,6 +26,14 @@ class DatabaseSettingsTests(SimpleTestCase):
 
         self.assertEqual(default_db["ENGINE"], "django.db.backends.sqlite3")
         self.assertEqual(default_db["OPTIONS"]["timeout"], 20)
+
+    def test_sqlite_database_config_should_use_sqlite_db_name_environment_variable(self):
+        with patch.dict(os.environ, {"SQLITE_DB_NAME": "db.regression.sqlite3"}):
+            database_config = project_settings._build_sqlite_database_config()
+
+        self.assertEqual(database_config["ENGINE"], "django.db.backends.sqlite3")
+        self.assertEqual(database_config["NAME"], project_settings.BASE_DIR / "db.regression.sqlite3")
+        self.assertEqual(database_config["OPTIONS"]["timeout"], 20)
 
 
 class AccessValidationHelperTests(TestCase):
