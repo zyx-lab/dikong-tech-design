@@ -1,3 +1,6 @@
+import os
+import unittest
+import uuid
 from io import BytesIO
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -16,6 +19,10 @@ from apps.dji_bff.models import TenantRouteIndex
 from apps.route.models import Route
 
 User = get_user_model()
+
+
+def _object_storage_tests_enabled():
+    return os.getenv("OBJECT_STORAGE_INTEGRATION_TESTS", "").lower() in {"1", "true", "yes", "on"}
 
 
 def DjiCloudPlatform():
@@ -295,3 +302,194 @@ class V2RouteApiTests(TestCase):
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         route_ids = [item["id"] for item in response.data["data"]["list"]]
         self.assertEqual(route_ids, [route_a_id])
+
+
+@unittest.skipUnless(
+    _object_storage_tests_enabled(),
+    "set OBJECT_STORAGE_INTEGRATION_TESTS=true and S3/MinIO env vars to run object storage integration tests",
+)
+class V2RouteObjectStorageIntegrationTests(TestCase):
+    KMZ_CONTENT_TYPE = "application/vnd.google-earth.kmz"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        try:
+            import boto3
+            from botocore.config import Config
+            import storages.backends.s3
+        except ImportError as exc:
+            raise unittest.SkipTest("install django-storages[s3] to run object storage integration tests") from exc
+
+        cls.boto3 = boto3
+        cls.Config = Config
+        cls.s3_storage_module = storages.backends.s3
+        cls.bucket_name = os.getenv("OBJECT_STORAGE_TEST_BUCKET") or os.getenv("AWS_STORAGE_BUCKET_NAME")
+        if not cls.bucket_name:
+            raise unittest.SkipTest("OBJECT_STORAGE_TEST_BUCKET or AWS_STORAGE_BUCKET_NAME is required")
+
+        cls.endpoint_url = (
+            os.getenv("OBJECT_STORAGE_TEST_ENDPOINT_URL")
+            or os.getenv("AWS_S3_ENDPOINT_URL")
+            or os.getenv("OBJECT_STORAGE_ENDPOINT_URL")
+            or None
+        )
+        cls.access_key = (
+            os.getenv("OBJECT_STORAGE_TEST_ACCESS_KEY_ID")
+            or os.getenv("AWS_ACCESS_KEY_ID")
+            or os.getenv("OBJECT_STORAGE_ACCESS_KEY_ID")
+            or None
+        )
+        cls.secret_key = (
+            os.getenv("OBJECT_STORAGE_TEST_SECRET_ACCESS_KEY")
+            or os.getenv("AWS_SECRET_ACCESS_KEY")
+            or os.getenv("OBJECT_STORAGE_SECRET_ACCESS_KEY")
+            or None
+        )
+        cls.region_name = (
+            os.getenv("OBJECT_STORAGE_TEST_REGION_NAME")
+            or os.getenv("AWS_S3_REGION_NAME")
+            or os.getenv("OBJECT_STORAGE_REGION_NAME")
+            or None
+        )
+        cls.addressing_style = (
+            os.getenv("OBJECT_STORAGE_TEST_ADDRESSING_STYLE")
+            or os.getenv("AWS_S3_ADDRESSING_STYLE")
+            or ("path" if cls.endpoint_url else "")
+        )
+
+    def setUp(self):
+        super().setUp()
+        self.storage_prefix = f"integration-tests/v2-routes/{uuid.uuid4().hex}"
+        self.s3_client = self._build_s3_client()
+        self.storage_options = self._build_storage_options()
+        self.override_settings = override_settings(
+            STORAGES={
+                "default": {
+                    "BACKEND": "storages.backends.s3.S3Storage",
+                    "OPTIONS": self.storage_options,
+                },
+                "staticfiles": {
+                    "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+                },
+            }
+        )
+        self.override_settings.enable()
+        self.addCleanup(self.override_settings.disable)
+        self.addCleanup(self._cleanup_storage_prefix)
+
+        self.client = APIClient()
+        self.user = User.objects.create_user(username=f"v2_route_s3_{uuid.uuid4().hex[:8]}", password="pass1234", status=1)
+        ensure_staff_profile(self.user, name="V2 对象存储航线管理员", employment_status=EmploymentStatus.ACTIVE)
+        self.tenant, self.member, self.role = ensure_tenant_role_binding(
+            self.user,
+            tenant_code=f"v2_route_s3_{uuid.uuid4().hex[:8]}",
+            role_code="v2_route_s3_role",
+            role_name="V2 对象存储航线角色",
+        )
+        grant_role_permissions(
+            self.role,
+            {
+                "route.view_route": ScopeType.ALL,
+                "route.manage_route": ScopeType.ALL,
+            },
+        )
+        self.client.force_authenticate(self.user)
+        self.client.credentials(HTTP_X_TENANT_CODE=self.tenant.code)
+
+    def _build_s3_client(self):
+        kwargs = {
+            "service_name": "s3",
+            "endpoint_url": self.endpoint_url,
+            "aws_access_key_id": self.access_key,
+            "aws_secret_access_key": self.secret_key,
+            "region_name": self.region_name,
+        }
+        if self.addressing_style:
+            kwargs["config"] = self.Config(s3={"addressing_style": self.addressing_style})
+        return self.boto3.client(**kwargs)
+
+    def _build_storage_options(self):
+        options = {
+            "bucket_name": self.bucket_name,
+            "location": self.storage_prefix,
+            "querystring_auth": True,
+            "default_acl": "private",
+        }
+        optional_options = {
+            "endpoint_url": self.endpoint_url,
+            "access_key": self.access_key,
+            "secret_key": self.secret_key,
+            "region_name": self.region_name,
+            "addressing_style": self.addressing_style,
+        }
+        options.update({key: value for key, value in optional_options.items() if value})
+        return options
+
+    def _cleanup_storage_prefix(self):
+        paginator = self.s3_client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=f"{self.storage_prefix}/"):
+            objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]
+            if objects:
+                self.s3_client.delete_objects(Bucket=self.bucket_name, Delete={"Objects": objects})
+
+    @staticmethod
+    def _build_test_kmz(route_name="route") -> bytes:
+        buffer = BytesIO()
+        with ZipFile(buffer, "w") as archive:
+            archive.writestr("template.kml", f"<kml><Document><name>{route_name}</name></Document></kml>")
+            archive.writestr("waylines.wpml", f"<wpml>{route_name}</wpml>")
+        return buffer.getvalue()
+
+    def _kmz_upload(self, name: str, content: bytes):
+        return SimpleUploadedFile(name, content, content_type=self.KMZ_CONTENT_TYPE)
+
+    def _object_key_for(self, route: Route) -> str:
+        return f"{self.storage_prefix}/{route.kmz_file.name}".strip("/")
+
+    def _read_object_bytes(self, route: Route) -> bytes:
+        response = self.s3_client.get_object(Bucket=self.bucket_name, Key=self._object_key_for(route))
+        try:
+            return response["Body"].read()
+        finally:
+            response["Body"].close()
+
+    def _response_body(self, response):
+        return b"".join(response.streaming_content)
+
+    def test_create_update_and_download_should_round_trip_kmz_through_object_storage(self):
+        initial_kmz = self._build_test_kmz("object-storage-initial")
+        updated_kmz = self._build_test_kmz("object-storage-updated")
+
+        create_response = self.client.post(
+            "/api/v2/routes",
+            {
+                "name": "对象存储航线",
+                "kmz_file": self._kmz_upload("route.kmz", initial_kmz),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(create_response.status_code, 201, getattr(create_response, "data", create_response.content))
+        route = Route.objects.get(id=create_response.data["data"]["id"])
+        self.assertIsInstance(route.kmz_file.storage, self.s3_storage_module.S3Storage)
+        self.assertEqual(self._read_object_bytes(route), initial_kmz)
+
+        download_response = self.client.get(f"/api/v2/routes/{route.id}/kmz")
+        self.assertEqual(download_response.status_code, 200)
+        self.assertEqual(self._response_body(download_response), initial_kmz)
+
+        update_response = self.client.put(
+            f"/api/v2/routes/{route.id}",
+            {
+                "kmz_file": self._kmz_upload("updated.kmz", updated_kmz),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(update_response.status_code, 200, getattr(update_response, "data", update_response.content))
+        route.refresh_from_db()
+        self.assertEqual(self._read_object_bytes(route), updated_kmz)
+        updated_download_response = self.client.get(f"/api/v2/routes/{route.id}/kmz")
+        self.assertEqual(updated_download_response.status_code, 200)
+        self.assertEqual(self._response_body(updated_download_response), updated_kmz)
