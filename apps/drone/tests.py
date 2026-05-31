@@ -444,6 +444,39 @@ class DroneApiTests(MockDjiUpstreamTestMixin, TestCase):
             video_quality=3,
         )
 
+    def test_live_start_should_expose_browser_play_url_from_hls_url(self):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code="DJ-LIVE-BROWSER-001",
+            name="直播浏览器播放设备",
+            model="M30",
+            device_sn="SN-LIVE-BROWSER-001",
+            created_by_tenant_member_id=self.member.id,
+        )
+
+        with patch(
+            "apps.drone.views.DjiGateway.start_live",
+            return_value={
+                "play_url": "http://drone-java-api.metop.com.cn:8889/live/SN-LIVE-BROWSER-001-88-0-0",
+                "hls_url": "https://drone-java-api.metop.com.cn/hls/live/SN-LIVE-BROWSER-001-88-0-0/index.m3u8",
+            },
+        ):
+            response = self.client.post(
+                f"/api/v1/drones/{drone.id}/live/start",
+                {"video_id": "SN-LIVE-BROWSER-001/88-0-0/normal-0", "url_type": 1, "video_quality": 0},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            response.data["data"]["browser_play_url"],
+            "https://drone-java-api.metop.com.cn/hls/live/SN-LIVE-BROWSER-001-88-0-0/index.m3u8",
+        )
+        self.assertEqual(
+            response.data["data"]["play_url"],
+            "http://drone-java-api.metop.com.cn:8889/live/SN-LIVE-BROWSER-001-88-0-0",
+        )
+
     def test_live_start_should_reject_legacy_mapped_fields(self):
         drone = Drone.objects.create(
             tenant=self.tenant,
