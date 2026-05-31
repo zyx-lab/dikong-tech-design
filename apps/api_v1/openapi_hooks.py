@@ -130,7 +130,7 @@ def standardize_response_schema_hook(result, generator, request, public):
 
     paths = result.get("paths", {})
     for path, path_item in paths.items():
-        if not path.startswith("/api/v1/"):
+        if not (path.startswith("/api/v1/") or path.startswith("/api/v2/")):
             continue
         for operation in path_item.values():
             if not isinstance(operation, dict):

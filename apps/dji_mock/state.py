@@ -49,6 +49,7 @@ class MockDjiState:
             self.live_streams: dict[str, dict] = {}
             self.seed_device(device_sn="MOCK-DRONE-001", name="Mock Drone 1", model="Matrice 30T")
             self.seed_device(device_sn="MOCK-DRONE-002", name="Mock Drone 2", model="Matrice 3D")
+            self.seed_device(device_sn="MOCK-DOCK-001", name="Mock Dock 1", model="Dock 2", domain=3)
             self.seed_media_file(
                 file_id="mock-file-001",
                 name="DJI_0001.JPG",
@@ -134,23 +135,26 @@ class MockDjiState:
                 self.bound_device_sns.add(device_sn)
             else:
                 self.bound_device_sns.discard(device_sn)
-            self.live_capacity[device_sn] = {
-                "sn": device_sn,
-                "name": name,
-                "cameras_list": [
-                    {
-                        "id": f"{device_sn}-camera-0",
-                        "index": "88-0-0",
-                        "videos_list": [
-                            {
-                                "id": f"{device_sn}-video-normal-0",
-                                "index": "normal-0",
-                                "type": "normal",
-                            }
-                        ],
-                    }
-                ],
-            }
+            if domain == 0:
+                self.live_capacity[device_sn] = {
+                    "sn": device_sn,
+                    "name": name,
+                    "cameras_list": [
+                        {
+                            "id": f"{device_sn}-camera-0",
+                            "index": "88-0-0",
+                            "videos_list": [
+                                {
+                                    "id": f"{device_sn}-video-normal-0",
+                                    "index": "normal-0",
+                                    "type": "normal",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            else:
+                self.live_capacity.pop(device_sn, None)
 
     @staticmethod
     def _paginate(items: list[dict], *, page: int, page_size: int) -> dict:

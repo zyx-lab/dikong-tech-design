@@ -111,7 +111,9 @@ def custom_exception_handler(exc, context):
     """DRF exception handler with a dedicated /api/v1 standard envelope."""
     response = exception_handler(exc, context)
     request = context.get("request")
-    is_business_api = request is not None and request.path.startswith("/api/v1/")
+    is_business_api = request is not None and (
+        request.path.startswith("/api/v1/") or request.path.startswith("/api/v2/")
+    )
 
     if response is not None:
         if is_business_api:
