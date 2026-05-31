@@ -3,7 +3,11 @@ from rest_framework import serializers
 
 from apps.access.api_v1.base import StrictSerializer
 from apps.access.models import DirectoryStatus
+from apps.flight_record.models import FlightRecord
 from apps.iam_v2.models import ResourceShareGroup, ResourceShareGroupTargetDepartment
+from apps.media_file.models import MediaFile
+from apps.mission.flight_state import resolve_mission_display_status
+from apps.mission.models import Mission
 from apps.resource_v2.models import (
     DjiConnection,
     DockResource,
@@ -15,6 +19,7 @@ from apps.resource_v2.models import (
     V2AuditLog,
 )
 from apps.resource_v2.services import effective_permissions_for_binding, normalize_base_url
+from apps.route.models import Route
 
 
 SHARE_PERMISSION_ORDER = ["view", "monitor", "dispatch_task", "review_task", "edit_config"]
@@ -165,6 +170,136 @@ class ResourceReadSerializer(serializers.Serializer):
     onlineStatus = serializers.BooleanField()
     ownerDepartment = serializers.DictField()
     effectivePermissions = serializers.ListField(child=serializers.CharField())
+
+
+class V2RouteReadSerializer(serializers.ModelSerializer):
+    isPublished = serializers.SerializerMethodField(method_name="get_is_published")
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
+
+    class Meta:
+        model = Route
+        fields = ["id", "name", "isPublished", "createdAt", "updatedAt"]
+        read_only_fields = fields
+
+    def get_is_published(self, obj) -> bool:
+        return bool(getattr(getattr(obj, "dji_index", None), "is_published", False))
+
+
+class V2MissionReadSerializer(serializers.ModelSerializer):
+    routeId = serializers.IntegerField(source="route_id", allow_null=True, read_only=True)
+    routeName = serializers.CharField(source="route_name", read_only=True)
+    droneId = serializers.IntegerField(source="drone_id", allow_null=True, read_only=True)
+    deviceSn = serializers.CharField(source="device_sn", read_only=True)
+    droneName = serializers.CharField(source="drone_name", read_only=True)
+    pilotId = serializers.IntegerField(source="pilot_id", read_only=True)
+    pilotName = serializers.CharField(source="pilot_name", read_only=True)
+    scheduledAt = serializers.DateTimeField(source="scheduled_at", allow_null=True, read_only=True)
+    startedAt = serializers.DateTimeField(source="started_at", allow_null=True, read_only=True)
+    finishedAt = serializers.DateTimeField(source="finished_at", allow_null=True, read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
+    status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Mission
+        fields = [
+            "id",
+            "name",
+            "routeId",
+            "routeName",
+            "droneId",
+            "deviceSn",
+            "droneName",
+            "pilotId",
+            "pilotName",
+            "scheduledAt",
+            "startedAt",
+            "finishedAt",
+            "remark",
+            "status",
+            "createdAt",
+            "updatedAt",
+        ]
+        read_only_fields = fields
+
+    def get_status(self, obj) -> int:
+        return resolve_mission_display_status(obj)
+
+
+class V2FlightRecordReadSerializer(serializers.ModelSerializer):
+    flightNo = serializers.CharField(source="flight_no", read_only=True)
+    missionId = serializers.IntegerField(source="mission_id", allow_null=True, read_only=True)
+    missionName = serializers.CharField(source="mission_name", read_only=True)
+    routeName = serializers.CharField(source="route_name", read_only=True)
+    airportName = serializers.CharField(source="airport_name", read_only=True)
+    droneId = serializers.IntegerField(source="drone_id", allow_null=True, read_only=True)
+    deviceSn = serializers.CharField(source="device_sn", read_only=True)
+    droneName = serializers.CharField(source="drone_name", read_only=True)
+    pilotId = serializers.IntegerField(source="pilot_id", allow_null=True, read_only=True)
+    pilotName = serializers.CharField(source="pilot_name", read_only=True)
+    startTime = serializers.DateTimeField(source="start_time", allow_null=True, read_only=True)
+    endTime = serializers.DateTimeField(source="end_time", allow_null=True, read_only=True)
+    flightDuration = serializers.IntegerField(source="flight_duration", allow_null=True, read_only=True)
+    photoCount = serializers.IntegerField(source="photo_count", read_only=True)
+    videoCount = serializers.IntegerField(source="video_count", read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
+
+    class Meta:
+        model = FlightRecord
+        fields = [
+            "id",
+            "flightNo",
+            "missionId",
+            "missionName",
+            "routeName",
+            "airportName",
+            "droneId",
+            "deviceSn",
+            "droneName",
+            "pilotId",
+            "pilotName",
+            "startTime",
+            "endTime",
+            "flightDuration",
+            "photoCount",
+            "videoCount",
+            "status",
+            "createdAt",
+            "updatedAt",
+        ]
+        read_only_fields = fields
+
+
+class V2MediaFileReadSerializer(serializers.ModelSerializer):
+    flightRecordId = serializers.IntegerField(source="flight_record_id", allow_null=True, read_only=True)
+    missionId = serializers.IntegerField(source="mission_id", allow_null=True, read_only=True)
+    deviceSn = serializers.CharField(source="device_sn", read_only=True)
+    mediaType = serializers.IntegerField(source="media_type", read_only=True)
+    fileName = serializers.CharField(source="file_name", read_only=True)
+    thumbnailUrl = serializers.CharField(source="thumbnail_url", read_only=True)
+    fileSize = serializers.IntegerField(source="file_size", allow_null=True, read_only=True)
+    capturedAt = serializers.DateTimeField(source="captured_at", allow_null=True, read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+
+    class Meta:
+        model = MediaFile
+        fields = [
+            "id",
+            "flightRecordId",
+            "missionId",
+            "deviceSn",
+            "mediaType",
+            "fileName",
+            "thumbnailUrl",
+            "fileSize",
+            "latitude",
+            "longitude",
+            "capturedAt",
+            "createdAt",
+        ]
+        read_only_fields = fields
 
 
 class BindingCreateSerializer(StrictSerializer):

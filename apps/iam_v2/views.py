@@ -23,7 +23,7 @@ from apps.iam_v2.serializers import (
     fixed_role_payloads,
 )
 from apps.iam_v2.services import is_department_admin, is_platform_super_admin, require_platform_super_admin, resolve_v2_context
-from apps.resource_v2.models import V2AuditLog
+from apps.resource_v2.audit import log_v2_action
 
 User = get_user_model()
 
@@ -48,13 +48,6 @@ def _duplicate_payload_response(data):
 
 def _not_found_response():
     return Response(standard_error_payload(StandardCode.NOT_FOUND, "资源不存在", None), status=status.HTTP_404_NOT_FOUND)
-
-
-def _client_ip(request):
-    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "") if request is not None else ""
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR") if request is not None else None
 
 
 def _account_queryset():
@@ -85,17 +78,28 @@ def _replace_account_roles(*, account: V2AccountProfile, role_codes: list[str], 
 
 
 def _log_account_action(*, request, context, action: str, account: V2AccountProfile, before_data=None, after_data=None):
-    return V2AuditLog.objects.create(
+    return log_v2_action(
+        request=request,
+        context=context,
         action=action,
-        actor_user=context.user,
-        actor_department=context.department,
-        resource_owner_department=account.department,
         target_type="v2_account",
-        target_id=str(account.id),
+        target_id=account.id,
+        resource_owner_department=account.department,
         before_data=before_data,
         after_data=after_data,
-        ip=_client_ip(request),
-        request_id=getattr(request, "request_id", "") if request is not None else "",
+    )
+
+
+def _log_department_action(*, request, context, action: str, department: Department, before_data=None, after_data=None):
+    return log_v2_action(
+        request=request,
+        context=context,
+        action=action,
+        target_type="v2_department",
+        target_id=department.id,
+        resource_owner_department=department,
+        before_data=before_data,
+        after_data=after_data,
     )
 
 
@@ -159,7 +163,15 @@ class DepartmentListCreateView(V2IamAPIView):
             department = serializer.save()
         except IntegrityError as exc:
             return _duplicate_response(exc)
-        return Response(DepartmentReadSerializer(department).data, status=status.HTTP_201_CREATED)
+        data = DepartmentReadSerializer(department).data
+        _log_department_action(
+            request=request,
+            context=context,
+            action="create_department",
+            department=department,
+            after_data=data,
+        )
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class DepartmentDetailView(V2IamAPIView):
@@ -170,40 +182,70 @@ class DepartmentDetailView(V2IamAPIView):
         return department
 
     def put(self, request, id: int):
-        require_platform_super_admin(request)
+        context = require_platform_super_admin(request)
         department = self._department(id)
         serializer = DepartmentUpdateSerializer(
             data=request.data,
             context={"department": department},
         )
         serializer.is_valid(raise_exception=True)
+        before_data = DepartmentReadSerializer(department).data
         try:
             department = serializer.update(department, serializer.validated_data)
         except IntegrityError as exc:
             return _duplicate_response(exc)
-        return Response(DepartmentReadSerializer(department).data, status=status.HTTP_200_OK)
+        after_data = DepartmentReadSerializer(department).data
+        _log_department_action(
+            request=request,
+            context=context,
+            action="update_department",
+            department=department,
+            before_data=before_data,
+            after_data=after_data,
+        )
+        return Response(after_data, status=status.HTTP_200_OK)
 
 
 class DepartmentEnableView(V2IamAPIView):
     def post(self, request, id: int):
-        require_platform_super_admin(request)
+        context = require_platform_super_admin(request)
         department = Department.objects.filter(pk=id).first()
         if department is None:
             return Response(standard_error_payload(StandardCode.NOT_FOUND, "资源不存在", None), status=status.HTTP_404_NOT_FOUND)
+        before_data = DepartmentReadSerializer(department).data
         department.status = DirectoryStatus.ACTIVE
         department.save(update_fields=["status", "updated_at"])
-        return Response(DepartmentReadSerializer(department).data, status=status.HTTP_200_OK)
+        after_data = DepartmentReadSerializer(department).data
+        _log_department_action(
+            request=request,
+            context=context,
+            action="enable_department",
+            department=department,
+            before_data=before_data,
+            after_data=after_data,
+        )
+        return Response(after_data, status=status.HTTP_200_OK)
 
 
 class DepartmentDisableView(V2IamAPIView):
     def post(self, request, id: int):
-        require_platform_super_admin(request)
+        context = require_platform_super_admin(request)
         department = Department.objects.filter(pk=id).first()
         if department is None:
             return Response(standard_error_payload(StandardCode.NOT_FOUND, "资源不存在", None), status=status.HTTP_404_NOT_FOUND)
+        before_data = DepartmentReadSerializer(department).data
         department.status = DirectoryStatus.DISABLED
         department.save(update_fields=["status", "updated_at"])
-        return Response(DepartmentReadSerializer(department).data, status=status.HTTP_200_OK)
+        after_data = DepartmentReadSerializer(department).data
+        _log_department_action(
+            request=request,
+            context=context,
+            action="disable_department",
+            department=department,
+            before_data=before_data,
+            after_data=after_data,
+        )
+        return Response(after_data, status=status.HTTP_200_OK)
 
 
 class RoleListView(V2IamAPIView):

@@ -4,6 +4,7 @@ from django.db.models import Q, QuerySet
 
 from apps.access.exceptions import StandardForbidden, StandardNotFound
 from apps.access.models import DirectoryStatus
+from apps.flight_record.models import FlightRecord
 from apps.iam_v2.models import FixedRole
 from apps.iam_v2.services import (
     PERMISSION_ORDER,
@@ -11,6 +12,9 @@ from apps.iam_v2.services import (
     is_platform_super_admin,
     role_permissions,
 )
+from apps.media_file.models import MediaFile
+from apps.mission.models import Mission
+from apps.resource_v2.audit import log_v2_action
 from apps.resource_v2.models import (
     BindingActionType,
     BindingStatus,
@@ -21,8 +25,8 @@ from apps.resource_v2.models import (
     ResourceBindingHistory,
     ResourceSharePermission,
     ResourceType,
-    V2AuditLog,
 )
+from apps.route.models import Route
 
 
 RESOURCE_MODELS = {
@@ -63,42 +67,6 @@ def dji_connection_snapshot(connection: DjiConnection) -> dict:
         "username": connection.username,
         "workspace_id": connection.workspace_id,
     }
-
-
-def _client_ip(request):
-    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "") if request is not None else ""
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR") if request is not None else None
-
-
-def log_v2_action(
-    *,
-    request,
-    context,
-    action: str,
-    target_type: str,
-    target_id=None,
-    resource_owner_department=None,
-    resource_type: str = "",
-    resource_object_id=None,
-    before_data=None,
-    after_data=None,
-):
-    return V2AuditLog.objects.create(
-        action=action,
-        actor_user=context.user if context is not None else getattr(request, "user", None),
-        actor_department=getattr(context, "department", None),
-        resource_owner_department=resource_owner_department,
-        resource_type=resource_type or "",
-        resource_object_id=str(resource_object_id or ""),
-        target_type=target_type,
-        target_id=str(target_id or ""),
-        before_data=before_data,
-        after_data=after_data,
-        ip=_client_ip(request),
-        request_id=getattr(request, "request_id", "") if request is not None else "",
-    )
 
 
 def can_manage_connection(context, connection: DjiConnection) -> bool:
@@ -149,6 +117,83 @@ def visible_bindings_queryset(context, *, resource_type: str) -> QuerySet:
     )
     hierarchy_filter = Q(owner_department__tenant=context.department.tenant, owner_department__path__startswith=context.department.path)
     return queryset.filter(hierarchy_filter | shared_resource_filter).distinct()
+
+
+def visible_drone_device_sns_queryset(context) -> QuerySet:
+    queryset = visible_bindings_queryset(context, resource_type=ResourceType.DRONE)
+    if is_platform_super_admin(context):
+        queryset = queryset.filter(owner_department__tenant=context.department.tenant)
+    return DroneResource.objects.filter(pk__in=queryset.values("resource_object_id")).values("device_sn")
+
+
+def _visible_drone_sn_filter(context, *lookups: str) -> Q:
+    visible_sns = visible_drone_device_sns_queryset(context)
+    query = Q()
+    for lookup in lookups:
+        query |= Q(**{f"{lookup}__in": visible_sns})
+    return query
+
+
+def visible_missions_queryset(context) -> QuerySet:
+    queryset = (
+        Mission.objects.select_related("route", "drone", "pilot__user__staff_profile")
+        .filter(tenant=context.department.tenant, is_deleted=False)
+        .order_by("-id")
+    )
+    if is_platform_super_admin(context):
+        return queryset
+    return queryset.filter(_visible_drone_sn_filter(context, "device_sn", "drone__device_sn")).distinct()
+
+
+def visible_routes_queryset(context) -> QuerySet:
+    queryset = (
+        Route.objects.prefetch_related("dji_indexes")
+        .filter(tenant=context.department.tenant)
+        .order_by("-id")
+    )
+    if is_platform_super_admin(context):
+        return queryset
+    visible_route_ids = visible_missions_queryset(context).exclude(route_id__isnull=True).values("route_id")
+    return queryset.filter(pk__in=visible_route_ids)
+
+
+def visible_flight_records_queryset(context) -> QuerySet:
+    queryset = (
+        FlightRecord.objects.select_related("mission", "drone", "pilot__user__staff_profile")
+        .filter(tenant=context.department.tenant, is_deleted=False)
+        .order_by("-id")
+    )
+    if is_platform_super_admin(context):
+        return queryset
+    return queryset.filter(
+        _visible_drone_sn_filter(
+            context,
+            "device_sn",
+            "drone__device_sn",
+            "mission__device_sn",
+            "mission__drone__device_sn",
+        )
+    ).distinct()
+
+
+def visible_media_files_queryset(context) -> QuerySet:
+    queryset = (
+        MediaFile.objects.select_related("flight_record", "flight_record__drone", "mission", "mission__drone")
+        .filter(tenant=context.department.tenant, is_deleted=False)
+        .order_by("-id")
+    )
+    if is_platform_super_admin(context):
+        return queryset
+    return queryset.filter(
+        _visible_drone_sn_filter(
+            context,
+            "device_sn",
+            "flight_record__device_sn",
+            "flight_record__drone__device_sn",
+            "mission__device_sn",
+            "mission__drone__device_sn",
+        )
+    ).distinct()
 
 
 def _shared_permissions_for_department(context, binding: ResourceBinding) -> list[str] | None:

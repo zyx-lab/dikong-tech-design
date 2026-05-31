@@ -1,0 +1,37 @@
+from apps.resource_v2.models import V2AuditLog
+
+
+def _client_ip(request):
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "") if request is not None else ""
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR") if request is not None else None
+
+
+def log_v2_action(
+    *,
+    request,
+    context,
+    action: str,
+    target_type: str,
+    target_id=None,
+    resource_owner_department=None,
+    resource_type: str = "",
+    resource_object_id=None,
+    before_data=None,
+    after_data=None,
+):
+    return V2AuditLog.objects.create(
+        action=action,
+        actor_user=context.user if context is not None else getattr(request, "user", None),
+        actor_department=getattr(context, "department", None),
+        resource_owner_department=resource_owner_department,
+        resource_type=resource_type or "",
+        resource_object_id=str(resource_object_id or ""),
+        target_type=target_type,
+        target_id=str(target_id or ""),
+        before_data=before_data,
+        after_data=after_data,
+        ip=_client_ip(request),
+        request_id=getattr(request, "request_id", "") if request is not None else "",
+    )

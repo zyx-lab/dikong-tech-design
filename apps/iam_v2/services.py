@@ -78,3 +78,12 @@ def role_permissions(role_codes: list[str]) -> list[str]:
     for role_code in role_codes:
         permissions.update(ROLE_OPERATION_PERMISSIONS.get(role_code, set()))
     return [permission for permission in PERMISSION_ORDER if permission in permissions]
+
+
+def has_v2_operation_permission(context: V2RequestContext, permission: str) -> bool:
+    return permission in role_permissions(context.role_codes)
+
+
+def require_v2_operation_permission(context: V2RequestContext, permission: str) -> None:
+    if not has_v2_operation_permission(context, permission):
+        raise StandardForbidden()

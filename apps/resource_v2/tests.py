@@ -5,8 +5,11 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus, Tenant, TenantStatus
+from apps.access.test_support import ensure_tenant_role_binding
 from apps.dji_bff.gateway import GatewayResponse
 from apps.dji_bff.models import DjiDeviceIndex
+from apps.drone.models import Drone
+from apps.flight_record.models import FlightRecord, FlightRecordStatus
 from apps.iam_v2.models import (
     Department,
     FixedRole,
@@ -15,6 +18,8 @@ from apps.iam_v2.models import (
     V2AccountProfile,
     V2AccountRoleAssignment,
 )
+from apps.media_file.models import MediaFile, MediaType
+from apps.mission.models import Mission, MissionStatus
 from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import (
     BindingActionType,
@@ -28,14 +33,16 @@ from apps.resource_v2.models import (
     ResourceType,
     V2AuditLog,
 )
+from apps.route.models import Route
 
 User = get_user_model()
 
 
-def create_v2_actor(*, username: str, role_code: str, department: Department):
-    user = User.objects.create_user(username=username, password="pass1234", status=1)
+def create_v2_actor(*, username: str, role_code: str | None, department: Department, is_platform_admin: bool = False):
+    user = User.objects.create_user(username=username, password="pass1234", status=1, is_platform_admin=is_platform_admin)
     profile = V2AccountProfile.objects.create(user=user, department=department)
-    V2AccountRoleAssignment.objects.create(account_profile=profile, role_code=role_code, assigned_by_user=user)
+    if role_code is not None:
+        V2AccountRoleAssignment.objects.create(account_profile=profile, role_code=role_code, assigned_by_user=user)
     return user
 
 
@@ -102,6 +109,17 @@ class ResourceV2ApiTests(TestCase):
             role_code=FixedRole.TASK_MONITOR_DISPATCHER,
             department=self.other,
         )
+        self.no_role_user = create_v2_actor(
+            username="no_role_user",
+            role_code=None,
+            department=self.child,
+        )
+        self.legacy_platform_admin = create_v2_actor(
+            username="legacy_platform_admin",
+            role_code=None,
+            department=self.child,
+            is_platform_admin=True,
+        )
         self.platform_super = create_v2_actor(
             username="platform_super",
             role_code=FixedRole.PLATFORM_SUPER_ADMIN,
@@ -110,6 +128,336 @@ class ResourceV2ApiTests(TestCase):
 
     def authenticate(self, user):
         self.client.force_authenticate(user)
+
+    def create_legacy_pilot(self, username: str):
+        pilot_user = User.objects.create_user(username=username, password="pass1234", status=1)
+        _tenant, member, _role = ensure_tenant_role_binding(
+            pilot_user,
+            tenant=self.tenant,
+            role_code="pilot_operator",
+            role_name="飞手",
+        )
+        return member
+
+    def bind_v2_drone(self, *, department: Department, actor, device_sn: str):
+        connection = DjiConnection.objects.create(
+            owner_department=department,
+            name=f"{device_sn} DJI",
+            base_url=f"https://{device_sn.lower()}.example.test",
+            username="adminPC1",
+            password="secret",
+            created_by_user=actor,
+        )
+        resource = DroneResource.objects.create(device_sn=device_sn, name=f"{device_sn} 资源", model="M30")
+        ResourceBinding.objects.create(
+            resource_type=ResourceType.DRONE,
+            resource_object_id=resource.id,
+            owner_department=department,
+            dji_connection=connection,
+            status=BindingStatus.ACTIVE,
+            bound_by_user=actor,
+        )
+        return resource
+
+    def create_legacy_business_set(self, *, device_sn: str, name_prefix: str, pilot):
+        drone = Drone.objects.create(
+            tenant=self.tenant,
+            code=f"{name_prefix}-DRONE",
+            name=f"{name_prefix}无人机",
+            model="M30",
+            device_sn=device_sn,
+        )
+        route = Route.objects.create(tenant=self.tenant, name=f"{name_prefix}航线")
+        mission = Mission.objects.create(
+            tenant=self.tenant,
+            name=f"{name_prefix}任务",
+            route=route,
+            drone=drone,
+            pilot=pilot,
+            status=MissionStatus.PENDING,
+        )
+        flight_record = FlightRecord.objects.create(
+            tenant=self.tenant,
+            flight_no=f"FR-{name_prefix}",
+            mission=mission,
+            drone=drone,
+            pilot=pilot,
+            status=FlightRecordStatus.COMPLETED,
+        )
+        media_file = MediaFile.objects.create(
+            tenant=self.tenant,
+            flight_record=flight_record,
+            mission=mission,
+            device_sn=device_sn,
+            media_type=MediaType.PHOTO,
+            file_name=f"{name_prefix}.jpg",
+            file_url=f"https://media.example.test/{name_prefix}.jpg",
+            thumbnail_url=f"https://media.example.test/{name_prefix}.thumb.jpg",
+        )
+        return {
+            "drone": drone,
+            "route": route,
+            "mission": mission,
+            "flight_record": flight_record,
+            "media_file": media_file,
+        }
+
+    def assert_business_read_totals(self, expected_total: int):
+        endpoints = [
+            "/api/v2/resource/routes",
+            "/api/v2/resource/missions",
+            "/api/v2/resource/flight-records",
+            "/api/v2/resource/media-files",
+        ]
+        for endpoint in endpoints:
+            with self.subTest(endpoint=endpoint):
+                response = self.client.get(endpoint)
+                self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+                self.assertEqual(response.data["data"]["total"], expected_total)
+
+    def test_v2_resource_endpoints_should_require_fixed_role_operation_permissions(self):
+        self.authenticate(self.no_role_user)
+
+        endpoints = [
+            "/api/v2/resource/drones",
+            "/api/v2/resource/docks",
+            "/api/v2/resource/routes",
+            "/api/v2/resource/missions",
+            "/api/v2/resource/flight-records",
+            "/api/v2/resource/media-files",
+            "/api/v2/resource/dji-connections",
+            "/api/v2/resource/audit-logs",
+        ]
+        for endpoint in endpoints:
+            with self.subTest(endpoint=endpoint):
+                response = self.client.get(endpoint)
+                self.assertEqual(response.status_code, 403, getattr(response, "data", response.content))
+
+        self.authenticate(self.legacy_platform_admin)
+        response = self.client.get("/api/v2/resource/drones")
+        self.assertEqual(response.status_code, 403, getattr(response, "data", response.content))
+
+    def test_business_role_should_read_visible_resources_but_not_management_surfaces(self):
+        self.bind_v2_drone(department=self.other, actor=self.other_admin, device_sn="BIZ-ROLE-VISIBLE")
+        pilot = self.create_legacy_pilot("business_role_pilot")
+        visible = self.create_legacy_business_set(device_sn="BIZ-ROLE-VISIBLE", name_prefix="business-role", pilot=pilot)
+        V2AuditLog.objects.create(
+            action="other_department_action",
+            actor_user=self.other_admin,
+            actor_department=self.other,
+            target_type="manual",
+        )
+        self.authenticate(self.other_dispatcher)
+
+        drones_response = self.client.get("/api/v2/resource/drones")
+        missions_response = self.client.get("/api/v2/resource/missions")
+        connections_response = self.client.get("/api/v2/resource/dji-connections")
+        audit_response = self.client.get("/api/v2/resource/audit-logs")
+
+        self.assertEqual(drones_response.status_code, 200, getattr(drones_response, "data", drones_response.content))
+        self.assertEqual(missions_response.status_code, 200, getattr(missions_response, "data", missions_response.content))
+        self.assertEqual(drones_response.data["data"]["total"], 1)
+        self.assertEqual(missions_response.data["data"]["list"][0]["id"], visible["mission"].id)
+        self.assertEqual(connections_response.status_code, 403, getattr(connections_response, "data", connections_response.content))
+        self.assertEqual(audit_response.status_code, 403, getattr(audit_response, "data", audit_response.content))
+
+    def test_business_read_apis_should_filter_by_v2_visible_drone_resources(self):
+        self.bind_v2_drone(department=self.child, actor=self.child_admin, device_sn="BIZ-VISIBLE-DRONE")
+        self.bind_v2_drone(department=self.other, actor=self.other_admin, device_sn="BIZ-HIDDEN-DRONE")
+        pilot = self.create_legacy_pilot("business_pilot")
+        visible = self.create_legacy_business_set(device_sn="BIZ-VISIBLE-DRONE", name_prefix="visible", pilot=pilot)
+        hidden = self.create_legacy_business_set(device_sn="BIZ-HIDDEN-DRONE", name_prefix="hidden", pilot=pilot)
+        orphan_route = Route.objects.create(tenant=self.tenant, name="孤立航线")
+
+        self.authenticate(self.child_admin)
+        routes_response = self.client.get("/api/v2/resource/routes")
+        missions_response = self.client.get("/api/v2/resource/missions")
+        records_response = self.client.get("/api/v2/resource/flight-records")
+        media_response = self.client.get("/api/v2/resource/media-files")
+
+        self.assertEqual(routes_response.status_code, 200, getattr(routes_response, "data", routes_response.content))
+        self.assertEqual(missions_response.status_code, 200, getattr(missions_response, "data", missions_response.content))
+        self.assertEqual(records_response.status_code, 200, getattr(records_response, "data", records_response.content))
+        self.assertEqual(media_response.status_code, 200, getattr(media_response, "data", media_response.content))
+        self.assertEqual([item["id"] for item in routes_response.data["data"]["list"]], [visible["route"].id])
+        self.assertEqual([item["id"] for item in missions_response.data["data"]["list"]], [visible["mission"].id])
+        self.assertEqual([item["id"] for item in records_response.data["data"]["list"]], [visible["flight_record"].id])
+        self.assertEqual([item["id"] for item in media_response.data["data"]["list"]], [visible["media_file"].id])
+        self.assertNotIn("downloadUrl", media_response.data["data"]["list"][0])
+        self.assertNotIn("playbackUrl", media_response.data["data"]["list"][0])
+        self.assertNotIn("previewUrl", media_response.data["data"]["list"][0])
+
+        visible_detail_response = self.client.get(f"/api/v2/resource/missions/{visible['mission'].id}")
+        hidden_detail_response = self.client.get(f"/api/v2/resource/missions/{hidden['mission'].id}")
+        orphan_route_response = self.client.get(f"/api/v2/resource/routes/{orphan_route.id}")
+        self.assertEqual(visible_detail_response.status_code, 200, getattr(visible_detail_response, "data", visible_detail_response.content))
+        self.assertEqual(hidden_detail_response.status_code, 404, getattr(hidden_detail_response, "data", hidden_detail_response.content))
+        self.assertEqual(orphan_route_response.status_code, 404, getattr(orphan_route_response, "data", orphan_route_response.content))
+
+        self.authenticate(self.root_admin)
+        parent_response = self.client.get("/api/v2/resource/missions")
+        self.assertEqual(parent_response.status_code, 200, getattr(parent_response, "data", parent_response.content))
+        self.assertEqual(
+            [item["id"] for item in parent_response.data["data"]["list"]],
+            [hidden["mission"].id, visible["mission"].id],
+        )
+
+        self.authenticate(self.other_admin)
+        sibling_response = self.client.get("/api/v2/resource/missions")
+        self.assertEqual(sibling_response.status_code, 200, getattr(sibling_response, "data", sibling_response.content))
+        self.assertEqual([item["id"] for item in sibling_response.data["data"]["list"]], [hidden["mission"].id])
+
+        self.authenticate(self.platform_super)
+        platform_route_response = self.client.get("/api/v2/resource/routes")
+        self.assertEqual(platform_route_response.status_code, 200, getattr(platform_route_response, "data", platform_route_response.content))
+        platform_route_ids = {item["id"] for item in platform_route_response.data["data"]["list"]}
+        self.assertTrue({visible["route"].id, hidden["route"].id, orphan_route.id}.issubset(platform_route_ids))
+
+    def test_business_read_apis_should_include_shared_resources_and_drop_unbound_resources(self):
+        resource = self.bind_v2_drone(department=self.child, actor=self.child_admin, device_sn="BIZ-SHARED-DRONE")
+        pilot = self.create_legacy_pilot("shared_business_pilot")
+        shared = self.create_legacy_business_set(device_sn="BIZ-SHARED-DRONE", name_prefix="shared", pilot=pilot)
+        group = ResourceShareGroup.objects.create(owner_department=self.child, name="业务共享")
+        ResourceShareGroupTargetDepartment.objects.create(share_group=group, department=self.other)
+        ResourceSharePermission.objects.create(
+            share_group=group,
+            resource_type=ResourceType.DRONE,
+            resource_object_id=resource.id,
+            permissions=["view", "monitor"],
+        )
+
+        self.authenticate(self.other_dispatcher)
+        routes_response = self.client.get("/api/v2/resource/routes")
+        missions_response = self.client.get("/api/v2/resource/missions")
+        records_response = self.client.get("/api/v2/resource/flight-records")
+        media_response = self.client.get("/api/v2/resource/media-files")
+
+        self.assertEqual(routes_response.status_code, 200, getattr(routes_response, "data", routes_response.content))
+        self.assertEqual(missions_response.status_code, 200, getattr(missions_response, "data", missions_response.content))
+        self.assertEqual(records_response.status_code, 200, getattr(records_response, "data", records_response.content))
+        self.assertEqual(media_response.status_code, 200, getattr(media_response, "data", media_response.content))
+        self.assertEqual(routes_response.data["data"]["list"][0]["id"], shared["route"].id)
+        self.assertEqual(missions_response.data["data"]["list"][0]["id"], shared["mission"].id)
+        self.assertEqual(records_response.data["data"]["list"][0]["id"], shared["flight_record"].id)
+        self.assertEqual(media_response.data["data"]["list"][0]["id"], shared["media_file"].id)
+
+        ResourceBinding.objects.filter(
+            resource_type=ResourceType.DRONE,
+            resource_object_id=resource.id,
+            status=BindingStatus.ACTIVE,
+        ).update(status=BindingStatus.UNBOUND)
+
+        no_routes_response = self.client.get("/api/v2/resource/routes")
+        no_missions_response = self.client.get("/api/v2/resource/missions")
+        no_records_response = self.client.get("/api/v2/resource/flight-records")
+        no_media_response = self.client.get("/api/v2/resource/media-files")
+        self.assertEqual(no_routes_response.data["data"]["total"], 0)
+        self.assertEqual(no_missions_response.data["data"]["total"], 0)
+        self.assertEqual(no_records_response.data["data"]["total"], 0)
+        self.assertEqual(no_media_response.data["data"]["total"], 0)
+
+    def test_business_read_apis_should_drop_shared_visibility_when_share_group_changes(self):
+        resource = self.bind_v2_drone(department=self.child, actor=self.child_admin, device_sn="BIZ-SHARE-GATE")
+        pilot = self.create_legacy_pilot("share_gate_business_pilot")
+        self.create_legacy_business_set(device_sn="BIZ-SHARE-GATE", name_prefix="share-gate", pilot=pilot)
+        group = ResourceShareGroup.objects.create(owner_department=self.child, name="业务共享门禁")
+        ResourceShareGroupTargetDepartment.objects.create(share_group=group, department=self.other)
+        resource_share = ResourceSharePermission.objects.create(
+            share_group=group,
+            resource_type=ResourceType.DRONE,
+            resource_object_id=resource.id,
+            permissions=["view", "monitor"],
+        )
+
+        self.authenticate(self.other_dispatcher)
+        self.assert_business_read_totals(1)
+
+        self.authenticate(self.child_admin)
+        disable_response = self.client.put(
+            f"/api/v2/resource/share-groups/{group.id}",
+            {"name": group.name, "status": DirectoryStatus.DISABLED},
+            format="json",
+        )
+        self.assertEqual(disable_response.status_code, 200, getattr(disable_response, "data", disable_response.content))
+
+        self.authenticate(self.other_dispatcher)
+        self.assert_business_read_totals(0)
+
+        self.authenticate(self.child_admin)
+        enable_response = self.client.put(
+            f"/api/v2/resource/share-groups/{group.id}",
+            {"name": group.name, "status": DirectoryStatus.ACTIVE},
+            format="json",
+        )
+        self.assertEqual(enable_response.status_code, 200, getattr(enable_response, "data", enable_response.content))
+
+        self.authenticate(self.other_dispatcher)
+        self.assert_business_read_totals(1)
+
+        self.authenticate(self.child_admin)
+        delete_share_response = self.client.delete(
+            f"/api/v2/resource/share-groups/{group.id}/resources/{resource_share.id}"
+        )
+        self.assertEqual(delete_share_response.status_code, 200, getattr(delete_share_response, "data", delete_share_response.content))
+
+        self.authenticate(self.other_dispatcher)
+        self.assert_business_read_totals(0)
+
+        resource_share = ResourceSharePermission.objects.create(
+            share_group=group,
+            resource_type=ResourceType.DRONE,
+            resource_object_id=resource.id,
+            permissions=["view", "monitor"],
+        )
+        self.assertIsNotNone(resource_share.id)
+
+        self.authenticate(self.other_dispatcher)
+        self.assert_business_read_totals(1)
+
+        self.authenticate(self.child_admin)
+        delete_target_response = self.client.delete(
+            f"/api/v2/resource/share-groups/{group.id}/departments/{self.other.id}"
+        )
+        self.assertEqual(delete_target_response.status_code, 200, getattr(delete_target_response, "data", delete_target_response.content))
+
+        self.authenticate(self.other_dispatcher)
+        self.assert_business_read_totals(0)
+
+    def test_business_read_apis_should_support_v2_filters_and_reject_write_methods(self):
+        self.bind_v2_drone(department=self.child, actor=self.child_admin, device_sn="BIZ-FILTER-A")
+        self.bind_v2_drone(department=self.child, actor=self.child_admin, device_sn="BIZ-FILTER-B")
+        pilot = self.create_legacy_pilot("filter_business_pilot")
+        alpha = self.create_legacy_business_set(device_sn="BIZ-FILTER-A", name_prefix="alpha", pilot=pilot)
+        self.create_legacy_business_set(device_sn="BIZ-FILTER-B", name_prefix="beta", pilot=pilot)
+
+        self.authenticate(self.child_admin)
+        routes_response = self.client.get("/api/v2/resource/routes", {"keywords": "alpha"})
+        missions_response = self.client.get(
+            "/api/v2/resource/missions",
+            {"routeId": alpha["route"].id, "deviceSn": "BIZ-FILTER-A", "status": MissionStatus.PENDING},
+        )
+        records_response = self.client.get(
+            "/api/v2/resource/flight-records",
+            {"missionId": alpha["mission"].id, "deviceSn": "BIZ-FILTER-A", "flightNo": "FR-alpha"},
+        )
+        media_response = self.client.get(
+            "/api/v2/resource/media-files",
+            {
+                "flightRecordId": alpha["flight_record"].id,
+                "missionId": alpha["mission"].id,
+                "deviceSn": "BIZ-FILTER-A",
+                "mediaType": MediaType.PHOTO,
+                "fileName": "alpha",
+            },
+        )
+
+        self.assertEqual([item["id"] for item in routes_response.data["data"]["list"]], [alpha["route"].id])
+        self.assertEqual([item["id"] for item in missions_response.data["data"]["list"]], [alpha["mission"].id])
+        self.assertEqual([item["id"] for item in records_response.data["data"]["list"]], [alpha["flight_record"].id])
+        self.assertEqual([item["id"] for item in media_response.data["data"]["list"]], [alpha["media_file"].id])
+
+        write_response = self.client.post("/api/v2/resource/missions", {"name": "不支持"}, format="json")
+        self.assertEqual(write_response.status_code, 405, getattr(write_response, "data", write_response.content))
 
     def test_department_admin_should_manage_own_connection_and_audit_plaintext_credential_view(self):
         self.authenticate(self.child_admin)

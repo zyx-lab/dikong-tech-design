@@ -9,10 +9,11 @@ from apps.resource_v2.models import V2AuditLog
 User = get_user_model()
 
 
-def create_v2_actor(*, username: str, role_code: str, department: Department, is_platform_admin: bool = False):
+def create_v2_actor(*, username: str, role_code: str | None, department: Department, is_platform_admin: bool = False):
     user = User.objects.create_user(username=username, password="pass1234", status=1, is_platform_admin=is_platform_admin)
     profile = V2AccountProfile.objects.create(user=user, department=department)
-    V2AccountRoleAssignment.objects.create(account_profile=profile, role_code=role_code, assigned_by_user=user)
+    if role_code is not None:
+        V2AccountRoleAssignment.objects.create(account_profile=profile, role_code=role_code, assigned_by_user=user)
     return user, profile
 
 
@@ -52,6 +53,14 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/resource/share-groups/{id}/departments/{department_id}",
             "/api/v2/resource/share-groups/{id}/resources",
             "/api/v2/resource/share-groups/{id}/resources/{resource_share_id}",
+            "/api/v2/resource/routes",
+            "/api/v2/resource/routes/{id}",
+            "/api/v2/resource/missions",
+            "/api/v2/resource/missions/{id}",
+            "/api/v2/resource/flight-records",
+            "/api/v2/resource/flight-records/{id}",
+            "/api/v2/resource/media-files",
+            "/api/v2/resource/media-files/{id}",
             "/api/v2/resource/audit-logs",
         }
         self.assertTrue(expected_paths.issubset(set(paths)))
@@ -99,6 +108,22 @@ class IamV2ApiTests(TestCase):
         self.assertEqual(data["department"]["path"], f"/{self.root.id}/")
         self.assertEqual(data["roles"], [FixedRole.PLATFORM_SUPER_ADMIN])
 
+    def test_me_context_should_allow_active_v2_profile_without_roles(self):
+        no_role_user, _profile = create_v2_actor(
+            username="v2_no_role",
+            role_code=None,
+            department=self.root,
+        )
+        self.client.force_authenticate(no_role_user)
+
+        response = self.client.get("/api/v2/iam/me/context")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        data = response.data["data"]
+        self.assertEqual(data["user"]["username"], "v2_no_role")
+        self.assertEqual(data["department"]["id"], self.root.id)
+        self.assertEqual(data["roles"], [])
+
     def test_platform_super_admin_should_create_child_department_and_reject_move(self):
         create_response = self.client.post(
             "/api/v2/iam/departments",
@@ -145,6 +170,101 @@ class IamV2ApiTests(TestCase):
         self.assertEqual(enable_response.status_code, 200, getattr(enable_response, "data", enable_response.content))
         child.refresh_from_db()
         self.assertEqual(child.status, 1)
+
+    def test_platform_super_admin_department_management_should_write_audit_logs(self):
+        create_response = self.client.post(
+            "/api/v2/iam/departments",
+            {"name": "审计部门", "parentId": self.root.id},
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, 201, getattr(create_response, "data", create_response.content))
+        department_id = create_response.data["data"]["id"]
+
+        create_log = V2AuditLog.objects.get(
+            action="create_department",
+            target_type="v2_department",
+            target_id=str(department_id),
+        )
+        self.assertEqual(create_log.actor_department_id, self.root.id)
+        self.assertEqual(create_log.resource_owner_department_id, department_id)
+        self.assertIsNone(create_log.before_data)
+        self.assertEqual(create_log.after_data["name"], "审计部门")
+
+        rename_response = self.client.put(
+            f"/api/v2/iam/departments/{department_id}",
+            {"name": "审计部门改名", "parentId": self.root.id},
+            format="json",
+        )
+        self.assertEqual(rename_response.status_code, 200, getattr(rename_response, "data", rename_response.content))
+        update_log = V2AuditLog.objects.get(
+            action="update_department",
+            target_type="v2_department",
+            target_id=str(department_id),
+        )
+        self.assertEqual(update_log.actor_department_id, self.root.id)
+        self.assertEqual(update_log.resource_owner_department_id, department_id)
+        self.assertEqual(update_log.before_data["name"], "审计部门")
+        self.assertEqual(update_log.after_data["name"], "审计部门改名")
+
+        disable_response = self.client.post(f"/api/v2/iam/departments/{department_id}/disable", {}, format="json")
+        self.assertEqual(disable_response.status_code, 200, getattr(disable_response, "data", disable_response.content))
+        disable_log = V2AuditLog.objects.get(
+            action="disable_department",
+            target_type="v2_department",
+            target_id=str(department_id),
+        )
+        self.assertEqual(disable_log.before_data["status"], DirectoryStatus.ACTIVE)
+        self.assertEqual(disable_log.after_data["status"], DirectoryStatus.DISABLED)
+
+        enable_response = self.client.post(f"/api/v2/iam/departments/{department_id}/enable", {}, format="json")
+        self.assertEqual(enable_response.status_code, 200, getattr(enable_response, "data", enable_response.content))
+        enable_log = V2AuditLog.objects.get(
+            action="enable_department",
+            target_type="v2_department",
+            target_id=str(department_id),
+        )
+        self.assertEqual(enable_log.before_data["status"], DirectoryStatus.DISABLED)
+        self.assertEqual(enable_log.after_data["status"], DirectoryStatus.ACTIVE)
+
+    def test_rejected_department_management_should_not_write_audit_logs(self):
+        child = Department.objects.create(tenant=self.tenant, name="待拒绝部门", parent=self.root)
+        other_parent = Department.objects.create(tenant=self.tenant, name="备用父部门", parent=self.root)
+
+        move_response = self.client.put(
+            f"/api/v2/iam/departments/{child.id}",
+            {"name": "非法移动", "parentId": other_parent.id},
+            format="json",
+        )
+        self.assertEqual(move_response.status_code, 400, getattr(move_response, "data", move_response.content))
+        self.assertFalse(
+            V2AuditLog.objects.filter(
+                action="update_department",
+                target_type="v2_department",
+                target_id=str(child.id),
+            ).exists()
+        )
+
+        department_admin, _profile = create_v2_actor(
+            username="department_audit_denied_admin",
+            role_code=FixedRole.DEPARTMENT_ADMIN,
+            department=self.root,
+        )
+        self.client.force_authenticate(department_admin)
+
+        denied_create_response = self.client.post(
+            "/api/v2/iam/departments",
+            {"name": "越权部门", "parentId": self.root.id},
+            format="json",
+        )
+        denied_update_response = self.client.put(
+            f"/api/v2/iam/departments/{child.id}",
+            {"name": "越权改名", "parentId": self.root.id},
+            format="json",
+        )
+
+        self.assertEqual(denied_create_response.status_code, 403, getattr(denied_create_response, "data", denied_create_response.content))
+        self.assertEqual(denied_update_response.status_code, 403, getattr(denied_update_response, "data", denied_update_response.content))
+        self.assertFalse(V2AuditLog.objects.filter(target_type="v2_department").exists())
 
     def test_department_admin_should_not_create_or_manage_child_departments(self):
         department_admin, _profile = create_v2_actor(
