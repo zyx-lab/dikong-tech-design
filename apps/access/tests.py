@@ -1,4 +1,6 @@
 import os
+import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import config.settings as project_settings
@@ -34,6 +36,34 @@ class DatabaseSettingsTests(SimpleTestCase):
         self.assertEqual(database_config["ENGINE"], "django.db.backends.sqlite3")
         self.assertEqual(database_config["NAME"], project_settings.BASE_DIR / "db.regression.sqlite3")
         self.assertEqual(database_config["OPTIONS"]["timeout"], 20)
+
+
+class RegressionServerScriptTests(SimpleTestCase):
+    def test_start_regression_server_should_default_real_dji_upstream_settings(self):
+        script_path = Path(project_settings.BASE_DIR) / "scripts" / "start_regression_server.sh"
+        env = os.environ.copy()
+        env.pop("SQLITE_DB_NAME", None)
+        env.pop("DJI_UPSTREAM_BASE_URL", None)
+        env.pop("DJI_UPSTREAM_USERNAME", None)
+        env.pop("DJI_UPSTREAM_PASSWORD", None)
+        env.pop("DJI_UPSTREAM_LOGIN_FLAG", None)
+        env["START_REGRESSION_SERVER_DRY_RUN"] = "1"
+
+        result = subprocess.run(
+            ["bash", str(script_path)],
+            cwd=project_settings.BASE_DIR,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        self.assertIn("SQLITE_DB_NAME=db.regression.sqlite3", result.stdout)
+        self.assertIn("DJI_UPSTREAM_BASE_URL=https://drone-java-api.metop.com.cn", result.stdout)
+        self.assertIn("DJI_UPSTREAM_USERNAME=adminPC1", result.stdout)
+        self.assertIn("DJI_UPSTREAM_PASSWORD_SET=1", result.stdout)
+        self.assertIn("DJI_UPSTREAM_LOGIN_FLAG=1", result.stdout)
 
 
 class AccessValidationHelperTests(TestCase):
