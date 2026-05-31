@@ -181,6 +181,17 @@ def _dji_live_stop_timeout_success_payload(*, exc: DjiGatewayUpstreamError, requ
     }
 
 
+def _with_browser_play_url(result):
+    if not isinstance(result, dict):
+        return result
+    browser_play_url = result.get("hls_url") or result.get("play_url") or result.get("webrtc_url")
+    if not browser_play_url:
+        return result
+    normalized = dict(result)
+    normalized.setdefault("browser_play_url", browser_play_url)
+    return normalized
+
+
 @extend_schema_view(
     list=extend_schema(
         summary="查询当前租户已认领设备",
@@ -395,6 +406,8 @@ class DroneViewSet(
                 )
                 return Response(result, status=status.HTTP_200_OK)
             return _dji_live_action_error_response(exc)
+        if gateway_method_name == "start_live":
+            result = _with_browser_play_url(result)
         if isinstance(result, dict) and "video_id" not in result and payload.get("video_id"):
             result = dict(result)
             result["video_id"] = payload["video_id"]
