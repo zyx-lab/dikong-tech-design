@@ -87,6 +87,20 @@ python manage.py spectacular --file /tmp/openapi.yaml --urlconf config.business_
 - For business endpoints, preserve the tenant boundary and standard envelope unless the existing code explicitly does otherwise.
 - If a feature touches DJI behavior, check whether it belongs in `apps/dji_bff` before changing a business app directly.
 
+## Detected conventions snapshot (2026-05-29)
+- Language/runtime: Python 3 + Django 5.1 + DRF + drf-spectacular.
+- File naming is predominantly `snake_case.py`; Django app modules follow the standard `models.py`, `views.py`, `serializers.py`, `urls.py`.
+- Tests are mainly colocated by app (`apps/*/tests.py`, `apps/*/test_live_api.py`, `apps/access/test_live_*.py`), plus script-level test helpers in `scripts/`.
+- API docs are generated from code annotations and shared schema helpers, not hand-maintained static files.
+- Git branch style is `feat/<topic>` or `task/<topic>`; commit style is mixed but trends toward Conventional Commit prefixes (`feat:`, `fix:`, `chore:`).
+
+## Request lifecycle quick trace
+1. Request enters `config/urls.py` and then `apps/api_v1/urls.py`.
+2. `apps/access/middleware.py` sets request id, structured lifecycle logging, and tenant context (`X-TENANT-CODE`).
+3. DRF authentication/permissions run via `apps/access/api_v1/authentication.py` and scoped permission mixins.
+4. Business viewsets execute domain logic and return unified `code/msg/data` envelopes.
+5. For DJI-dependent operations, business modules call into `apps/dji_bff/gateway.py` and related index models.
+
 ## Useful references
 - `README.md`: current project overview, bootstrap steps, and the current document entry point.
 - `DEPLOY.md`: containerized deployment notes.
