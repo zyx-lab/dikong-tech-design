@@ -73,10 +73,11 @@ python manage.py runserver 0.0.0.0:8001
 如需启用 DJI 后台同步，请先配置 DJI 上游环境变量；`DjiGateway` 会在运行时自动登录、自动续期，并把当前 `workspace_id`、`access_token`、`mqtt_*` 等会话字段回写到 `DjiWorkspaceConfig`：
 
 ```bash
-export DJI_UPSTREAM_BASE_URL=http://8.129.135.140
-export DJI_UPSTREAM_USERNAME=adminPC
+export DJI_UPSTREAM_BASE_URL=https://drone-java-api.metop.com.cn
+export DJI_UPSTREAM_USERNAME=adminPC1
 export DJI_UPSTREAM_PASSWORD=adminPC1234567890
 export DJI_UPSTREAM_LOGIN_FLAG=1
+export DJANGO_ALLOWED_HOSTS=drone-django-api.metop.com.cn,127.0.0.1,localhost
 ```
 
 说明：
