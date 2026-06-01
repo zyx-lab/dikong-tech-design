@@ -121,6 +121,14 @@ class MissionCloudExecutionReadSerializer(serializers.ModelSerializer):
     executorSn = serializers.CharField(source="executor_sn", read_only=True)
     droneSn = serializers.CharField(source="drone_sn", read_only=True)
     progressPercent = serializers.IntegerField(source="progress_percent", read_only=True)
+    liveStatus = serializers.CharField(source="live_status", read_only=True)
+    liveVideoId = serializers.CharField(source="live_video_id", read_only=True)
+    liveUrlType = serializers.IntegerField(source="live_url_type", read_only=True)
+    liveVideoQuality = serializers.IntegerField(source="live_video_quality", read_only=True)
+    liveUrls = serializers.JSONField(source="live_urls", read_only=True)
+    liveStartedAt = serializers.DateTimeField(source="live_started_at", allow_null=True, read_only=True)
+    liveStoppedAt = serializers.DateTimeField(source="live_stopped_at", allow_null=True, read_only=True)
+    liveErrorMessage = serializers.CharField(source="live_error_message", read_only=True)
     lastEventAt = serializers.DateTimeField(source="last_event_at", allow_null=True, read_only=True)
     errorCode = serializers.CharField(source="error_code", read_only=True)
     errorMessage = serializers.CharField(source="error_message", read_only=True)
@@ -137,6 +145,14 @@ class MissionCloudExecutionReadSerializer(serializers.ModelSerializer):
             "droneSn",
             "status",
             "progressPercent",
+            "liveStatus",
+            "liveVideoId",
+            "liveUrlType",
+            "liveVideoQuality",
+            "liveUrls",
+            "liveStartedAt",
+            "liveStoppedAt",
+            "liveErrorMessage",
             "lastEventAt",
             "errorCode",
             "errorMessage",
@@ -238,6 +254,9 @@ class ActiveFlightReadSerializer(serializers.ModelSerializer):
     pilotName = serializers.CharField(source="mission.pilot.display_name", read_only=True)
     startedAt = serializers.DateTimeField(source="started_at", read_only=True)
     telemetry = TelemetrySnapshotReadSerializer(source="telemetry_snapshot", read_only=True)
+    liveStatus = serializers.SerializerMethodField()
+    liveVideoId = serializers.SerializerMethodField()
+    liveUrls = serializers.SerializerMethodField()
 
     class Meta:
         model = FlightSession
@@ -256,8 +275,29 @@ class ActiveFlightReadSerializer(serializers.ModelSerializer):
             "status",
             "startedAt",
             "telemetry",
+            "liveStatus",
+            "liveVideoId",
+            "liveUrls",
         ]
         read_only_fields = fields
+
+    def _cloud_execution(self, obj):
+        try:
+            return obj.mission.cloud_execution
+        except MissionCloudExecution.DoesNotExist:
+            return None
+
+    def get_liveStatus(self, obj) -> str:
+        execution = self._cloud_execution(obj)
+        return execution.live_status if execution is not None else ""
+
+    def get_liveVideoId(self, obj) -> str:
+        execution = self._cloud_execution(obj)
+        return execution.live_video_id if execution is not None else ""
+
+    def get_liveUrls(self, obj) -> dict:
+        execution = self._cloud_execution(obj)
+        return execution.live_urls if execution is not None else {}
 
 
 class TelemetrySnapshotWriteSerializer(StrictSerializer):

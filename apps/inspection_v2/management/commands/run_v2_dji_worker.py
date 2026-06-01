@@ -9,7 +9,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
 
 from apps.dji_bff.gateway import DjiGatewayError
-from apps.inspection_v2.services import apply_cloud_execution_event, apply_osd_telemetry
+from apps.inspection_v2.services import apply_cloud_execution_event, apply_device_status_event, apply_osd_telemetry
 from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import DjiConnection, DjiConnectionStatus
 
@@ -85,6 +85,12 @@ class V2DjiWorker:
             device_sn = self._device_sn_from_topic(topic)
             if device_sn:
                 return apply_osd_telemetry(device_sn=device_sn, payload=payload)
+            return {"updated": 0}
+
+        if topic.startswith("sys/product/") and topic.endswith("/status"):
+            device_sn = self._device_sn_from_topic(topic)
+            if device_sn:
+                return apply_device_status_event(device_sn=device_sn, payload=payload)
             return {"updated": 0}
 
         if topic.endswith("/events") or topic.endswith("/services_reply"):

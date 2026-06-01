@@ -18,7 +18,14 @@ from apps.iam_v2.models import (
     V2AccountProfile,
     V2AccountRoleAssignment,
 )
-from apps.inspection_v2.models import CloudMediaFile, FlightSession, InspectionMission, MissionCloudExecution, MissionStatus
+from apps.inspection_v2.models import (
+    CloudMediaFile,
+    FlightSession,
+    InspectionMission,
+    LiveStreamStatus,
+    MissionCloudExecution,
+    MissionStatus,
+)
 from apps.inspection_v2.services import apply_cloud_execution_event, apply_osd_telemetry
 from apps.inspection_v2.management.commands.run_v2_dji_worker import V2DjiWorker
 from apps.resource_v2.models import (
@@ -204,7 +211,16 @@ class InspectionV2ApiTests(TestCase):
         return connection, executor
 
     def start_cloud_mission_by_api(self, mission_id, *, dji_job_id):
-        with patch("apps.inspection_v2.services.DjiConnectionGateway.create_mission", return_value={"dji_job_id": dji_job_id}):
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity",
+            return_value={"cameras_list": [{"index": "88-0-0", "videos_list": [{"index": "normal-0"}]}]},
+        ), patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.start_live",
+            return_value={
+                "rtmp_url": "rtmp://live.example.test/app",
+                "webrtc_url": "https://live.example.test/webrtc",
+            },
+        ), patch("apps.inspection_v2.services.DjiConnectionGateway.create_mission", return_value={"dji_job_id": dji_job_id}):
             response = self.client.post(f"/api/v2/inspection/missions/{mission_id}/start", {}, format="json")
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         return response
@@ -227,6 +243,11 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(active_response.status_code, 200, getattr(active_response, "data", active_response.content))
         self.assertEqual(active_response.data["data"]["total"], 1)
         session_id = active_response.data["data"]["list"][0]["id"]
+        self.assertEqual(active_response.data["data"]["list"][0]["liveStatus"], LiveStreamStatus.RUNNING)
+        self.assertEqual(
+            active_response.data["data"]["list"][0]["liveVideoId"],
+            f"{self.drone.device_sn}/88-0-0/normal-0",
+        )
 
         summary_response = self.client.get("/api/v2/resource/summary")
         self.assertEqual(summary_response.status_code, 200, getattr(summary_response, "data", summary_response.content))
@@ -277,12 +298,13 @@ class InspectionV2ApiTests(TestCase):
                     "downloadUrl": "https://media.example.test/inspection.jpg",
                 }
             ],
-        ):
+        ), patch("apps.inspection_v2.services.DjiConnectionGateway.stop_live", return_value={}) as stop_live:
             complete_response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/complete", {}, format="json")
 
         self.assertEqual(complete_response.status_code, 200, getattr(complete_response, "data", complete_response.content))
         self.assertEqual(complete_response.data["data"]["photoCount"], 1)
         self.assertEqual(CloudMediaFile.objects.filter(cloud_file_id="cloud-photo-001").count(), 1)
+        stop_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0")
 
         media_response = self.client.get("/api/v2/inspection/media-files")
         self.assertEqual(media_response.status_code, 200, getattr(media_response, "data", media_response.content))
@@ -355,6 +377,12 @@ class InspectionV2ApiTests(TestCase):
         )
 
         with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity",
+            return_value={"cameras_list": [{"index": "88-0-0", "videos_list": [{"index": "normal-0"}]}]},
+        ) as get_capacity, patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.start_live",
+            return_value={"rtmp_url": "rtmp://live.example.test/app", "webrtc_url": "https://live.example.test/webrtc"},
+        ) as start_live, patch(
             "apps.inspection_v2.services.DjiConnectionGateway.create_mission",
             return_value={"dji_job_id": "dji-job-001"},
         ) as create_job:
@@ -363,13 +391,25 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(start_response.status_code, 200, getattr(start_response, "data", start_response.content))
         self.assertEqual(start_response.data["data"]["status"], MissionStatus.RUNNING)
         self.assertEqual(start_response.data["data"]["cloudExecution"]["djiJobId"], "dji-job-001")
+        self.assertEqual(start_response.data["data"]["cloudExecution"]["liveStatus"], LiveStreamStatus.RUNNING)
+        self.assertEqual(start_response.data["data"]["cloudExecution"]["liveVideoId"], f"{self.drone.device_sn}/88-0-0/normal-0")
+        self.assertEqual(start_response.data["data"]["cloudExecution"]["liveUrls"]["webrtc_url"], "https://live.example.test/webrtc")
         execution = MissionCloudExecution.objects.get(mission_id=mission["id"])
         self.assertEqual(execution.dji_job_id, "dji-job-001")
         self.assertEqual(execution.executor_sn, "GATEWAY-JOB-001")
+        self.assertEqual(execution.live_video_id, f"{self.drone.device_sn}/88-0-0/normal-0")
         create_job.assert_called_once()
+        get_capacity.assert_called_once_with(self.drone.device_sn)
+        start_live.assert_called_once_with(
+            self.drone.device_sn,
+            video_id=f"{self.drone.device_sn}/88-0-0/normal-0",
+            url_type=1,
+            video_quality=1,
+        )
         self.assertEqual(create_job.call_args.kwargs["wayline_type"], 3)
         self.assertEqual(execution.raw_request["wayline_type"], 3)
         self.assertEqual(execution.raw_request["task_type"], 0)
+        self.assertEqual(execution.raw_request["live"]["video_id"], f"{self.drone.device_sn}/88-0-0/normal-0")
 
     def test_mission_start_upstream_failure_should_keep_local_task_pending(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="执行失败航线")
@@ -383,13 +423,48 @@ class InspectionV2ApiTests(TestCase):
         )
 
         with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity",
+            return_value={"cameras_list": [{"index": "88-0-0", "videos_list": [{"index": "normal-0"}]}]},
+        ), patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.start_live",
+            return_value={"rtmp_url": "rtmp://live.example.test/app"},
+        ) as start_live, patch(
             "apps.inspection_v2.services.DjiConnectionGateway.create_mission",
             side_effect=DjiGatewayUpstreamError(
                 "DJI upstream business error",
                 status_code=502,
                 data={"code": "E0001", "msg": "210003 device does not support flight task"},
             ),
-        ) as create_job:
+        ) as create_job, patch("apps.inspection_v2.services.DjiConnectionGateway.stop_live", return_value={}) as stop_live:
+            response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/start", {}, format="json")
+
+        self.assertEqual(response.status_code, 409, getattr(response, "data", response.content))
+        persisted = InspectionMission.objects.get(pk=mission["id"])
+        self.assertEqual(persisted.status, MissionStatus.PENDING)
+        self.assertFalse(FlightSession.objects.filter(mission_id=mission["id"]).exists())
+        self.assertFalse(MissionCloudExecution.objects.filter(mission_id=mission["id"]).exists())
+        start_live.assert_called_once()
+        create_job.assert_called_once()
+        stop_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0")
+
+    def test_mission_start_live_failure_should_not_create_dji_job(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="直播失败航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-LIVE-FAIL-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity",
+            return_value={"cameras_list": [{"index": "88-0-0", "videos_list": [{"index": "normal-0"}]}]},
+        ), patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.start_live",
+            side_effect=DjiGatewayUpstreamError("live start failed", status_code=502, data={"code": "E0001"}),
+        ) as start_live, patch("apps.inspection_v2.services.DjiConnectionGateway.create_mission") as create_job:
             response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/start", {}, format="json")
 
         self.assertEqual(response.status_code, 502, getattr(response, "data", response.content))
@@ -397,7 +472,8 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(persisted.status, MissionStatus.PENDING)
         self.assertFalse(FlightSession.objects.filter(mission_id=mission["id"]).exists())
         self.assertFalse(MissionCloudExecution.objects.filter(mission_id=mission["id"]).exists())
-        create_job.assert_called_once()
+        start_live.assert_called_once()
+        create_job.assert_not_called()
 
     def test_mission_start_should_require_online_drone_and_executor_before_upstream_call(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="离线航线")
@@ -434,8 +510,7 @@ class InspectionV2ApiTests(TestCase):
             executor_id=executor.id,
             pilot_id=self.owner_pilot.id,
         )
-        with patch("apps.inspection_v2.services.DjiConnectionGateway.create_mission", return_value={"dji_job_id": "dji-job-event"}):
-            self.client.post(f"/api/v2/inspection/missions/{mission['id']}/start", {}, format="json")
+        self.start_cloud_mission_by_api(mission["id"], dji_job_id="dji-job-event")
 
         captured_at = timezone.now().isoformat()
         with patch(
@@ -459,7 +534,7 @@ class InspectionV2ApiTests(TestCase):
                     "capturedAt": captured_at,
                 }
             ],
-        ):
+        ), patch("apps.inspection_v2.services.DjiConnectionGateway.stop_live", return_value={}) as stop_live:
             result = apply_cloud_execution_event(
                 dji_job_id="dji-job-event",
                 status="ok",
@@ -470,7 +545,10 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(result["media"]["photoCount"], 1)
         self.assertTrue(CloudMediaFile.objects.filter(cloud_file_id="event-photo-001").exists())
         self.assertFalse(CloudMediaFile.objects.filter(cloud_file_id="event-other-job-photo").exists())
-        self.assertEqual(MissionCloudExecution.objects.get(dji_job_id="dji-job-event").progress_percent, 100)
+        execution = MissionCloudExecution.objects.get(dji_job_id="dji-job-event")
+        self.assertEqual(execution.progress_percent, 100)
+        self.assertEqual(execution.live_status, LiveStreamStatus.STOPPED)
+        stop_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0")
 
     @override_settings(DJI_INTERNAL_API_TOKEN="internal-sync-token")
     def test_media_upload_callback_with_job_id_should_bind_v2_mission_exactly(self):
@@ -547,8 +625,7 @@ class InspectionV2ApiTests(TestCase):
             executor_id=executor.id,
             pilot_id=self.owner_pilot.id,
         )
-        with patch("apps.inspection_v2.services.DjiConnectionGateway.create_mission", return_value={"dji_job_id": "dji-job-osd"}):
-            self.client.post(f"/api/v2/inspection/missions/{mission['id']}/start", {}, format="json")
+        self.start_cloud_mission_by_api(mission["id"], dji_job_id="dji-job-osd")
 
         result = apply_osd_telemetry(
             device_sn=self.drone.device_sn,
@@ -585,10 +662,11 @@ class InspectionV2ApiTests(TestCase):
             executor_id=executor.id,
             pilot_id=self.owner_pilot.id,
         )
-        with patch("apps.inspection_v2.services.DjiConnectionGateway.create_mission", return_value={"dji_job_id": "dji-job-cancel"}):
-            self.client.post(f"/api/v2/inspection/missions/{mission['id']}/start", {}, format="json")
+        self.start_cloud_mission_by_api(mission["id"], dji_job_id="dji-job-cancel")
 
-        with patch("apps.inspection_v2.services.DjiConnectionGateway.cancel_mission", return_value={}) as cancel_job:
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.cancel_mission", return_value={}) as cancel_job, patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.stop_live", return_value={}
+        ) as stop_live:
             cancel_response = self.client.post(
                 f"/api/v2/inspection/missions/{mission['id']}/cancel",
                 {"reason": "调度取消"},
@@ -598,6 +676,7 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(cancel_response.status_code, 200, getattr(cancel_response, "data", cancel_response.content))
         self.assertEqual(cancel_response.data["data"]["status"], MissionStatus.CANCELED)
         cancel_job.assert_called_once_with("dji-job-cancel")
+        stop_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0")
 
     def test_v2_dji_worker_should_dispatch_osd_and_flighttask_progress_messages(self):
         worker = V2DjiWorker()
@@ -619,6 +698,13 @@ class InspectionV2ApiTests(TestCase):
             status="ok",
             payload={"method": "flighttask_progress", "data": {"job_id": "job-worker-001", "status": "ok", "progress": 100}},
         )
+
+        with patch("apps.inspection_v2.management.commands.run_v2_dji_worker.apply_device_status_event") as status_handler:
+            worker.handle_message(
+                "sys/product/DRONE-WORKER-001/status",
+                {"status": "offline"},
+            )
+        status_handler.assert_called_once_with(device_sn="DRONE-WORKER-001", payload={"status": "offline"})
 
     def test_v2_dji_worker_command_should_support_once_mode(self):
         with patch(

@@ -84,6 +84,20 @@ def _duplicate_response(errors=None):
 
 
 def _upstream_error_response(exc: DjiGatewayError):
+    error_text = f"{exc} {getattr(exc, 'data', '')}"
+    if "210003" in error_text:
+        return Response(
+            standard_error_payload(
+                StandardCode.CONSTRAINT_CONFLICT,
+                "当前设备不支持 DJI 航线任务能力",
+                {
+                    "detail": str(exc),
+                    "upstreamStatus": getattr(exc, "status_code", 502),
+                    "upstream": getattr(exc, "data", None),
+                },
+            ),
+            status=status.HTTP_409_CONFLICT,
+        )
     return Response(
         standard_error_payload(
             StandardCode.INTERNAL_ERROR,

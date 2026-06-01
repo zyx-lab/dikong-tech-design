@@ -15,7 +15,9 @@ from apps.resource_v2.audit import log_v2_action
 from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import (
     BindingStatus,
+    DockResource,
     DroneResource,
+    GatewayResource,
     ResourceBinding,
     ResourceSharePermission,
     ResourceType,
@@ -32,6 +34,7 @@ from apps.inspection_v2.models import (
     FlightTelemetrySnapshot,
     InspectionFlightRecord,
     InspectionMission,
+    LiveStreamStatus,
     MissionCloudExecution,
     MissionResourceAssignment,
     MissionStatus,
@@ -207,6 +210,7 @@ def visible_sessions_queryset(context) -> QuerySet:
             "mission__pilot",
             "mission__pilot__account_profile",
             "mission__pilot__account_profile__user",
+            "mission__cloud_execution",
             "drone",
             "dock",
             "payload",
@@ -309,6 +313,62 @@ def route_snapshot(route: WaypointRoute) -> dict:
             for waypoint in route.waypoints.order_by("sequence")
         ],
     }
+
+
+def _first_list(payload: dict, *keys: str) -> list:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _select_live_video_id(capacity: dict, *, device_sn: str) -> str:
+    if not isinstance(capacity, dict):
+        return ""
+    cameras = _first_list(capacity, "cameras_list", "camerasList", "cameras")
+    for camera in cameras:
+        if not isinstance(camera, dict):
+            continue
+        camera_index = str(camera.get("index") or camera.get("camera_index") or camera.get("cameraIndex") or "").strip()
+        if not camera_index:
+            continue
+        videos = _first_list(camera, "videos_list", "videosList", "videos")
+        for video in videos:
+            if not isinstance(video, dict):
+                continue
+            video_index = str(video.get("index") or video.get("video_index") or video.get("videoIndex") or "").strip()
+            if video_index:
+                return f"{device_sn}/{camera_index}/{video_index}"
+    return ""
+
+
+def _live_urls(payload) -> dict:
+    return payload if isinstance(payload, dict) else {"raw": payload}
+
+
+def _stop_live_for_execution(execution: MissionCloudExecution | None) -> bool:
+    if execution is None or not execution.live_video_id:
+        return False
+    if execution.live_status == LiveStreamStatus.STOPPED:
+        return True
+
+    now = timezone.now()
+    execution.live_status = LiveStreamStatus.STOPPING
+    execution.save(update_fields=["live_status", "updated_at"])
+    try:
+        DjiConnectionGateway(execution.dji_connection).stop_live(execution.drone_sn, video_id=execution.live_video_id)
+    except DjiGatewayError as exc:
+        execution.live_status = LiveStreamStatus.FAILED
+        execution.live_error_message = str(exc)
+        execution.save(update_fields=["live_status", "live_error_message", "updated_at"])
+        return False
+
+    execution.live_status = LiveStreamStatus.STOPPED
+    execution.live_stopped_at = now
+    execution.live_error_message = ""
+    execution.save(update_fields=["live_status", "live_stopped_at", "live_error_message", "updated_at"])
+    return True
 
 
 def _resource_occupancy_conflict(resource_type: str, resource_id: int, *, exclude_mission_id: int | None = None) -> bool:
@@ -423,17 +483,39 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
         "out_of_control_action": DjiConnectionGateway.DEFAULT_OUT_OF_CONTROL_ACTION,
     }
     gateway = DjiConnectionGateway(drone_binding.dji_connection)
-    response_payload = gateway.create_mission(
-        mission_name=mission.name,
-        file_id=route_cloud_file.dji_file_id,
-        dock_sn=mission.executor.device_sn,
-        wayline_type=route_cloud_file.wayline_type,
-        task_type=request_payload["task_type"],
-        rth_altitude=request_payload["rth_altitude"],
-        out_of_control_action=request_payload["out_of_control_action"],
-    )
+    capacity = gateway.get_live_capacity(mission.drone.device_sn)
+    live_video_id = _select_live_video_id(capacity, device_sn=mission.drone.device_sn)
+    if not live_video_id:
+        raise StandardConstraintConflict(msg="设备缺少可直播视频能力")
+
+    live_request = {
+        "video_id": live_video_id,
+        "url_type": 1,
+        "video_quality": 1,
+    }
+    live_response_payload = gateway.start_live(mission.drone.device_sn, **live_request)
+    try:
+        response_payload = gateway.create_mission(
+            mission_name=mission.name,
+            file_id=route_cloud_file.dji_file_id,
+            dock_sn=mission.executor.device_sn,
+            wayline_type=route_cloud_file.wayline_type,
+            task_type=request_payload["task_type"],
+            rth_altitude=request_payload["rth_altitude"],
+            out_of_control_action=request_payload["out_of_control_action"],
+        )
+    except Exception:
+        try:
+            gateway.stop_live(mission.drone.device_sn, video_id=live_video_id)
+        except DjiGatewayError:
+            pass
+        raise
     dji_job_id = str(response_payload.get("dji_job_id") or response_payload.get("job_id") or "").strip()
     if not dji_job_id:
+        try:
+            gateway.stop_live(mission.drone.device_sn, video_id=live_video_id)
+        except DjiGatewayError:
+            pass
         raise StandardConstraintConflict(msg="DJI 创建任务后未返回 job_id")
     mission.status = MissionStatus.RUNNING
     mission.started_at = now
@@ -460,7 +542,15 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
             "drone_sn": mission.drone.device_sn,
             "status": CloudExecutionStatus.RUNNING,
             "started_at": now,
-            "raw_request": request_payload,
+            "live_status": LiveStreamStatus.RUNNING,
+            "live_video_id": live_video_id,
+            "live_url_type": live_request["url_type"],
+            "live_video_quality": live_request["video_quality"],
+            "live_urls": _live_urls(live_response_payload),
+            "live_started_at": now,
+            "live_stopped_at": None,
+            "live_error_message": "",
+            "raw_request": {**request_payload, "live": live_request},
             "raw_response": response_payload,
             "error_code": "",
             "error_message": "",
@@ -526,6 +616,13 @@ def complete_mission(*, mission: InspectionMission, context, request) -> Inspect
         sync_media_for_record(record=record)
     except DjiGatewayError:
         pass
+    execution = getattr(mission, "cloud_execution", None)
+    if execution is not None:
+        execution.status = CloudExecutionStatus.COMPLETED
+        execution.ended_at = execution.ended_at or now
+        execution.progress_percent = max(execution.progress_percent, 100)
+        execution.save(update_fields=["status", "ended_at", "progress_percent", "updated_at"])
+    _stop_live_for_execution(execution)
     log_v2_action(
         request=request,
         context=context,
@@ -579,7 +676,13 @@ def close_mission(
         mission.finished_at = now
         mission.failure_reason = reason
         update_fields = ["status", "finished_at", "failure_reason", "updated_at"]
+        if execution is not None:
+            execution.status = CloudExecutionStatus.FAILED
+            execution.ended_at = now
+            execution.error_message = reason
+            execution.save(update_fields=["status", "ended_at", "error_message", "updated_at"])
     mission.save(update_fields=update_fields)
+    _stop_live_for_execution(execution)
     log_v2_action(
         request=request,
         context=context,
@@ -1060,6 +1163,7 @@ def apply_cloud_execution_event(*, dji_job_id: str, status: str, payload: dict |
             except DjiGatewayError:
                 media_result = {"synced": 0, "photoCount": record.photo_count, "videoCount": record.video_count}
         execution.ended_at = execution.ended_at or now
+        _stop_live_for_execution(execution)
     else:
         mission.status = MissionStatus.RUNNING
         mission.save(update_fields=["status", "updated_at"])
@@ -1107,9 +1211,49 @@ def _osd_battery_percent(data: dict):
         return None
 
 
+def _status_online_value(payload: dict):
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    for source in (data, payload):
+        for key in ("online_status", "onlineStatus", "online", "status", "state"):
+            value = source.get(key)
+            if value in (None, ""):
+                continue
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            normalized = str(value).strip().lower()
+            if normalized in {"online", "connected", "success", "1", "true", "active"}:
+                return True
+            if normalized in {"offline", "disconnected", "0", "false", "inactive"}:
+                return False
+    return None
+
+
+def apply_device_status_event(*, device_sn: str, payload: dict | None = None) -> dict:
+    payload = payload if isinstance(payload, dict) else {}
+    online = _status_online_value(payload)
+    if online is None:
+        return {"updated": 0}
+
+    now = timezone.now()
+    updated = 0
+    for model in (DroneResource, DockResource, GatewayResource):
+        queryset = model.objects.filter(device_sn=device_sn)
+        count = queryset.update(
+            online_status=online,
+            last_seen_at=now if online else None,
+            last_payload=payload,
+            updated_at=now,
+        )
+        updated += count
+    return {"updated": updated, "onlineStatus": online}
+
+
 def apply_osd_telemetry(*, device_sn: str, payload: dict | None = None) -> dict:
     payload = payload if isinstance(payload, dict) else {}
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    apply_device_status_event(device_sn=device_sn, payload={"online": True, "data": data})
     sessions = FlightSession.objects.select_related("mission").filter(
         status=FlightSessionStatus.RUNNING,
         drone__device_sn=device_sn,

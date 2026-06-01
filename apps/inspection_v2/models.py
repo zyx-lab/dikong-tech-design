@@ -50,6 +50,14 @@ class CloudExecutionStatus(models.TextChoices):
     FAILED = "FAILED", "失败"
 
 
+class LiveStreamStatus(models.TextChoices):
+    STOPPED = "STOPPED", "已停止"
+    STARTING = "STARTING", "启动中"
+    RUNNING = "RUNNING", "直播中"
+    STOPPING = "STOPPING", "停止中"
+    FAILED = "FAILED", "异常"
+
+
 class WaypointRoute(TimeStampedModel):
     tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="v2_waypoint_routes")
     owner_department = models.ForeignKey(Department, on_delete=models.PROTECT, related_name="v2_waypoint_routes")
@@ -280,6 +288,14 @@ class MissionCloudExecution(TimeStampedModel):
     drone_sn = models.CharField(max_length=128)
     status = models.CharField(max_length=16, choices=CloudExecutionStatus.choices, default=CloudExecutionStatus.STARTING)
     progress_percent = models.PositiveSmallIntegerField(default=0)
+    live_status = models.CharField(max_length=16, choices=LiveStreamStatus.choices, default=LiveStreamStatus.STOPPED)
+    live_video_id = models.CharField(max_length=256, blank=True, default="")
+    live_url_type = models.PositiveSmallIntegerField(default=1)
+    live_video_quality = models.PositiveSmallIntegerField(default=1)
+    live_urls = models.JSONField(default=dict, blank=True)
+    live_started_at = models.DateTimeField(null=True, blank=True)
+    live_stopped_at = models.DateTimeField(null=True, blank=True)
+    live_error_message = models.TextField(blank=True, default="")
     started_at = models.DateTimeField(null=True, blank=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     last_event_at = models.DateTimeField(null=True, blank=True)
