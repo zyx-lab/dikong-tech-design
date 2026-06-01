@@ -117,7 +117,7 @@ def iam_path_int_parameter(name: str, description: str) -> OpenApiParameter:
 
 
 class BearerAuthSessionScheme(OpenApiAuthenticationExtension):
-    target_class = "apps.access.api_v1.authentication.BearerAuthSessionAuthentication"
+    target_class = "apps.access.authentication.BearerAuthSessionAuthentication"
     name = "BearerAuth"
 
     def get_security_definition(self, auto_schema):

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.access.api_v1.base import StrictSerializer
+from apps.access.api_base import StrictSerializer
 from apps.access.models import DirectoryStatus
 from apps.inspection_v2.models import (
     CloudMediaFile,

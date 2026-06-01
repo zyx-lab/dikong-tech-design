@@ -1266,6 +1266,14 @@ class DjiBffSyncAndInternalApiTests(MockDjiUpstreamTestMixin, TestCase):
         self.assertEqual(sync_response.status_code, 200)
         self.assertGreaterEqual(sync_response.json()["data"]["synced_count"], 2)
 
+    def test_neutral_internal_sync_endpoint_should_follow_minimal_contract(self):
+        sync_response = self.client.post(
+            "/api/internal/dji/sync/devices",
+            HTTP_X_DJI_INTERNAL_TOKEN="internal-sync-token",
+        )
+        self.assertEqual(sync_response.status_code, 200)
+        self.assertGreaterEqual(sync_response.json()["data"]["synced_count"], 2)
+
     def test_internal_sync_missions_endpoint_should_be_removed(self):
         response = self.client.post(
             "/api/v1/__internal__/dji/sync/missions",

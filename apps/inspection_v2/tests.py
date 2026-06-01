@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus, Tenant, TenantStatus
-from apps.dji_bff.gateway import DjiGatewayUpstreamError
+from apps.dji_cloud.gateway import DjiGatewayUpstreamError
 from apps.iam_v2.models import (
     Department,
     FixedRole,
@@ -565,7 +565,7 @@ class InspectionV2ApiTests(TestCase):
         captured_at = timezone.now().isoformat()
 
         response = self.client.post(
-            "/api/v1/__internal__/dji/callbacks/media-upload",
+            "/api/internal/dji/callbacks/media-upload",
             data=json.dumps(
                 {
                     "ext": {"sn": self.drone.device_sn, "job_id": "dji-job-callback", "file_id": "callback-photo-001"},

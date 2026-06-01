@@ -5,10 +5,10 @@ from rest_framework import serializers, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 
-from apps.access.api_v1.authentication import BearerAuthSessionAuthentication
+from apps.access.authentication import BearerAuthSessionAuthentication
 from apps.access.exceptions import StandardForbidden
 from apps.access.models import DirectoryStatus
-from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
+from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.iam_v2.models import Department
 from apps.iam_v2.models import ResourceShareGroup, ResourceShareGroupTargetDepartment
 from apps.iam_v2.services import (

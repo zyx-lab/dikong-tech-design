@@ -5,7 +5,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus, Tenant, TenantStatus
-from apps.dji_bff.gateway import GatewayResponse
+from apps.dji_cloud.gateway import GatewayResponse
 from apps.dji_bff.models import DjiDeviceIndex
 from apps.iam_v2.models import (
     Department,

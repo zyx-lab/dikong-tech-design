@@ -164,13 +164,13 @@ else:
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "apps.access.api_v1.authentication.BearerAuthSessionAuthentication",
+        "apps.access.authentication.BearerAuthSessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    "DEFAULT_PAGINATION_CLASS": "apps.api_v1.pagination.StandardPageNumberPagination",
+    "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.StandardPageNumberPagination",
     "PAGE_SIZE": 20,
     "EXCEPTION_HANDLER": "apps.access.exceptions.custom_exception_handler",
 }

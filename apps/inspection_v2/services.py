@@ -8,7 +8,7 @@ from django.utils.dateparse import parse_datetime
 
 from apps.access.exceptions import StandardConstraintConflict, StandardForbidden, StandardNotFound
 from apps.access.models import DirectoryStatus
-from apps.dji_bff.gateway import DjiGatewayError
+from apps.dji_cloud.gateway import DjiGatewayError
 from apps.iam_v2.models import FixedRole
 from apps.iam_v2.services import is_platform_super_admin
 from apps.resource_v2.audit import log_v2_action

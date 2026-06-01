@@ -22,5 +22,6 @@ urlpatterns = [
     path("api/v2/docs/", SpectacularSwaggerView.as_view(url_name="api-v2-docs-schema"), name="api-v2-docs"),
     path("api/v1/", include("apps.api_v1.urls")),
     path("api/v2/", include("apps.api_v2.urls")),
+    path("api/internal/dji/", include("apps.dji_cloud.urls")),
     path("__mock-dji__/", include("apps.dji_mock.urls")),
 ]

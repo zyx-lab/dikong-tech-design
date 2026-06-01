@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from django.contrib.auth import get_user_model
+from django.conf import settings
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -117,6 +120,25 @@ class ApiV2SchemaBoundaryTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "/api/v2/docs/schema/")
+
+
+class ApiV2ImplementationBoundaryTests(TestCase):
+    def test_v2_mainline_should_not_import_v1_or_legacy_dji_bff_modules(self):
+        project_root = Path(settings.BASE_DIR)
+        app_names = ("api_v2", "iam_v2", "resource_v2", "workforce_v2", "inspection_v2")
+        forbidden_imports = ("apps.api_v1", "apps.access.api_v1", "apps.dji_bff")
+        offenders = []
+
+        for app_name in app_names:
+            for path in (project_root / "apps" / app_name).rglob("*.py"):
+                if "migrations" in path.parts or path.name == "tests.py" or path.name.startswith("test_"):
+                    continue
+                text = path.read_text(encoding="utf-8")
+                for forbidden in forbidden_imports:
+                    if forbidden in text:
+                        offenders.append(f"{path.relative_to(project_root)} imports {forbidden}")
+
+        self.assertEqual(offenders, [])
 
 
 class IamV2ApiTests(TestCase):

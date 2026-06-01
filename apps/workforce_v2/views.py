@@ -4,10 +4,10 @@ from rest_framework import status
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 
-from apps.access.api_v1.authentication import BearerAuthSessionAuthentication
-from apps.access.api_v1.base import EmptySerializer
+from apps.access.authentication import BearerAuthSessionAuthentication
+from apps.access.api_base import EmptySerializer
 from apps.access.exceptions import StandardNotFound
-from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
+from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.iam_v2.services import resolve_v2_context
 from apps.resource_v2.audit import log_v2_action
 from apps.workforce_v2.models import PilotProfile, PilotQualification

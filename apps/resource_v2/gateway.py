@@ -1,6 +1,6 @@
 from django.utils import timezone
 
-from apps.dji_bff.gateway import DjiGateway, DjiGatewayUpstreamError
+from apps.dji_cloud.gateway import DjiGateway, DjiGatewayUpstreamError
 from apps.resource_v2.models import DjiConnection, DjiConnectionStatus, ResourceType
 
 

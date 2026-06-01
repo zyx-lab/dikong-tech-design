@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.access.api_v1.base import StrictSerializer
+from apps.access.api_base import StrictSerializer
 from apps.access.models import DirectoryStatus, Tenant
 from apps.iam_v2.models import Department, FixedRole, V2AccountProfile
 
