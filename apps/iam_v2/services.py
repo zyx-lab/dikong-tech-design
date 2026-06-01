@@ -6,14 +6,14 @@ from apps.iam_v2.models import FixedRole, V2AccountProfile, V2AccountRoleAssignm
 
 
 ROLE_OPERATION_PERMISSIONS = {
-    FixedRole.PLATFORM_SUPER_ADMIN: {"view", "monitor", "dispatch_task", "review_task", "edit_config", "unbind"},
-    FixedRole.DEPARTMENT_ADMIN: {"view", "monitor", "dispatch_task", "review_task", "edit_config", "bind", "unbind"},
-    FixedRole.TASK_MONITOR_DISPATCHER: {"view", "monitor", "dispatch_task"},
+    FixedRole.PLATFORM_SUPER_ADMIN: {"view", "monitor", "dispatch_task", "use", "review_task", "edit_config", "unbind"},
+    FixedRole.DEPARTMENT_ADMIN: {"view", "monitor", "dispatch_task", "use", "review_task", "edit_config", "bind", "unbind"},
+    FixedRole.TASK_MONITOR_DISPATCHER: {"view", "monitor", "dispatch_task", "use"},
     FixedRole.PILOT: {"view", "monitor", "review_task"},
     FixedRole.WORK_ORDER_HANDLER: {"view", "review_task"},
 }
 
-PERMISSION_ORDER = ["view", "monitor", "dispatch_task", "review_task", "edit_config", "bind", "unbind"]
+PERMISSION_ORDER = ["view", "monitor", "dispatch_task", "use", "review_task", "edit_config", "bind", "unbind"]
 
 
 @dataclass(frozen=True)

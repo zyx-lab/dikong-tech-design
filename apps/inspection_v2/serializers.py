@@ -1,0 +1,303 @@
+from rest_framework import serializers
+
+from apps.access.api_v1.base import StrictSerializer
+from apps.access.models import DirectoryStatus
+from apps.inspection_v2.models import (
+    CloudMediaFile,
+    FlightSession,
+    FlightTelemetrySnapshot,
+    InspectionFlightRecord,
+    InspectionMission,
+    MissionResourceAssignment,
+    MissionStatus,
+    Waypoint,
+    WaypointRoute,
+)
+
+
+class WaypointReadSerializer(serializers.ModelSerializer):
+    hoverSeconds = serializers.IntegerField(source="hover_seconds", read_only=True)
+
+    class Meta:
+        model = Waypoint
+        fields = ["id", "sequence", "latitude", "longitude", "altitude", "speed", "heading", "hoverSeconds"]
+        read_only_fields = fields
+
+
+class WaypointWriteSerializer(StrictSerializer):
+    sequence = serializers.IntegerField(min_value=1)
+    latitude = serializers.DecimalField(max_digits=12, decimal_places=8)
+    longitude = serializers.DecimalField(max_digits=12, decimal_places=8)
+    altitude = serializers.DecimalField(max_digits=10, decimal_places=2)
+    speed = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    heading = serializers.DecimalField(max_digits=7, decimal_places=2, required=False, allow_null=True)
+    hoverSeconds = serializers.IntegerField(min_value=0, required=False, default=0)
+
+
+class RouteReadSerializer(serializers.ModelSerializer):
+    ownerDepartmentId = serializers.IntegerField(source="owner_department_id", read_only=True)
+    defaultAltitude = serializers.DecimalField(source="default_altitude", max_digits=10, decimal_places=2, allow_null=True, read_only=True)
+    defaultSpeed = serializers.DecimalField(source="default_speed", max_digits=10, decimal_places=2, allow_null=True, read_only=True)
+    waypoints = WaypointReadSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = WaypointRoute
+        fields = [
+            "id",
+            "ownerDepartmentId",
+            "name",
+            "status",
+            "defaultAltitude",
+            "defaultSpeed",
+            "remark",
+            "waypoints",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class RouteWriteSerializer(StrictSerializer):
+    name = serializers.CharField(max_length=128)
+    status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
+    defaultAltitude = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    defaultSpeed = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    remark = serializers.CharField(required=False, allow_blank=True)
+    waypoints = serializers.ListField(child=WaypointWriteSerializer(), allow_empty=False)
+
+    def validate_waypoints(self, value):
+        sequences = [item["sequence"] for item in value]
+        if len(sequences) != len(set(sequences)):
+            raise serializers.ValidationError("航点 sequence 不能重复")
+        return sorted(value, key=lambda item: item["sequence"])
+
+
+class MissionResourceAssignmentReadSerializer(serializers.ModelSerializer):
+    resourceType = serializers.CharField(source="resource_type", read_only=True)
+    resourceId = serializers.IntegerField(source="resource_object_id", read_only=True)
+    ownerDepartmentId = serializers.IntegerField(source="owner_department_id", read_only=True)
+
+    class Meta:
+        model = MissionResourceAssignment
+        fields = ["id", "resourceType", "resourceId", "ownerDepartmentId"]
+        read_only_fields = fields
+
+
+class MissionReadSerializer(serializers.ModelSerializer):
+    creatorDepartmentId = serializers.IntegerField(source="creator_department_id", read_only=True)
+    primaryResourceOwnerDepartmentId = serializers.IntegerField(source="primary_resource_owner_department_id", read_only=True)
+    routeId = serializers.IntegerField(source="route_id", read_only=True)
+    routeName = serializers.CharField(source="route.name", read_only=True)
+    droneId = serializers.IntegerField(source="drone_id", read_only=True)
+    droneDeviceSn = serializers.CharField(source="drone.device_sn", read_only=True)
+    droneName = serializers.CharField(source="drone.name", read_only=True)
+    dockId = serializers.IntegerField(source="dock_id", allow_null=True, read_only=True)
+    payloadId = serializers.IntegerField(source="payload_id", allow_null=True, read_only=True)
+    pilotId = serializers.IntegerField(source="pilot_id", read_only=True)
+    pilotName = serializers.CharField(source="pilot.display_name", read_only=True)
+    scheduledAt = serializers.DateTimeField(source="scheduled_at", allow_null=True, read_only=True)
+    startedAt = serializers.DateTimeField(source="started_at", allow_null=True, read_only=True)
+    finishedAt = serializers.DateTimeField(source="finished_at", allow_null=True, read_only=True)
+    canceledAt = serializers.DateTimeField(source="canceled_at", allow_null=True, read_only=True)
+    routeSnapshot = serializers.JSONField(source="route_snapshot", read_only=True)
+    resourceAssignments = MissionResourceAssignmentReadSerializer(source="resource_assignments", many=True, read_only=True)
+
+    class Meta:
+        model = InspectionMission
+        fields = [
+            "id",
+            "creatorDepartmentId",
+            "primaryResourceOwnerDepartmentId",
+            "name",
+            "status",
+            "routeId",
+            "routeName",
+            "routeSnapshot",
+            "droneId",
+            "droneDeviceSn",
+            "droneName",
+            "dockId",
+            "payloadId",
+            "pilotId",
+            "pilotName",
+            "scheduledAt",
+            "startedAt",
+            "finishedAt",
+            "canceledAt",
+            "cancel_reason",
+            "failure_reason",
+            "remark",
+            "resourceAssignments",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class MissionWriteSerializer(StrictSerializer):
+    name = serializers.CharField(max_length=128)
+    routeId = serializers.IntegerField(min_value=1)
+    droneId = serializers.IntegerField(min_value=1)
+    pilotId = serializers.IntegerField(min_value=1)
+    dockId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    payloadId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    scheduledAt = serializers.DateTimeField(required=False, allow_null=True)
+    remark = serializers.CharField(required=False, allow_blank=True)
+
+
+class MissionCloseSerializer(StrictSerializer):
+    reason = serializers.CharField(required=False, allow_blank=True)
+
+
+class TelemetrySnapshotReadSerializer(serializers.ModelSerializer):
+    batteryPercent = serializers.IntegerField(source="battery_percent", allow_null=True, read_only=True)
+    reportedAt = serializers.DateTimeField(source="reported_at", read_only=True)
+
+    class Meta:
+        model = FlightTelemetrySnapshot
+        fields = ["latitude", "longitude", "altitude", "speed", "heading", "batteryPercent", "reportedAt"]
+        read_only_fields = fields
+
+
+class ActiveFlightReadSerializer(serializers.ModelSerializer):
+    missionId = serializers.IntegerField(source="mission_id", read_only=True)
+    missionName = serializers.CharField(source="mission.name", read_only=True)
+    routeName = serializers.CharField(source="mission.route.name", read_only=True)
+    droneId = serializers.IntegerField(source="drone_id", read_only=True)
+    droneDeviceSn = serializers.CharField(source="drone.device_sn", read_only=True)
+    droneName = serializers.CharField(source="drone.name", read_only=True)
+    dockId = serializers.IntegerField(source="dock_id", allow_null=True, read_only=True)
+    payloadId = serializers.IntegerField(source="payload_id", allow_null=True, read_only=True)
+    pilotId = serializers.IntegerField(source="mission.pilot_id", read_only=True)
+    pilotName = serializers.CharField(source="mission.pilot.display_name", read_only=True)
+    startedAt = serializers.DateTimeField(source="started_at", read_only=True)
+    telemetry = TelemetrySnapshotReadSerializer(source="telemetry_snapshot", read_only=True)
+
+    class Meta:
+        model = FlightSession
+        fields = [
+            "id",
+            "missionId",
+            "missionName",
+            "routeName",
+            "droneId",
+            "droneDeviceSn",
+            "droneName",
+            "dockId",
+            "payloadId",
+            "pilotId",
+            "pilotName",
+            "status",
+            "startedAt",
+            "telemetry",
+        ]
+        read_only_fields = fields
+
+
+class TelemetrySnapshotWriteSerializer(StrictSerializer):
+    sessionId = serializers.IntegerField(min_value=1)
+    latitude = serializers.DecimalField(max_digits=12, decimal_places=8, required=False, allow_null=True)
+    longitude = serializers.DecimalField(max_digits=12, decimal_places=8, required=False, allow_null=True)
+    altitude = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    speed = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    heading = serializers.DecimalField(max_digits=7, decimal_places=2, required=False, allow_null=True)
+    batteryPercent = serializers.IntegerField(min_value=0, max_value=100, required=False, allow_null=True)
+    reportedAt = serializers.DateTimeField(required=False)
+
+
+class FlightRecordReadSerializer(serializers.ModelSerializer):
+    flightNo = serializers.CharField(source="flight_no", read_only=True)
+    missionId = serializers.IntegerField(source="mission_id", read_only=True)
+    creatorDepartmentId = serializers.IntegerField(source="creator_department_id", read_only=True)
+    primaryResourceOwnerDepartmentId = serializers.IntegerField(source="primary_resource_owner_department_id", read_only=True)
+    missionName = serializers.CharField(source="mission_name", read_only=True)
+    routeName = serializers.CharField(source="route_name", read_only=True)
+    droneDeviceSn = serializers.CharField(source="drone_device_sn", read_only=True)
+    droneName = serializers.CharField(source="drone_name", read_only=True)
+    pilotName = serializers.CharField(source="pilot_name", read_only=True)
+    startTime = serializers.DateTimeField(source="start_time", read_only=True)
+    endTime = serializers.DateTimeField(source="end_time", read_only=True)
+    flightDuration = serializers.IntegerField(source="flight_duration", read_only=True)
+    photoCount = serializers.IntegerField(source="photo_count", read_only=True)
+    videoCount = serializers.IntegerField(source="video_count", read_only=True)
+    abnormalReason = serializers.CharField(source="abnormal_reason", read_only=True)
+
+    class Meta:
+        model = InspectionFlightRecord
+        fields = [
+            "id",
+            "flightNo",
+            "missionId",
+            "creatorDepartmentId",
+            "primaryResourceOwnerDepartmentId",
+            "missionName",
+            "routeName",
+            "droneDeviceSn",
+            "droneName",
+            "pilotName",
+            "startTime",
+            "endTime",
+            "flightDuration",
+            "photoCount",
+            "videoCount",
+            "status",
+            "remark",
+            "abnormalReason",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class FlightRecordUpdateSerializer(StrictSerializer):
+    remark = serializers.CharField(required=False, allow_blank=True)
+    abnormalReason = serializers.CharField(required=False, allow_blank=True)
+
+
+class CloudMediaFileReadSerializer(serializers.ModelSerializer):
+    flightRecordId = serializers.IntegerField(source="flight_record_id", allow_null=True, read_only=True)
+    missionId = serializers.IntegerField(source="mission_id", allow_null=True, read_only=True)
+    deviceSn = serializers.CharField(source="device_sn", read_only=True)
+    cloudFileId = serializers.CharField(source="cloud_file_id", read_only=True)
+    mediaType = serializers.CharField(source="media_type", read_only=True)
+    fileName = serializers.CharField(source="file_name", read_only=True)
+    thumbnailUrl = serializers.CharField(source="thumbnail_url", read_only=True)
+    previewUrl = serializers.CharField(source="preview_url", read_only=True)
+    downloadUrl = serializers.CharField(source="download_url", read_only=True)
+    playbackUrl = serializers.CharField(source="playback_url", read_only=True)
+    fileSize = serializers.IntegerField(source="file_size", allow_null=True, read_only=True)
+    capturedAt = serializers.DateTimeField(source="captured_at", allow_null=True, read_only=True)
+
+    class Meta:
+        model = CloudMediaFile
+        fields = [
+            "id",
+            "flightRecordId",
+            "missionId",
+            "deviceSn",
+            "cloudFileId",
+            "mediaType",
+            "fileName",
+            "thumbnailUrl",
+            "previewUrl",
+            "downloadUrl",
+            "playbackUrl",
+            "fileSize",
+            "capturedAt",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class LiveActionSerializer(StrictSerializer):
+    droneId = serializers.IntegerField(min_value=1)
+    video_id = serializers.CharField(required=False, allow_blank=True)
+    videoId = serializers.CharField(required=False, allow_blank=True)
+    url_type = serializers.IntegerField(required=False)
+    urlType = serializers.IntegerField(required=False)
+    video_quality = serializers.IntegerField(required=False)
+    videoQuality = serializers.IntegerField(required=False)
+
+
+class LiveCapacityQuerySerializer(StrictSerializer):
+    droneId = serializers.IntegerField(min_value=1)

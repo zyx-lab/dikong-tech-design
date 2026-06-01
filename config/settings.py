@@ -36,6 +36,8 @@ INSTALLED_APPS = [
     "apps.api_v1",
     "apps.iam_v2",
     "apps.resource_v2",
+    "apps.workforce_v2",
+    "apps.inspection_v2",
     "apps.api_v2",
     "apps.drone",
     "apps.drone_assignment",
@@ -118,6 +120,9 @@ AUTH_PASSWORD_VALIDATORS = [
         "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
+
+if os.getenv("DJANGO_TEST_FAST_PASSWORD_HASHERS", "false").lower() in {"1", "true", "yes"}:
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = "Asia/Shanghai"

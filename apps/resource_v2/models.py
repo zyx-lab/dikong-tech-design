@@ -16,6 +16,7 @@ class DjiConnectionStatus(models.TextChoices):
 class ResourceType(models.TextChoices):
     DRONE = "drone", "无人机"
     DOCK = "dock", "机场"
+    PAYLOAD = "payload", "负载"
 
 
 class BindingStatus(models.TextChoices):
@@ -28,7 +29,7 @@ class BindingActionType(models.TextChoices):
     UNBIND = "unbind", "解绑"
 
 
-SHARE_PERMISSION_CHOICES = {"view", "monitor", "dispatch_task", "review_task", "edit_config"}
+SHARE_PERMISSION_CHOICES = {"view", "monitor", "dispatch_task", "use", "review_task", "edit_config"}
 
 
 class DjiConnection(TimeStampedModel):
@@ -103,6 +104,29 @@ class DockResource(TimeStampedModel):
 
     def __str__(self):
         return self.device_sn
+
+
+class PayloadResource(TimeStampedModel):
+    payload_sn = models.CharField(max_length=128, unique=True)
+    name = models.CharField(max_length=128, blank=True, default="")
+    model = models.CharField(max_length=128, blank=True, default="")
+    payload_type = models.CharField(max_length=64, blank=True, default="")
+    online_status = models.BooleanField(default=False)
+    firmware_version = models.CharField(max_length=128, blank=True, default="")
+    firmware_status = models.CharField(max_length=64, blank=True, default="")
+    last_payload = models.JSONField(default=dict, blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "v2_payload_resources"
+        ordering = ["payload_sn"]
+
+    @property
+    def device_sn(self):
+        return self.payload_sn
+
+    def __str__(self):
+        return self.payload_sn
 
 
 class ResourceBinding(TimeStampedModel):

@@ -70,6 +70,22 @@ python manage.py create_business_admin_account --username biz_root --password 'Y
 python manage.py runserver 0.0.0.0:8001
 ```
 
+## API v2 本地回归测试
+
+开发 API v2 时优先使用仓库内置的 v2 回归脚本，避免默认跑完整测试套件：
+
+```bash
+scripts/test_v2_regression.sh
+```
+
+默认模式会执行 Django check、迁移 dry-run，以及 `apps.api_v2.tests`、`apps.resource_v2.tests`。如果改动碰到共享响应、DJI 网关、schema/routing 或 v1/v2 共用模型，再跑边界烟测：
+
+```bash
+scripts/test_v2_regression.sh boundary
+```
+
+更多模式见 `docs/v2-regression-testing.md`。
+
 如需启用 DJI 后台同步，请先配置 DJI 上游环境变量；`DjiGateway` 会在运行时自动登录、自动续期，并把当前 `workspace_id`、`access_token`、`mqtt_*` 等会话字段回写到 `DjiWorkspaceConfig`：
 
 ```bash

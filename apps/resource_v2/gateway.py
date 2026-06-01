@@ -67,8 +67,40 @@ class DjiConnectionGateway(DjiGateway):
             query={"domain": domain},
         )
 
+    @staticmethod
+    def _payloads_from_devices(devices: list[dict]) -> list[dict]:
+        payloads = []
+        seen = set()
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+            candidates = []
+            for key in ("payloads", "payloads_list", "payloadsList", "payload_list"):
+                value = device.get(key)
+                if isinstance(value, list):
+                    candidates.extend(item for item in value if isinstance(item, dict))
+            single_payload = device.get("payload")
+            if isinstance(single_payload, dict):
+                candidates.append(single_payload)
+            for payload in candidates:
+                payload_sn = str(
+                    payload.get("payload_sn")
+                    or payload.get("payloadSn")
+                    or payload.get("device_sn")
+                    or payload.get("sn")
+                    or ""
+                ).strip()
+                if not payload_sn or payload_sn in seen:
+                    continue
+                seen.add(payload_sn)
+                payloads.append(payload)
+        return payloads
+
     def discover(self) -> dict[str, list[dict]]:
+        drones = self.list_resources(ResourceType.DRONE)
+        docks = self.list_resources(ResourceType.DOCK)
         return {
-            "drones": self.list_resources(ResourceType.DRONE),
-            "docks": self.list_resources(ResourceType.DOCK),
+            "drones": drones,
+            "docks": docks,
+            "payloads": self._payloads_from_devices([*drones, *docks]),
         }

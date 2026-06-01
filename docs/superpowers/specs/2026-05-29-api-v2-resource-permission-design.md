@@ -82,8 +82,8 @@ Create two new domain apps and keep `apps/api_v2` as a routing/API aggregation l
 - account profile in v2
 - fixed roles
 - account-role assignment
-- share groups
-- share group target departments
+- resource share groups
+- resource share group target departments
 
 `apps/resource_v2` owns resource and resource-permission concepts:
 
@@ -106,8 +106,9 @@ After authentication, v2 loads a separate account context:
 
 - one account belongs to exactly one department
 - one account can have multiple fixed v2 roles
-- groups are not direct user membership groups in the first version
-- groups are resource-sharing policy containers
+- accounts do not directly join groups in v2
+- groups mean resource-sharing policy containers, not account membership groups
+- an account gains shared-resource visibility when its department is targeted by one or more resource share groups
 
 Fixed v2 roles:
 
@@ -134,6 +135,7 @@ The platform super administrator can:
 - create, edit, enable, and disable departments
 - create, edit, enable, and disable all accounts
 - assign any account's department and fixed roles
+- create, edit, enable, disable, and maintain resource share groups for any department
 - view and maintain all department DJI Cloud API connections
 - view plaintext DJI connection credentials
 - unbind any resource
@@ -262,22 +264,25 @@ Visibility sources:
 2. Parent department users can see child department resources.
 3. Resource-owning departments can share resources through share groups.
 4. Share groups target one or more departments.
-5. Members of target departments can see resources shared to those departments.
+5. Members of target departments can see the specific resources shared to those departments.
 
 Parent department users treat child department resources like their own department's resources for use, except unbinding. Actual operation ability is still limited by their fixed roles.
 
 ## Share Group Model
 
-In the first version, groups are only resource-sharing policy containers. They should not implement a separate "group members can see all data from each other" rule.
+In v2, groups are only resource-sharing policy containers. They are not account membership groups and do not implement a separate "group members can see all data from each other" rule.
 
 Group rules:
 
 - a group is owned by one department
 - the owning department administrator creates and manages the group
+- the platform super administrator can create and manage groups for any active department
 - a group links one or more target departments
 - a group can carry multiple resource share records
 - each shared resource has its own operation permission set
-- target department members can see resources shared through the group
+- target department members can see resources explicitly shared through the group
+- target departments do not see each other's resources through the same group
+- a share group does not expose every resource owned by its owner department; only resources with share records are visible
 
 The final operation permission is:
 
@@ -410,4 +415,3 @@ The v2 schema urlconf must include only `/api/v2/*` paths. It must not include `
 6. Add models and migrations for department, roles, account context, connections, resources, sharing, binding history, and audit logs.
 7. Implement the first vertical slice: department tree, me context, DJI connection CRUD, resource discovery, resource binding, and visible resource list.
 8. Apply the v2 visibility helper to future v2 business resources that derive ownership from drone or dock.
-

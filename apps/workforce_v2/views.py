@@ -1,0 +1,200 @@
+from django.db import IntegrityError, transaction
+from drf_spectacular.utils import extend_schema
+from rest_framework import status
+from rest_framework.generics import GenericAPIView
+from rest_framework.response import Response
+
+from apps.access.api_v1.authentication import BearerAuthSessionAuthentication
+from apps.access.api_v1.base import EmptySerializer
+from apps.access.exceptions import StandardNotFound
+from apps.api_v1.business_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
+from apps.iam_v2.services import resolve_v2_context
+from apps.resource_v2.audit import log_v2_action
+from apps.workforce_v2.models import PilotProfile, PilotQualification
+from apps.workforce_v2.serializers import (
+    PilotProfileReadSerializer,
+    PilotProfileUpdateSerializer,
+    PilotProfileWriteSerializer,
+    PilotQualificationReadSerializer,
+    PilotQualificationWriteSerializer,
+)
+from apps.workforce_v2.services import (
+    account_profile_for_pilot,
+    get_manageable_pilot_or_404,
+    get_visible_pilot_or_404,
+    require_pilot_manager,
+    visible_pilots_queryset,
+)
+
+
+class WorkforceV2APIView(BusinessApiResponseMixin, GenericAPIView):
+    authentication_classes = [BearerAuthSessionAuthentication]
+    serializer_class = EmptySerializer
+
+
+def _duplicate_response(errors=None):
+    return Response(standard_error_payload(StandardCode.DUPLICATE, "资源已存在", errors), status=status.HTTP_409_CONFLICT)
+
+
+class PilotListCreateView(WorkforceV2APIView):
+    @extend_schema(operation_id="v2_workforce_pilots_list", responses=PilotProfileReadSerializer)
+    def get(self, request):
+        context = resolve_v2_context(request)
+        queryset = visible_pilots_queryset(context).prefetch_related("qualifications")
+        serializer = PilotProfileReadSerializer(queryset, many=True)
+        return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
+
+    @extend_schema(operation_id="v2_workforce_pilots_create", request=PilotProfileWriteSerializer, responses=PilotProfileReadSerializer)
+    @transaction.atomic
+    def post(self, request):
+        context = resolve_v2_context(request)
+        require_pilot_manager(context)
+        serializer = PilotProfileWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        account_profile = account_profile_for_pilot(context, serializer.validated_data["accountProfileId"])
+        try:
+            pilot = PilotProfile.objects.create(
+                account_profile=account_profile,
+                display_name=serializer.validated_data["displayName"],
+                phone=serializer.validated_data.get("phone", ""),
+                level=serializer.validated_data.get("level", ""),
+                status=serializer.validated_data.get("status", account_profile.status),
+                remark=serializer.validated_data.get("remark", ""),
+            )
+        except IntegrityError as exc:
+            return _duplicate_response({"detail": str(exc)})
+        data = PilotProfileReadSerializer(pilot).data
+        log_v2_action(
+            request=request,
+            context=context,
+            action="create_pilot_profile",
+            target_type="pilot_profile",
+            target_id=pilot.id,
+            resource_owner_department=pilot.account_profile.department,
+            after_data=data,
+        )
+        return Response(data, status=status.HTTP_201_CREATED)
+
+
+class PilotDetailView(WorkforceV2APIView):
+    @extend_schema(operation_id="v2_workforce_pilots_retrieve", responses=PilotProfileReadSerializer)
+    def get(self, request, id: int):
+        context = resolve_v2_context(request)
+        pilot = get_visible_pilot_or_404(context, id)
+        return Response(PilotProfileReadSerializer(pilot).data, status=status.HTTP_200_OK)
+
+    @extend_schema(operation_id="v2_workforce_pilots_update", request=PilotProfileUpdateSerializer, responses=PilotProfileReadSerializer)
+    @transaction.atomic
+    def put(self, request, id: int):
+        context = resolve_v2_context(request)
+        require_pilot_manager(context)
+        pilot = get_manageable_pilot_or_404(context, id)
+        serializer = PilotProfileUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        before_data = PilotProfileReadSerializer(pilot).data
+        pilot.display_name = serializer.validated_data["displayName"]
+        pilot.phone = serializer.validated_data.get("phone", "")
+        pilot.level = serializer.validated_data.get("level", "")
+        pilot.status = serializer.validated_data.get("status", pilot.status)
+        pilot.remark = serializer.validated_data.get("remark", "")
+        pilot.save(update_fields=["display_name", "phone", "level", "status", "remark", "updated_at"])
+        data = PilotProfileReadSerializer(pilot).data
+        log_v2_action(
+            request=request,
+            context=context,
+            action="update_pilot_profile",
+            target_type="pilot_profile",
+            target_id=pilot.id,
+            resource_owner_department=pilot.account_profile.department,
+            before_data=before_data,
+            after_data=data,
+        )
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class PilotQualificationListCreateView(WorkforceV2APIView):
+    @extend_schema(operation_id="v2_workforce_pilot_qualifications_list", responses=PilotQualificationReadSerializer)
+    def get(self, request, pilot_id: int):
+        context = resolve_v2_context(request)
+        pilot = get_visible_pilot_or_404(context, pilot_id)
+        queryset = pilot.qualifications.order_by("-expires_at", "-id")
+        return Response(
+            {"list": PilotQualificationReadSerializer(queryset, many=True).data, "total": queryset.count()},
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(operation_id="v2_workforce_pilot_qualifications_create", request=PilotQualificationWriteSerializer, responses=PilotQualificationReadSerializer)
+    @transaction.atomic
+    def post(self, request, pilot_id: int):
+        context = resolve_v2_context(request)
+        require_pilot_manager(context)
+        pilot = get_manageable_pilot_or_404(context, pilot_id)
+        serializer = PilotQualificationWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            qualification = PilotQualification.objects.create(
+                pilot=pilot,
+                qualification_type=serializer.validated_data["qualificationType"],
+                certificate_no=serializer.validated_data.get("certificateNo", ""),
+                issued_at=serializer.validated_data.get("issuedAt"),
+                expires_at=serializer.validated_data.get("expiresAt"),
+                status=serializer.validated_data.get("status", pilot.status),
+                remark=serializer.validated_data.get("remark", ""),
+            )
+        except IntegrityError as exc:
+            return _duplicate_response({"detail": str(exc)})
+        data = PilotQualificationReadSerializer(qualification).data
+        log_v2_action(
+            request=request,
+            context=context,
+            action="create_pilot_qualification",
+            target_type="pilot_qualification",
+            target_id=qualification.id,
+            resource_owner_department=pilot.account_profile.department,
+            after_data=data,
+        )
+        return Response(data, status=status.HTTP_201_CREATED)
+
+
+class PilotQualificationDetailView(WorkforceV2APIView):
+    @extend_schema(operation_id="v2_workforce_pilot_qualifications_update", request=PilotQualificationWriteSerializer, responses=PilotQualificationReadSerializer)
+    @transaction.atomic
+    def put(self, request, pilot_id: int, id: int):
+        context = resolve_v2_context(request)
+        require_pilot_manager(context)
+        pilot = get_manageable_pilot_or_404(context, pilot_id)
+        qualification = pilot.qualifications.filter(pk=id).first()
+        if qualification is None:
+            raise StandardNotFound()
+        serializer = PilotQualificationWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        before_data = PilotQualificationReadSerializer(qualification).data
+        qualification.qualification_type = serializer.validated_data["qualificationType"]
+        qualification.certificate_no = serializer.validated_data.get("certificateNo", "")
+        qualification.issued_at = serializer.validated_data.get("issuedAt")
+        qualification.expires_at = serializer.validated_data.get("expiresAt")
+        qualification.status = serializer.validated_data.get("status", qualification.status)
+        qualification.remark = serializer.validated_data.get("remark", "")
+        qualification.save(
+            update_fields=[
+                "qualification_type",
+                "certificate_no",
+                "issued_at",
+                "expires_at",
+                "status",
+                "remark",
+                "updated_at",
+            ]
+        )
+        data = PilotQualificationReadSerializer(qualification).data
+        log_v2_action(
+            request=request,
+            context=context,
+            action="update_pilot_qualification",
+            target_type="pilot_qualification",
+            target_id=qualification.id,
+            resource_owner_department=pilot.account_profile.department,
+            before_data=before_data,
+            after_data=data,
+        )
+        return Response(data, status=status.HTTP_200_OK)

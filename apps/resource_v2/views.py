@@ -1,5 +1,4 @@
 from django.db import IntegrityError, transaction
-from django.db.models import Q
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import serializers, status
@@ -44,10 +43,6 @@ from apps.resource_v2.serializers import (
     ShareGroupTargetCreateSerializer,
     ShareGroupTargetReadSerializer,
     ShareGroupUpdateSerializer,
-    V2FlightRecordReadSerializer,
-    V2MediaFileReadSerializer,
-    V2MissionReadSerializer,
-    V2RouteReadSerializer,
     serialize_resource_binding,
     upsert_resource_from_payload,
 )
@@ -59,10 +54,6 @@ from apps.resource_v2.services import (
     require_manage_connection,
     require_unbind,
     visible_bindings_queryset,
-    visible_flight_records_queryset,
-    visible_media_files_queryset,
-    visible_missions_queryset,
-    visible_routes_queryset,
 )
 
 
@@ -90,9 +81,23 @@ def _share_group_or_404(id: int):
     return group
 
 
-def _require_share_group_owner_admin(context, group: ResourceShareGroup):
-    if not (is_department_admin(context) and group.owner_department_id == context.department.id):
+def _require_share_group_manager(context, group: ResourceShareGroup):
+    if is_platform_super_admin(context):
+        return
+    if is_department_admin(context) and group.owner_department_id == context.department.id:
+        return
+    raise StandardForbidden()
+
+
+def _share_group_owner_department(context, owner_department_id: int | None):
+    if owner_department_id in (None, ""):
+        return context.department
+    if not is_platform_super_admin(context) and owner_department_id != context.department.id:
         raise StandardForbidden()
+    department = Department.objects.filter(pk=owner_department_id, status=DirectoryStatus.ACTIVE).first()
+    if department is None:
+        raise serializers.ValidationError({"ownerDepartmentId": ["部门不存在或未启用"]})
+    return department
 
 
 @extend_schema_view(
@@ -222,6 +227,11 @@ class DjiConnectionDiscoverView(V2ResourceAPIView):
             for payload in discovered.get("docks", [])
             if isinstance(payload, dict)
         ]
+        payloads = [
+            upsert_resource_from_payload(ResourceType.PAYLOAD, payload)
+            for payload in discovered.get("payloads", [])
+            if isinstance(payload, dict)
+        ]
         connection.status = DjiConnectionStatus.ACTIVE
         connection.last_checked_at = timezone.now()
         connection.save(update_fields=["status", "last_checked_at", "updated_at"])
@@ -246,6 +256,17 @@ class DjiConnectionDiscoverView(V2ResourceAPIView):
                 }
                 for item in docks
             ],
+            "payloads": [
+                {
+                    "id": item.id,
+                    "payloadSn": item.payload_sn,
+                    "name": item.name,
+                    "model": item.model,
+                    "payloadType": item.payload_type,
+                    "onlineStatus": item.online_status,
+                }
+                for item in payloads
+            ],
         }
         return Response(data, status=status.HTTP_200_OK)
 
@@ -261,192 +282,120 @@ class ResourceListView(V2ResourceAPIView):
         return Response({"list": items, "total": len(items)}, status=status.HTTP_200_OK)
 
 
+class ResourceDetailView(V2ResourceAPIView):
+    resource_type = None
+
+    def get(self, request, id: int):
+        context = resolve_v2_context(request)
+        require_v2_operation_permission(context, "view")
+        binding = visible_bindings_queryset(context, resource_type=self.resource_type).filter(resource_object_id=id).first()
+        if binding is None:
+            return _not_found_response()
+        return Response(serialize_resource_binding(binding, context=context), status=status.HTTP_200_OK)
+
+
 class DroneResourceListView(ResourceListView):
     resource_type = ResourceType.DRONE
+
+    @extend_schema(operation_id="v2_resource_drones_list")
+    def get(self, request):
+        return super().get(request)
+
+
+class DroneResourceDetailView(ResourceDetailView):
+    resource_type = ResourceType.DRONE
+
+    @extend_schema(operation_id="v2_resource_drones_retrieve")
+    def get(self, request, id: int):
+        return super().get(request, id=id)
 
 
 class DockResourceListView(ResourceListView):
     resource_type = ResourceType.DOCK
 
-
-def _int_query_param(params, name: str):
-    value = params.get(name)
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        raise serializers.ValidationError({name: ["必须是整数"]}) from exc
+    @extend_schema(operation_id="v2_resource_docks_list")
+    def get(self, request):
+        return super().get(request)
 
 
-class BusinessReadOnlyView(V2ResourceAPIView):
-    serializer_class = EmptySchemaSerializer
-    read_serializer_class = None
+class DockResourceDetailView(ResourceDetailView):
+    resource_type = ResourceType.DOCK
 
-    def get_queryset_for_context(self, context):
-        raise NotImplementedError
+    @extend_schema(operation_id="v2_resource_docks_retrieve")
+    def get(self, request, id: int):
+        return super().get(request, id=id)
 
-    def apply_query_filters(self, queryset, params):
-        return queryset
 
-    def get(self, request, id: int | None = None):
+class PayloadResourceListView(ResourceListView):
+    resource_type = ResourceType.PAYLOAD
+
+    @extend_schema(operation_id="v2_resource_payloads_list")
+    def get(self, request):
+        return super().get(request)
+
+
+class PayloadResourceDetailView(ResourceDetailView):
+    resource_type = ResourceType.PAYLOAD
+
+    @extend_schema(operation_id="v2_resource_payloads_retrieve")
+    def get(self, request, id: int):
+        return super().get(request, id=id)
+
+
+class ResourceSummaryView(V2ResourceAPIView):
+    @extend_schema(operation_id="v2_resource_summary")
+    def get(self, request):
         context = resolve_v2_context(request)
         require_v2_operation_permission(context, "view")
-        queryset = self.get_queryset_for_context(context)
-        if id is not None:
-            instance = queryset.filter(pk=id).first()
-            if instance is None:
-                return _not_found_response()
-            return Response(self.read_serializer_class(instance).data, status=status.HTTP_200_OK)
-        queryset = self.apply_query_filters(queryset, request.query_params)
-        serializer = self.read_serializer_class(queryset, many=True)
-        return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
+        from apps.inspection_v2.models import FlightSession, FlightSessionStatus
+        from apps.workforce_v2.services import visible_pilots_queryset
 
+        summary = {}
+        department_rows = {}
 
-class BusinessRouteReadView(BusinessReadOnlyView):
-    read_serializer_class = V2RouteReadSerializer
+        def department_row(department):
+            if department.id not in department_rows:
+                department_rows[department.id] = {
+                    "departmentId": department.id,
+                    "departmentName": department.name,
+                    "departmentPath": department.path,
+                    "drones": 0,
+                    "docks": 0,
+                    "payloads": 0,
+                    "pilots": 0,
+                }
+            return department_rows[department.id]
 
-    def get_queryset_for_context(self, context):
-        return visible_routes_queryset(context)
+        for resource_type in (ResourceType.DRONE, ResourceType.DOCK, ResourceType.PAYLOAD):
+            queryset = visible_bindings_queryset(context, resource_type=resource_type)
+            items = [serialize_resource_binding(binding, context=context) for binding in queryset]
+            visible_ids = [item["id"] for item in items]
+            if resource_type == ResourceType.DRONE:
+                occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, drone_id__in=visible_ids).count()
+            elif resource_type == ResourceType.DOCK:
+                occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, dock_id__in=visible_ids).count()
+            else:
+                occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, payload_id__in=visible_ids).count()
+            summary[f"{resource_type}s"] = {
+                "total": len(items),
+                "online": sum(1 for item in items if item.get("onlineStatus")),
+                "available": max(0, len(items) - occupied),
+                "occupied": occupied,
+            }
+            for binding in queryset:
+                row = department_row(binding.owner_department)
+                row[f"{resource_type}s"] += 1
 
-    def apply_query_filters(self, queryset, params):
-        keywords = str(params.get("keywords") or "").strip()
-        if keywords:
-            queryset = queryset.filter(name__icontains=keywords)
-        return queryset
-
-
-class BusinessRouteListView(BusinessRouteReadView):
-    @extend_schema(operation_id="v2_resource_routes_list", responses=V2RouteReadSerializer)
-    def get(self, request):
-        return super().get(request)
-
-
-class BusinessRouteDetailView(BusinessRouteReadView):
-    @extend_schema(operation_id="v2_resource_routes_retrieve", responses=V2RouteReadSerializer)
-    def get(self, request, id: int):
-        return super().get(request, id=id)
-
-
-class BusinessMissionReadView(BusinessReadOnlyView):
-    read_serializer_class = V2MissionReadSerializer
-
-    def get_queryset_for_context(self, context):
-        return visible_missions_queryset(context)
-
-    def apply_query_filters(self, queryset, params):
-        route_id = _int_query_param(params, "routeId")
-        if route_id is not None:
-            queryset = queryset.filter(route_id=route_id)
-        status_value = _int_query_param(params, "status")
-        if status_value is not None:
-            queryset = queryset.filter(status=status_value)
-        device_sn = str(params.get("deviceSn") or "").strip()
-        if device_sn:
-            queryset = queryset.filter(Q(device_sn=device_sn) | Q(drone__device_sn=device_sn))
-        keywords = str(params.get("keywords") or "").strip()
-        if keywords:
-            queryset = queryset.filter(
-                Q(name__icontains=keywords)
-                | Q(route_name__icontains=keywords)
-                | Q(drone_name__icontains=keywords)
-                | Q(device_sn__icontains=keywords)
-            )
-        return queryset.distinct()
-
-
-class BusinessMissionListView(BusinessMissionReadView):
-    @extend_schema(operation_id="v2_resource_missions_list", responses=V2MissionReadSerializer)
-    def get(self, request):
-        return super().get(request)
-
-
-class BusinessMissionDetailView(BusinessMissionReadView):
-    @extend_schema(operation_id="v2_resource_missions_retrieve", responses=V2MissionReadSerializer)
-    def get(self, request, id: int):
-        return super().get(request, id=id)
-
-
-class BusinessFlightRecordReadView(BusinessReadOnlyView):
-    read_serializer_class = V2FlightRecordReadSerializer
-
-    def get_queryset_for_context(self, context):
-        return visible_flight_records_queryset(context)
-
-    def apply_query_filters(self, queryset, params):
-        mission_id = _int_query_param(params, "missionId")
-        if mission_id is not None:
-            queryset = queryset.filter(mission_id=mission_id)
-        status_value = _int_query_param(params, "status")
-        if status_value is not None:
-            queryset = queryset.filter(status=status_value)
-        device_sn = str(params.get("deviceSn") or "").strip()
-        if device_sn:
-            queryset = queryset.filter(
-                Q(device_sn=device_sn)
-                | Q(drone__device_sn=device_sn)
-                | Q(mission__device_sn=device_sn)
-                | Q(mission__drone__device_sn=device_sn)
-            )
-        flight_no = str(params.get("flightNo") or "").strip()
-        if flight_no:
-            queryset = queryset.filter(flight_no__icontains=flight_no)
-        return queryset.distinct()
-
-
-class BusinessFlightRecordListView(BusinessFlightRecordReadView):
-    @extend_schema(operation_id="v2_resource_flight_records_list", responses=V2FlightRecordReadSerializer)
-    def get(self, request):
-        return super().get(request)
-
-
-class BusinessFlightRecordDetailView(BusinessFlightRecordReadView):
-    @extend_schema(operation_id="v2_resource_flight_records_retrieve", responses=V2FlightRecordReadSerializer)
-    def get(self, request, id: int):
-        return super().get(request, id=id)
-
-
-class BusinessMediaFileReadView(BusinessReadOnlyView):
-    read_serializer_class = V2MediaFileReadSerializer
-
-    def get_queryset_for_context(self, context):
-        return visible_media_files_queryset(context)
-
-    def apply_query_filters(self, queryset, params):
-        flight_record_id = _int_query_param(params, "flightRecordId")
-        if flight_record_id is not None:
-            queryset = queryset.filter(flight_record_id=flight_record_id)
-        mission_id = _int_query_param(params, "missionId")
-        if mission_id is not None:
-            queryset = queryset.filter(mission_id=mission_id)
-        media_type = _int_query_param(params, "mediaType")
-        if media_type is not None:
-            queryset = queryset.filter(media_type=media_type)
-        device_sn = str(params.get("deviceSn") or "").strip()
-        if device_sn:
-            queryset = queryset.filter(
-                Q(device_sn=device_sn)
-                | Q(flight_record__device_sn=device_sn)
-                | Q(flight_record__drone__device_sn=device_sn)
-                | Q(mission__device_sn=device_sn)
-                | Q(mission__drone__device_sn=device_sn)
-            )
-        file_name = str(params.get("fileName") or "").strip()
-        if file_name:
-            queryset = queryset.filter(file_name__icontains=file_name)
-        return queryset.distinct()
-
-
-class BusinessMediaFileListView(BusinessMediaFileReadView):
-    @extend_schema(operation_id="v2_resource_media_files_list", responses=V2MediaFileReadSerializer)
-    def get(self, request):
-        return super().get(request)
-
-
-class BusinessMediaFileDetailView(BusinessMediaFileReadView):
-    @extend_schema(operation_id="v2_resource_media_files_retrieve", responses=V2MediaFileReadSerializer)
-    def get(self, request, id: int):
-        return super().get(request, id=id)
+        pilot_queryset = visible_pilots_queryset(context)
+        summary["pilots"] = {
+            "total": pilot_queryset.count(),
+            "active": pilot_queryset.filter(status=DirectoryStatus.ACTIVE).count(),
+            "disabled": pilot_queryset.filter(status=DirectoryStatus.DISABLED).count(),
+        }
+        for pilot in pilot_queryset.select_related("account_profile__department"):
+            department_row(pilot.account_profile.department)["pilots"] += 1
+        summary["departments"] = sorted(department_rows.values(), key=lambda item: (item["departmentPath"], item["departmentId"]))
+        return Response(summary, status=status.HTTP_200_OK)
 
 
 class BindingListCreateView(V2ResourceAPIView):
@@ -538,13 +487,14 @@ class ShareGroupListCreateView(V2ResourceAPIView):
     @transaction.atomic
     def post(self, request):
         context = resolve_v2_context(request)
-        if not is_department_admin(context):
+        if not (is_platform_super_admin(context) or is_department_admin(context)):
             raise StandardForbidden()
         serializer = ShareGroupCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        owner_department = _share_group_owner_department(context, serializer.validated_data.get("ownerDepartmentId"))
         try:
             group = ResourceShareGroup.objects.create(
-                owner_department=context.department,
+                owner_department=owner_department,
                 name=serializer.validated_data["name"],
             )
         except IntegrityError as exc:
@@ -569,7 +519,7 @@ class ShareGroupDetailView(V2ResourceAPIView):
         group = _share_group_or_404(id)
         if group is None:
             return _not_found_response()
-        _require_share_group_owner_admin(context, group)
+        _require_share_group_manager(context, group)
         serializer = ShareGroupUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         before_data = ShareGroupReadSerializer(group).data
@@ -600,7 +550,7 @@ class ShareGroupDepartmentListCreateView(V2ResourceAPIView):
         group = _share_group_or_404(id)
         if group is None:
             return _not_found_response()
-        _require_share_group_owner_admin(context, group)
+        _require_share_group_manager(context, group)
         serializer = ShareGroupTargetCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         department = Department.objects.filter(
@@ -637,7 +587,7 @@ class ShareGroupDepartmentDetailView(V2ResourceAPIView):
         group = _share_group_or_404(id)
         if group is None:
             return _not_found_response()
-        _require_share_group_owner_admin(context, group)
+        _require_share_group_manager(context, group)
         target = (
             ResourceShareGroupTargetDepartment.objects.select_related("department")
             .filter(share_group=group, department_id=department_id)
@@ -667,7 +617,7 @@ class ShareGroupResourceListCreateView(V2ResourceAPIView):
         group = _share_group_or_404(id)
         if group is None:
             return _not_found_response()
-        _require_share_group_owner_admin(context, group)
+        _require_share_group_manager(context, group)
         serializer = ShareGroupResourceCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         resource_type = serializer.validated_data["resourceType"]
@@ -722,7 +672,7 @@ class ShareGroupResourceDetailView(V2ResourceAPIView):
         group = _share_group_or_404(id)
         if group is None:
             return _not_found_response()
-        _require_share_group_owner_admin(context, group)
+        _require_share_group_manager(context, group)
         resource_share = self._resource_share(group=group, resource_share_id=resource_share_id)
         if resource_share is None:
             return _not_found_response()
@@ -752,7 +702,7 @@ class ShareGroupResourceDetailView(V2ResourceAPIView):
         group = _share_group_or_404(id)
         if group is None:
             return _not_found_response()
-        _require_share_group_owner_admin(context, group)
+        _require_share_group_manager(context, group)
         resource_share = self._resource_share(group=group, resource_share_id=resource_share_id)
         if resource_share is None:
             return _not_found_response()
