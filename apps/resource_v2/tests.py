@@ -22,6 +22,7 @@ from apps.resource_v2.models import (
     DjiConnection,
     DockResource,
     DroneResource,
+    GatewayResource,
     PayloadResource,
     ResourceBinding,
     ResourceBindingHistory,
@@ -70,6 +71,17 @@ class FakeDiscoveryGateway:
                     "firmware_version": "v1.0.0",
                     "firmware_status": "1",
                     "last_payload": {"device_sn": "DOCK-SN-001"},
+                }
+            ],
+            "gateways": [
+                {
+                    "device_sn": "GATEWAY-SN-001",
+                    "name": "网关一号",
+                    "model": "RC Plus",
+                    "online_status": True,
+                    "firmware_version": "v1.0.0",
+                    "firmware_status": "1",
+                    "last_payload": {"device_sn": "GATEWAY-SN-001"},
                 }
             ],
             "payloads": [
@@ -339,11 +351,14 @@ class ResourceV2ApiTests(TestCase):
         self.assertEqual(FakeDiscoveryGateway.calls, [connection.id])
         drone = DroneResource.objects.get(device_sn="DRONE-SN-001")
         dock = DockResource.objects.get(device_sn="DOCK-SN-001")
+        gateway = GatewayResource.objects.get(device_sn="GATEWAY-SN-001")
         payload = PayloadResource.objects.get(payload_sn="PAYLOAD-SN-001")
         self.assertFalse(DjiDeviceIndex.objects.filter(device_sn="DRONE-SN-001").exists())
         self.assertEqual(discover_response.data["data"]["drones"][0]["id"], drone.id)
         self.assertEqual(discover_response.data["data"]["docks"][0]["id"], dock.id)
         self.assertEqual(discover_response.data["data"]["docks"][0]["deviceSn"], "DOCK-SN-001")
+        self.assertEqual(discover_response.data["data"]["gateways"][0]["id"], gateway.id)
+        self.assertEqual(discover_response.data["data"]["gateways"][0]["deviceSn"], "GATEWAY-SN-001")
         self.assertEqual(discover_response.data["data"]["payloads"][0]["payloadSn"], "PAYLOAD-SN-001")
 
         bind_response = self.client.post(
@@ -594,6 +609,15 @@ class ResourceV2ApiTests(TestCase):
                         "pagination": {"page": 1, "page_size": 100, "total": 1},
                     },
                 )
+            if "/devices?" in path and "domain=" not in path:
+                return GatewayResponse(
+                    status_code=200,
+                    headers={},
+                    data={
+                        "list": [{"device_sn": "GATEWAY-RC-001", "device_name": "网关遥控端"}],
+                        "pagination": {"page": 1, "page_size": 100, "total": 1},
+                    },
+                )
             raise AssertionError(f"unexpected upstream request: {method} {path}")
 
         with patch.object(DjiConnectionGateway, "_request", side_effect=fake_request), patch.object(
@@ -610,10 +634,12 @@ class ResourceV2ApiTests(TestCase):
         self.assertEqual(connection.status, "ACTIVE")
         self.assertEqual(discovered["drones"][0]["device_sn"], "GATEWAY-DRONE-001")
         self.assertEqual(discovered["docks"][0]["device_sn"], "GATEWAY-DOCK-001")
+        self.assertEqual(discovered["gateways"][0]["device_sn"], "GATEWAY-RC-001")
         self.assertFalse(DjiDeviceIndex.objects.filter(device_sn__in=["GATEWAY-DRONE-001", "GATEWAY-DOCK-001"]).exists())
         self.assertTrue(any(path == "/api/v1/manage/login" for _method, path, _headers in calls))
         self.assertTrue(any("domain=0" in path for _method, path, _headers in calls))
         self.assertTrue(any("domain=3" in path for _method, path, _headers in calls))
+        self.assertTrue(any("/devices?" in path and "domain=" not in path for _method, path, _headers in calls))
 
     def test_share_group_api_should_manage_targets_resources_visibility_and_audit(self):
         connection = DjiConnection.objects.create(

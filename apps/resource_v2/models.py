@@ -16,6 +16,7 @@ class DjiConnectionStatus(models.TextChoices):
 class ResourceType(models.TextChoices):
     DRONE = "drone", "无人机"
     DOCK = "dock", "机场"
+    GATEWAY = "gateway", "执行端/网关"
     PAYLOAD = "payload", "负载"
 
 
@@ -100,6 +101,24 @@ class DockResource(TimeStampedModel):
 
     class Meta:
         db_table = "v2_dock_resources"
+        ordering = ["device_sn"]
+
+    def __str__(self):
+        return self.device_sn
+
+
+class GatewayResource(TimeStampedModel):
+    device_sn = models.CharField(max_length=128, unique=True)
+    name = models.CharField(max_length=128, blank=True, default="")
+    model = models.CharField(max_length=128, blank=True, default="")
+    online_status = models.BooleanField(default=False)
+    firmware_version = models.CharField(max_length=128, blank=True, default="")
+    firmware_status = models.CharField(max_length=64, blank=True, default="")
+    last_payload = models.JSONField(default=dict, blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "v2_gateway_resources"
         ordering = ["device_sn"]
 
     def __str__(self):

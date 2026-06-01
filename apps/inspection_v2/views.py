@@ -1,7 +1,8 @@
 from django.db import IntegrityError, transaction
 from django.db.models import Q
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema
-from rest_framework import serializers, status
+from rest_framework import parsers, serializers, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 
@@ -15,6 +16,7 @@ from apps.inspection_v2.models import (
     InspectionMission,
     MissionStatus,
     Waypoint,
+    WaypointRouteCloudFile,
     WaypointRoute,
 )
 from apps.inspection_v2.serializers import (
@@ -27,6 +29,8 @@ from apps.inspection_v2.serializers import (
     MissionCloseSerializer,
     MissionReadSerializer,
     MissionWriteSerializer,
+    RouteCloudFileReadSerializer,
+    RouteKmzUploadSerializer,
     RouteReadSerializer,
     RouteWriteSerializer,
     TelemetrySnapshotReadSerializer,
@@ -61,6 +65,7 @@ from apps.inspection_v2.services import (
 from apps.resource_v2.audit import log_v2_action
 from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import ResourceType
+from apps.resource_v2.models import DjiConnection
 from apps.resource_v2.services import get_resource
 from apps.workforce_v2.services import pilot_has_effective_qualification, visible_pilots_queryset
 
@@ -203,6 +208,58 @@ class RouteDetailView(InspectionV2APIView):
         return Response(data, status=status.HTTP_200_OK)
 
 
+class RouteKmzView(InspectionV2APIView):
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+
+    @extend_schema(operation_id="v2_inspection_routes_upload_kmz", request=RouteKmzUploadSerializer, responses=RouteCloudFileReadSerializer)
+    @transaction.atomic
+    def post(self, request, id: int):
+        context = resolve_v2_context(request)
+        require_dispatcher(context)
+        route = get_editable_route_or_404(context, id)
+        serializer = RouteKmzUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        connection = (
+            DjiConnection.objects.select_related("owner_department")
+            .filter(pk=serializer.validated_data["djiConnectionId"], owner_department=route.owner_department)
+            .first()
+        )
+        if connection is None:
+            raise StandardNotFound()
+        gateway = DjiConnectionGateway(connection)
+        try:
+            upload_payload = gateway.upload_route(route_name=f"v2-{route.id}-{route.name}", file_obj=serializer.validated_data["kmzFile"])
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
+        cloud_file, _created = WaypointRouteCloudFile.objects.update_or_create(
+            route=route,
+            defaults={
+                "dji_connection": connection,
+                "workspace_id": connection.workspace_id,
+                "dji_file_id": str(upload_payload["dji_wayline_id"]),
+                "download_url": str(upload_payload.get("download_url") or ""),
+                "raw_response": upload_payload,
+                "uploaded_by_user": request.user,
+                "uploaded_at": timezone.now(),
+            },
+        )
+        data = RouteCloudFileReadSerializer(cloud_file).data
+        log_v2_action(
+            request=request,
+            context=context,
+            action="upload_route_kmz",
+            target_type="waypoint_route",
+            target_id=route.id,
+            resource_owner_department=route.owner_department,
+            after_data=data,
+        )
+        return Response(data, status=status.HTTP_200_OK)
+
+    @extend_schema(operation_id="v2_inspection_routes_replace_kmz", request=RouteKmzUploadSerializer, responses=RouteCloudFileReadSerializer)
+    def put(self, request, id: int):
+        return self.post(request, id=id)
+
+
 def _validated_mission_inputs(context, data):
     route = assignable_routes_queryset(context).filter(pk=data["routeId"]).first()
     if route is None:
@@ -216,17 +273,30 @@ def _validated_mission_inputs(context, data):
     bindings = [drone_binding]
     drone = get_resource(ResourceType.DRONE, data["droneId"])
     dock = None
+    executor = None
     payload = None
     dock_id = data.get("dockId")
+    executor_id = data.get("executorId")
     payload_id = data.get("payloadId")
     if dock_id:
         bindings.append(usable_resource_binding(context, ResourceType.DOCK, dock_id))
         dock = get_resource(ResourceType.DOCK, dock_id)
+    if executor_id:
+        executor_binding = usable_resource_binding(context, ResourceType.GATEWAY, executor_id)
+        if executor_binding.dji_connection_id != drone_binding.dji_connection_id:
+            raise StandardConstraintConflict(msg="执行端必须与无人机属于同一个 DJI 连接")
+        bindings.append(executor_binding)
+        executor = get_resource(ResourceType.GATEWAY, executor_id)
     if payload_id:
         bindings.append(usable_resource_binding(context, ResourceType.PAYLOAD, payload_id))
         payload = get_resource(ResourceType.PAYLOAD, payload_id)
-    ensure_resources_available(drone_id=drone.id, dock_id=dock.id if dock else None, payload_id=payload.id if payload else None)
-    return route, pilot, drone, dock, payload, bindings
+    ensure_resources_available(
+        drone_id=drone.id,
+        dock_id=dock.id if dock else None,
+        executor_id=executor.id if executor else None,
+        payload_id=payload.id if payload else None,
+    )
+    return route, pilot, drone, dock, executor, payload, bindings
 
 
 class MissionListCreateView(InspectionV2APIView):
@@ -258,7 +328,7 @@ class MissionListCreateView(InspectionV2APIView):
         require_dispatcher(context)
         serializer = MissionWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        route, pilot, drone, dock, payload, bindings = _validated_mission_inputs(context, serializer.validated_data)
+        route, pilot, drone, dock, executor, payload, bindings = _validated_mission_inputs(context, serializer.validated_data)
         mission = InspectionMission.objects.create(
             tenant=context.department.tenant,
             creator_department=context.department,
@@ -268,6 +338,7 @@ class MissionListCreateView(InspectionV2APIView):
             name=serializer.validated_data["name"],
             drone=drone,
             dock=dock,
+            executor=executor,
             payload=payload,
             pilot=pilot,
             scheduled_at=serializer.validated_data.get("scheduledAt"),
@@ -309,7 +380,7 @@ class MissionDetailView(InspectionV2APIView):
             raise StandardConstraintConflict(msg="只有待执行任务可以编辑")
         serializer = MissionWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        route, pilot, drone, dock, payload, bindings = _validated_mission_inputs(context, serializer.validated_data)
+        route, pilot, drone, dock, executor, payload, bindings = _validated_mission_inputs(context, serializer.validated_data)
         before_data = MissionReadSerializer(mission).data
         mission.route = route
         mission.route_snapshot = route_snapshot(route)
@@ -317,6 +388,7 @@ class MissionDetailView(InspectionV2APIView):
         mission.primary_resource_owner_department = bindings[0].owner_department
         mission.drone = drone
         mission.dock = dock
+        mission.executor = executor
         mission.payload = payload
         mission.pilot = pilot
         mission.scheduled_at = serializer.validated_data.get("scheduledAt")
@@ -329,6 +401,7 @@ class MissionDetailView(InspectionV2APIView):
                 "primary_resource_owner_department",
                 "drone",
                 "dock",
+                "executor",
                 "payload",
                 "pilot",
                 "scheduled_at",
@@ -358,7 +431,10 @@ class MissionStartView(InspectionV2APIView):
     def post(self, request, id: int):
         context = resolve_v2_context(request)
         mission = get_visible_mission_or_404(context, id)
-        start_mission(mission=mission, context=context, request=request)
+        try:
+            start_mission(mission=mission, context=context, request=request)
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
         return Response(MissionReadSerializer(mission).data, status=status.HTTP_200_OK)
 
 
@@ -382,13 +458,16 @@ class MissionCancelView(InspectionV2APIView):
         mission = get_visible_mission_or_404(context, id)
         serializer = MissionCloseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        mission = close_mission(
-            mission=mission,
-            context=context,
-            request=request,
-            status_value=MissionStatus.CANCELED,
-            reason=serializer.validated_data.get("reason", ""),
-        )
+        try:
+            mission = close_mission(
+                mission=mission,
+                context=context,
+                request=request,
+                status_value=MissionStatus.CANCELED,
+                reason=serializer.validated_data.get("reason", ""),
+            )
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
         return Response(MissionReadSerializer(mission).data, status=status.HTTP_200_OK)
 
 

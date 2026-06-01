@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import timedelta, timezone as dt_timezone
 from decimal import Decimal
 from django.db.models import Q, QuerySet
 from django.utils import timezone
@@ -24,15 +24,18 @@ from apps.workforce_v2.services import pilot_has_effective_qualification, visibl
 from apps.inspection_v2.models import (
     CloudMediaFile,
     CloudMediaType,
+    CloudExecutionStatus,
     FlightRecordStatus,
     FlightSession,
     FlightSessionStatus,
     FlightTelemetrySnapshot,
     InspectionFlightRecord,
     InspectionMission,
+    MissionCloudExecution,
     MissionResourceAssignment,
     MissionStatus,
     WaypointRoute,
+    WaypointRouteCloudFile,
 )
 
 
@@ -316,6 +319,8 @@ def _resource_occupancy_conflict(resource_type: str, resource_id: int, *, exclud
         filters["drone_id"] = resource_id
     elif resource_type == ResourceType.DOCK:
         filters["dock_id"] = resource_id
+    elif resource_type == ResourceType.GATEWAY:
+        filters["executor_id"] = resource_id
     elif resource_type == ResourceType.PAYLOAD:
         filters["payload_id"] = resource_id
     else:
@@ -326,11 +331,19 @@ def _resource_occupancy_conflict(resource_type: str, resource_id: int, *, exclud
     return queryset.exists()
 
 
-def ensure_resources_available(*, drone_id: int, dock_id: int | None = None, payload_id: int | None = None, exclude_mission_id=None):
+def ensure_resources_available(
+    *,
+    drone_id: int,
+    dock_id: int | None = None,
+    executor_id: int | None = None,
+    payload_id: int | None = None,
+    exclude_mission_id=None,
+):
     conflicts = []
     checks = [
         (ResourceType.DRONE, drone_id),
         (ResourceType.DOCK, dock_id),
+        (ResourceType.GATEWAY, executor_id),
         (ResourceType.PAYLOAD, payload_id),
     ]
     for resource_type, resource_id in checks:
@@ -378,13 +391,41 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
     require_transition_operator(context, mission)
     if mission.status != MissionStatus.PENDING:
         raise StandardConstraintConflict(msg="只有待执行任务可以开始")
+    if mission.executor_id is None:
+        raise StandardConstraintConflict(msg="任务缺少 DJI 航线任务执行端")
+    try:
+        route_cloud_file = mission.route.cloud_file
+    except WaypointRouteCloudFile.DoesNotExist as exc:
+        raise StandardConstraintConflict(msg="任务航线尚未上传 KMZ 到 DJI") from exc
+    drone_binding = _active_binding(ResourceType.DRONE, mission.drone_id)
+    executor_binding = _active_binding(ResourceType.GATEWAY, mission.executor_id)
+    if drone_binding.dji_connection_id != executor_binding.dji_connection_id:
+        raise StandardConstraintConflict(msg="执行端必须与无人机属于同一个 DJI 连接")
+    if route_cloud_file.dji_connection_id != drone_binding.dji_connection_id:
+        raise StandardConstraintConflict(msg="任务航线必须与无人机属于同一个 DJI 连接")
     ensure_resources_available(
         drone_id=mission.drone_id,
         dock_id=mission.dock_id,
+        executor_id=mission.executor_id,
         payload_id=mission.payload_id,
         exclude_mission_id=mission.id,
     )
     now = timezone.now()
+    request_payload = {
+        "mission_name": mission.name,
+        "file_id": route_cloud_file.dji_file_id,
+        "dock_sn": mission.executor.device_sn,
+        "task_type": 0,
+    }
+    gateway = DjiConnectionGateway(drone_binding.dji_connection)
+    response_payload = gateway.create_mission(
+        mission_name=mission.name,
+        file_id=route_cloud_file.dji_file_id,
+        dock_sn=mission.executor.device_sn,
+    )
+    dji_job_id = str(response_payload.get("dji_job_id") or response_payload.get("job_id") or "").strip()
+    if not dji_job_id:
+        raise StandardConstraintConflict(msg="DJI 创建任务后未返回 job_id")
     mission.status = MissionStatus.RUNNING
     mission.started_at = now
     mission.save(update_fields=["status", "started_at", "updated_at"])
@@ -392,10 +433,29 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
         mission=mission,
         drone=mission.drone,
         dock=mission.dock,
+        executor=mission.executor,
         payload=mission.payload,
         status=FlightSessionStatus.RUNNING,
         started_at=now,
         started_by_user=context.user,
+    )
+    MissionCloudExecution.objects.update_or_create(
+        mission=mission,
+        defaults={
+            "session": session,
+            "dji_connection": drone_binding.dji_connection,
+            "route_cloud_file": route_cloud_file,
+            "workspace_id": route_cloud_file.workspace_id,
+            "dji_job_id": dji_job_id,
+            "executor_sn": mission.executor.device_sn,
+            "drone_sn": mission.drone.device_sn,
+            "status": CloudExecutionStatus.RUNNING,
+            "started_at": now,
+            "raw_request": request_payload,
+            "raw_response": response_payload,
+            "error_code": "",
+            "error_message": "",
+        },
     )
     log_v2_action(
         request=request,
@@ -406,7 +466,7 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
         resource_owner_department=mission.primary_resource_owner_department,
         resource_type=ResourceType.DRONE,
         resource_object_id=mission.drone_id,
-        after_data={"sessionId": session.id, "status": mission.status},
+        after_data={"sessionId": session.id, "status": mission.status, "djiJobId": dji_job_id},
     )
     return session
 
@@ -486,6 +546,9 @@ def close_mission(
         raise StandardForbidden()
     if mission.status not in {MissionStatus.PENDING, MissionStatus.RUNNING}:
         raise StandardConstraintConflict(msg="当前任务状态不允许关闭")
+    execution = getattr(mission, "cloud_execution", None)
+    if status_value == MissionStatus.CANCELED and execution is not None and execution.dji_job_id:
+        DjiConnectionGateway(execution.dji_connection).cancel_mission(execution.dji_job_id)
     now = timezone.now()
     session = getattr(mission, "flight_session", None)
     if session and session.status == FlightSessionStatus.RUNNING:
@@ -498,6 +561,11 @@ def close_mission(
         mission.canceled_at = now
         mission.cancel_reason = reason
         update_fields = ["status", "canceled_at", "cancel_reason", "updated_at"]
+        if execution is not None:
+            execution.status = CloudExecutionStatus.CANCELED
+            execution.ended_at = now
+            execution.error_message = reason
+            execution.save(update_fields=["status", "ended_at", "error_message", "updated_at"])
     else:
         mission.finished_at = now
         mission.failure_reason = reason
@@ -538,7 +606,16 @@ def update_telemetry_snapshot(*, session: FlightSession, payload: dict) -> Fligh
     if reported_at is None:
         reported_at = timezone.now()
 
-    raw_payload = {key: (str(value) if isinstance(value, Decimal) else value) for key, value in payload.items()}
+    raw_payload = {
+        key: (
+            str(value)
+            if isinstance(value, Decimal)
+            else value.isoformat()
+            if hasattr(value, "isoformat")
+            else value
+        )
+        for key, value in payload.items()
+    }
     defaults = {
         "latitude": payload.get("latitude"),
         "longitude": payload.get("longitude"),
@@ -654,6 +731,202 @@ def sync_media_for_record(*, record: InspectionFlightRecord) -> dict:
     record.video_count = video_count
     record.save(update_fields=["photo_count", "video_count", "updated_at"])
     return {"synced": synced, "photoCount": photo_count, "videoCount": video_count}
+
+
+def _event_progress(payload: dict) -> int:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    output = data.get("output") if isinstance(data.get("output"), dict) else {}
+    value = None
+    for source in (output, data, payload):
+        value = source.get("progress") or source.get("progress_percent") or source.get("percent")
+        if value not in (None, ""):
+            break
+    if isinstance(value, bool):
+        return 0
+    try:
+        progress = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return min(max(progress, 0), 100)
+
+
+def _cloud_status_from_event(status: str) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized in {"ok", "success", "succeeded", "completed", "complete", "finish", "finished"}:
+        return CloudExecutionStatus.COMPLETED
+    if normalized in {"cancel", "canceled", "cancelled"}:
+        return CloudExecutionStatus.CANCELED
+    if normalized in {"failed", "failure", "error", "timeout"}:
+        return CloudExecutionStatus.FAILED
+    return CloudExecutionStatus.RUNNING
+
+
+def _record_status_from_cloud(status_value: str) -> str:
+    return {
+        CloudExecutionStatus.COMPLETED: FlightRecordStatus.COMPLETED,
+        CloudExecutionStatus.CANCELED: FlightRecordStatus.CANCELED,
+        CloudExecutionStatus.FAILED: FlightRecordStatus.FAILED,
+    }.get(status_value, FlightRecordStatus.COMPLETED)
+
+
+def _mission_status_from_cloud(status_value: str) -> str:
+    return {
+        CloudExecutionStatus.COMPLETED: MissionStatus.COMPLETED,
+        CloudExecutionStatus.CANCELED: MissionStatus.CANCELED,
+        CloudExecutionStatus.FAILED: MissionStatus.FAILED,
+    }.get(status_value, MissionStatus.RUNNING)
+
+
+def _session_status_from_cloud(status_value: str) -> str:
+    return {
+        CloudExecutionStatus.COMPLETED: FlightSessionStatus.COMPLETED,
+        CloudExecutionStatus.CANCELED: FlightSessionStatus.CANCELED,
+        CloudExecutionStatus.FAILED: FlightSessionStatus.FAILED,
+    }.get(status_value, FlightSessionStatus.RUNNING)
+
+
+def _flight_record_from_terminal_execution(*, mission: InspectionMission, session: FlightSession, status_value: str):
+    record, _created = InspectionFlightRecord.objects.get_or_create(
+        mission=mission,
+        defaults={
+            "tenant": mission.tenant,
+            "session": session,
+            "flight_no": _flight_no(mission),
+            "creator_department": mission.creator_department,
+            "primary_resource_owner_department": mission.primary_resource_owner_department,
+            "mission_name": mission.name,
+            "route_name": mission.route.name,
+            "drone_device_sn": mission.drone.device_sn,
+            "drone_name": mission.drone.name,
+            "pilot_name": mission.pilot.display_name,
+            "start_time": session.started_at,
+            "end_time": session.ended_at or timezone.now(),
+            "flight_duration": _duration_seconds(session.started_at, session.ended_at or timezone.now()),
+            "status": _record_status_from_cloud(status_value),
+        },
+    )
+    return record
+
+
+def apply_cloud_execution_event(*, dji_job_id: str, status: str, payload: dict | None = None) -> dict:
+    payload = payload if isinstance(payload, dict) else {}
+    execution = (
+        MissionCloudExecution.objects.select_related(
+            "mission",
+            "mission__tenant",
+            "mission__creator_department",
+            "mission__primary_resource_owner_department",
+            "mission__route",
+            "mission__drone",
+            "mission__pilot",
+            "session",
+        )
+        .filter(dji_job_id=dji_job_id)
+        .first()
+    )
+    if execution is None:
+        return {"updated": 0, "ignored": 1}
+
+    now = timezone.now()
+    cloud_status = _cloud_status_from_event(status)
+    execution.status = cloud_status
+    execution.progress_percent = _event_progress(payload) or execution.progress_percent
+    execution.last_event_at = now
+    execution.raw_last_event = payload
+    if cloud_status == CloudExecutionStatus.FAILED:
+        execution.error_code = str(payload.get("result_code") or payload.get("code") or "")
+        execution.error_message = str(payload.get("message") or payload.get("msg") or "")
+
+    mission = execution.mission
+    session = execution.session or getattr(mission, "flight_session", None)
+    media_result = {"synced": 0, "photoCount": 0, "videoCount": 0}
+    if cloud_status in {CloudExecutionStatus.COMPLETED, CloudExecutionStatus.CANCELED, CloudExecutionStatus.FAILED}:
+        mission.status = _mission_status_from_cloud(cloud_status)
+        if cloud_status == CloudExecutionStatus.CANCELED:
+            mission.canceled_at = mission.canceled_at or now
+            mission.save(update_fields=["status", "canceled_at", "updated_at"])
+        else:
+            mission.finished_at = mission.finished_at or now
+            mission.save(update_fields=["status", "finished_at", "updated_at"])
+        if session is not None and session.status == FlightSessionStatus.RUNNING:
+            session.status = _session_status_from_cloud(cloud_status)
+            session.ended_at = session.ended_at or now
+            session.save(update_fields=["status", "ended_at", "updated_at"])
+        if session is not None:
+            record = _flight_record_from_terminal_execution(mission=mission, session=session, status_value=cloud_status)
+            media_result = sync_media_for_record(record=record)
+        execution.ended_at = execution.ended_at or now
+    else:
+        mission.status = MissionStatus.RUNNING
+        mission.save(update_fields=["status", "updated_at"])
+
+    execution.save(
+        update_fields=[
+            "status",
+            "progress_percent",
+            "last_event_at",
+            "raw_last_event",
+            "error_code",
+            "error_message",
+            "ended_at",
+            "updated_at",
+        ]
+    )
+    return {
+        "updated": 1,
+        "missionId": mission.id,
+        "missionStatus": mission.status,
+        "executionStatus": execution.status,
+        "media": media_result,
+    }
+
+
+def _osd_reported_at(payload: dict):
+    timestamp = payload.get("timestamp")
+    if isinstance(timestamp, (int, float)):
+        seconds = timestamp / 1000 if timestamp > 10_000_000_000 else timestamp
+        return timezone.datetime.fromtimestamp(seconds, tz=dt_timezone.utc)
+    return timezone.now()
+
+
+def _osd_battery_percent(data: dict):
+    battery = data.get("battery")
+    if isinstance(battery, dict):
+        value = battery.get("capacity_percent") or battery.get("percent") or battery.get("battery_percent")
+    else:
+        value = data.get("battery_percent") or data.get("capacity_percent")
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def apply_osd_telemetry(*, device_sn: str, payload: dict | None = None) -> dict:
+    payload = payload if isinstance(payload, dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    sessions = FlightSession.objects.select_related("mission").filter(
+        status=FlightSessionStatus.RUNNING,
+        drone__device_sn=device_sn,
+    )
+    updated = 0
+    for session in sessions:
+        update_telemetry_snapshot(
+            session=session,
+            payload={
+                "latitude": data.get("latitude"),
+                "longitude": data.get("longitude"),
+                "altitude": data.get("altitude", data.get("height")),
+                "speed": data.get("speed", data.get("horizontal_speed")),
+                "heading": data.get("heading", data.get("attitude_head")),
+                "batteryPercent": _osd_battery_percent(data),
+                "reportedAt": _osd_reported_at(payload),
+                "raw": payload,
+            },
+        )
+        updated += 1
+    return {"updated": updated}
 
 
 def visible_resource_for_live(context, drone_id: int) -> ResourceBinding:

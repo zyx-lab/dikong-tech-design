@@ -227,6 +227,11 @@ class DjiConnectionDiscoverView(V2ResourceAPIView):
             for payload in discovered.get("docks", [])
             if isinstance(payload, dict)
         ]
+        gateways = [
+            upsert_resource_from_payload(ResourceType.GATEWAY, payload)
+            for payload in discovered.get("gateways", [])
+            if isinstance(payload, dict)
+        ]
         payloads = [
             upsert_resource_from_payload(ResourceType.PAYLOAD, payload)
             for payload in discovered.get("payloads", [])
@@ -255,6 +260,16 @@ class DjiConnectionDiscoverView(V2ResourceAPIView):
                     "onlineStatus": item.online_status,
                 }
                 for item in docks
+            ],
+            "gateways": [
+                {
+                    "id": item.id,
+                    "deviceSn": item.device_sn,
+                    "name": item.name,
+                    "model": item.model,
+                    "onlineStatus": item.online_status,
+                }
+                for item in gateways
             ],
             "payloads": [
                 {
@@ -326,6 +341,22 @@ class DockResourceDetailView(ResourceDetailView):
         return super().get(request, id=id)
 
 
+class GatewayResourceListView(ResourceListView):
+    resource_type = ResourceType.GATEWAY
+
+    @extend_schema(operation_id="v2_resource_gateways_list")
+    def get(self, request):
+        return super().get(request)
+
+
+class GatewayResourceDetailView(ResourceDetailView):
+    resource_type = ResourceType.GATEWAY
+
+    @extend_schema(operation_id="v2_resource_gateways_retrieve")
+    def get(self, request, id: int):
+        return super().get(request, id=id)
+
+
 class PayloadResourceListView(ResourceListView):
     resource_type = ResourceType.PAYLOAD
 
@@ -361,12 +392,13 @@ class ResourceSummaryView(V2ResourceAPIView):
                     "departmentPath": department.path,
                     "drones": 0,
                     "docks": 0,
+                    "gateways": 0,
                     "payloads": 0,
                     "pilots": 0,
                 }
             return department_rows[department.id]
 
-        for resource_type in (ResourceType.DRONE, ResourceType.DOCK, ResourceType.PAYLOAD):
+        for resource_type in (ResourceType.DRONE, ResourceType.DOCK, ResourceType.GATEWAY, ResourceType.PAYLOAD):
             queryset = visible_bindings_queryset(context, resource_type=resource_type)
             items = [serialize_resource_binding(binding, context=context) for binding in queryset]
             visible_ids = [item["id"] for item in items]
@@ -374,6 +406,8 @@ class ResourceSummaryView(V2ResourceAPIView):
                 occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, drone_id__in=visible_ids).count()
             elif resource_type == ResourceType.DOCK:
                 occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, dock_id__in=visible_ids).count()
+            elif resource_type == ResourceType.GATEWAY:
+                occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, executor_id__in=visible_ids).count()
             else:
                 occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, payload_id__in=visible_ids).count()
             summary[f"{resource_type}s"] = {

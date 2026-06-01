@@ -18,6 +18,7 @@ from apps.resource_v2.models import (
     DjiConnection,
     DockResource,
     DroneResource,
+    GatewayResource,
     PayloadResource,
     ResourceBinding,
     ResourceBindingHistory,
@@ -29,6 +30,7 @@ from apps.resource_v2.models import (
 RESOURCE_MODELS = {
     ResourceType.DRONE: DroneResource,
     ResourceType.DOCK: DockResource,
+    ResourceType.GATEWAY: GatewayResource,
     ResourceType.PAYLOAD: PayloadResource,
 }
 

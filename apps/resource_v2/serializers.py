@@ -8,6 +8,7 @@ from apps.resource_v2.models import (
     DjiConnection,
     DockResource,
     DroneResource,
+    GatewayResource,
     PayloadResource,
     ResourceBinding,
     ResourceSharePermission,
@@ -84,7 +85,11 @@ def upsert_resource_from_payload(resource_type: str, payload: dict):
     device_sn = _payload_string(payload, "device_sn", "dock_sn", "dockSn", "sn")
     if not device_sn:
         raise serializers.ValidationError({"device_sn": ["DJI 资源缺少稳定 SN"]})
-    model = DroneResource if resolved_type == ResourceType.DRONE else DockResource
+    model = {
+        ResourceType.DRONE: DroneResource,
+        ResourceType.DOCK: DockResource,
+        ResourceType.GATEWAY: GatewayResource,
+    }[resolved_type]
     resource, _created = model.objects.update_or_create(device_sn=device_sn, defaults=_resource_defaults(payload))
     return resource
 
@@ -297,6 +302,7 @@ def serialize_resource_binding(binding: ResourceBinding, *, context):
     resource_model = {
         ResourceType.DRONE: DroneResource,
         ResourceType.DOCK: DockResource,
+        ResourceType.GATEWAY: GatewayResource,
         ResourceType.PAYLOAD: PayloadResource,
     }[ResourceType(binding.resource_type)]
     resource = resource_model.objects.get(pk=binding.resource_object_id)

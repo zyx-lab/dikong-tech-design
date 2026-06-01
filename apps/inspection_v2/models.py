@@ -4,7 +4,7 @@ from django.db.models import Q
 
 from apps.access.models import DirectoryStatus, TimeStampedModel
 from apps.iam_v2.models import Department
-from apps.resource_v2.models import DockResource, DroneResource, PayloadResource, ResourceType
+from apps.resource_v2.models import DockResource, DroneResource, GatewayResource, PayloadResource, ResourceType
 from apps.workforce_v2.models import PilotProfile
 
 
@@ -33,6 +33,14 @@ class CloudMediaType(models.TextChoices):
     PHOTO = "PHOTO", "照片"
     VIDEO = "VIDEO", "视频"
     OTHER = "OTHER", "其他"
+
+
+class CloudExecutionStatus(models.TextChoices):
+    STARTING = "STARTING", "启动中"
+    RUNNING = "RUNNING", "执行中"
+    COMPLETED = "COMPLETED", "已完成"
+    CANCELED = "CANCELED", "已取消"
+    FAILED = "FAILED", "失败"
 
 
 class WaypointRoute(TimeStampedModel):
@@ -80,6 +88,33 @@ class Waypoint(TimeStampedModel):
         ]
 
 
+class WaypointRouteCloudFile(TimeStampedModel):
+    route = models.OneToOneField(WaypointRoute, on_delete=models.CASCADE, related_name="cloud_file")
+    dji_connection = models.ForeignKey(
+        "resource_v2.DjiConnection",
+        on_delete=models.PROTECT,
+        related_name="v2_route_cloud_files",
+    )
+    workspace_id = models.CharField(max_length=128)
+    dji_file_id = models.CharField(max_length=128)
+    download_url = models.CharField(max_length=1000, blank=True, default="")
+    raw_response = models.JSONField(default=dict, blank=True)
+    uploaded_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="uploaded_v2_route_cloud_files",
+    )
+    uploaded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "v2_waypoint_route_cloud_files"
+        constraints = [
+            models.UniqueConstraint(fields=["dji_connection", "dji_file_id"], name="uniq_v2_route_cloud_file_dji"),
+        ]
+
+
 class InspectionMission(TimeStampedModel):
     tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="v2_inspection_missions")
     creator_department = models.ForeignKey(Department, on_delete=models.PROTECT, related_name="created_v2_missions")
@@ -94,6 +129,7 @@ class InspectionMission(TimeStampedModel):
     status = models.CharField(max_length=16, choices=MissionStatus.choices, default=MissionStatus.PENDING)
     drone = models.ForeignKey(DroneResource, on_delete=models.PROTECT, related_name="v2_missions")
     dock = models.ForeignKey(DockResource, null=True, blank=True, on_delete=models.PROTECT, related_name="v2_missions")
+    executor = models.ForeignKey(GatewayResource, null=True, blank=True, on_delete=models.PROTECT, related_name="v2_missions")
     payload = models.ForeignKey(PayloadResource, null=True, blank=True, on_delete=models.PROTECT, related_name="v2_missions")
     pilot = models.ForeignKey(PilotProfile, on_delete=models.PROTECT, related_name="v2_missions")
     scheduled_at = models.DateTimeField(null=True, blank=True)
@@ -147,6 +183,7 @@ class FlightSession(TimeStampedModel):
     status = models.CharField(max_length=16, choices=FlightSessionStatus.choices, default=FlightSessionStatus.RUNNING)
     drone = models.ForeignKey(DroneResource, on_delete=models.PROTECT, related_name="v2_flight_sessions")
     dock = models.ForeignKey(DockResource, null=True, blank=True, on_delete=models.PROTECT, related_name="v2_flight_sessions")
+    executor = models.ForeignKey(GatewayResource, null=True, blank=True, on_delete=models.PROTECT, related_name="v2_flight_sessions")
     payload = models.ForeignKey(PayloadResource, null=True, blank=True, on_delete=models.PROTECT, related_name="v2_flight_sessions")
     started_at = models.DateTimeField()
     ended_at = models.DateTimeField(null=True, blank=True)
@@ -183,6 +220,11 @@ class FlightSession(TimeStampedModel):
                 name="uniq_v2_running_session_dock",
             ),
             models.UniqueConstraint(
+                fields=["executor"],
+                condition=Q(status=FlightSessionStatus.RUNNING, executor__isnull=False),
+                name="uniq_v2_running_session_executor",
+            ),
+            models.UniqueConstraint(
                 fields=["payload"],
                 condition=Q(status=FlightSessionStatus.RUNNING, payload__isnull=False),
                 name="uniq_v2_running_session_payload",
@@ -203,6 +245,51 @@ class FlightTelemetrySnapshot(TimeStampedModel):
 
     class Meta:
         db_table = "v2_flight_telemetry_snapshots"
+
+
+class MissionCloudExecution(TimeStampedModel):
+    mission = models.OneToOneField(InspectionMission, on_delete=models.CASCADE, related_name="cloud_execution")
+    session = models.OneToOneField(
+        FlightSession,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cloud_execution",
+    )
+    dji_connection = models.ForeignKey(
+        "resource_v2.DjiConnection",
+        on_delete=models.PROTECT,
+        related_name="v2_mission_cloud_executions",
+    )
+    route_cloud_file = models.ForeignKey(
+        WaypointRouteCloudFile,
+        on_delete=models.PROTECT,
+        related_name="mission_executions",
+    )
+    workspace_id = models.CharField(max_length=128)
+    dji_job_id = models.CharField(max_length=128, blank=True, default="")
+    executor_sn = models.CharField(max_length=128)
+    drone_sn = models.CharField(max_length=128)
+    status = models.CharField(max_length=16, choices=CloudExecutionStatus.choices, default=CloudExecutionStatus.STARTING)
+    progress_percent = models.PositiveSmallIntegerField(default=0)
+    started_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    last_event_at = models.DateTimeField(null=True, blank=True)
+    error_code = models.CharField(max_length=64, blank=True, default="")
+    error_message = models.TextField(blank=True, default="")
+    raw_request = models.JSONField(default=dict, blank=True)
+    raw_response = models.JSONField(default=dict, blank=True)
+    raw_last_event = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "v2_mission_cloud_executions"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["dji_connection", "dji_job_id"],
+                condition=~Q(dji_job_id=""),
+                name="uniq_v2_cloud_execution_job",
+            ),
+        ]
 
 
 class InspectionFlightRecord(TimeStampedModel):

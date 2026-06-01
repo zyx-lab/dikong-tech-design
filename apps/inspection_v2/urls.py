@@ -6,6 +6,7 @@ from apps.inspection_v2 import views
 urlpatterns = [
     path("routes", views.RouteListCreateView.as_view(), name="v2-inspection-routes"),
     path("routes/<int:id>", views.RouteDetailView.as_view(), name="v2-inspection-route-detail"),
+    path("routes/<int:id>/kmz", views.RouteKmzView.as_view(), name="v2-inspection-route-kmz"),
     path("missions", views.MissionListCreateView.as_view(), name="v2-inspection-missions"),
     path("missions/<int:id>", views.MissionDetailView.as_view(), name="v2-inspection-mission-detail"),
     path("missions/<int:id>/start", views.MissionStartView.as_view(), name="v2-inspection-mission-start"),

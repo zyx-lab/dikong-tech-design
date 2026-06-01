@@ -160,6 +160,38 @@ class DjiGatewayPaginationTests(TestCase):
         self.assertEqual(exc_info.exception.status_code, 502)
         self.assertEqual(exc_info.exception.data, upstream_payload)
 
+    def test_create_mission_should_send_snake_case_flight_task_payload(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        requests = []
+
+        def fake_request(method, path, *, data=None, follow_redirects=True):
+            requests.append((method, path, data))
+            return GatewayResponse(status_code=200, headers={}, data={"job_id": "job-snake-case-001"})
+
+        with patch.object(gateway, "_workspace_id", return_value="mock-workspace-001"):
+            with patch.object(gateway, "_request_json", side_effect=fake_request):
+                payload = gateway.create_mission(
+                    mission_name="v2-task",
+                    file_id="wayline-file-001",
+                    dock_sn="GATEWAY-RC-001",
+                )
+
+        self.assertEqual(payload["dji_job_id"], "job-snake-case-001")
+        self.assertEqual(requests[0][0], "POST")
+        self.assertEqual(requests[0][1], "/api/v1/wayline/workspaces/mock-workspace-001/flight-tasks")
+        self.assertEqual(
+            requests[0][2],
+            {
+                "name": "v2-task",
+                "file_id": "wayline-file-001",
+                "dock_sn": "GATEWAY-RC-001",
+                "wayline_type": 0,
+                "task_type": 0,
+                "rth_altitude": 30,
+                "out_of_control_action": 0,
+            },
+        )
+
     def test_download_route_file_should_expand_relative_download_url(self):
         gateway = DjiGateway(base_url="http://mock-dji")
         upstream_response = GatewayResponse(

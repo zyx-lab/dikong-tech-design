@@ -67,6 +67,10 @@ class DjiConnectionGateway(DjiGateway):
             query={"domain": domain},
         )
 
+    def list_gateways(self) -> list[dict]:
+        workspace_id = self._workspace_id()
+        return self._request_paginated_items(f"/api/v1/manage/workspaces/{workspace_id}/devices")
+
     @staticmethod
     def _payloads_from_devices(devices: list[dict]) -> list[dict]:
         payloads = []
@@ -102,5 +106,6 @@ class DjiConnectionGateway(DjiGateway):
         return {
             "drones": drones,
             "docks": docks,
+            "gateways": self.list_gateways(),
             "payloads": self._payloads_from_devices([*drones, *docks]),
         }

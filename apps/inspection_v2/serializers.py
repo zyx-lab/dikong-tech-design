@@ -8,10 +8,12 @@ from apps.inspection_v2.models import (
     FlightTelemetrySnapshot,
     InspectionFlightRecord,
     InspectionMission,
+    MissionCloudExecution,
     MissionResourceAssignment,
     MissionStatus,
     Waypoint,
     WaypointRoute,
+    WaypointRouteCloudFile,
 )
 
 
@@ -72,6 +74,31 @@ class RouteWriteSerializer(StrictSerializer):
         return sorted(value, key=lambda item: item["sequence"])
 
 
+class RouteKmzUploadSerializer(StrictSerializer):
+    djiConnectionId = serializers.IntegerField(min_value=1)
+    kmzFile = serializers.FileField()
+
+    def validate_kmzFile(self, value):
+        name = str(getattr(value, "name", "") or "").lower()
+        if not name.endswith(".kmz"):
+            raise serializers.ValidationError("只支持上传 .kmz 文件")
+        return value
+
+
+class RouteCloudFileReadSerializer(serializers.ModelSerializer):
+    routeId = serializers.IntegerField(source="route_id", read_only=True)
+    djiConnectionId = serializers.IntegerField(source="dji_connection_id", read_only=True)
+    workspaceId = serializers.CharField(source="workspace_id", read_only=True)
+    djiFileId = serializers.CharField(source="dji_file_id", read_only=True)
+    downloadUrl = serializers.CharField(source="download_url", read_only=True)
+    uploadedAt = serializers.DateTimeField(source="uploaded_at", allow_null=True, read_only=True)
+
+    class Meta:
+        model = WaypointRouteCloudFile
+        fields = ["routeId", "djiConnectionId", "workspaceId", "djiFileId", "downloadUrl", "uploadedAt"]
+        read_only_fields = fields
+
+
 class MissionResourceAssignmentReadSerializer(serializers.ModelSerializer):
     resourceType = serializers.CharField(source="resource_type", read_only=True)
     resourceId = serializers.IntegerField(source="resource_object_id", read_only=True)
@@ -80,6 +107,37 @@ class MissionResourceAssignmentReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = MissionResourceAssignment
         fields = ["id", "resourceType", "resourceId", "ownerDepartmentId"]
+        read_only_fields = fields
+
+
+class MissionCloudExecutionReadSerializer(serializers.ModelSerializer):
+    djiConnectionId = serializers.IntegerField(source="dji_connection_id", read_only=True)
+    routeCloudFileId = serializers.IntegerField(source="route_cloud_file_id", read_only=True)
+    workspaceId = serializers.CharField(source="workspace_id", read_only=True)
+    djiJobId = serializers.CharField(source="dji_job_id", read_only=True)
+    executorSn = serializers.CharField(source="executor_sn", read_only=True)
+    droneSn = serializers.CharField(source="drone_sn", read_only=True)
+    progressPercent = serializers.IntegerField(source="progress_percent", read_only=True)
+    lastEventAt = serializers.DateTimeField(source="last_event_at", allow_null=True, read_only=True)
+    errorCode = serializers.CharField(source="error_code", read_only=True)
+    errorMessage = serializers.CharField(source="error_message", read_only=True)
+
+    class Meta:
+        model = MissionCloudExecution
+        fields = [
+            "id",
+            "djiConnectionId",
+            "routeCloudFileId",
+            "workspaceId",
+            "djiJobId",
+            "executorSn",
+            "droneSn",
+            "status",
+            "progressPercent",
+            "lastEventAt",
+            "errorCode",
+            "errorMessage",
+        ]
         read_only_fields = fields
 
 
@@ -92,6 +150,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
     droneDeviceSn = serializers.CharField(source="drone.device_sn", read_only=True)
     droneName = serializers.CharField(source="drone.name", read_only=True)
     dockId = serializers.IntegerField(source="dock_id", allow_null=True, read_only=True)
+    executorId = serializers.IntegerField(source="executor_id", allow_null=True, read_only=True)
     payloadId = serializers.IntegerField(source="payload_id", allow_null=True, read_only=True)
     pilotId = serializers.IntegerField(source="pilot_id", read_only=True)
     pilotName = serializers.CharField(source="pilot.display_name", read_only=True)
@@ -101,6 +160,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
     canceledAt = serializers.DateTimeField(source="canceled_at", allow_null=True, read_only=True)
     routeSnapshot = serializers.JSONField(source="route_snapshot", read_only=True)
     resourceAssignments = MissionResourceAssignmentReadSerializer(source="resource_assignments", many=True, read_only=True)
+    cloudExecution = MissionCloudExecutionReadSerializer(source="cloud_execution", allow_null=True, read_only=True)
 
     class Meta:
         model = InspectionMission
@@ -117,6 +177,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
             "droneDeviceSn",
             "droneName",
             "dockId",
+            "executorId",
             "payloadId",
             "pilotId",
             "pilotName",
@@ -128,6 +189,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
             "failure_reason",
             "remark",
             "resourceAssignments",
+            "cloudExecution",
             "created_at",
             "updated_at",
         ]
@@ -140,6 +202,7 @@ class MissionWriteSerializer(StrictSerializer):
     droneId = serializers.IntegerField(min_value=1)
     pilotId = serializers.IntegerField(min_value=1)
     dockId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    executorId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     payloadId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     scheduledAt = serializers.DateTimeField(required=False, allow_null=True)
     remark = serializers.CharField(required=False, allow_blank=True)

@@ -279,12 +279,12 @@ class DjiGateway:
         workspace_id = self._workspace_id()
         payload = {
             "name": mission_name,
-            "fileId": file_id,
-            "dockSn": dock_sn or "",
-            "waylineType": self.DEFAULT_WAYLINE_TYPE,
-            "taskType": self.DEFAULT_TASK_TYPE,
-            "rthAltitude": self.DEFAULT_RTH_ALTITUDE,
-            "outOfControlAction": self.DEFAULT_OUT_OF_CONTROL_ACTION,
+            "file_id": file_id,
+            "dock_sn": dock_sn or "",
+            "wayline_type": self.DEFAULT_WAYLINE_TYPE,
+            "task_type": self.DEFAULT_TASK_TYPE,
+            "rth_altitude": self.DEFAULT_RTH_ALTITUDE,
+            "out_of_control_action": self.DEFAULT_OUT_OF_CONTROL_ACTION,
         }
         response = self._request_json(
             "POST",
