@@ -41,6 +41,17 @@ def handle_media_upload_callback(payload: dict, *, request=None) -> dict[str, in
     else:
         ignored_count = 1
 
+    from apps.inspection_v2.services import handle_v2_media_upload_callback
+
+    v2_result = handle_v2_media_upload_callback(payload)
+
+    if v2_result["resolved_count"]:
+        resolved_count += v2_result["resolved_count"]
+        if ignored_count:
+            ignored_count -= 1
+    elif not dji_file_id:
+        ignored_count = max(ignored_count, v2_result["ignored_count"])
+
     result = _counts(resolved_count=resolved_count, ignored_count=ignored_count)
     log_action(
         action="DJI_MEDIA_UPLOAD_CALLBACK",

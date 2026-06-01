@@ -203,7 +203,7 @@ class DjiGateway:
 
     def list_waylines(self, *, key: str | None = None) -> list[dict]:
         workspace_id = self._workspace_id()
-        query = {"orderBy": "create_time"}
+        query = {"order_by": "update_time desc"}
         if key:
             query["key"] = key
         try:
@@ -214,7 +214,7 @@ class DjiGateway:
         except DjiGatewayUpstreamError as exc:
             if not self._is_invalid_params_error(exc):
                 raise
-            fallback_query = {"orderBy.column": "create_time", "orderBy.desc": "true"}
+            fallback_query = {"order_by": "create_time desc"}
             if key:
                 fallback_query["key"] = key
             return self._request_paginated_items(
@@ -275,16 +275,28 @@ class DjiGateway:
             f"/api/v1/wayline/workspaces/{workspace_id}/waylines/{dji_wayline_id}",
         ).data
 
-    def create_mission(self, *, mission_name: str, file_id: str, dock_sn: str | None = None):
+    def create_mission(
+        self,
+        *,
+        mission_name: str,
+        file_id: str,
+        dock_sn: str | None = None,
+        wayline_type: int | None = None,
+        task_type: int | None = None,
+        rth_altitude: int | None = None,
+        out_of_control_action: int | None = None,
+    ):
         workspace_id = self._workspace_id()
         payload = {
             "name": mission_name,
             "file_id": file_id,
             "dock_sn": dock_sn or "",
-            "wayline_type": self.DEFAULT_WAYLINE_TYPE,
-            "task_type": self.DEFAULT_TASK_TYPE,
-            "rth_altitude": self.DEFAULT_RTH_ALTITUDE,
-            "out_of_control_action": self.DEFAULT_OUT_OF_CONTROL_ACTION,
+            "wayline_type": self.DEFAULT_WAYLINE_TYPE if wayline_type is None else int(wayline_type),
+            "task_type": self.DEFAULT_TASK_TYPE if task_type is None else int(task_type),
+            "rth_altitude": self.DEFAULT_RTH_ALTITUDE if rth_altitude is None else int(rth_altitude),
+            "out_of_control_action": (
+                self.DEFAULT_OUT_OF_CONTROL_ACTION if out_of_control_action is None else int(out_of_control_action)
+            ),
         }
         response = self._request_json(
             "POST",

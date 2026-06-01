@@ -1,3 +1,7 @@
+import re
+import uuid
+
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -123,6 +127,20 @@ def _replace_waypoints(route: WaypointRoute, waypoints: list[dict]):
     )
 
 
+def _safe_dji_upload_name(*, route_id: int) -> str:
+    return f"v2-route-{route_id}-{uuid.uuid4().hex[:8]}"
+
+
+def _clone_kmz_for_dji_upload(file_obj, *, upload_name: str) -> SimpleUploadedFile:
+    safe_name = re.sub(r"[^A-Za-z0-9.-]+", "-", upload_name).strip(".-") or "route"
+    safe_name = safe_name.replace("_", "-")
+    file_obj.seek(0)
+    content = file_obj.read()
+    file_obj.seek(0)
+    content_type = getattr(file_obj, "content_type", "application/vnd.google-earth.kmz")
+    return SimpleUploadedFile(name=f"{safe_name}.kmz", content=content, content_type=content_type)
+
+
 class RouteListCreateView(InspectionV2APIView):
     @extend_schema(operation_id="v2_inspection_routes_list", responses=RouteReadSerializer)
     def get(self, request):
@@ -227,8 +245,10 @@ class RouteKmzView(InspectionV2APIView):
         if connection is None:
             raise StandardNotFound()
         gateway = DjiConnectionGateway(connection)
+        upload_name = _safe_dji_upload_name(route_id=route.id)
+        upload_file = _clone_kmz_for_dji_upload(serializer.validated_data["kmzFile"], upload_name=upload_name)
         try:
-            upload_payload = gateway.upload_route(route_name=f"v2-{route.id}-{route.name}", file_obj=serializer.validated_data["kmzFile"])
+            upload_payload = gateway.upload_route(route_name=upload_name, file_obj=upload_file)
         except DjiGatewayError as exc:
             return _upstream_error_response(exc)
         cloud_file, _created = WaypointRouteCloudFile.objects.update_or_create(
@@ -237,6 +257,7 @@ class RouteKmzView(InspectionV2APIView):
                 "dji_connection": connection,
                 "workspace_id": connection.workspace_id,
                 "dji_file_id": str(upload_payload["dji_wayline_id"]),
+                "wayline_type": serializer.validated_data["waylineType"],
                 "download_url": str(upload_payload.get("download_url") or ""),
                 "raw_response": upload_payload,
                 "uploaded_by_user": request.user,

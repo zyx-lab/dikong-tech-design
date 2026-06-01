@@ -1,9 +1,10 @@
+import json
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -104,7 +105,7 @@ class InspectionV2ApiTests(TestCase):
             access_token="token",
             created_by_user=actor,
         )
-        drone = DroneResource.objects.create(device_sn=device_sn, name=f"{device_sn} 无人机", model="M30")
+        drone = DroneResource.objects.create(device_sn=device_sn, name=f"{device_sn} 无人机", model="M30", online_status=True)
         ResourceBinding.objects.create(
             resource_type=ResourceType.DRONE,
             resource_object_id=drone.id,
@@ -116,7 +117,7 @@ class InspectionV2ApiTests(TestCase):
         return drone
 
     def bind_gateway(self, department, actor, device_sn, *, connection):
-        gateway = GatewayResource.objects.create(device_sn=device_sn, name=f"{device_sn} 执行端", model="RC Plus")
+        gateway = GatewayResource.objects.create(device_sn=device_sn, name=f"{device_sn} 执行端", model="RC Plus", online_status=True)
         ResourceBinding.objects.create(
             resource_type=ResourceType.GATEWAY,
             resource_object_id=gateway.id,
@@ -179,7 +180,7 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
         return response.data["data"]
 
-    def upload_route_kmz_by_api(self, route_id, connection):
+    def upload_route_kmz_by_api(self, route_id, connection, *, wayline_type=0):
         self.authenticate(self.owner_dispatcher)
         kmz_file = SimpleUploadedFile("route.kmz", b"fake-kmz-content", content_type="application/vnd.google-earth.kmz")
         with patch(
@@ -188,7 +189,7 @@ class InspectionV2ApiTests(TestCase):
         ):
             response = self.client.post(
                 f"/api/v2/inspection/routes/{route_id}/kmz",
-                {"djiConnectionId": connection.id, "kmzFile": kmz_file},
+                {"djiConnectionId": connection.id, "waylineType": wayline_type, "kmzFile": kmz_file},
                 format="multipart",
             )
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
@@ -267,6 +268,7 @@ class InspectionV2ApiTests(TestCase):
             return_value=[
                 {
                     "file_id": "cloud-photo-001",
+                    "job_id": "dji-job-lifecycle",
                     "device_sn": self.drone.device_sn,
                     "fileName": "inspection.jpg",
                     "mediaType": "photo",
@@ -300,14 +302,42 @@ class InspectionV2ApiTests(TestCase):
         ) as upload_route:
             response = self.client.post(
                 f"/api/v2/inspection/routes/{route['id']}/kmz",
-                {"djiConnectionId": connection.id, "kmzFile": kmz_file},
+                {"djiConnectionId": connection.id, "waylineType": 2, "kmzFile": kmz_file},
                 format="multipart",
             )
 
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         self.assertEqual(response.data["data"]["djiFileId"], "wayline-kmz-001")
         self.assertEqual(response.data["data"]["workspaceId"], "workspace-kmz-001")
+        self.assertEqual(response.data["data"]["waylineType"], 2)
         upload_route.assert_called_once()
+        upload_kwargs = upload_route.call_args.kwargs
+        self.assertNotIn("_", upload_kwargs["route_name"])
+        self.assertNotIn("_", upload_kwargs["file_obj"].name)
+        self.assertRegex(upload_kwargs["route_name"], r"^v2-route-\d+-[0-9a-f]{8}$")
+
+    def test_route_kmz_upload_should_require_wayline_type(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="缺少航线类型")
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+
+        self.authenticate(self.owner_dispatcher)
+        kmz_file = SimpleUploadedFile("route.kmz", b"fake-kmz-content", content_type="application/vnd.google-earth.kmz")
+        response = self.client.post(
+            f"/api/v2/inspection/routes/{route['id']}/kmz",
+            {"djiConnectionId": connection.id, "kmzFile": kmz_file},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+
+        invalid_file = SimpleUploadedFile("route.kmz", b"fake-kmz-content", content_type="application/vnd.google-earth.kmz")
+        invalid_response = self.client.post(
+            f"/api/v2/inspection/routes/{route['id']}/kmz",
+            {"djiConnectionId": connection.id, "waylineType": 9, "kmzFile": invalid_file},
+            format="multipart",
+        )
+
+        self.assertEqual(invalid_response.status_code, 400, getattr(invalid_response, "data", invalid_response.content))
 
     def test_mission_start_should_create_dji_immediate_job_from_route_kmz_and_executor(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="执行航线")
@@ -315,7 +345,7 @@ class InspectionV2ApiTests(TestCase):
         connection.workspace_id = "workspace-job-001"
         connection.save(update_fields=["workspace_id", "updated_at"])
         executor = self.bind_gateway(self.owner_department, self.owner_admin, "GATEWAY-JOB-001", connection=connection)
-        self.upload_route_kmz_by_api(route["id"], connection)
+        self.upload_route_kmz_by_api(route["id"], connection, wayline_type=3)
         mission = self.create_mission_by_api(
             self.owner_dispatcher,
             route_id=route["id"],
@@ -337,6 +367,9 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(execution.dji_job_id, "dji-job-001")
         self.assertEqual(execution.executor_sn, "GATEWAY-JOB-001")
         create_job.assert_called_once()
+        self.assertEqual(create_job.call_args.kwargs["wayline_type"], 3)
+        self.assertEqual(execution.raw_request["wayline_type"], 3)
+        self.assertEqual(execution.raw_request["task_type"], 0)
 
     def test_mission_start_upstream_failure_should_keep_local_task_pending(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="执行失败航线")
@@ -366,6 +399,27 @@ class InspectionV2ApiTests(TestCase):
         self.assertFalse(MissionCloudExecution.objects.filter(mission_id=mission["id"]).exists())
         create_job.assert_called_once()
 
+    def test_mission_start_should_require_online_drone_and_executor_before_upstream_call(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="离线航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-OFFLINE-001")
+        self.drone.online_status = False
+        self.drone.save(update_fields=["online_status", "updated_at"])
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.create_mission") as create_job:
+            response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/start", {}, format="json")
+
+        self.assertEqual(response.status_code, 409, getattr(response, "data", response.content))
+        create_job.assert_not_called()
+        persisted = InspectionMission.objects.get(pk=mission["id"])
+        self.assertEqual(persisted.status, MissionStatus.PENDING)
+
     def test_cloud_execution_success_event_should_finish_mission_and_archive_media(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="事件航线")
         connection = DjiConnection.objects.get(owner_department=self.owner_department)
@@ -389,11 +443,20 @@ class InspectionV2ApiTests(TestCase):
             return_value=[
                 {
                     "file_id": "event-photo-001",
+                    "jobId": "dji-job-event",
                     "device_sn": self.drone.device_sn,
                     "fileName": "event.jpg",
                     "mediaType": "photo",
                     "capturedAt": captured_at,
                     "downloadUrl": "https://media.example.test/event.jpg",
+                },
+                {
+                    "file_id": "event-other-job-photo",
+                    "jobId": "dji-job-other",
+                    "device_sn": self.drone.device_sn,
+                    "fileName": "other.jpg",
+                    "mediaType": "photo",
+                    "capturedAt": captured_at,
                 }
             ],
         ):
@@ -406,7 +469,69 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(result["missionStatus"], MissionStatus.COMPLETED)
         self.assertEqual(result["media"]["photoCount"], 1)
         self.assertTrue(CloudMediaFile.objects.filter(cloud_file_id="event-photo-001").exists())
+        self.assertFalse(CloudMediaFile.objects.filter(cloud_file_id="event-other-job-photo").exists())
         self.assertEqual(MissionCloudExecution.objects.get(dji_job_id="dji-job-event").progress_percent, 100)
+
+    @override_settings(DJI_INTERNAL_API_TOKEN="internal-sync-token")
+    def test_media_upload_callback_with_job_id_should_bind_v2_mission_exactly(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="回调航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-CALLBACK-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        self.start_cloud_mission_by_api(mission["id"], dji_job_id="dji-job-callback")
+        captured_at = timezone.now().isoformat()
+
+        response = self.client.post(
+            "/api/v1/__internal__/dji/callbacks/media-upload",
+            data=json.dumps(
+                {
+                    "ext": {"sn": self.drone.device_sn, "job_id": "dji-job-callback", "file_id": "callback-photo-001"},
+                    "file_group_id": "callback-group-001",
+                    "fingerprint": "callback-fingerprint-001",
+                    "object_key": "media/callback-photo-001.jpg",
+                    "metadata": {"created_time": captured_at},
+                    "name": "CALLBACK_PHOTO.JPG",
+                }
+            ),
+            content_type="application/json",
+            HTTP_X_DJI_INTERNAL_TOKEN="internal-sync-token",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        media = CloudMediaFile.objects.get(cloud_file_id="callback-photo-001")
+        self.assertEqual(media.mission_id, mission["id"])
+        self.assertIsNone(media.flight_record_id)
+        self.assertEqual(media.dji_job_id, "dji-job-callback")
+        self.assertEqual(media.object_key, "media/callback-photo-001.jpg")
+        self.assertEqual(media.file_group_id, "callback-group-001")
+
+    @override_settings(DJI_INTERNAL_API_TOKEN="internal-sync-token")
+    def test_media_upload_callback_without_job_id_should_store_unassigned_v2_media_only(self):
+        response = self.client.post(
+            "/api/v1/__internal__/dji/callbacks/media-upload",
+            data=json.dumps(
+                {
+                    "ext": {"sn": self.drone.device_sn, "file_id": "callback-unassigned-001"},
+                    "object_key": "media/callback-unassigned-001.jpg",
+                    "metadata": {"created_time": timezone.now().isoformat()},
+                    "name": "CALLBACK_UNASSIGNED.JPG",
+                }
+            ),
+            content_type="application/json",
+            HTTP_X_DJI_INTERNAL_TOKEN="internal-sync-token",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        media = CloudMediaFile.objects.get(cloud_file_id="callback-unassigned-001")
+        self.assertIsNone(media.mission_id)
+        self.assertIsNone(media.flight_record_id)
+        self.assertEqual(media.dji_job_id, "")
+        self.assertEqual(media.workspace_id, DjiConnection.objects.get(owner_department=self.owner_department).workspace_id)
 
     def test_osd_event_should_update_running_flight_telemetry(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="OSD 航线")

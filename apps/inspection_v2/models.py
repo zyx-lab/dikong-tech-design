@@ -35,6 +35,13 @@ class CloudMediaType(models.TextChoices):
     OTHER = "OTHER", "其他"
 
 
+class WaylineType(models.IntegerChoices):
+    WAYPOINT = 0, "waypoint"
+    MAPPING_2D = 1, "mapping2d"
+    MAPPING_3D = 2, "mapping3d"
+    MAPPING_STRIP = 3, "mappingStrip"
+
+
 class CloudExecutionStatus(models.TextChoices):
     STARTING = "STARTING", "启动中"
     RUNNING = "RUNNING", "执行中"
@@ -97,6 +104,7 @@ class WaypointRouteCloudFile(TimeStampedModel):
     )
     workspace_id = models.CharField(max_length=128)
     dji_file_id = models.CharField(max_length=128)
+    wayline_type = models.PositiveSmallIntegerField(choices=WaylineType.choices, default=WaylineType.WAYPOINT)
     download_url = models.CharField(max_length=1000, blank=True, default="")
     raw_response = models.JSONField(default=dict, blank=True)
     uploaded_by_user = models.ForeignKey(
@@ -328,6 +336,7 @@ class InspectionFlightRecord(TimeStampedModel):
 
 class CloudMediaFile(TimeStampedModel):
     tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="v2_cloud_media_files")
+    workspace_id = models.CharField(max_length=128, blank=True, default="")
     flight_record = models.ForeignKey(
         InspectionFlightRecord,
         null=True,
@@ -343,7 +352,11 @@ class CloudMediaFile(TimeStampedModel):
         related_name="media_files",
     )
     device_sn = models.CharField(max_length=128)
+    dji_job_id = models.CharField(max_length=128, blank=True, default="")
     cloud_file_id = models.CharField(max_length=256)
+    object_key = models.CharField(max_length=1000, blank=True, default="")
+    fingerprint = models.CharField(max_length=256, blank=True, default="")
+    file_group_id = models.CharField(max_length=128, blank=True, default="")
     media_type = models.CharField(max_length=16, choices=CloudMediaType.choices, default=CloudMediaType.OTHER)
     file_name = models.CharField(max_length=256, blank=True, default="")
     thumbnail_url = models.CharField(max_length=1000, blank=True, default="")
@@ -362,4 +375,5 @@ class CloudMediaFile(TimeStampedModel):
         ]
         indexes = [
             models.Index(fields=["device_sn", "captured_at"], name="idx_v2_media_device_time"),
+            models.Index(fields=["workspace_id", "dji_job_id"], name="idx_v2_media_workspace_job"),
         ]

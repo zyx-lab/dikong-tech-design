@@ -289,21 +289,21 @@ def create_job(request, workspace_id: str):
         return _error("B0001", "file_id is required", status=400, data={"file_id": ["该字段是必填项。"]})
     if not str(payload.get("dockSn") or payload.get("dock_sn") or "").strip():
         return _error("B0001", "dock_sn is required", status=400, data={"dock_sn": ["该字段是必填项。"]})
-    if payload.get("waylineType") is None:
-        return _error("B0001", "waylineType is required", status=400, data={"waylineType": ["该字段是必填项。"]})
-    if payload.get("taskType") is None:
-        return _error("B0001", "taskType is required", status=400, data={"taskType": ["该字段是必填项。"]})
-    rth_altitude = payload.get("rthAltitude")
+    if payload.get("waylineType", payload.get("wayline_type")) is None:
+        return _error("B0001", "wayline_type is required", status=400, data={"wayline_type": ["该字段是必填项。"]})
+    if payload.get("taskType", payload.get("task_type")) is None:
+        return _error("B0001", "task_type is required", status=400, data={"task_type": ["该字段是必填项。"]})
+    rth_altitude = payload.get("rthAltitude", payload.get("rth_altitude"))
     if not isinstance(rth_altitude, int) or isinstance(rth_altitude, bool):
-        return _error("B0001", "rthAltitude is required", status=400, data={"rthAltitude": ["该字段是必填项。"]})
+        return _error("B0001", "rth_altitude is required", status=400, data={"rth_altitude": ["该字段是必填项。"]})
     if rth_altitude < 20 or rth_altitude > 500:
-        return _error("B0001", "rthAltitude is invalid", status=400, data={"rthAltitude": ["取值范围必须在 20 到 500 之间。"]})
-    if payload.get("outOfControlAction") is None:
+        return _error("B0001", "rth_altitude is invalid", status=400, data={"rth_altitude": ["取值范围必须在 20 到 500 之间。"]})
+    if payload.get("outOfControlAction", payload.get("out_of_control_action")) is None:
         return _error(
             "B0001",
-            "outOfControlAction is required",
+            "out_of_control_action is required",
             status=400,
-            data={"outOfControlAction": ["该字段是必填项。"]},
+            data={"out_of_control_action": ["该字段是必填项。"]},
         )
     job = mock_dji_state.create_job(payload)
     return _success(

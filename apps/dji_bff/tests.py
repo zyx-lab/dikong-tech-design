@@ -174,6 +174,7 @@ class DjiGatewayPaginationTests(TestCase):
                     mission_name="v2-task",
                     file_id="wayline-file-001",
                     dock_sn="GATEWAY-RC-001",
+                    wayline_type=2,
                 )
 
         self.assertEqual(payload["dji_job_id"], "job-snake-case-001")
@@ -185,12 +186,30 @@ class DjiGatewayPaginationTests(TestCase):
                 "name": "v2-task",
                 "file_id": "wayline-file-001",
                 "dock_sn": "GATEWAY-RC-001",
-                "wayline_type": 0,
+                "wayline_type": 2,
                 "task_type": 0,
                 "rth_altitude": 30,
                 "out_of_control_action": 0,
             },
         )
+
+    def test_list_waylines_should_use_real_order_by_query_param(self):
+        gateway = DjiGateway(base_url="http://mock-dji")
+        requests = []
+
+        def fake_request(method, path, *, data=None, follow_redirects=True):
+            requests.append(path)
+            return self._page([{"wayline_id": "wayline-001"}], page=1, total=1, page_size=100)
+
+        with patch.object(gateway, "_workspace_id", return_value="mock-workspace-001"):
+            with patch.object(gateway, "_request_json", side_effect=fake_request):
+                items = gateway.list_waylines(key="route")
+
+        self.assertEqual(items, [{"wayline_id": "wayline-001"}])
+        query = parse_qs(urlparse(requests[0]).query)
+        self.assertEqual(query["order_by"], ["update_time desc"])
+        self.assertEqual(query["key"], ["route"])
+        self.assertNotIn("orderBy.column", query)
 
     def test_download_route_file_should_expand_relative_download_url(self):
         gateway = DjiGateway(base_url="http://mock-dji")

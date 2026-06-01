@@ -14,6 +14,7 @@ from apps.inspection_v2.models import (
     Waypoint,
     WaypointRoute,
     WaypointRouteCloudFile,
+    WaylineType,
 )
 
 
@@ -76,6 +77,7 @@ class RouteWriteSerializer(StrictSerializer):
 
 class RouteKmzUploadSerializer(StrictSerializer):
     djiConnectionId = serializers.IntegerField(min_value=1)
+    waylineType = serializers.ChoiceField(choices=WaylineType.choices)
     kmzFile = serializers.FileField()
 
     def validate_kmzFile(self, value):
@@ -90,12 +92,13 @@ class RouteCloudFileReadSerializer(serializers.ModelSerializer):
     djiConnectionId = serializers.IntegerField(source="dji_connection_id", read_only=True)
     workspaceId = serializers.CharField(source="workspace_id", read_only=True)
     djiFileId = serializers.CharField(source="dji_file_id", read_only=True)
+    waylineType = serializers.IntegerField(source="wayline_type", read_only=True)
     downloadUrl = serializers.CharField(source="download_url", read_only=True)
     uploadedAt = serializers.DateTimeField(source="uploaded_at", allow_null=True, read_only=True)
 
     class Meta:
         model = WaypointRouteCloudFile
-        fields = ["routeId", "djiConnectionId", "workspaceId", "djiFileId", "downloadUrl", "uploadedAt"]
+        fields = ["routeId", "djiConnectionId", "workspaceId", "djiFileId", "waylineType", "downloadUrl", "uploadedAt"]
         read_only_fields = fields
 
 
@@ -320,8 +323,13 @@ class FlightRecordUpdateSerializer(StrictSerializer):
 class CloudMediaFileReadSerializer(serializers.ModelSerializer):
     flightRecordId = serializers.IntegerField(source="flight_record_id", allow_null=True, read_only=True)
     missionId = serializers.IntegerField(source="mission_id", allow_null=True, read_only=True)
+    workspaceId = serializers.CharField(source="workspace_id", read_only=True)
     deviceSn = serializers.CharField(source="device_sn", read_only=True)
+    djiJobId = serializers.CharField(source="dji_job_id", read_only=True)
     cloudFileId = serializers.CharField(source="cloud_file_id", read_only=True)
+    objectKey = serializers.CharField(source="object_key", read_only=True)
+    fingerprint = serializers.CharField(read_only=True)
+    fileGroupId = serializers.CharField(source="file_group_id", read_only=True)
     mediaType = serializers.CharField(source="media_type", read_only=True)
     fileName = serializers.CharField(source="file_name", read_only=True)
     thumbnailUrl = serializers.CharField(source="thumbnail_url", read_only=True)
@@ -337,8 +345,13 @@ class CloudMediaFileReadSerializer(serializers.ModelSerializer):
             "id",
             "flightRecordId",
             "missionId",
+            "workspaceId",
             "deviceSn",
+            "djiJobId",
             "cloudFileId",
+            "objectKey",
+            "fingerprint",
+            "fileGroupId",
             "mediaType",
             "fileName",
             "thumbnailUrl",
