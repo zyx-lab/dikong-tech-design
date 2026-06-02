@@ -42,11 +42,11 @@ This design does not cover:
 - migration or replacement of v1 business tables
 - exposing `apps.dji_bff.urls` under `/api/v2/`
 
-## Tenant And Department Boundary
+## Department Boundary And Compatibility
 
-The existing `Tenant` can remain as a system compatibility boundary. In v2, the expected deployment mode is effectively single-tenant.
+The existing v1 boundary model can remain as an internal system compatibility detail. It is not a public v2 API concept.
 
-Within that tenant, v2 introduces a root `Department`. Real resource ownership, visibility, and inherited access are based on the department tree, not on the v1 tenant-scoped resource model.
+v2 uses a root `Department` and its child tree as the public organizational boundary. Real resource ownership, visibility, and inherited access are based on the department tree, not on the v1 resource model.
 
 Department tree should use a materialized path model:
 
@@ -110,7 +110,7 @@ After authentication, v2 loads a separate account context:
 - groups mean resource-sharing policy containers, not account membership groups
 - an account gains shared-resource visibility when its department is targeted by one or more resource share groups
 
-Fixed v2 roles:
+Stored v2 roles include one platform identity plus four department roles:
 
 - `platform_super_admin`
 - `department_admin`
@@ -118,13 +118,14 @@ Fixed v2 roles:
 - `pilot`
 - `work_order_handler`
 
-The three business roles have these initial meanings:
+`platform_super_admin` is a platform/system identity, not a department business concept. `GET /api/v2/iam/roles` returns only the four department roles.
 
+The four department roles have these initial meanings:
+
+- `department_admin`: manages resources and accounts within their own department boundary
 - `task_monitor_dispatcher`: monitors real-time and historical flight data, and dispatches flight tasks
 - `pilot`: executes tasks, reviews tasks, and maintains their own qualification data
 - `work_order_handler`: handles assigned work orders and submits feedback
-
-`department_admin` is a separate system role. It is not one of the three business roles.
 
 ## Platform Super Administrator
 
@@ -134,7 +135,7 @@ The platform super administrator can:
 
 - create, edit, enable, and disable departments
 - create, edit, enable, and disable all accounts
-- assign any account's department and fixed roles
+- assign any account's department and four department roles
 - create, edit, enable, disable, and maintain resource share groups for any department
 - view and maintain all department DJI Cloud API connections
 - view plaintext DJI connection credentials
@@ -150,7 +151,7 @@ A department administrator manages only their own department.
 A department administrator can:
 
 - create or invite members in their own department
-- edit business roles for members in their own department
+- edit operation roles for members in their own department
 - create and update DJI Cloud API connections in their own department
 - view plaintext credentials for their own department's DJI connections
 - discover drones and docks from their own department's DJI connections

@@ -29,7 +29,7 @@ The current environment could not run Django checks during planning because the 
   - `/api/v2/missions`
   - `/api/v2/flight-records`
   - `/api/v2/media-files`
-  - `/api/v2/iam/tenant/dji-platforms*`
+  - old IAM-scoped DJI platform routes
 - Keep `apps.dji_bff` installed and keep `/api/v1/__internal__/dji/*` unchanged for v1/internal use.
 
 ### New `apps/iam_v2` Domain
@@ -39,15 +39,15 @@ Create `apps/iam_v2` and add it to `INSTALLED_APPS`.
 Core models:
 
 - `Department`
-  - Fields: `tenant`, `parent`, `name`, `status`, `path`, `depth`, `created_by_user`, timestamps.
+  - Fields: internal compatibility boundary, `parent`, `name`, `status`, `path`, `depth`, `created_by_user`, timestamps.
   - `path` uses stable department IDs, for example `/1/2/8/`.
   - Create sets `path/depth` transactionally after the ID exists.
   - Parent changes are rejected; department movement is out of scope.
-  - Only one root department per tenant is allowed.
+  - The root department is initialized by the system; public v2 APIs manage child departments.
 - `V2AccountProfile`
   - One-to-one with `access.User`.
   - Fields: `department`, `status`, timestamps.
-  - No `X-TENANT-CODE` requirement for v2; tenant is derived through `department.tenant`.
+  - No v1 boundary header and no public boundary identifier for v2; the internal compatibility boundary is derived from the account department.
 - `V2AccountRoleAssignment`
   - Fields: `account_profile`, `role_code`, `assigned_by_user`, timestamps.
   - `role_code` is one of:
@@ -57,6 +57,7 @@ Core models:
     - `pilot`
     - `work_order_handler`
   - Roles are fixed enum values, not a mutable role catalog table.
+  - `platform_super_admin` is a platform identity; `GET /api/v2/iam/roles` exposes only the four department role codes.
 - `ResourceShareGroup`
   - Owned by one department.
   - Fields: `owner_department`, `name`, `status`, timestamps.
@@ -81,7 +82,7 @@ IAM authorization rules:
 - A user with only `User.is_platform_admin=True` does not get v2 super-admin rights.
 - `platform_super_admin` can create/edit/enable/disable departments and query global audit logs.
 - `department_admin` can manage only resources and connections owned by their own department.
-- `department_admin` cannot manage child departments and cannot grant v2 roles in this first slice.
+- `department_admin` cannot manage child departments, grant `department_admin`, or grant `platform_super_admin`.
 
 ### New `apps/resource_v2` Domain
 
@@ -201,7 +202,7 @@ Core API/schema tests:
   - `/api/v2/missions`
   - `/api/v2/flight-records`
   - `/api/v2/media-files`
-  - `/api/v2/iam/tenant/dji-platforms*`
+  - old IAM-scoped DJI platform routes
 
 IAM tests:
 
@@ -211,7 +212,7 @@ IAM tests:
 - Department admin cannot create or manage child departments.
 - `GET /api/v2/iam/me/context` returns user, department, and v2 fixed roles.
 - A user with `User.is_platform_admin=True` but no v2 role is not a v2 super admin.
-- `GET /api/v2/iam/roles` returns exactly the five fixed role codes.
+- `GET /api/v2/iam/roles` returns exactly the four department role codes and does not return `platform_super_admin`.
 
 Resource model/API tests:
 
@@ -259,7 +260,7 @@ Regression tests:
 - This slice intentionally does not implement v2 account CRUD, role assignment APIs, share group CRUD APIs, or v2 business route/mission/media endpoints.
 - New v2 account profiles and role assignments can be created in tests/admin/fixtures until account management APIs are implemented in a later slice.
 - Existing v1 business tables are not migrated or replaced.
-- Existing v1 tenant remains as compatibility boundary; v2 department ownership is the real authorization boundary.
+- Existing v1 boundary model remains as an internal compatibility detail; v2 department ownership is the real authorization boundary.
 - Department movement is unsupported and actively rejected.
 - Share group models are added now because visibility depends on them, but public share management APIs are deferred.
 - Docks are represented as first-class v2 resources even though current local mock data mostly covers drones.

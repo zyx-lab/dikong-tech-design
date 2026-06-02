@@ -108,7 +108,7 @@ class StandardConstraintConflict(StandardizedApiException):
 
 
 def custom_exception_handler(exc, context):
-    """DRF exception handler with a dedicated /api/v1 standard envelope."""
+    """DRF exception handler with a dedicated standard envelope for formal APIs."""
     response = exception_handler(exc, context)
     request = context.get("request")
     is_business_api = request is not None and (

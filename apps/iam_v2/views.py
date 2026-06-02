@@ -1,25 +1,34 @@
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import serializers, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 
 from apps.access.exceptions import StandardForbidden
 from apps.access.authentication import BearerAuthSessionAuthentication
+from apps.api_v2.openapi import V2MeContextSerializer, list_data_serializer
 from apps.access.models import DirectoryStatus, UserStatus
 from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
-from apps.iam_v2.models import Department, V2AccountProfile, V2AccountRoleAssignment
+from apps.iam_v2.models import (
+    DEPARTMENT_OPERATOR_ROLE_CODES,
+    DEPARTMENT_ROLE_CODES,
+    Department,
+    PLATFORM_ROLE_CODES,
+    PROTECTED_FROM_DEPARTMENT_ADMIN_ROLE_CODES,
+    V2AccountProfile,
+    V2AccountRoleAssignment,
+)
 from apps.iam_v2.serializers import (
     AccountCreateSerializer,
     AccountReadSerializer,
     AccountRolesReplaceSerializer,
     AccountUpdateSerializer,
-    BUSINESS_ROLE_CODES,
     DepartmentCreateSerializer,
     DepartmentReadSerializer,
     DepartmentUpdateSerializer,
     FIXED_ROLE_ORDER,
-    SYSTEM_ROLE_CODES,
+    FixedRoleSerializer,
     fixed_role_payloads,
 )
 from apps.iam_v2.services import is_department_admin, is_platform_super_admin, require_platform_super_admin, resolve_v2_context
@@ -51,7 +60,7 @@ def _not_found_response():
 
 
 def _account_queryset():
-    return V2AccountProfile.objects.select_related("user", "department", "department__tenant").prefetch_related("role_assignments")
+    return V2AccountProfile.objects.select_related("user", "department").prefetch_related("role_assignments")
 
 
 def _account_or_404(id):
@@ -115,10 +124,24 @@ def _require_account_manager(context):
         raise StandardForbidden()
 
 
-def _require_business_roles_only(role_codes):
-    invalid = [role_code for role_code in role_codes if role_code not in BUSINESS_ROLE_CODES]
+def _require_department_roles_only(role_codes):
+    invalid = [role_code for role_code in role_codes if role_code not in DEPARTMENT_ROLE_CODES]
     if invalid:
-        raise serializers.ValidationError({"roleCodes": [f"部门管理员只能分配业务角色: {', '.join(invalid)}"]})
+        raise serializers.ValidationError({"roleCodes": [f"只能分配 v2 部门角色: {', '.join(invalid)}"]})
+
+
+def _require_department_operator_roles_only(role_codes):
+    invalid = [role_code for role_code in role_codes if role_code not in DEPARTMENT_OPERATOR_ROLE_CODES]
+    if invalid:
+        raise serializers.ValidationError({"roleCodes": [f"部门管理员只能分配操作型部门角色: {', '.join(invalid)}"]})
+
+
+def _existing_role_codes(account, allowed_role_codes):
+    return [
+        role_code
+        for role_code in account.role_assignments.values_list("role_code", flat=True)
+        if role_code in allowed_role_codes
+    ]
 
 
 class V2IamAPIView(BusinessApiResponseMixin, GenericAPIView):
@@ -126,7 +149,18 @@ class V2IamAPIView(BusinessApiResponseMixin, GenericAPIView):
     serializer_class = EmptySchemaSerializer
 
 
+DEPARTMENT_LIST_RESPONSE = list_data_serializer("V2DepartmentListData", DepartmentReadSerializer)
+ACCOUNT_LIST_RESPONSE = list_data_serializer("V2AccountListData", AccountReadSerializer)
+ROLE_LIST_RESPONSE = list_data_serializer("V2RoleListData", FixedRoleSerializer)
+
+
 class MeContextView(V2IamAPIView):
+    @extend_schema(
+        operation_id="v2_iam_me_context",
+        summary="获取当前 v2 登录上下文",
+        description="返回当前 Bearer Token 对应用户、部门和真实 v2 角色；平台身份可能包含 platform_super_admin。",
+        responses={200: OpenApiResponse(response=V2MeContextSerializer, description="查询成功。")},
+    )
     def get(self, request):
         context = resolve_v2_context(request)
         return Response(
@@ -143,18 +177,30 @@ class MeContextView(V2IamAPIView):
 
 
 class DepartmentListCreateView(V2IamAPIView):
+    @extend_schema(
+        operation_id="v2_iam_departments_list",
+        summary="查询 v2 部门列表",
+        description="平台超管可查看全部部门；部门管理员和业务角色仅查看本部门及下级部门。",
+        responses={200: OpenApiResponse(response=DEPARTMENT_LIST_RESPONSE, description="查询成功。")},
+    )
     def get(self, request):
         context = resolve_v2_context(request)
         if "platform_super_admin" in context.role_codes:
-            queryset = Department.objects.select_related("tenant", "parent").order_by("path", "id")
+            queryset = Department.objects.select_related("parent").order_by("path", "id")
         else:
-            queryset = Department.objects.select_related("tenant", "parent").filter(
-                tenant=context.department.tenant,
+            queryset = Department.objects.select_related("parent").filter(
                 path__startswith=context.department.path,
             ).order_by("path", "id")
         serializer = DepartmentReadSerializer(queryset, many=True)
         return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        operation_id="v2_iam_departments_create",
+        summary="创建 v2 部门",
+        description="仅平台超管可在已有部门下创建子部门；根部门由系统初始化维护。",
+        request=DepartmentCreateSerializer,
+        responses={201: OpenApiResponse(response=DepartmentReadSerializer, description="创建成功。")},
+    )
     def post(self, request):
         context = require_platform_super_admin(request)
         serializer = DepartmentCreateSerializer(data=request.data, context={"request": request, "v2_context": context})
@@ -181,6 +227,13 @@ class DepartmentDetailView(V2IamAPIView):
             raise serializers.ValidationError({"id": ["部门不存在"]})
         return department
 
+    @extend_schema(
+        operation_id="v2_iam_departments_update",
+        summary="更新 v2 部门",
+        description="仅平台超管可更新部门名称；当前实现不支持移动部门节点。",
+        request=DepartmentUpdateSerializer,
+        responses={200: OpenApiResponse(response=DepartmentReadSerializer, description="更新成功。")},
+    )
     def put(self, request, id: int):
         context = require_platform_super_admin(request)
         department = self._department(id)
@@ -207,6 +260,13 @@ class DepartmentDetailView(V2IamAPIView):
 
 
 class DepartmentEnableView(V2IamAPIView):
+    @extend_schema(
+        operation_id="v2_iam_departments_enable",
+        summary="启用 v2 部门",
+        description="仅平台超管可启用部门；请求体固定为空对象或无请求体。",
+        request=None,
+        responses={200: OpenApiResponse(response=DepartmentReadSerializer, description="启用成功。")},
+    )
     def post(self, request, id: int):
         context = require_platform_super_admin(request)
         department = Department.objects.filter(pk=id).first()
@@ -228,6 +288,13 @@ class DepartmentEnableView(V2IamAPIView):
 
 
 class DepartmentDisableView(V2IamAPIView):
+    @extend_schema(
+        operation_id="v2_iam_departments_disable",
+        summary="禁用 v2 部门",
+        description="仅平台超管可禁用部门；请求体固定为空对象或无请求体。",
+        request=None,
+        responses={200: OpenApiResponse(response=DepartmentReadSerializer, description="禁用成功。")},
+    )
     def post(self, request, id: int):
         context = require_platform_super_admin(request)
         department = Department.objects.filter(pk=id).first()
@@ -249,6 +316,12 @@ class DepartmentDisableView(V2IamAPIView):
 
 
 class RoleListView(V2IamAPIView):
+    @extend_schema(
+        operation_id="v2_iam_roles_list",
+        summary="查询 v2 部门固定角色",
+        description="返回 v2 部门体系的四类固定角色 code/name 列表；platform_super_admin 是平台身份，不属于部门角色目录。",
+        responses={200: OpenApiResponse(response=ROLE_LIST_RESPONSE, description="查询成功。")},
+    )
     def get(self, request):
         resolve_v2_context(request)
         items = fixed_role_payloads()
@@ -256,6 +329,17 @@ class RoleListView(V2IamAPIView):
 
 
 class AccountListCreateView(V2IamAPIView):
+    @extend_schema(
+        operation_id="v2_iam_accounts_list",
+        summary="查询 v2 账号列表",
+        description="平台超管可查询全部账号；部门管理员仅查询本部门账号。",
+        parameters=[
+            OpenApiParameter("departmentId", int, OpenApiParameter.QUERY, required=False, description="按部门 ID 精确过滤。"),
+            OpenApiParameter("status", int, OpenApiParameter.QUERY, required=False, description="按状态过滤：0 disabled，1 active。"),
+            OpenApiParameter("keywords", str, OpenApiParameter.QUERY, required=False, description="按用户名模糊过滤。"),
+        ],
+        responses={200: OpenApiResponse(response=ACCOUNT_LIST_RESPONSE, description="查询成功。")},
+    )
     def get(self, request):
         context = resolve_v2_context(request)
         _require_account_manager(context)
@@ -291,6 +375,16 @@ class AccountListCreateView(V2IamAPIView):
         serializer = AccountReadSerializer(queryset, many=True)
         return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        operation_id="v2_iam_accounts_create",
+        summary="创建 v2 账号",
+        description=(
+            "平台超管可创建任意部门账号并分配部门角色；部门管理员只能创建本部门操作型角色账号。"
+            "platform_super_admin 是平台身份，不能通过此接口分配。"
+        ),
+        request=AccountCreateSerializer,
+        responses={201: OpenApiResponse(response=AccountReadSerializer, description="创建成功。")},
+    )
     @transaction.atomic
     def post(self, request):
         context = resolve_v2_context(request)
@@ -302,8 +396,9 @@ class AccountListCreateView(V2IamAPIView):
             raise StandardForbidden()
 
         role_codes = serializer.validated_data["roleCodes"]
+        _require_department_roles_only(role_codes)
         if is_department_admin(context) and not is_platform_super_admin(context):
-            _require_business_roles_only(role_codes)
+            _require_department_operator_roles_only(role_codes)
 
         username = serializer.validated_data["username"]
         if User.objects.filter(username=username).exists():
@@ -333,6 +428,13 @@ class AccountListCreateView(V2IamAPIView):
 
 
 class AccountDetailView(V2IamAPIView):
+    @extend_schema(
+        operation_id="v2_iam_accounts_update",
+        summary="更新 v2 账号",
+        description="仅平台超管可更新账号用户名、密码、部门和状态；password 可不传。",
+        request=AccountUpdateSerializer,
+        responses={200: OpenApiResponse(response=AccountReadSerializer, description="更新成功。")},
+    )
     @transaction.atomic
     def put(self, request, id: int):
         context = require_platform_super_admin(request)
@@ -386,6 +488,16 @@ class AccountDetailView(V2IamAPIView):
 
 
 class AccountRolesView(V2IamAPIView):
+    @extend_schema(
+        operation_id="v2_iam_accounts_roles_replace",
+        summary="替换 v2 账号角色",
+        description=(
+            "平台超管可替换部门角色；部门管理员只能维护本部门账号的操作型角色，"
+            "platform_super_admin 和 department_admin 等受保护角色会保留。"
+        ),
+        request=AccountRolesReplaceSerializer,
+        responses={200: OpenApiResponse(response=AccountReadSerializer, description="替换成功。")},
+    )
     @transaction.atomic
     def put(self, request, id: int):
         context = resolve_v2_context(request)
@@ -396,19 +508,17 @@ class AccountRolesView(V2IamAPIView):
         serializer = AccountRolesReplaceSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         requested_role_codes = serializer.validated_data["roleCodes"]
+        _require_department_roles_only(requested_role_codes)
 
         if is_platform_super_admin(context):
-            next_role_codes = requested_role_codes
+            existing_platform_role_codes = _existing_role_codes(account, PLATFORM_ROLE_CODES)
+            next_role_codes = _ordered_role_codes(existing_platform_role_codes + requested_role_codes)
         else:
             if account.department_id != context.department.id:
                 raise StandardForbidden()
-            _require_business_roles_only(requested_role_codes)
-            existing_system_role_codes = [
-                role_code
-                for role_code in account.role_assignments.values_list("role_code", flat=True)
-                if role_code in SYSTEM_ROLE_CODES
-            ]
-            next_role_codes = _ordered_role_codes(existing_system_role_codes + requested_role_codes)
+            _require_department_operator_roles_only(requested_role_codes)
+            protected_role_codes = _existing_role_codes(account, PROTECTED_FROM_DEPARTMENT_ADMIN_ROLE_CODES)
+            next_role_codes = _ordered_role_codes(protected_role_codes + requested_role_codes)
 
         before_data = AccountReadSerializer(account).data
         account = _replace_account_roles(account=account, role_codes=next_role_codes, actor=request.user)

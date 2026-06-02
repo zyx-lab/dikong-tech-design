@@ -9,6 +9,7 @@ if [[ -d ".venv" ]]; then
   source ".venv/bin/activate"
 fi
 
+export DB_ENGINE=sqlite
 export SQLITE_DB_NAME="${SQLITE_DB_NAME:-db.regression.sqlite3}"
 export DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS:-127.0.0.1,localhost,*}"
 export DJI_UPSTREAM_BASE_URL="${DJI_UPSTREAM_BASE_URL:-https://drone-java-api.metop.com.cn}"
@@ -22,6 +23,7 @@ HOST="${DJANGO_RUNSERVER_HOST:-0.0.0.0}"
 PORT="${DJANGO_RUNSERVER_PORT:-8011}"
 
 if [[ "${START_REGRESSION_SERVER_DRY_RUN:-}" == "1" ]]; then
+  printf 'DB_ENGINE=%s\n' "$DB_ENGINE"
   printf 'SQLITE_DB_NAME=%s\n' "$SQLITE_DB_NAME"
   printf 'DJANGO_ALLOWED_HOSTS=%s\n' "$DJANGO_ALLOWED_HOSTS"
   printf 'DJI_UPSTREAM_BASE_URL=%s\n' "$DJI_UPSTREAM_BASE_URL"

@@ -1,5 +1,5 @@
 from django.db import IntegrityError, transaction
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from apps.access.authentication import BearerAuthSessionAuthentication
 from apps.access.api_base import EmptySerializer
 from apps.access.exceptions import StandardNotFound
+from apps.api_v2.openapi import list_data_serializer
 from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.iam_v2.services import resolve_v2_context
 from apps.resource_v2.audit import log_v2_action
@@ -32,19 +33,35 @@ class WorkforceV2APIView(BusinessApiResponseMixin, GenericAPIView):
     serializer_class = EmptySerializer
 
 
+PILOT_LIST_RESPONSE = list_data_serializer("V2PilotProfileListData", PilotProfileReadSerializer)
+PILOT_QUALIFICATION_LIST_RESPONSE = list_data_serializer(
+    "V2PilotQualificationListData",
+    PilotQualificationReadSerializer,
+)
+
+
 def _duplicate_response(errors=None):
     return Response(standard_error_payload(StandardCode.DUPLICATE, "资源已存在", errors), status=status.HTTP_409_CONFLICT)
 
 
 class PilotListCreateView(WorkforceV2APIView):
-    @extend_schema(operation_id="v2_workforce_pilots_list", responses=PilotProfileReadSerializer)
+    @extend_schema(
+        operation_id="v2_workforce_pilots_list",
+        summary="查询飞手档案列表",
+        responses={200: OpenApiResponse(response=PILOT_LIST_RESPONSE, description="查询成功。")},
+    )
     def get(self, request):
         context = resolve_v2_context(request)
         queryset = visible_pilots_queryset(context).prefetch_related("qualifications")
         serializer = PilotProfileReadSerializer(queryset, many=True)
         return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
 
-    @extend_schema(operation_id="v2_workforce_pilots_create", request=PilotProfileWriteSerializer, responses=PilotProfileReadSerializer)
+    @extend_schema(
+        operation_id="v2_workforce_pilots_create",
+        summary="创建飞手档案",
+        request=PilotProfileWriteSerializer,
+        responses={201: OpenApiResponse(response=PilotProfileReadSerializer, description="创建成功。")},
+    )
     @transaction.atomic
     def post(self, request):
         context = resolve_v2_context(request)
@@ -77,13 +94,22 @@ class PilotListCreateView(WorkforceV2APIView):
 
 
 class PilotDetailView(WorkforceV2APIView):
-    @extend_schema(operation_id="v2_workforce_pilots_retrieve", responses=PilotProfileReadSerializer)
+    @extend_schema(
+        operation_id="v2_workforce_pilots_retrieve",
+        summary="读取飞手档案详情",
+        responses={200: OpenApiResponse(response=PilotProfileReadSerializer, description="读取成功。")},
+    )
     def get(self, request, id: int):
         context = resolve_v2_context(request)
         pilot = get_visible_pilot_or_404(context, id)
         return Response(PilotProfileReadSerializer(pilot).data, status=status.HTTP_200_OK)
 
-    @extend_schema(operation_id="v2_workforce_pilots_update", request=PilotProfileUpdateSerializer, responses=PilotProfileReadSerializer)
+    @extend_schema(
+        operation_id="v2_workforce_pilots_update",
+        summary="更新飞手档案",
+        request=PilotProfileUpdateSerializer,
+        responses={200: OpenApiResponse(response=PilotProfileReadSerializer, description="更新成功。")},
+    )
     @transaction.atomic
     def put(self, request, id: int):
         context = resolve_v2_context(request)
@@ -113,7 +139,11 @@ class PilotDetailView(WorkforceV2APIView):
 
 
 class PilotQualificationListCreateView(WorkforceV2APIView):
-    @extend_schema(operation_id="v2_workforce_pilot_qualifications_list", responses=PilotQualificationReadSerializer)
+    @extend_schema(
+        operation_id="v2_workforce_pilot_qualifications_list",
+        summary="查询飞手资质列表",
+        responses={200: OpenApiResponse(response=PILOT_QUALIFICATION_LIST_RESPONSE, description="查询成功。")},
+    )
     def get(self, request, pilot_id: int):
         context = resolve_v2_context(request)
         pilot = get_visible_pilot_or_404(context, pilot_id)
@@ -123,7 +153,12 @@ class PilotQualificationListCreateView(WorkforceV2APIView):
             status=status.HTTP_200_OK,
         )
 
-    @extend_schema(operation_id="v2_workforce_pilot_qualifications_create", request=PilotQualificationWriteSerializer, responses=PilotQualificationReadSerializer)
+    @extend_schema(
+        operation_id="v2_workforce_pilot_qualifications_create",
+        summary="创建飞手资质",
+        request=PilotQualificationWriteSerializer,
+        responses={201: OpenApiResponse(response=PilotQualificationReadSerializer, description="创建成功。")},
+    )
     @transaction.atomic
     def post(self, request, pilot_id: int):
         context = resolve_v2_context(request)
@@ -157,7 +192,12 @@ class PilotQualificationListCreateView(WorkforceV2APIView):
 
 
 class PilotQualificationDetailView(WorkforceV2APIView):
-    @extend_schema(operation_id="v2_workforce_pilot_qualifications_update", request=PilotQualificationWriteSerializer, responses=PilotQualificationReadSerializer)
+    @extend_schema(
+        operation_id="v2_workforce_pilot_qualifications_update",
+        summary="更新飞手资质",
+        request=PilotQualificationWriteSerializer,
+        responses={200: OpenApiResponse(response=PilotQualificationReadSerializer, description="更新成功。")},
+    )
     @transaction.atomic
     def put(self, request, pilot_id: int, id: int):
         context = resolve_v2_context(request)

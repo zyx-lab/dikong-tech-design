@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 from config.logging_config import build_logging_config
@@ -83,28 +84,61 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DB_ENGINE = os.getenv("DB_ENGINE", "sqlite").lower()
-if DB_ENGINE == "postgres":
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("DB_NAME", "dikong"),
-            "USER": os.getenv("DB_USER", "postgres"),
-            "PASSWORD": os.getenv("DB_PASSWORD", "postgres"),
-            "HOST": os.getenv("DB_HOST", "127.0.0.1"),
-            "PORT": os.getenv("DB_PORT", "5432"),
-        }
+def _is_django_test_command(argv):
+    options_with_value = {"--settings", "--pythonpath"}
+    args = iter(argv[1:])
+    for arg in args:
+        if arg in options_with_value:
+            next(args, None)
+            continue
+        if arg.startswith("--settings=") or arg.startswith("--pythonpath="):
+            continue
+        if arg.startswith("-"):
+            continue
+        return arg == "test"
+    return False
+
+
+def _sqlite_database_config(env, base_dir):
+    sqlite_name = env.get("SQLITE_DB_NAME", "db.sqlite3")
+    sqlite_path = Path(sqlite_name)
+    if not sqlite_path.is_absolute():
+        sqlite_path = base_dir / sqlite_path
+    return {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": sqlite_path,
+        "OPTIONS": {
+            "timeout": 20,
+        },
     }
-else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-            "OPTIONS": {
-                "timeout": 20,
-            },
-        }
+
+
+def _postgres_database_config(env):
+    return {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": env.get("DB_NAME", "dikong"),
+        "USER": env.get("DB_USER", "postgres"),
+        "PASSWORD": env.get("DB_PASSWORD", "postgres"),
+        "HOST": env.get("DB_HOST", "127.0.0.1"),
+        "PORT": env.get("DB_PORT", "5432"),
     }
+
+
+def _database_engine(env, argv):
+    if _is_django_test_command(argv):
+        return "sqlite"
+    return env.get("DB_ENGINE", "postgres").lower()
+
+
+def _database_config(env, base_dir, argv):
+    engine = _database_engine(env, argv)
+    if engine in {"postgres", "postgresql"}:
+        return {"default": _postgres_database_config(env)}
+    return {"default": _sqlite_database_config(env, base_dir)}
+
+
+DB_ENGINE = _database_engine(os.environ, sys.argv)
+DATABASES = _database_config(os.environ, BASE_DIR, sys.argv)
 
 AUTH_PASSWORD_VALIDATORS = [
     {

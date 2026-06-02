@@ -19,7 +19,7 @@ logger = logging.getLogger("apps.access.lifecycle")
 
 def _should_log_api_lifecycle(request) -> bool:
     path = getattr(request, "path", "")
-    return isinstance(path, str) and path.startswith("/api/v1/")
+    return isinstance(path, str) and path.startswith(("/api/v1/", "/api/v2/"))
 
 
 class RequestContextMiddleware:
@@ -47,7 +47,7 @@ class RequestContextMiddleware:
 
 
 class RequestLifecycleLoggingMiddleware:
-    """输出 /api/v1/* 请求的结构化生命周期日志。"""
+    """输出正式业务 API 请求的结构化生命周期日志。"""
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -132,7 +132,7 @@ class TenantContextMiddleware:
         tenant = Tenant.objects.filter(code=tenant_code).first()
         request.tenant_context = tenant
 
-        if request.path.startswith("/api/v1/iam/"):
+        if request.path.startswith(("/api/v1/iam/", "/api/v2/iam/")):
             return self.get_response(request)
 
         if tenant is None or tenant.status != TenantStatus.ACTIVE:

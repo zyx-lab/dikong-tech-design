@@ -126,5 +126,5 @@ class BearerAuthSessionScheme(OpenApiAuthenticationExtension):
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "opaque token",
-            "description": "正式 IAM Bearer Token，需通过 /api/v1/iam/session/login 获取。",
+            "description": "IAM Bearer Token，需通过当前 API 版本的 `iam/session/login` 获取。",
         }

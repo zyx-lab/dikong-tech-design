@@ -3,7 +3,6 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.access.models import Tenant, TenantStatus
 from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountRoleAssignment
 from apps.workforce_v2.models import PilotProfile
 
@@ -21,8 +20,7 @@ def create_v2_actor(*, username: str, role_code: str | None, department: Departm
 class WorkforceV2ApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.tenant = Tenant.objects.create(code="workforce_v2_tenant", name="飞手 v2 租户", status=TenantStatus.ACTIVE)
-        self.department = Department.objects.create(tenant=self.tenant, name="飞行队")
+        self.department = Department.objects.create(name="飞行队")
         self.admin, _ = create_v2_actor(
             username="workforce_admin",
             role_code=FixedRole.DEPARTMENT_ADMIN,

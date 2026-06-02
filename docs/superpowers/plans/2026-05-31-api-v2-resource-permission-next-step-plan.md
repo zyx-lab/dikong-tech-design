@@ -29,7 +29,7 @@
   - 共享组写操作只允许拥有部门的 `department_admin` 执行；`platform_super_admin` 默认不代替部门管理员创建或修改共享组，除非该账号同时拥有对应部门的 `department_admin` 角色。
   - `POST /share-groups` 请求体为 `{ "name": string }`，`owner_department` 固定为当前 v2 上下文部门。
   - `PUT /share-groups/{id}` 请求体为 `{ "name": string, "status": 0|1 }`，允许改名和启停；不支持变更拥有部门。
-  - `POST /departments` 请求体为 `{ "departmentId": number }`；目标部门必须 active、同 tenant、精确目标部门，不自动包含子部门。
+  - `POST /departments` 请求体为 `{ "departmentId": number }`；目标部门必须 active、属于同一部门体系、精确目标部门，不自动包含子部门。
   - `POST /resources` 请求体为 `{ "resourceType": "drone"|"dock", "resourceId": number, "permissions": string[] }`；资源必须存在 active binding，且 binding 的 `owner_department` 必须等于共享组拥有部门。
   - `permissions` 统一按 `["view","monitor","dispatch_task","review_task","edit_config"]` 去重排序；空数组、未知权限、`unbind` 一律 400。
   - 重复添加目标部门或重复共享同一资源返回 409；`PUT /resources/{resource_share_id}` 只替换权限集合，不改变资源身份。
@@ -59,7 +59,7 @@
   - 部门管理员不能管理父部门、子部门或兄弟部门拥有的共享组。
   - 普通业务角色不能创建或修改共享组。
   - 平台超级管理员可读取全部共享组，但默认不能代替部门创建/修改共享组。
-  - 添加目标部门要求同 tenant 且 active；重复添加返回 409；删除后目标部门不再通过该组看到资源。
+  - 添加目标部门要求属于同一部门体系且 active；重复添加返回 409；删除后目标部门不再通过该组看到资源。
   - 只能共享本部门 active binding 的 drone/dock；不能共享未绑定资源、已解绑资源、其他部门资源、子部门资源。
   - `permissions` 拒绝空数组、未知值和 `unbind`；保存时按固定顺序去重。
   - 用 API 创建共享组、目标部门和资源共享后，目标部门用户通过 `/api/v2/resource/drones|docks` 能看到资源，`effectivePermissions` 等于固定角色权限与共享权限交集。

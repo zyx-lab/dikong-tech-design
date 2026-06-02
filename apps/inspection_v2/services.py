@@ -84,7 +84,7 @@ def require_inspection_viewer(context) -> None:
 
 
 def _department_tree_q(field: str, context) -> Q:
-    return Q(**{f"{field}__tenant": context.department.tenant, f"{field}__path__startswith": context.department.path})
+    return Q(**{f"{field}__path__startswith": context.department.path})
 
 
 def _shared_resource_permissions(context):
@@ -125,7 +125,6 @@ def visible_missions_queryset(context) -> QuerySet:
             "pilot__account_profile__department",
         )
         .prefetch_related("resource_assignments")
-        .filter(tenant=context.department.tenant)
         .order_by("-id")
     )
     if is_platform_super_admin(context):
@@ -142,7 +141,7 @@ def visible_missions_queryset(context) -> QuerySet:
 
 def visible_routes_queryset(context) -> QuerySet:
     require_inspection_viewer(context)
-    queryset = WaypointRoute.objects.prefetch_related("waypoints").filter(tenant=context.department.tenant).order_by("-id")
+    queryset = WaypointRoute.objects.prefetch_related("waypoints").order_by("-id")
     if is_platform_super_admin(context):
         return queryset
     visible_mission_route_ids = visible_missions_queryset(context).values("route_id")
@@ -153,7 +152,6 @@ def visible_routes_queryset(context) -> QuerySet:
 
 def editable_routes_queryset(context) -> QuerySet:
     queryset = WaypointRoute.objects.prefetch_related("waypoints").filter(
-        tenant=context.department.tenant,
         status=DirectoryStatus.ACTIVE,
     )
     if is_platform_super_admin(context):
@@ -174,7 +172,6 @@ def visible_records_queryset(context) -> QuerySet:
             "creator_department",
             "primary_resource_owner_department",
         )
-        .filter(tenant=context.department.tenant)
         .order_by("-end_time", "-id")
     )
     if is_platform_super_admin(context):
@@ -191,9 +188,7 @@ def visible_records_queryset(context) -> QuerySet:
 
 def visible_media_queryset(context) -> QuerySet:
     require_inspection_viewer(context)
-    queryset = CloudMediaFile.objects.select_related("flight_record", "mission").filter(
-        tenant=context.department.tenant
-    )
+    queryset = CloudMediaFile.objects.select_related("flight_record", "mission")
     if is_platform_super_admin(context):
         return queryset.order_by("-captured_at", "-id")
     visible_record_ids = visible_records_queryset(context).values("id")
@@ -215,7 +210,7 @@ def visible_sessions_queryset(context) -> QuerySet:
             "dock",
             "payload",
         )
-        .filter(status=FlightSessionStatus.RUNNING, mission__tenant=context.department.tenant)
+        .filter(status=FlightSessionStatus.RUNNING)
         .order_by("-started_at", "-id")
     )
     if is_platform_super_admin(context):
@@ -277,10 +272,7 @@ def _shared_can_use(context, binding: ResourceBinding) -> bool:
 
 def usable_resource_binding(context, resource_type: str, resource_id: int) -> ResourceBinding:
     binding = _active_binding(resource_type, resource_id)
-    hierarchy_visible = (
-        binding.owner_department.tenant_id == context.department.tenant_id
-        and binding.owner_department.path.startswith(context.department.path)
-    )
+    hierarchy_visible = binding.owner_department.path.startswith(context.department.path)
     if is_platform_super_admin(context) or hierarchy_visible or _shared_can_use(context, binding):
         return binding
     raise StandardForbidden()
@@ -431,7 +423,6 @@ def can_safety_abort(context, mission: InspectionMission) -> bool:
     if not (is_department_admin(context) or is_dispatcher(context)):
         return False
     return mission.resource_assignments.filter(
-        owner_department__tenant=context.department.tenant,
         owner_department__path__startswith=context.department.path,
     ).exists()
 
@@ -596,7 +587,6 @@ def complete_mission(*, mission: InspectionMission, context, request) -> Inspect
     record, _created = InspectionFlightRecord.objects.get_or_create(
         mission=mission,
         defaults={
-            "tenant": mission.tenant,
             "session": session,
             "flight_no": _flight_no(mission),
             "creator_department": mission.creator_department,
@@ -941,7 +931,7 @@ def sync_media_for_record(*, record: InspectionFlightRecord) -> dict:
     dji_job_id = execution.dji_job_id
     workspace_id = execution.workspace_id or connection.workspace_id
 
-    CloudMediaFile.objects.filter(tenant=record.tenant, dji_job_id=dji_job_id).update(
+    CloudMediaFile.objects.filter(workspace_id=workspace_id, dji_job_id=dji_job_id).update(
         workspace_id=workspace_id,
         mission=record.mission,
         flight_record=record,
@@ -957,7 +947,7 @@ def sync_media_for_record(*, record: InspectionFlightRecord) -> dict:
         if not cloud_file_id:
             continue
         CloudMediaFile.objects.update_or_create(
-            tenant=record.tenant,
+            workspace_id=workspace_id,
             cloud_file_id=cloud_file_id,
             defaults=_cloud_media_defaults(
                 payload=payload,
@@ -994,7 +984,6 @@ def handle_v2_media_upload_callback(payload: dict) -> dict[str, int]:
         execution = (
             MissionCloudExecution.objects.select_related(
                 "mission",
-                "mission__tenant",
                 "dji_connection",
             )
             .filter(dji_job_id=dji_job_id)
@@ -1007,21 +996,19 @@ def handle_v2_media_upload_callback(payload: dict) -> dict[str, int]:
     flight_record = _flight_record_for_v2_mission(mission)
 
     if execution is not None:
-        tenant = execution.mission.tenant
         workspace_id = workspace_id or execution.workspace_id or execution.dji_connection.workspace_id
         device_sn = device_sn or execution.drone_sn
     else:
         binding = _resource_binding_for_device_sn(device_sn)
         if binding is None:
             return {"resolved_count": 0, "ignored_count": 1}
-        tenant = binding.owner_department.tenant
         workspace_id = workspace_id or binding.dji_connection.workspace_id
 
     if not workspace_id:
         return {"resolved_count": 0, "ignored_count": 1}
 
     CloudMediaFile.objects.update_or_create(
-        tenant=tenant,
+        workspace_id=workspace_id,
         cloud_file_id=cloud_file_id,
         defaults=_cloud_media_defaults(
             payload=payload,
@@ -1093,7 +1080,6 @@ def _flight_record_from_terminal_execution(*, mission: InspectionMission, sessio
     record, _created = InspectionFlightRecord.objects.get_or_create(
         mission=mission,
         defaults={
-            "tenant": mission.tenant,
             "session": session,
             "flight_no": _flight_no(mission),
             "creator_department": mission.creator_department,
@@ -1117,7 +1103,6 @@ def apply_cloud_execution_event(*, dji_job_id: str, status: str, payload: dict |
     execution = (
         MissionCloudExecution.objects.select_related(
             "mission",
-            "mission__tenant",
             "mission__creator_department",
             "mission__primary_resource_owner_department",
             "mission__route",

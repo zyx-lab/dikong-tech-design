@@ -58,12 +58,17 @@
           banner.className = cls;
         }
 
-        if (pathname.startsWith('/api/v1/docs/')) {
-          setBanner('当前为 /api/v1 正式文档页。需要认证的接口请在 Swagger Authorize 中填写 Bearer Token；租户工作侧接口还需要传 X-TENANT-CODE。', 'warn');
+        if (pathname.startsWith('/api/v2/docs/')) {
+          setBanner('当前为 API v2 文档页。需要认证的接口请先调用 /api/v2/iam/session/login，再在 Swagger Authorize 中填写 Bearer Token。', 'warn');
           return;
         }
 
-        setBanner('当前为 Swagger 文档页。正式 OpenAPI 文档统一收口到 /api/v1/docs/，Schema 地址为 /api/v1/docs/schema/。', 'warn');
+        if (pathname.includes('/docs/')) {
+          setBanner('当前为 legacy API 文档页。需要认证的接口请在 Swagger Authorize 中填写 Bearer Token；租户工作侧接口还需要传 X-TENANT-CODE。', 'warn');
+          return;
+        }
+
+        setBanner('当前为 Swagger 文档页。请按当前页面加载的 Schema 地址联调。', 'warn');
       })();
     </script>
     {% endblock %}

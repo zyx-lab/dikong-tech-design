@@ -115,7 +115,7 @@ def visible_bindings_queryset(context, *, resource_type: str) -> QuerySet:
             resource_type=resource_type,
         ).values("resource_object_id"),
     )
-    hierarchy_filter = Q(owner_department__tenant=context.department.tenant, owner_department__path__startswith=context.department.path)
+    hierarchy_filter = Q(owner_department__path__startswith=context.department.path)
     return queryset.filter(hierarchy_filter | shared_resource_filter).distinct()
 
 
@@ -142,10 +142,7 @@ def effective_permissions_for_binding(context, binding: ResourceBinding) -> list
         return role_permissions([FixedRole.PLATFORM_SUPER_ADMIN])
 
     base_permissions = set(role_permissions(context.role_codes))
-    hierarchy_visible = (
-        binding.owner_department.tenant_id == context.department.tenant_id
-        and binding.owner_department.path.startswith(context.department.path)
-    )
+    hierarchy_visible = binding.owner_department.path.startswith(context.department.path)
     if hierarchy_visible:
         if binding.owner_department_id != context.department.id:
             base_permissions.discard("bind")

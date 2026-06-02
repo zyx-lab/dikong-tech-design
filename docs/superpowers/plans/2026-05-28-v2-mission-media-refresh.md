@@ -39,7 +39,7 @@
 - Add tests: `apps/mission/test_v2_api.py`
 
 - [ ] 在 `V2MissionViewSet` 覆盖 `advance()`，只改 v2 行为，v1 `MissionViewSet.advance()` 保持不变。
-- [ ] 当 mission 从 `RUNNING` 推进到 `COMPLETED` 后，先保存 `finished_at`，调用 `FlightRecord.create_from_completed_mission(mission=mission)`，再调用 `refresh_platform_media_indexes(tenant=mission.tenant, platform=mission.dji_platform)`。
+- [ ] 当 mission 从 `RUNNING` 推进到 `COMPLETED` 后，先保存 `finished_at`，调用 `FlightRecord.create_from_completed_mission(mission=mission)`，再按 mission 的内部兼容边界和 `dji_platform` 刷新平台媒体索引。
 - [ ] 刷新失败时沿用当前异常链路，不吞异常，避免用户误以为素材已刷新。
 - [ ] 测试覆盖：mock `DjiGateway.list_media_files()` 返回该平台、该无人机、任务时间窗口内的一张图片和一个视频；调用 `/api/v2/missions/{id}/advance` 完成后，断言 `MediaFile.mission_id`、`flight_record_id`、`photo_count`、`video_count` 都正确。
 
@@ -51,7 +51,7 @@
 - Add tests: `apps/flight_record/test_v2_api.py`
 
 - [ ] 在 `V2FlightRecordViewSet.retrieve()` 中先 `get_object()` 取得 record。
-- [ ] 如果 record 有 `dji_platform`，调用 `refresh_platform_media_indexes(tenant=record.tenant, platform=record.dji_platform)`。
+- [ ] 如果 record 有 `dji_platform`，按 record 的内部兼容边界和 `dji_platform` 刷新平台媒体索引。
 - [ ] 刷新后重新读取 record，使用 v2 detail serializer 返回。
 - [ ] list 接口不做全量刷新，避免一次列表请求打爆多个 DJI 平台；只保留已有 platform filter。
 - [ ] 测试覆盖：访问 `/api/v2/flight-records/{id}` 前数据库没有 media，mock DJI 返回素材，响应详情里能看到 `media_files`，并且只调用该 record 所属平台。
@@ -76,7 +76,7 @@
 
 - [ ] 保留 `GET /api/v2/media-files?platform_id=...` 现有行为：请求时刷新指定平台媒体。
 - [ ] 只补测试，不改变接口 wire shape。
-- [ ] 测试覆盖：media list 仍要求有效 `platform_id`；只刷新请求的平台，不刷新同租户其他平台。
+- [ ] 测试覆盖：media list 仍要求有效 `platform_id`；只刷新请求的平台，不刷新同一部门体系的其他平台。
 
 ## Public API / Interface Changes
 

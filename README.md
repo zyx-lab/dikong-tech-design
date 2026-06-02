@@ -57,7 +57,36 @@
 - 邀请流、`me/permissions`、`set-plan`、全局用户目录等旧能力不再属于正式 API。
 - `Waypoint` 已降级为 `Route` 聚合内部存储结构，不再公开 `/api/v1/waypoints*`。
 
+## API v2 当前开发入口
+
+现阶段业务开发和联调以 API v2 为准，默认不要从 v1 路径开始业务流：
+
+- Swagger UI：`/api/v2/docs/`
+- OpenAPI Schema(JSON)：`/api/v2/docs/schema/`
+- 登录：`POST /api/v2/iam/session/login`
+- 刷新令牌：`POST /api/v2/iam/session/refresh`
+- 登出：`POST /api/v2/iam/session/logout`
+- 业务分组：`/api/v2/iam/*`、`/api/v2/resource/*`、`/api/v2/workforce/*`、`/api/v2/inspection/*`
+
+`/api/v1/*` 仍作为 legacy 兼容入口保留，但不作为当前 v2 业务开发和联调入口。DJI 上游协议里的 `/api/v1/manage/*`、`/api/v1/wayline/*`、`/api/v1/media/*` 是 DJI 云平台自身的协议路径，不是本系统对外业务 API。
+
+### API v2 联调账号
+
+当前 v2 联调只使用以下 5 个账号，统一密码为 `FrontTest@123`：
+
+| 账号 | 角色 | 说明 |
+| --- | --- | --- |
+| `v2_test_platform_super_admin` | `platform_super_admin` | 平台调试/管理身份，不属于部门业务角色 |
+| `v2_test_department_admin` | `department_admin` | 部门管理员 |
+| `v2_test_task_monitor_dispatcher` | `task_monitor_dispatcher` | 任务派发和监控人员 |
+| `v2_test_pilot` | `pilot` | 飞手 |
+| `v2_test_work_order_handler` | `work_order_handler` | 工单处理者 |
+
+`GET /api/v2/iam/roles` 只返回 4 个部门角色，不返回 `platform_super_admin`。前端业务角色选择器不要展示平台身份。
+
 ## 快速启动
+
+项目运行时默认连接 PostgreSQL：`127.0.0.1:5432`、数据库 `dikong`、用户/密码 `postgres/postgres`。本地启动前先确认 PostgreSQL 可连接，或通过 `DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER`、`DB_PASSWORD` 覆盖。
 
 ```bash
 python3 -m venv .venv
@@ -70,6 +99,8 @@ python manage.py create_business_admin_account --username biz_root --password 'Y
 python manage.py runserver 0.0.0.0:8001
 ```
 
+临时需要 SQLite 时显式设置 `DB_ENGINE=sqlite`。Django 测试命令和仓库内 v2 回归脚本会固定使用 SQLite，不依赖本地 PostgreSQL。
+
 ## API v2 本地回归测试
 
 开发 API v2 时优先使用仓库内置的 v2 回归脚本，避免默认跑完整测试套件：
@@ -78,7 +109,7 @@ python manage.py runserver 0.0.0.0:8001
 scripts/test_v2_regression.sh
 ```
 
-默认模式会执行 Django check、迁移 dry-run，以及 `apps.api_v2.tests`、`apps.resource_v2.tests`。如果改动碰到共享响应、DJI 网关、schema/routing 或 v1/v2 共用模型，再跑边界烟测：
+默认模式会固定使用 SQLite，并执行 Django check、迁移 dry-run，以及 v2 API、资源、飞手、巡检相关测试。如果改动碰到共享响应、DJI 网关、schema/routing 或 v1/v2 共用模型，再跑边界烟测：
 
 ```bash
 scripts/test_v2_regression.sh boundary

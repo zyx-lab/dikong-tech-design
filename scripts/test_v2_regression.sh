@@ -42,6 +42,7 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="$(command -v python3 || command -v python)"
 fi
 
+export DB_ENGINE=sqlite
 export DJANGO_TEST_FAST_PASSWORD_HASHERS="${DJANGO_TEST_FAST_PASSWORD_HASHERS:-1}"
 
 run() {

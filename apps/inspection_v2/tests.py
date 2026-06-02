@@ -8,7 +8,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.access.models import DirectoryStatus, Tenant, TenantStatus
+from apps.access.models import DirectoryStatus
 from apps.dji_cloud.gateway import DjiGatewayUpstreamError
 from apps.iam_v2.models import (
     Department,
@@ -53,10 +53,9 @@ def create_v2_actor(*, username: str, role_code: str | None, department: Departm
 class InspectionV2ApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.tenant = Tenant.objects.create(code="inspection_v2_tenant", name="巡检 v2 租户", status=TenantStatus.ACTIVE)
-        self.root = Department.objects.create(tenant=self.tenant, name="总部")
-        self.owner_department = Department.objects.create(tenant=self.tenant, name="资源队", parent=self.root)
-        self.other_department = Department.objects.create(tenant=self.tenant, name="任务队", parent=self.root)
+        self.root = Department.objects.create(name="总部")
+        self.owner_department = Department.objects.create(name="资源队", parent=self.root)
+        self.other_department = Department.objects.create(name="任务队", parent=self.root)
         self.owner_dispatcher, _ = create_v2_actor(
             username="owner_dispatcher",
             role_code=FixedRole.TASK_MONITOR_DISPATCHER,
@@ -591,7 +590,7 @@ class InspectionV2ApiTests(TestCase):
     @override_settings(DJI_INTERNAL_API_TOKEN="internal-sync-token")
     def test_media_upload_callback_without_job_id_should_store_unassigned_v2_media_only(self):
         response = self.client.post(
-            "/api/v1/__internal__/dji/callbacks/media-upload",
+            "/api/internal/dji/callbacks/media-upload",
             data=json.dumps(
                 {
                     "ext": {"sn": self.drone.device_sn, "file_id": "callback-unassigned-001"},

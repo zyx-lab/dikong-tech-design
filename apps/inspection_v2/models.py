@@ -59,7 +59,6 @@ class LiveStreamStatus(models.TextChoices):
 
 
 class WaypointRoute(TimeStampedModel):
-    tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="v2_waypoint_routes")
     owner_department = models.ForeignKey(Department, on_delete=models.PROTECT, related_name="v2_waypoint_routes")
     name = models.CharField(max_length=128)
     status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE)
@@ -132,7 +131,6 @@ class WaypointRouteCloudFile(TimeStampedModel):
 
 
 class InspectionMission(TimeStampedModel):
-    tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="v2_inspection_missions")
     creator_department = models.ForeignKey(Department, on_delete=models.PROTECT, related_name="created_v2_missions")
     primary_resource_owner_department = models.ForeignKey(
         Department,
@@ -167,7 +165,7 @@ class InspectionMission(TimeStampedModel):
         db_table = "v2_inspection_missions"
         ordering = ["-id"]
         indexes = [
-            models.Index(fields=["tenant", "status"], name="idx_v2_mission_tenant_status"),
+            models.Index(fields=["status"], name="idx_v2_mission_status"),
             models.Index(fields=["creator_department", "status"], name="idx_v2_mission_creator_status"),
             models.Index(fields=["primary_resource_owner_department", "status"], name="idx_v2_mission_owner_status"),
         ]
@@ -317,7 +315,6 @@ class MissionCloudExecution(TimeStampedModel):
 
 
 class InspectionFlightRecord(TimeStampedModel):
-    tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="v2_flight_records")
     mission = models.OneToOneField(InspectionMission, on_delete=models.PROTECT, related_name="flight_record")
     session = models.OneToOneField(FlightSession, on_delete=models.PROTECT, related_name="flight_record")
     flight_no = models.CharField(max_length=64, unique=True)
@@ -345,13 +342,12 @@ class InspectionFlightRecord(TimeStampedModel):
         db_table = "v2_inspection_flight_records"
         ordering = ["-end_time", "-id"]
         indexes = [
-            models.Index(fields=["tenant", "status"], name="idx_v2_record_tenant_status"),
+            models.Index(fields=["status"], name="idx_v2_record_status"),
             models.Index(fields=["drone_device_sn", "start_time", "end_time"], name="idx_v2_record_drone_time"),
         ]
 
 
 class CloudMediaFile(TimeStampedModel):
-    tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="v2_cloud_media_files")
     workspace_id = models.CharField(max_length=128, blank=True, default="")
     flight_record = models.ForeignKey(
         InspectionFlightRecord,
@@ -387,7 +383,7 @@ class CloudMediaFile(TimeStampedModel):
         db_table = "v2_cloud_media_files"
         ordering = ["-captured_at", "-id"]
         constraints = [
-            models.UniqueConstraint(fields=["tenant", "cloud_file_id"], name="uniq_v2_cloud_media_file"),
+            models.UniqueConstraint(fields=["workspace_id", "cloud_file_id"], name="uniq_v2_cloud_media_file"),
         ]
         indexes = [
             models.Index(fields=["device_sn", "captured_at"], name="idx_v2_media_device_time"),

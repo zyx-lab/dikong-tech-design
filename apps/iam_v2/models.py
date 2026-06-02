@@ -14,8 +14,26 @@ class FixedRole(models.TextChoices):
     WORK_ORDER_HANDLER = "work_order_handler", "工单处理员"
 
 
+ROLE_CODE_ORDER = [choice.value for choice in FixedRole]
+PLATFORM_ROLE_CODES = {FixedRole.PLATFORM_SUPER_ADMIN.value}
+DEPARTMENT_ROLE_CODES = {
+    FixedRole.DEPARTMENT_ADMIN.value,
+    FixedRole.TASK_MONITOR_DISPATCHER.value,
+    FixedRole.PILOT.value,
+    FixedRole.WORK_ORDER_HANDLER.value,
+}
+DEPARTMENT_OPERATOR_ROLE_CODES = {
+    FixedRole.TASK_MONITOR_DISPATCHER.value,
+    FixedRole.PILOT.value,
+    FixedRole.WORK_ORDER_HANDLER.value,
+}
+PROTECTED_FROM_DEPARTMENT_ADMIN_ROLE_CODES = {
+    FixedRole.PLATFORM_SUPER_ADMIN.value,
+    FixedRole.DEPARTMENT_ADMIN.value,
+}
+
+
 class Department(TimeStampedModel):
-    tenant = models.ForeignKey("access.Tenant", on_delete=models.CASCADE, related_name="v2_departments")
     parent = models.ForeignKey(
         "self",
         on_delete=models.PROTECT,
@@ -40,22 +58,19 @@ class Department(TimeStampedModel):
         ordering = ["path", "id"]
         constraints = [
             models.UniqueConstraint(
-                fields=["tenant"],
+                models.Value(1),
                 condition=Q(parent__isnull=True),
-                name="uniq_v2_department_tenant_root",
+                name="uniq_v2_department_single_root",
             ),
-            models.UniqueConstraint(fields=["tenant", "parent", "name"], name="uniq_v2_department_sibling_name"),
-        ]
-        indexes = [
-            models.Index(fields=["tenant", "path"], name="idx_v2_dept_tenant_path"),
+            models.UniqueConstraint(fields=["parent", "name"], name="uniq_v2_department_sibling_name"),
         ]
 
     def __str__(self):
-        return f"{self.tenant_id}:{self.path or self.name}"
+        return self.path or self.name
 
     def clean(self):
-        if self.parent_id and self.parent is not None and self.parent.tenant_id != self.tenant_id:
-            raise ValidationError({"parent": "parent 必须属于同一 tenant"})
+        if self.parent_id is None and Department.objects.filter(parent__isnull=True).exclude(pk=self.pk).exists():
+            raise ValidationError({"parent": "系统只允许一个根部门"})
         if self.pk is not None:
             old_parent_id = Department.objects.filter(pk=self.pk).values_list("parent_id", flat=True).first()
             if old_parent_id != self.parent_id:
@@ -141,12 +156,7 @@ class ResourceShareGroupTargetDepartment(TimeStampedModel):
         ]
 
     def clean(self):
-        if (
-            self.share_group_id
-            and self.department_id
-            and self.share_group.owner_department.tenant_id != self.department.tenant_id
-        ):
-            raise ValidationError({"department": "target department 必须与 share group owner 属于同一 tenant"})
+        return None
 
     def save(self, *args, **kwargs):
         self.full_clean()

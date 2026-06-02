@@ -5,7 +5,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import parsers, serializers, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from apps.access.authentication import BearerAuthSessionAuthentication
 from apps.access.api_base import EmptySerializer
 from apps.access.exceptions import StandardConstraintConflict, StandardForbidden, StandardNotFound
+from apps.api_v2.openapi import V2MediaRefreshSerializer, generic_object_response, list_data_serializer
 from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.dji_cloud.gateway import DjiGatewayError
 from apps.iam_v2.services import resolve_v2_context
@@ -77,6 +78,13 @@ from apps.workforce_v2.services import pilot_has_effective_qualification, visibl
 class InspectionV2APIView(BusinessApiResponseMixin, GenericAPIView):
     authentication_classes = [BearerAuthSessionAuthentication]
     serializer_class = EmptySerializer
+
+
+ROUTE_LIST_RESPONSE = list_data_serializer("V2InspectionRouteListData", RouteReadSerializer)
+MISSION_LIST_RESPONSE = list_data_serializer("V2InspectionMissionListData", MissionReadSerializer)
+ACTIVE_FLIGHT_LIST_RESPONSE = list_data_serializer("V2ActiveFlightListData", ActiveFlightReadSerializer)
+FLIGHT_RECORD_LIST_RESPONSE = list_data_serializer("V2InspectionFlightRecordListData", FlightRecordReadSerializer)
+MEDIA_FILE_LIST_RESPONSE = list_data_serializer("V2CloudMediaFileListData", CloudMediaFileReadSerializer)
 
 
 def _duplicate_response(errors=None):
@@ -156,7 +164,12 @@ def _clone_kmz_for_dji_upload(file_obj, *, upload_name: str) -> SimpleUploadedFi
 
 
 class RouteListCreateView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_routes_list", responses=RouteReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_routes_list",
+        summary="查询巡检航线列表",
+        parameters=[OpenApiParameter("keywords", str, OpenApiParameter.QUERY, required=False, description="按航线名称模糊过滤。")],
+        responses={200: OpenApiResponse(response=ROUTE_LIST_RESPONSE, description="查询成功。")},
+    )
     def get(self, request):
         context = resolve_v2_context(request)
         queryset = visible_routes_queryset(context)
@@ -166,7 +179,12 @@ class RouteListCreateView(InspectionV2APIView):
         serializer = RouteReadSerializer(queryset, many=True)
         return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
 
-    @extend_schema(operation_id="v2_inspection_routes_create", request=RouteWriteSerializer, responses=RouteReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_routes_create",
+        summary="创建巡检航线",
+        request=RouteWriteSerializer,
+        responses={201: OpenApiResponse(response=RouteReadSerializer, description="创建成功。")},
+    )
     @transaction.atomic
     def post(self, request):
         context = resolve_v2_context(request)
@@ -175,7 +193,6 @@ class RouteListCreateView(InspectionV2APIView):
         serializer.is_valid(raise_exception=True)
         try:
             route = WaypointRoute.objects.create(
-                tenant=context.department.tenant,
                 owner_department=context.department,
                 name=serializer.validated_data["name"],
                 status=serializer.validated_data.get("status", 1),
@@ -201,13 +218,22 @@ class RouteListCreateView(InspectionV2APIView):
 
 
 class RouteDetailView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_routes_retrieve", responses=RouteReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_routes_retrieve",
+        summary="读取巡检航线详情",
+        responses={200: OpenApiResponse(response=RouteReadSerializer, description="读取成功。")},
+    )
     def get(self, request, id: int):
         context = resolve_v2_context(request)
         route = get_visible_route_or_404(context, id)
         return Response(RouteReadSerializer(route).data, status=status.HTTP_200_OK)
 
-    @extend_schema(operation_id="v2_inspection_routes_update", request=RouteWriteSerializer, responses=RouteReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_routes_update",
+        summary="更新巡检航线",
+        request=RouteWriteSerializer,
+        responses={200: OpenApiResponse(response=RouteReadSerializer, description="更新成功。")},
+    )
     @transaction.atomic
     def put(self, request, id: int):
         context = resolve_v2_context(request)
@@ -243,7 +269,12 @@ class RouteDetailView(InspectionV2APIView):
 class RouteKmzView(InspectionV2APIView):
     parser_classes = [parsers.MultiPartParser, parsers.FormParser]
 
-    @extend_schema(operation_id="v2_inspection_routes_upload_kmz", request=RouteKmzUploadSerializer, responses=RouteCloudFileReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_routes_upload_kmz",
+        summary="上传巡检航线 KMZ",
+        request=RouteKmzUploadSerializer,
+        responses={200: OpenApiResponse(response=RouteCloudFileReadSerializer, description="上传成功。")},
+    )
     @transaction.atomic
     def post(self, request, id: int):
         context = resolve_v2_context(request)
@@ -290,7 +321,12 @@ class RouteKmzView(InspectionV2APIView):
         )
         return Response(data, status=status.HTTP_200_OK)
 
-    @extend_schema(operation_id="v2_inspection_routes_replace_kmz", request=RouteKmzUploadSerializer, responses=RouteCloudFileReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_routes_replace_kmz",
+        summary="替换巡检航线 KMZ",
+        request=RouteKmzUploadSerializer,
+        responses={200: OpenApiResponse(response=RouteCloudFileReadSerializer, description="替换成功。")},
+    )
     def put(self, request, id: int):
         return self.post(request, id=id)
 
@@ -335,7 +371,16 @@ def _validated_mission_inputs(context, data):
 
 
 class MissionListCreateView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_missions_list", responses=MissionReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_missions_list",
+        summary="查询巡检任务列表",
+        parameters=[
+            OpenApiParameter("routeId", int, OpenApiParameter.QUERY, required=False, description="按航线 ID 精确过滤。"),
+            OpenApiParameter("status", str, OpenApiParameter.QUERY, required=False, description="按任务状态过滤。"),
+            OpenApiParameter("keywords", str, OpenApiParameter.QUERY, required=False, description="按任务、航线、无人机模糊过滤。"),
+        ],
+        responses={200: OpenApiResponse(response=MISSION_LIST_RESPONSE, description="查询成功。")},
+    )
     def get(self, request):
         context = resolve_v2_context(request)
         queryset = visible_missions_queryset(context)
@@ -356,7 +401,12 @@ class MissionListCreateView(InspectionV2APIView):
         serializer = MissionReadSerializer(queryset.distinct(), many=True)
         return Response({"list": serializer.data, "total": queryset.distinct().count()}, status=status.HTTP_200_OK)
 
-    @extend_schema(operation_id="v2_inspection_missions_create", request=MissionWriteSerializer, responses=MissionReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_missions_create",
+        summary="创建巡检任务",
+        request=MissionWriteSerializer,
+        responses={201: OpenApiResponse(response=MissionReadSerializer, description="创建成功。")},
+    )
     @transaction.atomic
     def post(self, request):
         context = resolve_v2_context(request)
@@ -365,7 +415,6 @@ class MissionListCreateView(InspectionV2APIView):
         serializer.is_valid(raise_exception=True)
         route, pilot, drone, dock, executor, payload, bindings = _validated_mission_inputs(context, serializer.validated_data)
         mission = InspectionMission.objects.create(
-            tenant=context.department.tenant,
             creator_department=context.department,
             primary_resource_owner_department=bindings[0].owner_department,
             route=route,
@@ -397,13 +446,22 @@ class MissionListCreateView(InspectionV2APIView):
 
 
 class MissionDetailView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_missions_retrieve", responses=MissionReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_missions_retrieve",
+        summary="读取巡检任务详情",
+        responses={200: OpenApiResponse(response=MissionReadSerializer, description="读取成功。")},
+    )
     def get(self, request, id: int):
         context = resolve_v2_context(request)
         mission = get_visible_mission_or_404(context, id)
         return Response(MissionReadSerializer(mission).data, status=status.HTTP_200_OK)
 
-    @extend_schema(operation_id="v2_inspection_missions_update", request=MissionWriteSerializer, responses=MissionReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_missions_update",
+        summary="更新巡检任务",
+        request=MissionWriteSerializer,
+        responses={200: OpenApiResponse(response=MissionReadSerializer, description="更新成功。")},
+    )
     @transaction.atomic
     def put(self, request, id: int):
         context = resolve_v2_context(request)
@@ -461,7 +519,13 @@ class MissionDetailView(InspectionV2APIView):
 
 
 class MissionStartView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_missions_start", responses=MissionReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_missions_start",
+        summary="开始巡检任务",
+        description="请求体固定为空对象或无请求体。",
+        request=None,
+        responses={200: OpenApiResponse(response=MissionReadSerializer, description="开始成功。")},
+    )
     @transaction.atomic
     def post(self, request, id: int):
         context = resolve_v2_context(request)
@@ -474,7 +538,13 @@ class MissionStartView(InspectionV2APIView):
 
 
 class MissionCompleteView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_missions_complete", responses=FlightRecordReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_missions_complete",
+        summary="完成巡检任务",
+        description="请求体固定为空对象或无请求体。",
+        request=None,
+        responses={200: OpenApiResponse(response=FlightRecordReadSerializer, description="完成成功。")},
+    )
     @transaction.atomic
     def post(self, request, id: int):
         context = resolve_v2_context(request)
@@ -484,7 +554,12 @@ class MissionCompleteView(InspectionV2APIView):
 
 
 class MissionCancelView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_missions_cancel", request=MissionCloseSerializer, responses=MissionReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_missions_cancel",
+        summary="取消巡检任务",
+        request=MissionCloseSerializer,
+        responses={200: OpenApiResponse(response=MissionReadSerializer, description="取消成功。")},
+    )
     @transaction.atomic
     def post(self, request, id: int):
         from apps.inspection_v2.services import close_mission
@@ -507,7 +582,12 @@ class MissionCancelView(InspectionV2APIView):
 
 
 class MissionFailView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_missions_fail", request=MissionCloseSerializer, responses=MissionReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_missions_fail",
+        summary="标记巡检任务失败",
+        request=MissionCloseSerializer,
+        responses={200: OpenApiResponse(response=MissionReadSerializer, description="标记成功。")},
+    )
     @transaction.atomic
     def post(self, request, id: int):
         from apps.inspection_v2.services import close_mission
@@ -527,7 +607,12 @@ class MissionFailView(InspectionV2APIView):
 
 
 class MissionAbortView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_missions_abort", request=MissionCloseSerializer, responses=MissionReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_missions_abort",
+        summary="安全中止巡检任务",
+        request=MissionCloseSerializer,
+        responses={200: OpenApiResponse(response=MissionReadSerializer, description="中止成功。")},
+    )
     @transaction.atomic
     def post(self, request, id: int):
         context = resolve_v2_context(request)
@@ -544,7 +629,11 @@ class MissionAbortView(InspectionV2APIView):
 
 
 class ActiveFlightListView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_active_flights_list", responses=ActiveFlightReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_active_flights_list",
+        summary="查询活动飞行列表",
+        responses={200: OpenApiResponse(response=ACTIVE_FLIGHT_LIST_RESPONSE, description="查询成功。")},
+    )
     def get(self, request):
         context = resolve_v2_context(request)
         queryset = visible_sessions_queryset(context)
@@ -553,7 +642,11 @@ class ActiveFlightListView(InspectionV2APIView):
 
 
 class ActiveFlightDetailView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_active_flights_retrieve", responses=ActiveFlightReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_active_flights_retrieve",
+        summary="读取活动飞行详情",
+        responses={200: OpenApiResponse(response=ActiveFlightReadSerializer, description="读取成功。")},
+    )
     def get(self, request, id: int):
         context = resolve_v2_context(request)
         session = visible_sessions_queryset(context).filter(pk=id).first()
@@ -563,7 +656,12 @@ class ActiveFlightDetailView(InspectionV2APIView):
 
 
 class TelemetrySnapshotView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_telemetry_snapshot_upsert", request=TelemetrySnapshotWriteSerializer, responses=TelemetrySnapshotReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_telemetry_snapshot_upsert",
+        summary="上报飞行遥测快照",
+        request=TelemetrySnapshotWriteSerializer,
+        responses={200: OpenApiResponse(response=TelemetrySnapshotReadSerializer, description="上报成功。")},
+    )
     @transaction.atomic
     def post(self, request):
         context = resolve_v2_context(request)
@@ -596,7 +694,12 @@ def _require_active_session_for_drone(context, drone_id: int):
 
 
 class LiveCapacityView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_live_capacity")
+    @extend_schema(
+        operation_id="v2_inspection_live_capacity",
+        summary="查询直播能力",
+        parameters=[OpenApiParameter("droneId", int, OpenApiParameter.QUERY, required=True, description="无人机资源 ID。")],
+        responses={200: generic_object_response("查询成功。返回 DJI 直播能力数据。")},
+    )
     def get(self, request):
         context = resolve_v2_context(request)
         serializer = LiveCapacityQuerySerializer(data=request.query_params.dict())
@@ -615,6 +718,10 @@ class LiveActionView(InspectionV2APIView):
     gateway_method = ""
     audit_action = ""
 
+    @extend_schema(
+        request=LiveActionSerializer,
+        responses={200: generic_object_response("操作成功。返回 DJI 直播操作结果。")},
+    )
     def post(self, request):
         context = resolve_v2_context(request)
         serializer = LiveActionSerializer(data=request.data)
@@ -663,7 +770,15 @@ class LiveSwitchView(LiveActionView):
 
 
 class FlightRecordListView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_flight_records_list", responses=FlightRecordReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_flight_records_list",
+        summary="查询飞行记录列表",
+        parameters=[
+            OpenApiParameter("missionId", int, OpenApiParameter.QUERY, required=False, description="按任务 ID 精确过滤。"),
+            OpenApiParameter("status", str, OpenApiParameter.QUERY, required=False, description="按飞行记录状态过滤。"),
+        ],
+        responses={200: OpenApiResponse(response=FLIGHT_RECORD_LIST_RESPONSE, description="查询成功。")},
+    )
     def get(self, request):
         context = resolve_v2_context(request)
         queryset = visible_records_queryset(context)
@@ -678,13 +793,22 @@ class FlightRecordListView(InspectionV2APIView):
 
 
 class FlightRecordDetailView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_flight_records_retrieve", responses=FlightRecordReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_flight_records_retrieve",
+        summary="读取飞行记录详情",
+        responses={200: OpenApiResponse(response=FlightRecordReadSerializer, description="读取成功。")},
+    )
     def get(self, request, id: int):
         context = resolve_v2_context(request)
         record = get_visible_record_or_404(context, id)
         return Response(FlightRecordReadSerializer(record).data, status=status.HTTP_200_OK)
 
-    @extend_schema(operation_id="v2_inspection_flight_records_update_note", request=FlightRecordUpdateSerializer, responses=FlightRecordReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_flight_records_update_note",
+        summary="更新飞行记录备注",
+        request=FlightRecordUpdateSerializer,
+        responses={200: OpenApiResponse(response=FlightRecordReadSerializer, description="更新成功。")},
+    )
     @transaction.atomic
     def put(self, request, id: int):
         context = resolve_v2_context(request)
@@ -712,7 +836,13 @@ class FlightRecordDetailView(InspectionV2APIView):
 
 
 class FlightRecordMediaRefreshView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_flight_records_refresh_media")
+    @extend_schema(
+        operation_id="v2_inspection_flight_records_refresh_media",
+        summary="刷新飞行记录媒体",
+        description="请求体固定为空对象或无请求体。",
+        request=None,
+        responses={200: OpenApiResponse(response=V2MediaRefreshSerializer, description="刷新成功。")},
+    )
     @transaction.atomic
     def post(self, request, id: int):
         context = resolve_v2_context(request)
@@ -736,7 +866,15 @@ class FlightRecordMediaRefreshView(InspectionV2APIView):
 
 
 class MediaFileListView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_media_files_list", responses=CloudMediaFileReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_media_files_list",
+        summary="查询云媒体文件列表",
+        parameters=[
+            OpenApiParameter("flightRecordId", int, OpenApiParameter.QUERY, required=False, description="按飞行记录 ID 精确过滤。"),
+            OpenApiParameter("missionId", int, OpenApiParameter.QUERY, required=False, description="按任务 ID 精确过滤。"),
+        ],
+        responses={200: OpenApiResponse(response=MEDIA_FILE_LIST_RESPONSE, description="查询成功。")},
+    )
     def get(self, request):
         context = resolve_v2_context(request)
         queryset = visible_media_queryset(context)
@@ -751,7 +889,11 @@ class MediaFileListView(InspectionV2APIView):
 
 
 class MediaFileDetailView(InspectionV2APIView):
-    @extend_schema(operation_id="v2_inspection_media_files_retrieve", responses=CloudMediaFileReadSerializer)
+    @extend_schema(
+        operation_id="v2_inspection_media_files_retrieve",
+        summary="读取云媒体文件详情",
+        responses={200: OpenApiResponse(response=CloudMediaFileReadSerializer, description="读取成功。")},
+    )
     def get(self, request, id: int):
         context = resolve_v2_context(request)
         media = visible_media_queryset(context).filter(pk=id).first()

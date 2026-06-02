@@ -36,7 +36,7 @@ def _active_authenticated_user(request):
 def resolve_v2_context(request) -> V2RequestContext:
     user = _active_authenticated_user(request)
     profile = (
-        V2AccountProfile.objects.select_related("department", "department__tenant")
+        V2AccountProfile.objects.select_related("department")
         .filter(user=user, status=DirectoryStatus.ACTIVE, department__status=DirectoryStatus.ACTIVE)
         .first()
     )

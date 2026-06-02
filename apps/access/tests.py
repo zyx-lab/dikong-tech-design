@@ -23,7 +23,66 @@ User = get_user_model()
 
 
 class DatabaseSettingsTests(SimpleTestCase):
-    def test_sqlite_default_database_should_wait_20_seconds_for_locks(self):
+    def test_runtime_database_should_default_to_postgres(self):
+        databases = project_settings._database_config({}, project_settings.BASE_DIR, ["manage.py", "runserver"])
+        default_db = databases["default"]
+
+        self.assertEqual(default_db["ENGINE"], "django.db.backends.postgresql")
+        self.assertEqual(default_db["NAME"], "dikong")
+        self.assertEqual(default_db["USER"], "postgres")
+        self.assertEqual(default_db["PASSWORD"], "postgres")
+        self.assertEqual(default_db["HOST"], "127.0.0.1")
+        self.assertEqual(default_db["PORT"], "5432")
+
+    def test_postgresql_alias_should_use_postgres_backend(self):
+        databases = project_settings._database_config(
+            {"DB_ENGINE": "postgresql"},
+            project_settings.BASE_DIR,
+            ["manage.py", "runserver"],
+        )
+
+        self.assertEqual(databases["default"]["ENGINE"], "django.db.backends.postgresql")
+
+    def test_explicit_sqlite_should_use_sqlite_backend(self):
+        databases = project_settings._database_config(
+            {"DB_ENGINE": "sqlite"},
+            project_settings.BASE_DIR,
+            ["manage.py", "runserver"],
+        )
+        default_db = databases["default"]
+
+        self.assertEqual(default_db["ENGINE"], "django.db.backends.sqlite3")
+        self.assertEqual(default_db["NAME"], project_settings.BASE_DIR / "db.sqlite3")
+        self.assertEqual(default_db["OPTIONS"]["timeout"], 20)
+
+    def test_sqlite_database_name_should_resolve_relative_to_project_root(self):
+        databases = project_settings._database_config(
+            {"DB_ENGINE": "sqlite", "SQLITE_DB_NAME": "db.regression.sqlite3"},
+            project_settings.BASE_DIR,
+            ["manage.py", "runserver"],
+        )
+
+        self.assertEqual(databases["default"]["NAME"], project_settings.BASE_DIR / "db.regression.sqlite3")
+
+    def test_test_command_should_force_sqlite_backend(self):
+        databases = project_settings._database_config(
+            {"DB_ENGINE": "postgres"},
+            project_settings.BASE_DIR,
+            ["manage.py", "test", "apps.access.tests"],
+        )
+
+        self.assertEqual(databases["default"]["ENGINE"], "django.db.backends.sqlite3")
+
+    def test_non_test_command_argument_should_not_force_sqlite_backend(self):
+        databases = project_settings._database_config(
+            {"DB_ENGINE": "postgres"},
+            project_settings.BASE_DIR,
+            ["manage.py", "shell", "-c", "test"],
+        )
+
+        self.assertEqual(databases["default"]["ENGINE"], "django.db.backends.postgresql")
+
+    def test_running_tests_should_use_sqlite_database(self):
         default_db = settings.DATABASES["default"]
 
         self.assertEqual(default_db["ENGINE"], "django.db.backends.sqlite3")
@@ -52,10 +111,16 @@ class RegressionServerScriptTests(SimpleTestCase):
         )
 
         self.assertIn("SQLITE_DB_NAME=db.regression.sqlite3", result.stdout)
+        self.assertIn("DB_ENGINE=sqlite", result.stdout)
         self.assertIn("DJI_UPSTREAM_BASE_URL=https://drone-java-api.metop.com.cn", result.stdout)
         self.assertIn("DJI_UPSTREAM_USERNAME=adminPC1", result.stdout)
         self.assertIn("DJI_UPSTREAM_PASSWORD_SET=1", result.stdout)
         self.assertIn("DJI_UPSTREAM_LOGIN_FLAG=1", result.stdout)
+
+    def test_v2_regression_script_should_force_sqlite_database(self):
+        script_path = Path(project_settings.BASE_DIR) / "scripts" / "test_v2_regression.sh"
+
+        self.assertIn("export DB_ENGINE=sqlite", script_path.read_text())
 
 
 class AccessValidationHelperTests(TestCase):

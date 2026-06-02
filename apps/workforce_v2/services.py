@@ -29,7 +29,7 @@ def require_pilot_viewer(context) -> None:
 
 
 def department_scope_filter(context, field_prefix: str = "account_profile__department"):
-    return {f"{field_prefix}__tenant": context.department.tenant, f"{field_prefix}__path__startswith": context.department.path}
+    return {f"{field_prefix}__path__startswith": context.department.path}
 
 
 def visible_pilots_queryset(context) -> QuerySet:
@@ -38,7 +38,7 @@ def visible_pilots_queryset(context) -> QuerySet:
         "account_profile",
         "account_profile__user",
         "account_profile__department",
-    ).filter(account_profile__department__tenant=context.department.tenant)
+    )
     if is_platform_super_admin(context):
         return queryset.order_by("id")
     if is_pilot(context) and not (is_department_admin_role(context) or is_task_dispatcher(context)):

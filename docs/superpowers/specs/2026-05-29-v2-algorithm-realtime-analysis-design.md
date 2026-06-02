@@ -2,7 +2,7 @@
 
   ## Summary
 
-  - 采用“Django 控制面 + 算法服务拉流”的架构：Django 负责租户、DJI 平台、无人机、mission、直播启动、算法会话、事件落库和 SSE 推送；视频流本身不进入 Django 进程。
+  - 采用“Django 控制面 + 算法服务拉流”的架构：Django 负责部门体系、DJI 平台、无人机、mission、直播启动、算法会话、事件落库和 SSE 推送；视频流本身不进入 Django 进程。
   - 第一版使用 DJI 直播 RTMP URL 给算法系统拉流。DJI 官方 Cloud API 文档里 RTMP 是直播协议选项之一，Pilot/RC Plus 侧 url_type=1 为 RTMP；Dock 直播文档也说明 DJI 推流支持 Agora/RTMP/GB28181，WebRTC/WHIP
     更偏低延迟播放链路。参考：Pilot to Cloud Live Stream (https://developer.dji.com/doc/cloud-api-tutorial/en/api-reference/pilot-to-cloud/mqtt/rc-plus/live.html)、Dock Livestream
     (https://developer.dji.com/doc/cloud-api-tutorial/en/feature-set/dock-feature-set/dock-livestream.html)。
@@ -13,17 +13,17 @@
   ## Public API / Data Model Changes
 
   - 新增 apps.algorithm 领域模块，避免把外部算法系统塞进 dji_bff：
-      - AlgorithmProvider：租户级算法服务配置，字段包括 tenant、name、base_url、auth_token、status、is_default、timeout_seconds。
-      - AlgorithmProfile：算法能力配置，字段包括 tenant、provider、name、code、params、stream_protocol=RTMP、is_default、enabled。
-      - AlgorithmSession：一次 mission 实时分析会话，关联 tenant、mission、drone、dji_platform、profile，保存 video_id、stream_url、external_session_id、状态 STARTING/RUNNING/STOPPING/STOPPED/ERROR、错误信息
+      - AlgorithmProvider：部门体系级算法服务配置，字段包括 owner_department、name、base_url、auth_token、status、is_default、timeout_seconds。
+      - AlgorithmProfile：算法能力配置，字段包括 owner_department、provider、name、code、params、stream_protocol=RTMP、is_default、enabled。
+      - AlgorithmSession：一次 mission 实时分析会话，关联 mission、drone、dji_platform、profile，保存 video_id、stream_url、external_session_id、状态 STARTING/RUNNING/STOPPING/STOPPED/ERROR、错误信息
         和时间戳。
       - AlgorithmEvent：算法回调事件，关联 session、mission、drone、dji_platform，保存 external_event_id、event_type、event_time、confidence、bbox、payload、evidence_file/evidence_url；对同一 session 的
         external_event_id 做唯一约束保证幂等。
   - 新增 v2 配置接口：
-      - GET/POST /api/v2/iam/tenant/algorithm-providers
-      - GET/PATCH /api/v2/iam/tenant/algorithm-providers/{id}
-      - GET/POST /api/v2/iam/tenant/algorithm-profiles
-      - GET/PATCH /api/v2/iam/tenant/algorithm-profiles/{id}
+      - GET/POST /api/v2/algorithm/providers
+      - GET/PATCH /api/v2/algorithm/providers/{id}
+      - GET/POST /api/v2/algorithm/profiles
+      - GET/PATCH /api/v2/algorithm/profiles/{id}
   - 扩展 v2 mission 接口：
       - POST/PATCH /api/v2/missions 增加可选 algorithm_profile_id、live_video_id、live_video_quality。
       - 如果传了 algorithm_profile_id，任务启动时强制启动算法；如果没传，则不启用算法，不影响现有任务流程。
@@ -45,7 +45,7 @@
       - 如果 mission 没配置算法 profile，走现有 v2 advance 流程。
       - 如果配置了 profile，先创建 AlgorithmSession(STARTING)，再调用 DjiGateway(platform).get_live_capacity() 解析/校验 video_id。
       - 调用 DjiGateway(platform).start_live(device_sn, video_id, url_type=1, video_quality=...)，选择返回里的 rtmp_url 或 url 作为算法拉流地址。
-      - 调用算法服务 POST {provider.base_url}/sessions，传 session_id、mission_id、tenant_code、drone/device_sn、dji_platform_id、stream_url、video_id、profile.code/params、callback_url。
+      - 调用算法服务 POST {provider.base_url}/sessions，传 session_id、mission_id、department_id、drone/device_sn、dji_platform_id、stream_url、video_id、profile.code/params、callback_url。
       - 算法服务返回成功后，mission 才更新为 RUNNING，session 更新为 RUNNING。
       - 任一步失败：mission 保持 PENDING，session 标记 ERROR；如果 DJI 直播已启动，调用 stop_live 做补偿；接口返回 400/502。
   - mission RUNNING -> COMPLETED：
@@ -58,7 +58,7 @@
       - 证据第一版支持图片证据：算法可传 evidence_url，Django 同步下载到默认对象存储并保存 evidence_file；下载失败时事件仍落库并记录 evidence_error。
   - SSE：
       - 使用 Django StreamingHttpResponse，不新增 Channels。
-      - 连接鉴权复用 v2 租户和 scope 权限；只能订阅当前租户有权限的 mission/session。
+      - 连接鉴权复用 v2 部门体系和 scope 权限；只能订阅当前部门体系有权限的 mission/session。
       - 先发送 id > Last-Event-ID 的历史事件，再每 1 秒查询新增事件；每 15 秒发 heartbeat；单连接设置最大存活时间，前端自动重连。
 
   ## Test Plan
@@ -73,7 +73,7 @@
       - mission 保持 PENDING；
       - session 变 ERROR；
       - 已启动直播时会调用 stop_live 补偿。
-  - 同租户多 DJI 平台、相同 device_sn 场景：
+  - 同一部门体系多 DJI 平台、相同 device_sn 场景：
       - 算法启动只使用 mission drone 所属 dji_platform；
       - 不会误用默认平台或其他平台直播。
   - mission 完成：
@@ -88,7 +88,7 @@
   - SSE：
       - 有权限用户能收到历史事件和新增事件；
       - Last-Event-ID 能断线续传；
-      - 无权限或跨租户订阅返回 403/404；
+      - 无权限或跨部门体系订阅返回 403/404；
       - heartbeat 不产生业务事件。
 
   ## Assumptions
@@ -98,4 +98,3 @@
   - 算法只对显式配置了 algorithm_profile_id 的 mission 生效；未配置算法的 mission 不受影响。
   - 启动失败阻断任务启动；停止失败不阻断任务完成。
   - SSE 用数据库轮询实现，先满足实时事件查看，不引入 Redis、Celery、WebSocket 或新消息队列。
-

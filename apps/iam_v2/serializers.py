@@ -1,17 +1,19 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.access.api_base import StrictSerializer
-from apps.access.models import DirectoryStatus, Tenant
-from apps.iam_v2.models import Department, FixedRole, V2AccountProfile
+from apps.access.models import DirectoryStatus
+from apps.iam_v2.models import (
+    DEPARTMENT_ROLE_CODES,
+    ROLE_CODE_ORDER,
+    Department,
+    FixedRole,
+    V2AccountProfile,
+)
 
 
-FIXED_ROLE_ORDER = [choice.value for choice in FixedRole]
-SYSTEM_ROLE_CODES = {FixedRole.PLATFORM_SUPER_ADMIN.value, FixedRole.DEPARTMENT_ADMIN.value}
-BUSINESS_ROLE_CODES = {
-    FixedRole.TASK_MONITOR_DISPATCHER.value,
-    FixedRole.PILOT.value,
-    FixedRole.WORK_ORDER_HANDLER.value,
-}
+FIXED_ROLE_ORDER = ROLE_CODE_ORDER
+DEPARTMENT_ROLE_ORDER = [role_code for role_code in FIXED_ROLE_ORDER if role_code in DEPARTMENT_ROLE_CODES]
 
 
 def normalize_fixed_role_codes(raw_role_codes) -> list[str]:
@@ -38,14 +40,12 @@ def normalize_fixed_role_codes(raw_role_codes) -> list[str]:
 
 class DepartmentReadSerializer(serializers.ModelSerializer):
     parentId = serializers.IntegerField(source="parent_id", allow_null=True, read_only=True)
-    tenantId = serializers.IntegerField(source="tenant_id", read_only=True)
     createdByUserId = serializers.IntegerField(source="created_by_user_id", allow_null=True, read_only=True)
 
     class Meta:
         model = Department
         fields = [
             "id",
-            "tenantId",
             "parentId",
             "name",
             "status",
@@ -60,36 +60,32 @@ class DepartmentReadSerializer(serializers.ModelSerializer):
 
 class DepartmentCreateSerializer(StrictSerializer):
     name = serializers.CharField(max_length=128)
-    tenantId = serializers.IntegerField(required=False, min_value=1)
-    parentId = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    parentId = serializers.IntegerField(
+        min_value=1,
+        error_messages={
+            "required": "创建部门必须指定父部门",
+            "null": "创建部门必须指定父部门",
+        },
+    )
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            unexpected = sorted(set(data.keys()) - set(self.fields.keys()))
+            if unexpected:
+                raise serializers.ValidationError({"body": ["请求包含不支持的字段"]})
+        return super().to_internal_value(data)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
         parent_id = attrs.get("parentId")
-        tenant_id = attrs.get("tenantId")
-        parent = None
-        tenant = None
-        if parent_id:
-            parent = Department.objects.filter(pk=parent_id).select_related("tenant").first()
-            if parent is None:
-                raise serializers.ValidationError({"parentId": ["部门不存在"]})
-            tenant = parent.tenant
-        elif tenant_id:
-            tenant = Tenant.objects.filter(pk=tenant_id).first()
-            if tenant is None:
-                raise serializers.ValidationError({"tenantId": ["租户不存在"]})
-        else:
-            context = self.context.get("v2_context")
-            tenant = getattr(getattr(context, "department", None), "tenant", None)
-        if tenant is None:
-            raise serializers.ValidationError({"tenantId": ["创建根部门必须提供 tenantId"]})
+        parent = Department.objects.filter(pk=parent_id).first()
+        if parent is None:
+            raise serializers.ValidationError({"parentId": ["部门不存在"]})
         attrs["parent"] = parent
-        attrs["tenant"] = tenant
         return attrs
 
     def create(self, validated_data):
         return Department.objects.create(
-            tenant=validated_data["tenant"],
             parent=validated_data.get("parent"),
             name=validated_data["name"],
             created_by_user=self.context.get("request").user if self.context.get("request") else None,
@@ -120,7 +116,8 @@ class FixedRoleSerializer(serializers.Serializer):
 
 
 def fixed_role_payloads():
-    return [{"code": choice.value, "name": choice.label} for choice in FixedRole]
+    labels = dict(FixedRole.choices)
+    return [{"code": role_code, "name": labels[role_code]} for role_code in DEPARTMENT_ROLE_ORDER]
 
 
 class AccountCreateSerializer(StrictSerializer):
@@ -161,9 +158,11 @@ class AccountReadSerializer(serializers.ModelSerializer):
         fields = ["id", "userId", "username", "status", "department", "roleCodes", "createdAt", "updatedAt"]
         read_only_fields = fields
 
+    @extend_schema_field(DepartmentReadSerializer)
     def get_department(self, instance):
         return DepartmentReadSerializer(instance.department).data
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_roleCodes(self, instance):
         role_codes = set(instance.role_assignments.all().values_list("role_code", flat=True))
         return [role_code for role_code in FIXED_ROLE_ORDER if role_code in role_codes]

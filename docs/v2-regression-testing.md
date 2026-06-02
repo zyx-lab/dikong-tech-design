@@ -2,6 +2,8 @@
 
 Use `scripts/test_v2_regression.sh` as the local gate while developing API v2. It keeps the default loop focused on the v2 boundary instead of running the full project suite.
 
+The script explicitly exports `DB_ENGINE=sqlite`, so v2 regression tests do not require a local PostgreSQL instance even though normal runtime defaults to PostgreSQL.
+
 ## Default v2 Gate
 
 ```bash
@@ -14,8 +16,10 @@ This runs:
 - `manage.py makemigrations --check --dry-run`
 - `apps.api_v2.tests`
 - `apps.resource_v2.tests`
+- `apps.workforce_v2.tests`
+- `apps.inspection_v2.tests`
 
-Use this for normal changes under `apps/api_v2`, `apps/iam_v2`, `apps/resource_v2`, and the v2 resource-permission design docs.
+Use this for normal changes under `apps/api_v2`, `apps/iam_v2`, `apps/resource_v2`, `apps/workforce_v2`, `apps/inspection_v2`, and the v2 resource-permission design docs.
 
 ## Boundary Smoke Gate
 

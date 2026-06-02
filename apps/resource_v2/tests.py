@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.access.models import DirectoryStatus, Tenant, TenantStatus
+from apps.access.models import DirectoryStatus
 from apps.dji_cloud.gateway import GatewayResponse
 from apps.dji_bff.models import DjiDeviceIndex
 from apps.iam_v2.models import (
@@ -104,10 +104,9 @@ class ResourceV2ApiTests(TestCase):
         super().setUp()
         FakeDiscoveryGateway.calls = []
         self.client = APIClient()
-        self.tenant = Tenant.objects.create(code="resource_v2_tenant", name="资源租户", status=TenantStatus.ACTIVE)
-        self.root = Department.objects.create(tenant=self.tenant, name="总部")
-        self.child = Department.objects.create(tenant=self.tenant, name="飞行队", parent=self.root)
-        self.other = Department.objects.create(tenant=self.tenant, name="保障队", parent=self.root)
+        self.root = Department.objects.create(name="总部")
+        self.child = Department.objects.create(name="飞行队", parent=self.root)
+        self.other = Department.objects.create(name="保障队", parent=self.root)
         self.root_admin = create_v2_actor(
             username="root_admin",
             role_code=FixedRole.DEPARTMENT_ADMIN,
@@ -926,13 +925,10 @@ class ResourceV2ApiTests(TestCase):
         )
         unbound_drone = DroneResource.objects.create(device_sn="UNBOUND-SHARE-DRONE", name="未绑定无人机", model="M30")
         disabled_department = Department.objects.create(
-            tenant=self.tenant,
             name="停用部门",
             parent=self.root,
             status=DirectoryStatus.DISABLED,
         )
-        other_tenant = Tenant.objects.create(code="other_v2_tenant", name="其他租户", status=TenantStatus.ACTIVE)
-        cross_tenant_department = Department.objects.create(tenant=other_tenant, name="其他租户总部")
 
         self.authenticate(self.other_admin)
         denied_update_response = self.client.put(
@@ -978,15 +974,15 @@ class ResourceV2ApiTests(TestCase):
         )
         self.assertEqual(disabled_target_response.status_code, 400, getattr(disabled_target_response, "data", disabled_target_response.content))
 
-        cross_tenant_target_response = self.client.post(
+        active_target_response = self.client.post(
             f"/api/v2/resource/share-groups/{group.id}/departments",
-            {"departmentId": cross_tenant_department.id},
+            {"departmentId": self.other.id},
             format="json",
         )
         self.assertEqual(
-            cross_tenant_target_response.status_code,
-            400,
-            getattr(cross_tenant_target_response, "data", cross_tenant_target_response.content),
+            active_target_response.status_code,
+            201,
+            getattr(active_target_response, "data", active_target_response.content),
         )
 
         for permissions in ([], ["unbind"], ["unknown"]):
