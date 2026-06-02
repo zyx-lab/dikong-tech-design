@@ -1,0 +1,33 @@
+Creating test database for alias 'default'...
+Found 1 test(s).
+System check identified no issues (0 silenced).
+FF
+======================================================================
+FAIL: test_v2_schema_should_document_route_cover_multipart_request_body (apps.api_v2.tests.ApiV2SchemaBoundaryTests.test_v2_schema_should_document_route_cover_multipart_request_body) (method='post', path='/api/v2/inspection/routes')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/root/charles/dikong-tech-design/apps/api_v2/tests.py", line 356, in test_v2_schema_should_document_route_cover_multipart_request_body
+    self.assertEqual(multipart_properties["coverImage"]["format"], "binary")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'uri' != 'binary'
+- uri
++ binary
+
+
+======================================================================
+FAIL: test_v2_schema_should_document_route_cover_multipart_request_body (apps.api_v2.tests.ApiV2SchemaBoundaryTests.test_v2_schema_should_document_route_cover_multipart_request_body) (method='put', path='/api/v2/inspection/routes/{id}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/root/charles/dikong-tech-design/apps/api_v2/tests.py", line 356, in test_v2_schema_should_document_route_cover_multipart_request_body
+    self.assertEqual(multipart_properties["coverImage"]["format"], "binary")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'uri' != 'binary'
+- uri
++ binary
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.106s
+
+FAILED (failures=2)
+Destroying test database for alias 'default'...

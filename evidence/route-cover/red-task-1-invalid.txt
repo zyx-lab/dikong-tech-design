@@ -1,0 +1,18 @@
+Creating test database for alias 'default'...
+Found 1 test(s).
+System check identified no issues (0 silenced).
+F
+======================================================================
+FAIL: test_route_save_should_reject_non_image_cover_file (apps.inspection_v2.tests.InspectionV2ApiTests.test_route_save_should_reject_non_image_cover_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/root/charles/dikong-tech-design/apps/inspection_v2/tests.py", line 277, in test_route_save_should_reject_non_image_cover_file
+    self.assertIn("只支持上传 jpg/jpeg/png/webp 图片，且大小不能超过 5MB", str(response.data))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '只支持上传 jpg/jpeg/png/webp 图片，且大小不能超过 5MB' not found in "{'code': 'B0001', 'msg': '参数校验失败', 'data': {'coverImage': [ErrorDetail(string='该字段不允许传入', code='invalid')]}, 'traceId': '7283118b-e2e0-4842-9e8f-2d7799dfbae2'}"
+
+----------------------------------------------------------------------
+Ran 1 test in 2.327s
+
+FAILED (failures=1)
+Destroying test database for alias 'default'...

@@ -1,0 +1,48 @@
+apps/inspection_v2/services.py:43:    route_cover_image_url,
+apps/inspection_v2/services.py:296:        "coverImageUrl": route_cover_image_url(route),
+apps/api_v2/tests.py:353:                self.assertIn("coverImage", multipart_properties)
+apps/inspection_v2/models.py:64:def route_cover_upload_to(instance, filename):
+apps/inspection_v2/models.py:76:    cover_image = models.FileField(upload_to=route_cover_upload_to, blank=True, default="")
+apps/inspection_v2/models.py:97:def route_cover_image_url(route: WaypointRoute) -> str:
+apps/inspection_v2/models.py:98:    if not route.cover_image:
+apps/inspection_v2/models.py:101:        return route.cover_image.url
+apps/inspection_v2/serializers.py:21:    route_cover_image_url,
+apps/inspection_v2/serializers.py:54:    coverImageUrl = serializers.SerializerMethodField()
+apps/inspection_v2/serializers.py:66:            "coverImageUrl",
+apps/inspection_v2/serializers.py:74:    def get_coverImageUrl(self, instance: WaypointRoute) -> str:
+apps/inspection_v2/serializers.py:75:        return route_cover_image_url(instance)
+apps/inspection_v2/serializers.py:83:    coverImage = serializers.FileField(required=False, allow_empty_file=False, write_only=True)
+apps/inspection_v2/serializers.py:105:    def validate_coverImage(self, value):
+apps/inspection_v2/views.py:157:    if not old_cover_name or old_cover_name == route.cover_image.name:
+apps/inspection_v2/views.py:160:        route.cover_image.storage.delete(old_cover_name)
+apps/inspection_v2/views.py:219:                cover_image=serializer.validated_data.get("coverImage", ""),
+apps/inspection_v2/views.py:274:        old_cover_name = route.cover_image.name
+apps/inspection_v2/views.py:276:        if "coverImage" in serializer.validated_data:
+apps/inspection_v2/views.py:277:            route.cover_image = serializer.validated_data["coverImage"]
+apps/inspection_v2/views.py:278:            update_fields.append("cover_image")
+apps/inspection_v2/migrations/0009_waypointroute_cover_image.py:15:            name="cover_image",
+apps/inspection_v2/migrations/0009_waypointroute_cover_image.py:16:            field=models.FileField(blank=True, default="", upload_to=apps.inspection_v2.models.route_cover_upload_to),
+apps/inspection_v2/tests.py:267:    def test_route_save_should_accept_cover_image_and_return_cover_image_url(self):
+apps/inspection_v2/tests.py:271:        payload["coverImage"] = SimpleUploadedFile("cover.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
+apps/inspection_v2/tests.py:277:        self.assertIn("coverImageUrl", response.data["data"])
+apps/inspection_v2/tests.py:278:        self.assertRegex(response.data["data"]["coverImageUrl"], r"\.(jpg|jpeg|png|webp)$")
+apps/inspection_v2/tests.py:284:        payload["coverImage"] = SimpleUploadedFile("cover.txt", b"not an image", content_type="text/plain")
+apps/inspection_v2/tests.py:290:        self.assertIn("coverImage", str(response.data))
+apps/inspection_v2/tests.py:297:        payload["coverImage"] = SimpleUploadedFile("cover.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
+apps/inspection_v2/tests.py:305:    def test_route_update_should_replace_cover_image_and_preserve_when_omitted(self):
+apps/inspection_v2/tests.py:309:        create_payload["coverImage"] = SimpleUploadedFile("cover-a.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
+apps/inspection_v2/tests.py:315:            first_url = create_response.data["data"]["coverImageUrl"]
+apps/inspection_v2/tests.py:317:            first_cover_name = route.cover_image.name
+apps/inspection_v2/tests.py:322:            self.assertEqual(preserve_response.data["data"]["coverImageUrl"], first_url)
+apps/inspection_v2/tests.py:326:            replace_payload["coverImage"] = SimpleUploadedFile("cover-b.png", b"\x89PNG\r\n\x1a\n", content_type="image/png")
+apps/inspection_v2/tests.py:330:            self.assertIn("coverImageUrl", replace_response.data["data"])
+apps/inspection_v2/tests.py:331:            self.assertNotEqual(replace_response.data["data"]["coverImageUrl"], first_url)
+apps/inspection_v2/tests.py:333:            self.assertNotEqual(route.cover_image.name, first_cover_name)
+apps/inspection_v2/tests.py:334:            self.assertFalse(route.cover_image.storage.exists(first_cover_name))
+apps/inspection_v2/tests.py:336:    def test_route_json_save_should_remain_backward_compatible_without_cover_image(self):
+apps/inspection_v2/tests.py:338:        self.assertEqual(route["coverImageUrl"], "")
+apps/inspection_v2/tests.py:345:        self.assertEqual(response.data["data"]["coverImageUrl"], "")
+apps/inspection_v2/tests.py:347:    def test_mission_route_snapshot_should_include_route_cover_image_url(self):
+apps/inspection_v2/tests.py:351:        route_payload["coverImage"] = SimpleUploadedFile("mission-cover.webp", b"RIFFxxxxWEBP", content_type="image/webp")
+apps/inspection_v2/tests.py:366:        self.assertEqual(mission["routeSnapshot"]["coverImageUrl"], route["coverImageUrl"])
+apps/inspection_v2/tests.py:894:        self.assertIn("coverImageUrl", routes_response.data["data"]["list"][0])

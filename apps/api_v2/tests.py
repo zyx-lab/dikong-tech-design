@@ -50,6 +50,16 @@ class ApiV2SchemaBoundaryTests(TestCase):
             response_schema = schema["components"]["schemas"][response_schema["$ref"].split("/")[-1]]
         return response_schema["properties"]["data"]
 
+    def _schema_ref(self, schema, schema_value):
+        while "$ref" in schema_value:
+            schema_value = schema["components"]["schemas"][schema_value["$ref"].split("/")[-1]]
+        return schema_value
+
+    def _request_body_properties(self, schema, *, path: str, method: str, content_type: str):
+        request_schema = schema["paths"][path][method.lower()]["requestBody"]["content"][content_type]["schema"]
+        request_schema = self._schema_ref(schema, request_schema)
+        return request_schema.get("properties", {})
+
     def _actual_v2_routes(self):
         def route_to_openapi(route):
             value = str(route).replace("^", "").replace("\\Z", "").replace("$", "")
@@ -322,6 +332,37 @@ class ApiV2SchemaBoundaryTests(TestCase):
         for method, path in request_body_operations:
             with self.subTest(method=method, path=path):
                 self.assertIn("requestBody", schema["paths"][path][method.lower()])
+
+    def test_v2_schema_should_document_route_cover_multipart_request_body(self):
+        schema = self._schema()
+
+        for method, path in (
+            ("post", "/api/v2/inspection/routes"),
+            ("put", "/api/v2/inspection/routes/{id}"),
+        ):
+            with self.subTest(method=method, path=path):
+                content = schema["paths"][path][method]["requestBody"]["content"]
+                self.assertIn("application/json", content)
+                self.assertIn("multipart/form-data", content)
+                multipart_properties = self._request_body_properties(
+                    schema,
+                    path=path,
+                    method=method,
+                    content_type="multipart/form-data",
+                )
+                self.assertIn("coverImage", multipart_properties)
+                self.assertIn("waypoints", multipart_properties)
+                self.assertEqual(multipart_properties["coverImage"]["type"], "string")
+                self.assertEqual(multipart_properties["coverImage"]["format"], "binary")
+                self.assertEqual(multipart_properties["waypoints"]["type"], "string")
+
+                json_properties = self._request_body_properties(
+                    schema,
+                    path=path,
+                    method=method,
+                    content_type="application/json",
+                )
+                self.assertEqual(json_properties["waypoints"]["type"], "array")
 
     def test_v2_docs_should_be_available(self):
         response = self.client.get("/api/v2/docs/")

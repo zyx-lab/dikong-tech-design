@@ -1,0 +1,5 @@
+System check identified no issues (0 silenced).
+/root/charles/dikong-tech-design/.venv/lib/python3.13/site-packages/django/core/management/commands/makemigrations.py:160: RuntimeWarning: Got an error checking a consistent migration history performed for database connection 'default': connection failed: connection to server at "127.0.0.1", port 5432 failed: 致命错误:  用户 "postgres" Password 认证失败
+connection to server at "127.0.0.1", port 5432 failed: 致命错误:  用户 "postgres" Password 认证失败
+  warnings.warn(
+No changes detected

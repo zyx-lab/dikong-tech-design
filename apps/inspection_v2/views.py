@@ -1,11 +1,12 @@
 import re
 import uuid
+import logging
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
-from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiRequest, OpenApiResponse, extend_schema
 from rest_framework import parsers, serializers, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
@@ -75,6 +76,9 @@ from apps.resource_v2.services import get_resource
 from apps.workforce_v2.services import pilot_has_effective_qualification, visible_pilots_queryset
 
 
+logger = logging.getLogger(__name__)
+
+
 class InspectionV2APIView(BusinessApiResponseMixin, GenericAPIView):
     authentication_classes = [BearerAuthSessionAuthentication]
     serializer_class = EmptySerializer
@@ -85,6 +89,25 @@ MISSION_LIST_RESPONSE = list_data_serializer("V2InspectionMissionListData", Miss
 ACTIVE_FLIGHT_LIST_RESPONSE = list_data_serializer("V2ActiveFlightListData", ActiveFlightReadSerializer)
 FLIGHT_RECORD_LIST_RESPONSE = list_data_serializer("V2InspectionFlightRecordListData", FlightRecordReadSerializer)
 MEDIA_FILE_LIST_RESPONSE = list_data_serializer("V2CloudMediaFileListData", CloudMediaFileReadSerializer)
+ROUTE_MULTIPART_WRITE_REQUEST = OpenApiRequest(
+    request={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "maxLength": 128},
+            "status": {"type": "integer", "enum": [0, 1]},
+            "defaultAltitude": {"type": "string", "format": "decimal", "nullable": True},
+            "defaultSpeed": {"type": "string", "format": "decimal", "nullable": True},
+            "coverImage": {"type": "string", "format": "binary"},
+            "remark": {"type": "string"},
+            "waypoints": {"type": "string", "description": "JSON 数组字符串。"},
+        },
+        "required": ["name", "waypoints"],
+    },
+    encoding={
+        "coverImage": {"contentType": "image/jpeg, image/png, image/webp"},
+        "waypoints": {"contentType": "application/json"},
+    },
+)
 
 
 def _duplicate_response(errors=None):
@@ -149,6 +172,15 @@ def _replace_waypoints(route: WaypointRoute, waypoints: list[dict]):
     )
 
 
+def _delete_replaced_route_cover(route: WaypointRoute, old_cover_name: str) -> None:
+    if not old_cover_name or old_cover_name == route.cover_image.name:
+        return
+    try:
+        route.cover_image.storage.delete(old_cover_name)
+    except Exception:  # noqa: BLE001 - storage backends expose inconsistent deletion errors.
+        logger.warning("failed to delete replaced route cover", extra={"route_id": route.id, "cover_name": old_cover_name}, exc_info=True)
+
+
 def _safe_dji_upload_name(*, route_id: int) -> str:
     return f"v2-route-{route_id}-{uuid.uuid4().hex[:8]}"
 
@@ -164,6 +196,8 @@ def _clone_kmz_for_dji_upload(file_obj, *, upload_name: str) -> SimpleUploadedFi
 
 
 class RouteListCreateView(InspectionV2APIView):
+    parser_classes = [parsers.JSONParser, parsers.MultiPartParser, parsers.FormParser]
+
     @extend_schema(
         operation_id="v2_inspection_routes_list",
         summary="查询巡检航线列表",
@@ -182,7 +216,10 @@ class RouteListCreateView(InspectionV2APIView):
     @extend_schema(
         operation_id="v2_inspection_routes_create",
         summary="创建巡检航线",
-        request=RouteWriteSerializer,
+        request={
+            "application/json": RouteWriteSerializer,
+            "multipart/form-data": ROUTE_MULTIPART_WRITE_REQUEST,
+        },
         responses={201: OpenApiResponse(response=RouteReadSerializer, description="创建成功。")},
     )
     @transaction.atomic
@@ -198,6 +235,7 @@ class RouteListCreateView(InspectionV2APIView):
                 status=serializer.validated_data.get("status", 1),
                 default_altitude=serializer.validated_data.get("defaultAltitude"),
                 default_speed=serializer.validated_data.get("defaultSpeed"),
+                cover_image=serializer.validated_data.get("coverImage", ""),
                 remark=serializer.validated_data.get("remark", ""),
                 created_by_user=request.user,
             )
@@ -218,6 +256,8 @@ class RouteListCreateView(InspectionV2APIView):
 
 
 class RouteDetailView(InspectionV2APIView):
+    parser_classes = [parsers.JSONParser, parsers.MultiPartParser, parsers.FormParser]
+
     @extend_schema(
         operation_id="v2_inspection_routes_retrieve",
         summary="读取巡检航线详情",
@@ -231,7 +271,10 @@ class RouteDetailView(InspectionV2APIView):
     @extend_schema(
         operation_id="v2_inspection_routes_update",
         summary="更新巡检航线",
-        request=RouteWriteSerializer,
+        request={
+            "application/json": RouteWriteSerializer,
+            "multipart/form-data": ROUTE_MULTIPART_WRITE_REQUEST,
+        },
         responses={200: OpenApiResponse(response=RouteReadSerializer, description="更新成功。")},
     )
     @transaction.atomic
@@ -247,10 +290,16 @@ class RouteDetailView(InspectionV2APIView):
         route.default_altitude = serializer.validated_data.get("defaultAltitude")
         route.default_speed = serializer.validated_data.get("defaultSpeed")
         route.remark = serializer.validated_data.get("remark", "")
+        old_cover_name = route.cover_image.name
+        update_fields = ["name", "status", "default_altitude", "default_speed", "remark", "updated_at"]
+        if "coverImage" in serializer.validated_data:
+            route.cover_image = serializer.validated_data["coverImage"]
+            update_fields.append("cover_image")
         try:
-            route.save(update_fields=["name", "status", "default_altitude", "default_speed", "remark", "updated_at"])
+            route.save(update_fields=update_fields)
         except IntegrityError as exc:
             return _duplicate_response({"detail": str(exc)})
+        _delete_replaced_route_cover(route, old_cover_name)
         _replace_waypoints(route, serializer.validated_data["waypoints"])
         data = RouteReadSerializer(route).data
         log_v2_action(

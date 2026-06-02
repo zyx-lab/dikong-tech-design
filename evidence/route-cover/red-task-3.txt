@@ -1,0 +1,18 @@
+Creating test database for alias 'default'...
+Found 1 test(s).
+System check identified no issues (0 silenced).
+E
+======================================================================
+ERROR: test_mission_route_snapshot_should_include_route_cover_image_url (apps.inspection_v2.tests.InspectionV2ApiTests.test_mission_route_snapshot_should_include_route_cover_image_url)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/root/charles/dikong-tech-design/apps/inspection_v2/tests.py", line 366, in test_mission_route_snapshot_should_include_route_cover_image_url
+    self.assertEqual(mission["routeSnapshot"]["coverImageUrl"], route["coverImageUrl"])
+                     ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+KeyError: 'coverImageUrl'
+
+----------------------------------------------------------------------
+Ran 1 test in 2.345s
+
+FAILED (errors=1)
+Destroying test database for alias 'default'...

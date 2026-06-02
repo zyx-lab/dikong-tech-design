@@ -1,3 +1,6 @@
+from pathlib import Path
+import uuid
+
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
@@ -58,12 +61,19 @@ class LiveStreamStatus(models.TextChoices):
     FAILED = "FAILED", "异常"
 
 
+def route_cover_upload_to(instance, filename):
+    extension = Path(str(filename or "")).suffix.lower() or ".bin"
+    route_id = instance.pk or "new"
+    return f"inspection/routes/covers/route-{route_id}/{uuid.uuid4().hex}{extension}"
+
+
 class WaypointRoute(TimeStampedModel):
     owner_department = models.ForeignKey(Department, on_delete=models.PROTECT, related_name="v2_waypoint_routes")
     name = models.CharField(max_length=128)
     status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE)
     default_altitude = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     default_speed = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    cover_image = models.FileField(upload_to=route_cover_upload_to, blank=True, default="")
     remark = models.TextField(blank=True, default="")
     created_by_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -82,6 +92,15 @@ class WaypointRoute(TimeStampedModel):
 
     def __str__(self):
         return f"{self.owner_department_id}:{self.name}"
+
+
+def route_cover_image_url(route: WaypointRoute) -> str:
+    if not route.cover_image:
+        return ""
+    try:
+        return route.cover_image.url
+    except ValueError:
+        return ""
 
 
 class Waypoint(TimeStampedModel):

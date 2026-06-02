@@ -1,0 +1,14 @@
+HTTP/1.1 200 OK
+Date: Tue, 02 Jun 2026 07:55:41 GMT
+Server: WSGIServer/0.2 CPython/3.13.5
+Content-Type: application/json
+Vary: Accept, Cookie
+Allow: POST, OPTIONS
+X-Request-ID: 09498053-8207-434f-afde-f995a1f153c2
+X-Frame-Options: DENY
+Content-Length: 520
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+Cross-Origin-Opener-Policy: same-origin
+
+{"code":"00000","msg":"success","data":{"accessToken":"<redacted>","refreshToken":"<redacted>","tokenType":"Bearer","expiresIn":7200,"refreshExpiresIn":604800,"user":{"userId":12,"username":"v2_test_task_monitor_dispatcher","status":"ACTIVE","hasPlatformAccess":false,"staffProfile":{"name":"V2 任务监控调度员","phone":"","email":"","employmentStatus":"ACTIVE","orgId":null}}},"traceId":"09498053-8207-434f-afde-f995a1f153c2"}

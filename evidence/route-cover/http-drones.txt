@@ -1,0 +1,14 @@
+HTTP/1.1 200 OK
+Date: Tue, 02 Jun 2026 07:55:42 GMT
+Server: WSGIServer/0.2 CPython/3.13.5
+Content-Type: application/json
+Vary: Accept, Cookie
+Allow: GET, HEAD, OPTIONS
+X-Request-ID: bc82bfe7-edfe-4f24-a208-90d86e8d7f7a
+X-Frame-Options: DENY
+Content-Length: 381
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+Cross-Origin-Opener-Policy: same-origin
+
+{"code":"00000","msg":"success","data":{"list":[{"id":3,"resourceType":"drone","bindingId":3,"deviceSn":"ULW-COVER-QA-DRONE","name":"ulw-cover-qa-drone","model":"M30","onlineStatus":true,"ownerDepartment":{"id":1,"name":"前端联调总部","path":"/1/"},"effectivePermissions":["view","monitor","dispatch_task","use"]}],"total":1},"traceId":"bc82bfe7-edfe-4f24-a208-90d86e8d7f7a"}

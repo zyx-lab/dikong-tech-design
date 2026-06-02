@@ -40,6 +40,7 @@ from apps.inspection_v2.models import (
     MissionStatus,
     WaypointRoute,
     WaypointRouteCloudFile,
+    route_cover_image_url,
 )
 
 
@@ -292,6 +293,7 @@ def route_snapshot(route: WaypointRoute) -> dict:
         "name": route.name,
         "defaultAltitude": str(route.default_altitude) if route.default_altitude is not None else None,
         "defaultSpeed": str(route.default_speed) if route.default_speed is not None else None,
+        "coverImageUrl": route_cover_image_url(route),
         "waypoints": [
             {
                 "sequence": waypoint.sequence,

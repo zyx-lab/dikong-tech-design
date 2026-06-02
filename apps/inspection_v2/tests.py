@@ -1,4 +1,5 @@
 import json
+import tempfile
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -25,6 +26,7 @@ from apps.inspection_v2.models import (
     LiveStreamStatus,
     MissionCloudExecution,
     MissionStatus,
+    WaypointRoute,
 )
 from apps.inspection_v2.services import apply_cloud_execution_event, apply_osd_telemetry
 from apps.inspection_v2.management.commands.run_v2_dji_worker import V2DjiWorker
@@ -167,6 +169,23 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
         return response.data["data"]
 
+    def storage_settings(self, media_root):
+        return self.settings(
+            MEDIA_ROOT=media_root,
+            STORAGES={
+                "default": {
+                    "BACKEND": "django.core.files.storage.FileSystemStorage",
+                    "OPTIONS": {
+                        "location": media_root,
+                        "base_url": "/media/",
+                    },
+                },
+                "staticfiles": {
+                    "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+                },
+            },
+        )
+
     def create_mission_by_api(self, user, *, route_id, drone_id, pilot_id, executor_id=None, name="一号任务"):
         self.authenticate(user)
         payload = {
@@ -223,6 +242,135 @@ class InspectionV2ApiTests(TestCase):
             response = self.client.post(f"/api/v2/inspection/missions/{mission_id}/start", {}, format="json")
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         return response
+
+    def test_route_json_create_should_preserve_existing_contract(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="JSON 基线航线")
+
+        self.assertEqual(route["name"], "JSON 基线航线")
+        self.assertEqual(route["defaultAltitude"], "120.00")
+        self.assertEqual(route["defaultSpeed"], "8.50")
+        self.assertEqual(len(route["waypoints"]), 2)
+
+    def test_route_json_update_should_preserve_existing_contract(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="JSON 更新基线航线")
+        payload = self.route_payload(name="JSON 更新后航线")
+        payload["defaultAltitude"] = "130.00"
+
+        self.authenticate(self.owner_dispatcher)
+        response = self.client.put(f"/api/v2/inspection/routes/{route['id']}", payload, format="json")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["name"], "JSON 更新后航线")
+        self.assertEqual(response.data["data"]["defaultAltitude"], "130.00")
+        self.assertEqual(len(response.data["data"]["waypoints"]), 2)
+
+    def test_route_save_should_accept_cover_image_and_return_cover_image_url(self):
+        self.authenticate(self.owner_dispatcher)
+        payload = self.route_payload(name="封面航线")
+        payload["waypoints"] = json.dumps(payload["waypoints"])
+        payload["coverImage"] = SimpleUploadedFile("cover.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
+
+        with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
+            response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
+
+        self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
+        self.assertIn("coverImageUrl", response.data["data"])
+        self.assertRegex(response.data["data"]["coverImageUrl"], r"\.(jpg|jpeg|png|webp)$")
+
+    def test_route_save_should_reject_non_image_cover_file(self):
+        self.authenticate(self.owner_dispatcher)
+        payload = self.route_payload(name="非法封面航线")
+        payload["waypoints"] = json.dumps(payload["waypoints"])
+        payload["coverImage"] = SimpleUploadedFile("cover.txt", b"not an image", content_type="text/plain")
+
+        with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
+            response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
+
+        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+        self.assertIn("coverImage", str(response.data))
+        self.assertIn("只支持上传 jpg/jpeg/png/webp 图片，且大小不能超过 5MB", str(response.data))
+
+    def test_route_multipart_should_reject_invalid_waypoints_json(self):
+        self.authenticate(self.owner_dispatcher)
+        payload = self.route_payload(name="非法航点航线")
+        payload["waypoints"] = "[invalid-json"
+        payload["coverImage"] = SimpleUploadedFile("cover.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
+
+        with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
+            response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
+
+        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+        self.assertIn("waypoints", str(response.data))
+
+    def test_route_update_should_replace_cover_image_and_preserve_when_omitted(self):
+        self.authenticate(self.owner_dispatcher)
+        create_payload = self.route_payload(name="封面替换航线")
+        create_payload["waypoints"] = json.dumps(create_payload["waypoints"])
+        create_payload["coverImage"] = SimpleUploadedFile("cover-a.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
+
+        with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
+            create_response = self.client.post("/api/v2/inspection/routes", create_payload, format="multipart")
+            self.assertEqual(create_response.status_code, 201, getattr(create_response, "data", create_response.content))
+            route_id = create_response.data["data"]["id"]
+            first_url = create_response.data["data"]["coverImageUrl"]
+            route = WaypointRoute.objects.get(pk=route_id)
+            first_cover_name = route.cover_image.name
+
+            json_payload = self.route_payload(name="封面保留航线")
+            preserve_response = self.client.put(f"/api/v2/inspection/routes/{route_id}", json_payload, format="json")
+            self.assertEqual(preserve_response.status_code, 200, getattr(preserve_response, "data", preserve_response.content))
+            self.assertEqual(preserve_response.data["data"]["coverImageUrl"], first_url)
+
+            empty_cover_payload = self.route_payload(name="封面空字段保留航线")
+            empty_cover_payload["waypoints"] = json.dumps(empty_cover_payload["waypoints"])
+            empty_cover_payload["coverImage"] = ""
+            empty_cover_response = self.client.put(f"/api/v2/inspection/routes/{route_id}", empty_cover_payload, format="multipart")
+            self.assertEqual(empty_cover_response.status_code, 200, getattr(empty_cover_response, "data", empty_cover_response.content))
+            self.assertEqual(empty_cover_response.data["data"]["coverImageUrl"], first_url)
+
+            replace_payload = self.route_payload(name="封面替换后航线")
+            replace_payload["waypoints"] = json.dumps(replace_payload["waypoints"])
+            replace_payload["coverImage"] = SimpleUploadedFile("cover-b.png", b"\x89PNG\r\n\x1a\n", content_type="image/png")
+            replace_response = self.client.put(f"/api/v2/inspection/routes/{route_id}", replace_payload, format="multipart")
+
+            self.assertEqual(replace_response.status_code, 200, getattr(replace_response, "data", replace_response.content))
+            self.assertIn("coverImageUrl", replace_response.data["data"])
+            self.assertNotEqual(replace_response.data["data"]["coverImageUrl"], first_url)
+            route.refresh_from_db()
+            self.assertNotEqual(route.cover_image.name, first_cover_name)
+            self.assertFalse(route.cover_image.storage.exists(first_cover_name))
+
+    def test_route_json_save_should_remain_backward_compatible_without_cover_image(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="无封面 JSON 航线")
+        self.assertEqual(route["coverImageUrl"], "")
+
+        payload = self.route_payload(name="无封面 JSON 更新航线")
+        self.authenticate(self.owner_dispatcher)
+        response = self.client.put(f"/api/v2/inspection/routes/{route['id']}", payload, format="json")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["coverImageUrl"], "")
+
+    def test_mission_route_snapshot_should_include_route_cover_image_url(self):
+        self.authenticate(self.owner_dispatcher)
+        route_payload = self.route_payload(name="任务封面航线")
+        route_payload["waypoints"] = json.dumps(route_payload["waypoints"])
+        route_payload["coverImage"] = SimpleUploadedFile("mission-cover.webp", b"RIFFxxxxWEBP", content_type="image/webp")
+
+        with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
+            route_response = self.client.post("/api/v2/inspection/routes", route_payload, format="multipart")
+            self.assertEqual(route_response.status_code, 201, getattr(route_response, "data", route_response.content))
+            route = route_response.data["data"]
+
+            mission = self.create_mission_by_api(
+                self.owner_dispatcher,
+                route_id=route["id"],
+                drone_id=self.drone.id,
+                pilot_id=self.owner_pilot.id,
+                name="任务封面快照",
+            )
+
+        self.assertEqual(mission["routeSnapshot"]["coverImageUrl"], route["coverImageUrl"])
 
     def test_mission_lifecycle_should_create_session_record_and_cloud_media(self):
         route = self.create_route_by_api(self.owner_dispatcher)
@@ -750,6 +898,7 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual([item["id"] for item in missions_response.data["data"]["list"]], [first_mission["id"]])
         self.assertEqual(routes_response.status_code, 200, getattr(routes_response, "data", routes_response.content))
         self.assertEqual([item["id"] for item in routes_response.data["data"]["list"]], [first_route["id"]])
+        self.assertIn("coverImageUrl", routes_response.data["data"]["list"][0])
         self.assertEqual(cancel_response.status_code, 403, getattr(cancel_response, "data", cancel_response.content))
 
         self.authenticate(second_pilot_user)

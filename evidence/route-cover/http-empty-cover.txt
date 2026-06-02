@@ -1,0 +1,14 @@
+HTTP/1.1 200 OK
+Date: Tue, 02 Jun 2026 07:55:42 GMT
+Server: WSGIServer/0.2 CPython/3.13.5
+Content-Type: application/json
+Vary: Accept, Cookie
+Allow: GET, PUT, HEAD, OPTIONS
+X-Request-ID: a70ded21-4fb8-4c8c-bb19-5a87cfe12842
+X-Frame-Options: DENY
+Content-Length: 576
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+Cross-Origin-Opener-Policy: same-origin
+
+{"code":"00000","msg":"success","data":{"id":3,"ownerDepartmentId":1,"name":"ulw-cover-qa-empty-cover","status":1,"defaultAltitude":"120.00","defaultSpeed":"8.50","coverImageUrl":"/media/inspection/routes/covers/route-new/98d2a872291946fbbacd1a8713a0df22.jpg","remark":"","waypoints":[{"id":6,"sequence":1,"latitude":"31.23040000","longitude":"121.47370000","altitude":"120.00","speed":"8.50","heading":"90.00","hoverSeconds":3}],"created_at":"2026-06-02T15:55:41.970728+08:00","updated_at":"2026-06-02T15:55:42.096229+08:00"},"traceId":"a70ded21-4fb8-4c8c-bb19-5a87cfe12842"}

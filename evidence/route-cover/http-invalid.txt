@@ -1,0 +1,14 @@
+HTTP/1.1 400 Bad Request
+Date: Tue, 02 Jun 2026 07:55:42 GMT
+Server: WSGIServer/0.2 CPython/3.13.5
+Content-Type: application/json
+Vary: Accept, Cookie
+Allow: GET, POST, HEAD, OPTIONS
+X-Request-ID: 35ffb66f-c53f-4c98-9a8e-7ec4c42a7db7
+X-Frame-Options: DENY
+Content-Length: 187
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+Cross-Origin-Opener-Policy: same-origin
+
+{"code":"B0001","msg":"参数校验失败","data":{"coverImage":["只支持上传 jpg/jpeg/png/webp 图片，且大小不能超过 5MB"]},"traceId":"35ffb66f-c53f-4c98-9a8e-7ec4c42a7db7"}
