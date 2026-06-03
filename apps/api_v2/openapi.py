@@ -57,6 +57,9 @@ class V2MeContextSerializer(serializers.Serializer):
 
 class V2DiscoveredDeviceSerializer(serializers.Serializer):
     id = serializers.IntegerField()
+    resourceId = serializers.IntegerField()
+    resourceType = serializers.CharField()
+    djiConnectionId = serializers.IntegerField()
     deviceSn = serializers.CharField()
     name = serializers.CharField()
     model = serializers.CharField()
@@ -65,6 +68,9 @@ class V2DiscoveredDeviceSerializer(serializers.Serializer):
 
 class V2DiscoveredPayloadSerializer(serializers.Serializer):
     id = serializers.IntegerField()
+    resourceId = serializers.IntegerField()
+    resourceType = serializers.CharField()
+    djiConnectionId = serializers.IntegerField()
     payloadSn = serializers.CharField()
     name = serializers.CharField()
     model = serializers.CharField()
@@ -73,6 +79,7 @@ class V2DiscoveredPayloadSerializer(serializers.Serializer):
 
 
 class V2DjiConnectionDiscoverSerializer(serializers.Serializer):
+    connectionId = serializers.IntegerField()
     drones = V2DiscoveredDeviceSerializer(many=True)
     docks = V2DiscoveredDeviceSerializer(many=True)
     gateways = V2DiscoveredDeviceSerializer(many=True)

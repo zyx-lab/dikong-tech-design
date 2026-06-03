@@ -49,6 +49,12 @@ class V2DjiWorker:
                 worker_id=f"{self.client_id_prefix}-{connection.id}",
             )
             config = DjiConnectionGateway(connection).get_workspace_config()
+            mark_mqtt_health(
+                connection=connection,
+                status=MqttHealthStatus.CONNECTING,
+                worker_id=f"{self.client_id_prefix}-{connection.id}",
+                mqtt_addr=config.mqtt_addr,
+            )
         except DjiGatewayError as exc:
             mark_mqtt_health(connection=connection, status=MqttHealthStatus.ERROR, last_error=str(exc))
             return

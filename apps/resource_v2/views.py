@@ -93,6 +93,37 @@ def _duplicate_response(errors=None):
     return Response(standard_error_payload(StandardCode.DUPLICATE, "资源已存在", errors), status=status.HTTP_409_CONFLICT)
 
 
+def _discovered_resource_base(resource, *, resource_type: str, connection_id: int) -> dict:
+    resolved_type = ResourceType(resource_type).value
+    return {
+        "id": resource.id,
+        "resourceId": resource.id,
+        "resourceType": resolved_type,
+        "djiConnectionId": connection_id,
+    }
+
+
+def _discovered_device(resource, *, resource_type: str, connection_id: int) -> dict:
+    return {
+        **_discovered_resource_base(resource, resource_type=resource_type, connection_id=connection_id),
+        "deviceSn": resource.device_sn,
+        "name": resource.name,
+        "model": resource.model,
+        "onlineStatus": resource.online_status,
+    }
+
+
+def _discovered_payload(resource, *, connection_id: int) -> dict:
+    return {
+        **_discovered_resource_base(resource, resource_type=ResourceType.PAYLOAD, connection_id=connection_id),
+        "payloadSn": resource.payload_sn,
+        "name": resource.name,
+        "model": resource.model,
+        "payloadType": resource.payload_type,
+        "onlineStatus": resource.online_status,
+    }
+
+
 def _share_group_or_404(id: int):
     group = ResourceShareGroup.objects.select_related("owner_department").filter(pk=id).first()
     if group is None:
@@ -298,47 +329,11 @@ class DjiConnectionDiscoverView(V2ResourceAPIView):
         connection.last_checked_at = timezone.now()
         connection.save(update_fields=["status", "last_checked_at", "updated_at"])
         data = {
-            "drones": [
-                {
-                    "id": item.id,
-                    "deviceSn": item.device_sn,
-                    "name": item.name,
-                    "model": item.model,
-                    "onlineStatus": item.online_status,
-                }
-                for item in drones
-            ],
-            "docks": [
-                {
-                    "id": item.id,
-                    "deviceSn": item.device_sn,
-                    "name": item.name,
-                    "model": item.model,
-                    "onlineStatus": item.online_status,
-                }
-                for item in docks
-            ],
-            "gateways": [
-                {
-                    "id": item.id,
-                    "deviceSn": item.device_sn,
-                    "name": item.name,
-                    "model": item.model,
-                    "onlineStatus": item.online_status,
-                }
-                for item in gateways
-            ],
-            "payloads": [
-                {
-                    "id": item.id,
-                    "payloadSn": item.payload_sn,
-                    "name": item.name,
-                    "model": item.model,
-                    "payloadType": item.payload_type,
-                    "onlineStatus": item.online_status,
-                }
-                for item in payloads
-            ],
+            "connectionId": connection.id,
+            "drones": [_discovered_device(item, resource_type=ResourceType.DRONE, connection_id=connection.id) for item in drones],
+            "docks": [_discovered_device(item, resource_type=ResourceType.DOCK, connection_id=connection.id) for item in docks],
+            "gateways": [_discovered_device(item, resource_type=ResourceType.GATEWAY, connection_id=connection.id) for item in gateways],
+            "payloads": [_discovered_payload(item, connection_id=connection.id) for item in payloads],
         }
         return Response(data, status=status.HTTP_200_OK)
 
