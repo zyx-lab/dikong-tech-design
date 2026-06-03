@@ -123,6 +123,9 @@ def fixed_role_payloads():
 class AccountCreateSerializer(StrictSerializer):
     username = serializers.CharField(max_length=150)
     password = serializers.CharField(max_length=128, write_only=True)
+    name = serializers.CharField(max_length=128)
+    phone = serializers.CharField(max_length=32)
+    email = serializers.EmailField(required=False, allow_blank=True)
     departmentId = serializers.IntegerField(min_value=1)
     roleCodes = serializers.ListField(child=serializers.CharField(), allow_empty=True)
     status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False, default=DirectoryStatus.ACTIVE)
@@ -134,6 +137,9 @@ class AccountCreateSerializer(StrictSerializer):
 class AccountUpdateSerializer(StrictSerializer):
     username = serializers.CharField(max_length=150)
     password = serializers.CharField(max_length=128, required=False, write_only=True)
+    name = serializers.CharField(max_length=128)
+    phone = serializers.CharField(max_length=32)
+    email = serializers.EmailField(required=False, allow_blank=True)
     departmentId = serializers.IntegerField(min_value=1)
     status = serializers.ChoiceField(choices=DirectoryStatus.choices)
 
@@ -155,7 +161,19 @@ class AccountReadSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = V2AccountProfile
-        fields = ["id", "userId", "username", "status", "department", "roleCodes", "createdAt", "updatedAt"]
+        fields = [
+            "id",
+            "userId",
+            "username",
+            "name",
+            "phone",
+            "email",
+            "status",
+            "department",
+            "roleCodes",
+            "createdAt",
+            "updatedAt",
+        ]
         read_only_fields = fields
 
     @extend_schema_field(DepartmentReadSerializer)

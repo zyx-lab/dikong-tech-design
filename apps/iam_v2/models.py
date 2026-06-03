@@ -2,6 +2,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.access.models import DirectoryStatus, TimeStampedModel
 
@@ -96,11 +97,18 @@ class Department(TimeStampedModel):
 class V2AccountProfile(TimeStampedModel):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="v2_account_profile")
     department = models.ForeignKey(Department, on_delete=models.PROTECT, related_name="account_profiles")
+    name = models.CharField(max_length=128)
+    phone = models.CharField(max_length=32)
+    email = models.EmailField(blank=True, default="")
     status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE)
 
     class Meta:
         db_table = "v2_account_profiles"
         ordering = ["id"]
+        constraints = [
+            models.CheckConstraint(condition=Q(phone__gt=""), name="chk_v2_account_phone_not_blank"),
+            models.UniqueConstraint(fields=["phone"], name="uniq_v2_account_phone"),
+        ]
 
     def __str__(self):
         return f"{self.user_id}:{self.department_id}"
@@ -126,6 +134,54 @@ class V2AccountRoleAssignment(TimeStampedModel):
 
     def __str__(self):
         return f"{self.account_profile_id}:{self.role_code}"
+
+
+class V2AccountQualification(TimeStampedModel):
+    account_profile = models.ForeignKey(V2AccountProfile, on_delete=models.CASCADE, related_name="qualifications")
+    role_code = models.CharField(max_length=64, choices=FixedRole.choices)
+    qualification_type = models.CharField(max_length=128)
+    certificate_no = models.CharField(max_length=128)
+    issued_at = models.DateField()
+    expires_at = models.DateField()
+    status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices)
+    remark = models.TextField()
+
+    class Meta:
+        db_table = "v2_account_qualifications"
+        ordering = ["-expires_at", "-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(role_code__in=sorted(DEPARTMENT_ROLE_CODES)),
+                name="chk_v2_account_qualification_role",
+            ),
+            models.UniqueConstraint(
+                fields=["account_profile", "role_code", "qualification_type", "certificate_no"],
+                name="uniq_v2_account_qualification",
+            ),
+        ]
+
+    def clean(self):
+        if self.role_code not in DEPARTMENT_ROLE_CODES:
+            raise ValidationError({"role_code": "资质只能归属 v2 部门业务角色"})
+        if self.issued_at > self.expires_at:
+            raise ValidationError({"expires_at": "有效期结束日期不能早于签发日期"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def is_effective(self, at=None) -> bool:
+        today = (at or timezone.now()).date()
+        if self.status != DirectoryStatus.ACTIVE:
+            return False
+        if self.issued_at > today:
+            return False
+        if self.expires_at < today:
+            return False
+        return True
+
+    def __str__(self):
+        return f"{self.account_profile_id}:{self.role_code}:{self.qualification_type}:{self.certificate_no}"
 
 
 class ResourceShareGroup(TimeStampedModel):

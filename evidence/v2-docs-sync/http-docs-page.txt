@@ -1,0 +1,216 @@
+HTTP/1.1 200 OK
+Date: Tue, 02 Jun 2026 09:43:02 GMT
+Server: WSGIServer/0.2 CPython/3.13.5
+Content-Type: text/html; charset=utf-8
+Cross-Origin-Opener-Policy: unsafe-none
+Allow: GET, HEAD, OPTIONS
+X-Request-ID: 8442efa5-cac7-4367-9e95-d37a7d03c310
+X-Frame-Options: DENY
+Vary: Cookie
+Content-Length: 6109
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+Set-Cookie: <redacted>
+
+<!DOCTYPE html>
+<html>
+  <head>
+    
+    <title>低空平台 API v2</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@latest/favicon-32x32.png">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@latest/swagger-ui.css">
+    <style>
+      html { box-sizing: border-box; overflow-y: scroll; }
+      *, *:after, *:before { box-sizing: inherit; }
+      body { background: #fafafa; margin: 0; }
+
+      #auth-status-banner {
+        position: sticky;
+        top: 0;
+        z-index: 9999;
+        padding: 10px 16px;
+        font-size: 14px;
+        border-bottom: 1px solid #d9d9d9;
+        background: #fff8e1;
+        color: #5d4037;
+      }
+
+      #auth-status-banner.ok {
+        background: #e8f5e9;
+        color: #1b5e20;
+      }
+
+      #auth-status-banner.warn {
+        background: #fff8e1;
+        color: #5d4037;
+      }
+    </style>
+    
+  </head>
+  <body>
+    
+    <div id="auth-status-banner" class="warn">正在检测登录状态...</div>
+    <div id="swagger-ui"></div>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@latest/swagger-ui-bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@latest/swagger-ui-standalone-preset.js"></script>
+    
+    <script>
+    "use strict";
+
+const swaggerSettings = {
+  "deepLinking": true
+};
+const schemaAuthNames = [];
+let schemaAuthFailed = false;
+const plugins = [];
+
+const reloadSchemaOnAuthChange = () => {
+  return {
+    statePlugins: {
+      auth: {
+        wrapActions: {
+          authorizeOauth2:(ori) => (...args) => {
+            schemaAuthFailed = false;
+            setTimeout(() => ui.specActions.download());
+            return ori(...args);
+          },
+          authorize: (ori) => (...args) => {
+            schemaAuthFailed = false;
+            setTimeout(() => ui.specActions.download());
+            return ori(...args);
+          },
+          logout: (ori) => (...args) => {
+            schemaAuthFailed = false;
+            setTimeout(() => ui.specActions.download());
+            return ori(...args);
+          },
+        },
+      },
+    },
+  };
+};
+
+if (schemaAuthNames.length > 0) {
+  plugins.push(reloadSchemaOnAuthChange);
+}
+
+const uiInitialized = () => {
+  try {
+    ui;
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const isSchemaUrl = (url) => {
+  if (!uiInitialized()) {
+    return false;
+  }
+  return url === new URL(ui.getConfigs().url, document.baseURI).href;
+};
+
+const responseInterceptor = (response, ...args) => {
+  if (!response.ok && isSchemaUrl(response.url)) {
+    console.warn("schema request received '" + response.status + "'. disabling credentials for schema till logout.");
+    if (!schemaAuthFailed) {
+      // only retry once to prevent endless loop.
+      schemaAuthFailed = true;
+      setTimeout(() => ui.specActions.download());
+    }
+  }
+  return response;
+};
+
+const injectAuthCredentials = (request) => {
+  let authorized;
+  if (uiInitialized()) {
+    const state = ui.getState().get("auth").get("authorized");
+    if (state !== undefined && Object.keys(state.toJS()).length !== 0) {
+      authorized = state.toJS();
+    }
+  } else if (![undefined, "{}"].includes(localStorage.authorized)) {
+    authorized = JSON.parse(localStorage.authorized);
+  }
+  if (authorized === undefined) {
+    return;
+  }
+  for (const authName of schemaAuthNames) {
+    const authDef = authorized[authName];
+    if (authDef === undefined || authDef.schema === undefined) {
+      continue;
+    }
+    if (authDef.schema.type === "http" && authDef.schema.scheme === "bearer") {
+      request.headers["Authorization"] = "Bearer " + authDef.value;
+      return;
+    } else if (authDef.schema.type === "http" && authDef.schema.scheme === "basic") {
+      request.headers["Authorization"] = "Basic " + btoa(authDef.value.username + ":" + authDef.value.password);
+      return;
+    } else if (authDef.schema.type === "apiKey" && authDef.schema.in === "header") {
+      request.headers[authDef.schema.name] = authDef.value;
+      return;
+    } else if (authDef.schema.type === "oauth2" && authDef.token.token_type === "Bearer") {
+      request.headers["Authorization"] = `Bearer ${authDef.token.access_token}`;
+      return;
+    }
+  }
+};
+
+const requestInterceptor = (request, ...args) => {
+  if (request.loadSpec && schemaAuthNames.length > 0 && !schemaAuthFailed) {
+    try {
+      injectAuthCredentials(request);
+    } catch (e) {
+      console.error("schema auth injection failed with error: ", e);
+    }
+  }
+  // selectively omit adding headers to mitigate CORS issues.
+  if (!["GET", undefined].includes(request.method) && request.credentials === "same-origin") {
+    request.headers["X-CSRFTOKEN"] = "<redacted>";
+  }
+  return request;
+};
+
+const ui = SwaggerUIBundle({
+  url: "/api/v2/docs/schema/",
+  dom_id: "#swagger-ui",
+  presets: [SwaggerUIBundle.presets.apis],
+  plugins,
+  layout: "BaseLayout",
+  requestInterceptor,
+  responseInterceptor,
+  ...swaggerSettings,
+});
+
+ui.initOAuth({});
+
+    </script>
+    
+    <script>
+      (function () {
+        var banner = document.getElementById('auth-status-banner');
+        var pathname = window.location.pathname || '';
+
+        function setBanner(text, cls) {
+          banner.textContent = text;
+          banner.className = cls;
+        }
+
+        if (pathname.startsWith('/api/v2/docs/')) {
+          setBanner('当前为 API v2 文档页。需要认证的接口请先调用 /api/v2/iam/session/login，再在 Swagger Authorize 中填写 Bearer Token。', 'warn');
+          return;
+        }
+
+        if (pathname.includes('/docs/')) {
+          setBanner('当前为 legacy API 文档页。需要认证的接口请在 Swagger Authorize 中填写 Bearer Token；租户工作侧接口还需要传 X-TENANT-CODE。', 'warn');
+          return;
+        }
+
+        setBanner('当前为 Swagger 文档页。请按当前页面加载的 Schema 地址联调。', 'warn');
+      })();
+    </script>
+    
+  </body>
+</html>

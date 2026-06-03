@@ -1,0 +1,27 @@
+Creating test database for alias 'default'...
+Found 1 test(s).
+System check identified no issues (0 silenced).
+FF
+======================================================================
+FAIL: test_route_save_schema_should_document_json_base64_and_multipart_binary_for_create_and_update (apps.api_v2.test_route_cover_base64_schema.RouteCoverBase64SchemaTests.test_route_save_schema_should_document_json_base64_and_multipart_binary_for_create_and_update) (method='post', path='/api/v2/inspection/routes')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/root/charles/dikong-tech-design/apps/api_v2/test_route_cover_base64_schema.py", line 46, in test_route_save_schema_should_document_json_base64_and_multipart_binary_for_create_and_update
+    self.assertIn("base64", json_properties["coverImage"].get("description", ""))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'base64' not found in ''
+
+======================================================================
+FAIL: test_route_save_schema_should_document_json_base64_and_multipart_binary_for_create_and_update (apps.api_v2.test_route_cover_base64_schema.RouteCoverBase64SchemaTests.test_route_save_schema_should_document_json_base64_and_multipart_binary_for_create_and_update) (method='put', path='/api/v2/inspection/routes/{id}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/root/charles/dikong-tech-design/apps/api_v2/test_route_cover_base64_schema.py", line 46, in test_route_save_schema_should_document_json_base64_and_multipart_binary_for_create_and_update
+    self.assertIn("base64", json_properties["coverImage"].get("description", ""))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'base64' not found in ''
+
+----------------------------------------------------------------------
+Ran 1 test in 0.105s
+
+FAILED (failures=2)
+Destroying test database for alias 'default'...

@@ -1,0 +1,1 @@
+schema comparison failed: schema source does not contain a JSON object

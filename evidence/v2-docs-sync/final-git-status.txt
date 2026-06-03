@@ -1,0 +1,9 @@
+ M .omo/boulder.json
+ M .omo/start-work/ledger.jsonl
+ M docs/v2-regression-testing.md
+ M scripts/test_v2_regression.sh
+?? .omo/drafts/
+?? apps/api_v2/test_schema_docs_sync.py
+?? evidence/v2-docs-sync/
+?? plans/v2-docs-code-sync.md
+?? scripts/compare_v2_docs_schema.py

@@ -1,0 +1,36 @@
+==> git diff --check
+
+==> .venv/bin/python manage.py check
+System check identified no issues (0 silenced).
+
+==> .venv/bin/python manage.py test apps.api_v2.tests apps.api_v2.test_schema_docs_sync
+Creating test database for alias 'default'...
+Found 31 test(s).
+System check identified no issues (0 silenced).
+...............................
+----------------------------------------------------------------------
+Ran 31 tests in 15.099s
+
+OK
+Destroying test database for alias 'default'...
+
+==> scripts/test_v2_regression.sh
+
+==> /root/charles/dikong-tech-design/.venv/bin/python manage.py check
+System check identified no issues (0 silenced).
+
+==> /root/charles/dikong-tech-design/.venv/bin/python manage.py makemigrations --check --dry-run
+No changes detected
+
+==> /root/charles/dikong-tech-design/.venv/bin/python manage.py test apps.api_v2.tests apps.api_v2.test_schema_docs_sync apps.resource_v2.tests apps.workforce_v2.tests apps.inspection_v2.tests
+Creating test database for alias 'default'...
+Found 68 test(s).
+System check identified no issues (0 silenced).
+..................................................Bad Gateway: /api/v2/inspection/missions/1/start
+................v2 DJI worker checked: {'connections': 0}
+..
+----------------------------------------------------------------------
+Ran 68 tests in 3.175s
+
+OK
+Destroying test database for alias 'default'...

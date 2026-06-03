@@ -1,0 +1,21 @@
+{
+  "diff": {
+    "component_diffs": {
+      "schema_diffs": [],
+      "schemas_only_live": [],
+      "schemas_only_local": []
+    },
+    "info_diff": {},
+    "method_diffs": [],
+    "operation_diffs": [],
+    "paths_only_live": [],
+    "paths_only_local": []
+  },
+  "has_drift": false,
+  "live_component_schema_count": 78,
+  "live_path_count": 62,
+  "live_source": "http://110.42.32.122:8001/api/v2/docs/schema/",
+  "local_component_schema_count": 78,
+  "local_path_count": 62,
+  "local_source": "django:/api/v2/docs/schema/"
+}

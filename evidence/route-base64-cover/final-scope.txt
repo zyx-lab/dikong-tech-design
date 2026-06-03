@@ -1,0 +1,17 @@
+== specified scope grep ==
+32:+from apps.inspection_v2.route_cover_images import RouteCoverImageField, validate_route_cover_upload
+41:+    coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
+== changed-lines-only scope grep ==
+44:+from apps.inspection_v2.route_cover_images import RouteCoverImageField, validate_route_cover_upload
+47:+    coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
+== diff name only ==
+.omo/boulder.json
+.omo/start-work/ledger.jsonl
+README.md
+apps/api_v2/apps.py
+apps/inspection_v2/serializers.py
+config/settings.py
+docs/v2-regression-testing.md
+scripts/test_v2_regression.sh
+== refined forbidden additions ==
+refined check note: original ImageField hits are RouteCoverImageField class/import names, not Django ImageField or Pillow usage.

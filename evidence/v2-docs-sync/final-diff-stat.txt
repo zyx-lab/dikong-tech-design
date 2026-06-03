@@ -1,0 +1,5 @@
+ .omo/boulder.json             | 12 +++++++++++-
+ .omo/start-work/ledger.jsonl  | 10 ++++++++++
+ docs/v2-regression-testing.md | 28 ++++++++++++++++++++++++++++
+ scripts/test_v2_regression.sh |  2 ++
+ 4 files changed, 51 insertions(+), 1 deletion(-)

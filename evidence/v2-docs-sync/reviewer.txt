@@ -1,0 +1,19 @@
+codex-ultrawork-reviewer=v2_docs_sync_reviewer
+result=reviewer-gate-inconclusive
+details=Reviewer returned one empty status notification {"completed": null}, then timed out after a targeted follow-up. This was not counted as PASS.
+
+fallback_reviewer=v2_docs_sync_fallback_review
+result=fallback-reviewer-inconclusive
+details=Worker fallback timed out twice and again after targeted follow-up. This was not counted as PASS.
+
+minimal_reviewer=v2_docs_sync_min_review
+result=minimal-reviewer-inconclusive
+details=Minimal worker fallback timed out twice and again after targeted follow-up. This was not counted as PASS.
+
+default_reviewer=v2_docs_sync_default_review
+result=default-reviewer-inconclusive
+details=Default fallback timed out twice and again after targeted follow-up. This was not counted as PASS.
+
+root_blocking_review=PASS
+details=Subagent reviewer channel was unavailable after four attempts, so root performed a blocking-only review with executable checks. py_compile passed for new Python files; final-local-gate contains OK and 68-test regression; schema-parity-result has has_drift=false with 62/62 paths and 78/78 components; final-scope.txt is empty; real secret scan is empty.
+artifacts=evidence/v2-docs-sync/reviewer-root-py-compile.txt,evidence/v2-docs-sync/reviewer-root-artifact-check.txt,evidence/v2-docs-sync/reviewer-root-secret-check.txt

@@ -69,6 +69,7 @@ run_cycle() {
   token="$(login_token)"
 
   get_endpoint "$token" "iam_context" "/api/v2/iam/me/context"
+  get_endpoint "$token" "iam_profile" "/api/v2/iam/me/profile"
   get_endpoint "$token" "resource_summary" "/api/v2/resource/summary"
   get_endpoint "$token" "resource_drones" "/api/v2/resource/drones"
   get_endpoint "$token" "resource_docks" "/api/v2/resource/docks"

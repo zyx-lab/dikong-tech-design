@@ -1,6 +1,5 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountRoleAssignment
@@ -11,7 +10,13 @@ User = get_user_model()
 
 def create_v2_actor(*, username: str, role_code: str | None, department: Department):
     user = User.objects.create_user(username=username, password="pass1234", status=1)
-    profile = V2AccountProfile.objects.create(user=user, department=department)
+    profile = V2AccountProfile.objects.create(
+        user=user,
+        department=department,
+        name=username,
+        phone=f"138{user.id:08d}",
+        email=f"{username}@example.test",
+    )
     if role_code is not None:
         V2AccountRoleAssignment.objects.create(account_profile=profile, role_code=role_code, assigned_by_user=user)
     return user, profile
@@ -45,7 +50,7 @@ class WorkforceV2ApiTests(TestCase):
     def authenticate(self, user):
         self.client.force_authenticate(user)
 
-    def test_department_admin_should_manage_pilot_profile_and_qualification(self):
+    def test_department_admin_should_manage_pilot_profile(self):
         self.authenticate(self.admin)
         denied_response = self.client.post(
             "/api/v2/workforce/pilots",
@@ -56,28 +61,12 @@ class WorkforceV2ApiTests(TestCase):
 
         create_response = self.client.post(
             "/api/v2/workforce/pilots",
-            {"accountProfileId": self.pilot_account.id, "displayName": "正式飞手", "phone": "13800000000"},
+            {"accountProfileId": self.pilot_account.id, "displayName": "正式飞手"},
             format="json",
         )
         self.assertEqual(create_response.status_code, 201, getattr(create_response, "data", create_response.content))
         pilot_id = create_response.data["data"]["id"]
         self.assertEqual(PilotProfile.objects.filter(pk=pilot_id).count(), 1)
-
-        qualification_response = self.client.post(
-            f"/api/v2/workforce/pilots/{pilot_id}/qualifications",
-            {
-                "qualificationType": "多旋翼巡检",
-                "certificateNo": "CERT-001",
-                "issuedAt": timezone.now().date().isoformat(),
-                "expiresAt": timezone.now().date().replace(year=timezone.now().date().year + 1).isoformat(),
-            },
-            format="json",
-        )
-        self.assertEqual(
-            qualification_response.status_code,
-            201,
-            getattr(qualification_response, "data", qualification_response.content),
-        )
 
         self.authenticate(self.dispatcher)
         list_response = self.client.get("/api/v2/workforce/pilots")

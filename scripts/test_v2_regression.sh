@@ -59,17 +59,29 @@ case "$mode" in
   fast)
     labels=(
       apps.api_v2.tests
+      apps.api_v2.test_schema_docs_sync
+      apps.api_v2.test_route_cover_base64_schema
+      apps.api_v2.test_object_storage_settings
+      apps.iam_v2.test_profile_api
       apps.resource_v2.tests
       apps.workforce_v2.tests
       apps.inspection_v2.tests
+      apps.inspection_v2.test_route_cover_base64
+      apps.inspection_v2.test_route_cover_object_storage
     )
     ;;
   boundary)
     labels=(
       apps.api_v2.tests
+      apps.api_v2.test_schema_docs_sync
+      apps.api_v2.test_route_cover_base64_schema
+      apps.api_v2.test_object_storage_settings
+      apps.iam_v2.test_profile_api
       apps.resource_v2.tests
       apps.workforce_v2.tests
       apps.inspection_v2.tests
+      apps.inspection_v2.test_route_cover_base64
+      apps.inspection_v2.test_route_cover_object_storage
       apps.api_v1.tests.BusinessApiResponseContractTests
       apps.dji_bff.test_v2_platform_models
       apps.dji_mock.tests.DjiMockServerTests

@@ -1,0 +1,6 @@
+manual QA evidence PASS
+{'create_host': '127.0.0.1:19000', 'create_path': '/dikong-route-covers/inspection/routes/covers/route-new/0a54764e80fc4eaab95d5abafdf5dd3d.png', 'create_query': True}
+{'update_host': '127.0.0.1:19000', 'update_path': '/dikong-route-covers/inspection/routes/covers/route-1/b09d33e05ee24ff9afc6c359674377b7.jpg', 'update_query': True}
+login tokens redacted: PASS
+cleanup receipt: PASS
+live docs parity: deployment-blocked

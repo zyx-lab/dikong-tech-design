@@ -1,0 +1,9 @@
+live_info= {'title': '低空平台 API v2', 'version': '2.0.0', 'description': 'API v2 文档。当前业务开发入口统一收口到 `/api/v2/*`。'}
+local_info= {'title': '低空平台 API v2', 'version': '2.0.0', 'description': 'API v2 文档。当前业务开发入口统一收口到 `/api/v2/*`。'}
+live_paths= 62
+local_paths= 62
+paths_only_live= []
+paths_only_local= []
+method_diffs= []
+operation_diffs_count= 0
+components_equal= True

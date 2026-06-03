@@ -1,0 +1,1 @@
+deployment-blocked: live server http://110.42.32.122:8001 was not redeployed/restarted with this local code during this run; local MinIO-backed HTTP QA is the primary object-storage evidence.

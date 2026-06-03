@@ -3,8 +3,9 @@ from django.db.models import QuerySet
 from apps.access.exceptions import StandardForbidden, StandardNotFound
 from apps.access.models import DirectoryStatus
 from apps.iam_v2.models import FixedRole, V2AccountProfile
+from apps.iam_v2.qualification_services import account_has_effective_qualification
 from apps.iam_v2.services import is_platform_super_admin
-from apps.workforce_v2.models import PilotProfile, PilotQualification
+from apps.workforce_v2.models import PilotProfile
 
 
 def is_task_dispatcher(context) -> bool:
@@ -89,4 +90,4 @@ def account_profile_for_pilot(context, account_profile_id: int) -> V2AccountProf
 
 
 def pilot_has_effective_qualification(pilot: PilotProfile) -> bool:
-    return any(qualification.is_effective() for qualification in PilotQualification.objects.filter(pilot=pilot))
+    return account_has_effective_qualification(pilot.account_profile, FixedRole.PILOT)

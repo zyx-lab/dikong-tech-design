@@ -1,0 +1,19 @@
+
+==> /root/charles/dikong-tech-design/.venv/bin/python manage.py check
+System check identified no issues (0 silenced).
+
+==> /root/charles/dikong-tech-design/.venv/bin/python manage.py makemigrations --check --dry-run
+No changes detected
+
+==> /root/charles/dikong-tech-design/.venv/bin/python manage.py test apps.api_v2.tests apps.api_v2.test_schema_docs_sync apps.api_v2.test_route_cover_base64_schema apps.api_v2.test_object_storage_settings apps.resource_v2.tests apps.workforce_v2.tests apps.inspection_v2.tests apps.inspection_v2.test_route_cover_base64 apps.inspection_v2.test_route_cover_object_storage
+Creating test database for alias 'default'...
+Found 85 test(s).
+System check identified no issues (0 silenced).
+...................................................Bad Gateway: /api/v2/inspection/missions/1/start
+................v2 DJI worker checked: {'connections': 0}
+..................
+----------------------------------------------------------------------
+Ran 85 tests in 4.290s
+
+OK
+Destroying test database for alias 'default'...

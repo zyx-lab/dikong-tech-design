@@ -24,7 +24,13 @@ User = get_user_model()
 
 def create_v2_actor(*, username: str, role_code: str | None, department: Department, is_platform_admin: bool = False):
     user = User.objects.create_user(username=username, password="pass1234", status=1, is_platform_admin=is_platform_admin)
-    profile = V2AccountProfile.objects.create(user=user, department=department)
+    profile = V2AccountProfile.objects.create(
+        user=user,
+        department=department,
+        name=username,
+        phone=f"138{user.id:08d}",
+        email=f"{username}@example.test",
+    )
     if role_code is not None:
         V2AccountRoleAssignment.objects.create(account_profile=profile, role_code=role_code, assigned_by_user=user)
     return user, profile
@@ -103,9 +109,8 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/iam/session/login",
             "/api/v2/iam/session/refresh",
             "/api/v2/iam/session/logout",
-            "/api/v2/iam/session/register",
-            "/api/v2/iam/session/register-by-phone",
             "/api/v2/iam/me/context",
+            "/api/v2/iam/me/profile",
             "/api/v2/iam/departments",
             "/api/v2/iam/departments/{id}",
             "/api/v2/iam/departments/{id}/enable",
@@ -113,6 +118,8 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/iam/accounts",
             "/api/v2/iam/accounts/{id}",
             "/api/v2/iam/accounts/{id}/roles",
+            "/api/v2/iam/accounts/{id}/qualifications",
+            "/api/v2/iam/accounts/{id}/qualifications/{qualification_id}",
             "/api/v2/iam/roles",
             "/api/v2/resource/dji-connections",
             "/api/v2/resource/dji-connections/{id}",
@@ -137,8 +144,6 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/resource/audit-logs",
             "/api/v2/workforce/pilots",
             "/api/v2/workforce/pilots/{id}",
-            "/api/v2/workforce/pilots/{pilot_id}/qualifications",
-            "/api/v2/workforce/pilots/{pilot_id}/qualifications/{id}",
             "/api/v2/inspection/routes",
             "/api/v2/inspection/routes/{id}",
             "/api/v2/inspection/routes/{id}/kmz",
@@ -183,6 +188,10 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/resource/media-files",
             "/api/v2/resource/media-files/{id}",
             "/api/v2/iam/tenant/dji-platforms",
+            "/api/v2/iam/session/register",
+            "/api/v2/iam/session/register-by-phone",
+            "/api/v2/workforce/pilots/{pilot_id}/qualifications",
+            "/api/v2/workforce/pilots/{pilot_id}/qualifications/{id}",
         }
         self.assertTrue(removed_paths.isdisjoint(set(paths)))
         self.assertNotIn("/api/v1", response.content.decode("utf-8"))
@@ -236,6 +245,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
         schema = self._schema()
         list_operations = [
             ("GET", "/api/v2/iam/accounts"),
+            ("GET", "/api/v2/iam/accounts/{id}/qualifications"),
             ("GET", "/api/v2/iam/departments"),
             ("GET", "/api/v2/iam/roles"),
             ("GET", "/api/v2/resource/audit-logs"),
@@ -246,7 +256,6 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("GET", "/api/v2/resource/payloads"),
             ("GET", "/api/v2/resource/share-groups"),
             ("GET", "/api/v2/workforce/pilots"),
-            ("GET", "/api/v2/workforce/pilots/{pilot_id}/qualifications"),
             ("GET", "/api/v2/inspection/active-flights"),
             ("GET", "/api/v2/inspection/flight-records"),
             ("GET", "/api/v2/inspection/media-files"),
@@ -265,9 +274,8 @@ class ApiV2SchemaBoundaryTests(TestCase):
         schema = self._schema()
         expected_statuses = {
             ("POST", "/api/v2/iam/accounts"): "201",
+            ("POST", "/api/v2/iam/accounts/{id}/qualifications"): "201",
             ("POST", "/api/v2/iam/departments"): "201",
-            ("POST", "/api/v2/iam/session/register"): "201",
-            ("POST", "/api/v2/iam/session/register-by-phone"): "201",
             ("POST", "/api/v2/inspection/missions"): "201",
             ("POST", "/api/v2/inspection/routes"): "201",
             ("POST", "/api/v2/resource/bindings"): "201",
@@ -276,7 +284,6 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("POST", "/api/v2/resource/share-groups/{id}/departments"): "201",
             ("POST", "/api/v2/resource/share-groups/{id}/resources"): "201",
             ("POST", "/api/v2/workforce/pilots"): "201",
-            ("POST", "/api/v2/workforce/pilots/{pilot_id}/qualifications"): "201",
             ("DELETE", "/api/v2/resource/bindings/{id}"): "200",
             ("DELETE", "/api/v2/resource/share-groups/{id}/departments/{department_id}"): "200",
             ("DELETE", "/api/v2/resource/share-groups/{id}/resources/{resource_share_id}"): "200",
@@ -292,14 +299,14 @@ class ApiV2SchemaBoundaryTests(TestCase):
         schema = self._schema()
         request_body_operations = [
             ("POST", "/api/v2/iam/accounts"),
+            ("POST", "/api/v2/iam/accounts/{id}/qualifications"),
             ("PUT", "/api/v2/iam/accounts/{id}"),
+            ("PUT", "/api/v2/iam/accounts/{id}/qualifications/{qualification_id}"),
             ("PUT", "/api/v2/iam/accounts/{id}/roles"),
             ("POST", "/api/v2/iam/departments"),
             ("PUT", "/api/v2/iam/departments/{id}"),
             ("POST", "/api/v2/iam/session/login"),
             ("POST", "/api/v2/iam/session/refresh"),
-            ("POST", "/api/v2/iam/session/register"),
-            ("POST", "/api/v2/iam/session/register-by-phone"),
             ("PUT", "/api/v2/inspection/flight-records/{id}"),
             ("POST", "/api/v2/inspection/live/start"),
             ("POST", "/api/v2/inspection/live/stop"),
@@ -325,8 +332,6 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("PUT", "/api/v2/resource/share-groups/{id}/resources/{resource_share_id}"),
             ("POST", "/api/v2/workforce/pilots"),
             ("PUT", "/api/v2/workforce/pilots/{id}"),
-            ("POST", "/api/v2/workforce/pilots/{pilot_id}/qualifications"),
-            ("PUT", "/api/v2/workforce/pilots/{pilot_id}/qualifications/{id}"),
         ]
 
         for method, path in request_body_operations:
@@ -420,6 +425,11 @@ class ApiV2SessionTests(TestCase):
         login_data = login_response.data["data"]
         self.assertEqual(login_data["tokenType"], "Bearer")
         self.assertEqual(login_data["user"]["username"], "v2_session_user")
+        self.assertNotIn("staffProfile", login_data["user"])
+        self.assertEqual(login_data["user"]["accountProfileId"], self.user.v2_account_profile.id)
+        self.assertEqual(login_data["user"]["name"], "v2_session_user")
+        self.assertEqual(login_data["user"]["department"]["id"], self.root.id)
+        self.assertEqual(login_data["user"]["roleCodes"], [FixedRole.PLATFORM_SUPER_ADMIN])
         access_token = login_data["accessToken"]
         refresh_token = login_data["refreshToken"]
 
@@ -735,6 +745,9 @@ class IamV2ApiTests(TestCase):
             {
                 "username": "v2_pilot_account",
                 "password": "pass1234",
+                "name": "v2 飞手账号",
+                "phone": "13800002001",
+                "email": "v2_pilot_account@example.test",
                 "departmentId": child.id,
                 "roleCodes": [FixedRole.PILOT, FixedRole.DEPARTMENT_ADMIN],
                 "status": DirectoryStatus.ACTIVE,
@@ -747,6 +760,9 @@ class IamV2ApiTests(TestCase):
         account_id = created["id"]
         user_id = created["userId"]
         self.assertEqual(created["username"], "v2_pilot_account")
+        self.assertEqual(created["name"], "v2 飞手账号")
+        self.assertEqual(created["phone"], "13800002001")
+        self.assertEqual(created["email"], "v2_pilot_account@example.test")
         self.assertEqual(created["department"]["id"], child.id)
         self.assertNotIn("tenantId", created["department"])
         self.assertEqual(created["roleCodes"], [FixedRole.DEPARTMENT_ADMIN, FixedRole.PILOT])
@@ -769,6 +785,9 @@ class IamV2ApiTests(TestCase):
             {
                 "username": "v2_pilot_renamed",
                 "password": "changed123",
+                "name": "v2 飞手改名",
+                "phone": "13800002002",
+                "email": "",
                 "departmentId": other.id,
                 "status": DirectoryStatus.DISABLED,
             },
@@ -778,6 +797,9 @@ class IamV2ApiTests(TestCase):
         self.assertEqual(update_response.status_code, 200, getattr(update_response, "data", update_response.content))
         updated = update_response.data["data"]
         self.assertEqual(updated["username"], "v2_pilot_renamed")
+        self.assertEqual(updated["name"], "v2 飞手改名")
+        self.assertEqual(updated["phone"], "13800002002")
+        self.assertEqual(updated["email"], "")
         self.assertEqual(updated["department"]["id"], other.id)
         self.assertEqual(updated["status"], DirectoryStatus.DISABLED)
         user.refresh_from_db()
@@ -801,6 +823,9 @@ class IamV2ApiTests(TestCase):
             f"/api/v2/iam/accounts/{account_id}",
             {
                 "username": "v2_pilot_renamed",
+                "name": "v2 飞手改名",
+                "phone": "13800002002",
+                "email": "",
                 "departmentId": other.id,
                 "status": DirectoryStatus.ACTIVE,
             },
@@ -867,6 +892,9 @@ class IamV2ApiTests(TestCase):
             {
                 "username": "child_business_account",
                 "password": "pass1234",
+                "name": "子部门业务账号",
+                "phone": "13800003001",
+                "email": "",
                 "departmentId": child.id,
                 "roleCodes": [FixedRole.PILOT, FixedRole.TASK_MONITOR_DISPATCHER],
             },
@@ -882,6 +910,9 @@ class IamV2ApiTests(TestCase):
             {
                 "username": "cross_department_account",
                 "password": "pass1234",
+                "name": "跨部门账号",
+                "phone": "13800003002",
+                "email": "",
                 "departmentId": other.id,
                 "roleCodes": [FixedRole.PILOT],
             },
@@ -898,6 +929,9 @@ class IamV2ApiTests(TestCase):
             {
                 "username": "illegal_system_role_account",
                 "password": "pass1234",
+                "name": "非法系统角色账号",
+                "phone": "13800003003",
+                "email": "",
                 "departmentId": child.id,
                 "roleCodes": [FixedRole.DEPARTMENT_ADMIN],
             },
@@ -914,6 +948,9 @@ class IamV2ApiTests(TestCase):
             {
                 "username": "illegal_platform_role_account",
                 "password": "pass1234",
+                "name": "非法平台角色账号",
+                "phone": "13800003004",
+                "email": "",
                 "departmentId": child.id,
                 "roleCodes": [FixedRole.PLATFORM_SUPER_ADMIN],
             },
@@ -962,7 +999,13 @@ class IamV2ApiTests(TestCase):
         self.assertEqual(replace_roles_response.data["data"]["roleCodes"], [FixedRole.DEPARTMENT_ADMIN, FixedRole.WORK_ORDER_HANDLER])
 
         other_user = User.objects.create_user(username="other_department_account", password="pass1234", status=1)
-        other_profile = V2AccountProfile.objects.create(user=other_user, department=other)
+        other_profile = V2AccountProfile.objects.create(
+            user=other_user,
+            department=other,
+            name="other_department_account",
+            phone=f"138{other_user.id:08d}",
+            email="other_department_account@example.test",
+        )
         V2AccountRoleAssignment.objects.create(account_profile=other_profile, role_code=FixedRole.PILOT, assigned_by_user=other_admin)
         denied_other_account_response = self.client.put(
             f"/api/v2/iam/accounts/{other_profile.id}/roles",
@@ -988,6 +1031,9 @@ class IamV2ApiTests(TestCase):
             {
                 "username": "duplicate_v2_account",
                 "password": "pass1234",
+                "name": "重复用户名账号",
+                "phone": "13800004001",
+                "email": "",
                 "departmentId": child.id,
                 "roleCodes": [FixedRole.PILOT],
             },
@@ -1000,6 +1046,9 @@ class IamV2ApiTests(TestCase):
             {
                 "username": "invalid_role_account",
                 "password": "pass1234",
+                "name": "非法角色账号",
+                "phone": "13800004002",
+                "email": "",
                 "departmentId": child.id,
                 "roleCodes": ["unknown_role"],
             },
@@ -1012,6 +1061,9 @@ class IamV2ApiTests(TestCase):
             {
                 "username": "platform_identity_role_account",
                 "password": "pass1234",
+                "name": "平台身份角色账号",
+                "phone": "13800004003",
+                "email": "",
                 "departmentId": child.id,
                 "roleCodes": [FixedRole.PLATFORM_SUPER_ADMIN],
             },
@@ -1028,6 +1080,9 @@ class IamV2ApiTests(TestCase):
             {
                 "username": "invalid_department_account",
                 "password": "pass1234",
+                "name": "非法部门账号",
+                "phone": "13800004004",
+                "email": "",
                 "departmentId": 999999,
                 "roleCodes": [FixedRole.PILOT],
             },
@@ -1041,7 +1096,14 @@ class IamV2ApiTests(TestCase):
 
         missing_account_update_response = self.client.put(
             "/api/v2/iam/accounts/999999",
-            {"username": "missing", "departmentId": child.id, "status": DirectoryStatus.ACTIVE},
+            {
+                "username": "missing",
+                "name": "缺失账号",
+                "phone": "13800004005",
+                "email": "",
+                "departmentId": child.id,
+                "status": DirectoryStatus.ACTIVE,
+            },
             format="json",
         )
         self.assertEqual(

@@ -166,6 +166,7 @@ USE_TZ = True
 STATIC_URL = "static/"
 MEDIA_ROOT = Path(os.getenv("DJANGO_MEDIA_ROOT", str(BASE_DIR / "media")))
 MEDIA_URL = os.getenv("DJANGO_MEDIA_URL", "/media/")
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("DJANGO_DATA_UPLOAD_MAX_MEMORY_SIZE", str(10 * 1024 * 1024)))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "access.User"
 
@@ -181,7 +182,9 @@ if OBJECT_STORAGE_BACKEND in {"s3", "minio"}:
     AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME", os.getenv("OBJECT_STORAGE_BUCKET_NAME", ""))
     AWS_S3_ENDPOINT_URL = os.getenv("AWS_S3_ENDPOINT_URL", os.getenv("OBJECT_STORAGE_ENDPOINT_URL", ""))
     AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", os.getenv("OBJECT_STORAGE_REGION_NAME", ""))
-    AWS_S3_ADDRESSING_STYLE = os.getenv("AWS_S3_ADDRESSING_STYLE", "path")
+    AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN", os.getenv("OBJECT_STORAGE_PUBLIC_DOMAIN", "")).strip() or None
+    AWS_QUERYSTRING_EXPIRE = int(os.getenv("AWS_QUERYSTRING_EXPIRE", os.getenv("OBJECT_STORAGE_URL_EXPIRE_SECONDS", "3600")))
+    AWS_S3_ADDRESSING_STYLE = os.getenv("AWS_S3_ADDRESSING_STYLE", "path" if OBJECT_STORAGE_BACKEND == "minio" else "auto")
     AWS_QUERYSTRING_AUTH = os.getenv("AWS_QUERYSTRING_AUTH", "true").lower() == "true"
     AWS_DEFAULT_ACL = os.getenv("AWS_DEFAULT_ACL", "private")
     STORAGES["default"] = {

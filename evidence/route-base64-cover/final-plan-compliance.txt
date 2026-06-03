@@ -1,0 +1,50 @@
+== unchecked top-level boxes ==
+490:- [ ] F1. Plan Compliance Audit
+495:- [ ] F2. Code Quality Review
+502:- [ ] F3. Real Manual QA
+506:- [ ] F4. Scope Fidelity Check
+== evidence files ==
+present red-task-1-create.txt
+present green-task-1.txt
+present green-task-1-multipart.txt
+present green-task-1-snapshot.txt
+present red-task-2-schema.txt
+present green-task-2-schema.txt
+present green-task-2-existing-schema.txt
+present red-task-3-object-url.txt
+present green-task-3-object-url.txt
+present red-task-3-storage-check-tests.txt
+present red-task-3-storage-check.txt
+present green-task-3-storage-check.txt
+present green-task-3-storage-settings-tests.txt
+present green-task-3-body-limit.txt
+present green-task-3-regression.txt
+present green-task-3-migrations.txt
+present http-local-minio-setup.txt
+present http-storage-preflight.txt
+present http-login.txt
+present http-create-data-url.txt
+present http-update-raw-base64.txt
+present http-invalid-base64.txt
+present http-local-schema.txt
+present live-docs-parity.txt
+present http-cleanup.txt
+present final-regression.txt
+== regression labels ==
+scripts/test_v2_regression.sh:63:      apps.api_v2.test_route_cover_base64_schema
+scripts/test_v2_regression.sh:64:      apps.api_v2.test_object_storage_settings
+scripts/test_v2_regression.sh:68:      apps.inspection_v2.test_route_cover_base64
+scripts/test_v2_regression.sh:69:      apps.inspection_v2.test_route_cover_object_storage
+scripts/test_v2_regression.sh:76:      apps.api_v2.test_route_cover_base64_schema
+scripts/test_v2_regression.sh:77:      apps.api_v2.test_object_storage_settings
+scripts/test_v2_regression.sh:81:      apps.inspection_v2.test_route_cover_base64
+scripts/test_v2_regression.sh:82:      apps.inspection_v2.test_route_cover_object_storage
+docs/v2-regression-testing.md:19:- `apps.api_v2.test_route_cover_base64_schema`
+docs/v2-regression-testing.md:20:- `apps.api_v2.test_object_storage_settings`
+docs/v2-regression-testing.md:24:- `apps.inspection_v2.test_route_cover_base64`
+docs/v2-regression-testing.md:25:- `apps.inspection_v2.test_route_cover_object_storage`
+== README storage docs ==
+107:export OBJECT_STORAGE_BACKEND=minio
+110:export OBJECT_STORAGE_BUCKET_NAME=dikong-route-covers
+114:export OBJECT_STORAGE_URL_EXPIRE_SECONDS=3600
+117:`OBJECT_STORAGE_PUBLIC_DOMAIN=assets.example.com` 只用于公有 bucket 或 CDN 风格域名，值必须是不带 scheme 和 path 的 host-only 形式。私有 MinIO 需要预签名 URL 时不要设置 `OBJECT_STORAGE_PUBLIC_DOMAIN`，并确保 `OBJECT_STORAGE_ENDPOINT_URL` 是前端浏览器可访问的地址。

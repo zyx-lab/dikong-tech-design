@@ -36,7 +36,13 @@ User = get_user_model()
 
 def create_v2_actor(*, username: str, role_code: str | None, department: Department, is_platform_admin: bool = False):
     user = User.objects.create_user(username=username, password="pass1234", status=1, is_platform_admin=is_platform_admin)
-    profile = V2AccountProfile.objects.create(user=user, department=department)
+    profile = V2AccountProfile.objects.create(
+        user=user,
+        department=department,
+        name=username,
+        phone=f"138{user.id:08d}",
+        email=f"{username}@example.test",
+    )
     if role_code is not None:
         V2AccountRoleAssignment.objects.create(account_profile=profile, role_code=role_code, assigned_by_user=user)
     return user

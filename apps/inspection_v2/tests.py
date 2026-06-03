@@ -17,6 +17,7 @@ from apps.iam_v2.models import (
     ResourceShareGroup,
     ResourceShareGroupTargetDepartment,
     V2AccountProfile,
+    V2AccountQualification,
     V2AccountRoleAssignment,
 )
 from apps.inspection_v2.models import (
@@ -39,14 +40,20 @@ from apps.resource_v2.models import (
     ResourceSharePermission,
     ResourceType,
 )
-from apps.workforce_v2.models import PilotProfile, PilotQualification
+from apps.workforce_v2.models import PilotProfile
 
 User = get_user_model()
 
 
 def create_v2_actor(*, username: str, role_code: str | None, department: Department):
     user = User.objects.create_user(username=username, password="pass1234", status=1)
-    profile = V2AccountProfile.objects.create(user=user, department=department)
+    profile = V2AccountProfile.objects.create(
+        user=user,
+        department=department,
+        name=username,
+        phone=f"138{user.id:08d}",
+        email=f"{username}@example.test",
+    )
     if role_code is not None:
         V2AccountRoleAssignment.objects.create(account_profile=profile, role_code=role_code, assigned_by_user=user)
     return user, profile
@@ -92,13 +99,15 @@ class InspectionV2ApiTests(TestCase):
 
     def create_pilot(self, account_profile, name):
         pilot = PilotProfile.objects.create(account_profile=account_profile, display_name=name)
-        PilotQualification.objects.create(
-            pilot=pilot,
+        V2AccountQualification.objects.create(
+            account_profile=account_profile,
+            role_code=FixedRole.PILOT,
             qualification_type="多旋翼巡检",
             certificate_no=f"CERT-{pilot.id}",
             issued_at=timezone.now().date(),
             expires_at=timezone.now().date().replace(year=timezone.now().date().year + 1),
             status=DirectoryStatus.ACTIVE,
+            remark="当前有效",
         )
         return pilot
 

@@ -70,6 +70,13 @@ def _account_or_404(id):
     return account
 
 
+def _phone_exists(*, phone: str, exclude_account_id: int | None = None) -> bool:
+    queryset = V2AccountProfile.objects.filter(phone=phone)
+    if exclude_account_id is not None:
+        queryset = queryset.exclude(pk=exclude_account_id)
+    return queryset.exists()
+
+
 def _ordered_role_codes(role_codes):
     role_set = set(role_codes)
     return [role_code for role_code in FIXED_ROLE_ORDER if role_code in role_set]
@@ -403,6 +410,9 @@ class AccountListCreateView(V2IamAPIView):
         username = serializer.validated_data["username"]
         if User.objects.filter(username=username).exists():
             return _duplicate_payload_response({"username": ["用户名已存在"]})
+        phone = serializer.validated_data["phone"]
+        if _phone_exists(phone=phone):
+            return _duplicate_payload_response({"phone": ["手机号已存在"]})
 
         account_status = int(serializer.validated_data.get("status", DirectoryStatus.ACTIVE))
         user = User.objects.create_user(
@@ -414,7 +424,14 @@ class AccountListCreateView(V2IamAPIView):
             is_superuser=False,
             is_platform_admin=False,
         )
-        account = V2AccountProfile.objects.create(user=user, department=department, status=account_status)
+        account = V2AccountProfile.objects.create(
+            user=user,
+            department=department,
+            name=serializer.validated_data["name"],
+            phone=phone,
+            email=serializer.validated_data.get("email", ""),
+            status=account_status,
+        )
         account = _replace_account_roles(account=account, role_codes=role_codes, actor=request.user)
         data = AccountReadSerializer(account).data
         _log_account_action(
@@ -447,6 +464,9 @@ class AccountDetailView(V2IamAPIView):
         username = serializer.validated_data["username"]
         if User.objects.exclude(pk=account.user_id).filter(username=username).exists():
             return _duplicate_payload_response({"username": ["用户名已存在"]})
+        phone = serializer.validated_data["phone"]
+        if _phone_exists(phone=phone, exclude_account_id=account.id):
+            return _duplicate_payload_response({"phone": ["手机号已存在"]})
 
         before_data = AccountReadSerializer(account).data
         old_department_id = account.department_id
@@ -463,8 +483,11 @@ class AccountDetailView(V2IamAPIView):
         user.save(update_fields=update_fields)
 
         account.department = department
+        account.name = serializer.validated_data["name"]
+        account.phone = phone
+        account.email = serializer.validated_data.get("email", "")
         account.status = account_status
-        account.save(update_fields=["department", "status", "updated_at"])
+        account.save(update_fields=["department", "name", "phone", "email", "status", "updated_at"])
         account = _account_queryset().get(pk=account.pk)
         after_data = AccountReadSerializer(account).data
         _log_account_action(

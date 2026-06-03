@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from rest_framework import serializers
 
@@ -20,12 +19,7 @@ from apps.inspection_v2.models import (
     WaylineType,
     route_cover_image_url,
 )
-
-
-ROUTE_COVER_ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-ROUTE_COVER_ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
-ROUTE_COVER_MAX_BYTES = 5 * 1024 * 1024
-ROUTE_COVER_VALIDATION_MESSAGE = "只支持上传 jpg/jpeg/png/webp 图片，且大小不能超过 5MB"
+from apps.inspection_v2.route_cover_images import RouteCoverImageField, validate_route_cover_upload
 
 
 class WaypointReadSerializer(serializers.ModelSerializer):
@@ -80,15 +74,21 @@ class RouteWriteSerializer(StrictSerializer):
     status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
     defaultAltitude = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
     defaultSpeed = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
-    coverImage = serializers.FileField(required=False, allow_empty_file=False, write_only=True)
+    coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
     remark = serializers.CharField(required=False, allow_blank=True)
     waypoints = serializers.ListField(child=WaypointWriteSerializer(), allow_empty=False)
 
     def to_internal_value(self, data):
-        if isinstance(data, dict) and (isinstance(data.get("waypoints"), str) or data.get("coverImage") == ""):
+        if isinstance(data, dict):
+            has_empty_cover = "coverImage" in data and (data.get("coverImage") == "" or data.get("coverImage") is None)
+            has_string_waypoints = isinstance(data.get("waypoints"), str)
+        else:
+            has_empty_cover = False
+            has_string_waypoints = False
+        if isinstance(data, dict) and (has_string_waypoints or has_empty_cover):
             data = {key: data.get(key) for key in data.keys()}
-            if data.get("coverImage") == "":
-                data.pop("coverImage")
+            if has_empty_cover:
+                data.pop("coverImage", None)
         if isinstance(data, dict) and isinstance(data.get("waypoints"), str):
             try:
                 parsed_waypoints = json.loads(data["waypoints"])
@@ -106,17 +106,7 @@ class RouteWriteSerializer(StrictSerializer):
         return sorted(value, key=lambda item: item["sequence"])
 
     def validate_coverImage(self, value):
-        extension = Path(str(getattr(value, "name", "") or "")).suffix.lower()
-        content_type = str(getattr(value, "content_type", "") or "").lower()
-        size = int(getattr(value, "size", 0) or 0)
-        if (
-            extension not in ROUTE_COVER_ALLOWED_EXTENSIONS
-            or (content_type and content_type not in ROUTE_COVER_ALLOWED_CONTENT_TYPES)
-            or size <= 0
-            or size > ROUTE_COVER_MAX_BYTES
-        ):
-            raise serializers.ValidationError(ROUTE_COVER_VALIDATION_MESSAGE)
-        return value
+        return validate_route_cover_upload(value)
 
 
 class RouteKmzUploadSerializer(StrictSerializer):

@@ -1,0 +1,6 @@
+== default check ==
+System check identified no issues (0 silenced).
+== minio check ==
+System check identified no issues (0 silenced).
+== migrations ==
+No changes detected

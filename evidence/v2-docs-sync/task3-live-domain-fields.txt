@@ -1,0 +1,13 @@
+iam_accounts_read=True
+iam_accounts_write=True
+dji_connections_read=True
+dji_connections_write=True
+drones_read=True
+pilots_read=True
+pilots_write=True
+routes_read=True
+routes_json_waypoints_array=True
+routes_multipart_cover_binary=True
+routes_multipart_waypoints_string=True
+missions_read=True
+PASS live schema representative fields match current v2 contract

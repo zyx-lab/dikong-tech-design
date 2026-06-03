@@ -15,9 +15,15 @@ This runs:
 - `manage.py check`
 - `manage.py makemigrations --check --dry-run`
 - `apps.api_v2.tests`
+- `apps.api_v2.test_schema_docs_sync`
+- `apps.api_v2.test_route_cover_base64_schema`
+- `apps.api_v2.test_object_storage_settings`
+- `apps.iam_v2.test_profile_api`
 - `apps.resource_v2.tests`
 - `apps.workforce_v2.tests`
 - `apps.inspection_v2.tests`
+- `apps.inspection_v2.test_route_cover_base64`
+- `apps.inspection_v2.test_route_cover_object_storage`
 
 Use this for normal changes under `apps/api_v2`, `apps/iam_v2`, `apps/resource_v2`, `apps/workforce_v2`, `apps/inspection_v2`, and the v2 resource-permission design docs.
 
@@ -35,6 +41,33 @@ This runs the default v2 gate plus a small legacy boundary smoke suite:
 - selected internal DJI sync endpoint contract tests
 
 Use this when v2 work touches shared response handling, DJI gateway behavior, schema/routing boundaries, or models reused by v1 and v2.
+
+## API v2 Docs Sync
+
+The default v2 gate is the deterministic local check for docs/code synchronization. It verifies the v2-only schema boundary, route/method parity, no tenant/v1 leakage, and representative field-level contracts for IAM, resource, workforce, and inspection.
+
+Use the live parity command only as an explicit network check:
+
+```bash
+DB_ENGINE=sqlite .venv/bin/python scripts/compare_v2_docs_schema.py \
+  --live-url http://110.42.32.122:8001/api/v2/docs/schema/ \
+  --local-django \
+  --write-local evidence/v2-docs-sync/local-schema.json \
+  --output-json evidence/v2-docs-sync/schema-parity-result.json
+```
+
+The diff output groups drift into `info_diff`, `paths_only_live`, `paths_only_local`, `method_diffs`, `operation_diffs`, and `component_diffs`. A no-drift run exits `0`; detected drift exits `1`; malformed input, missing files, or network/read failures exit `2`.
+
+For HTTP evidence, use `curl -sS -i` so headers are captured without progress output corrupting JSON bodies:
+
+```bash
+curl -sS -i http://110.42.32.122:8001/api/v2/docs/ > evidence/v2-docs-sync/http-docs-page.txt
+curl -sS -i http://110.42.32.122:8001/api/v2/docs/schema/ > evidence/v2-docs-sync/http-docs-schema.txt
+```
+
+No credentials are required for the schema parity command. Do not commit cookies, bearer tokens, refresh tokens, passwords, or DB credentials in docs-sync evidence. If `curl -i` captures `Set-Cookie`, redact the value before keeping the artifact.
+
+If a local change alters the generated v2 schema, live no-drift is not a valid final claim until the live server at `110.42.32.122:8001` is redeployed or restarted with the changed code. Otherwise record the live parity state as deployment-blocked.
 
 ## Wider Legacy Gate
 

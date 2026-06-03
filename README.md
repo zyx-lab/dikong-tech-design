@@ -66,21 +66,24 @@
 - 登录：`POST /api/v2/iam/session/login`
 - 刷新令牌：`POST /api/v2/iam/session/refresh`
 - 登出：`POST /api/v2/iam/session/logout`
+- 当前账号资料：`GET /api/v2/iam/me/profile`
 - 业务分组：`/api/v2/iam/*`、`/api/v2/resource/*`、`/api/v2/workforce/*`、`/api/v2/inspection/*`
 
 `/api/v1/*` 仍作为 legacy 兼容入口保留，但不作为当前 v2 业务开发和联调入口。DJI 上游协议里的 `/api/v1/manage/*`、`/api/v1/wayline/*`、`/api/v1/media/*` 是 DJI 云平台自身的协议路径，不是本系统对外业务 API。
+
+v2 和 v1 是两套平行体系：v2 账号资料使用 `V2AccountProfile`，不使用 v1 的 `StaffProfile`；v2 不提供公开注册入口，账号由平台超管或部门管理员通过 `/api/v2/iam/accounts` 创建维护。v2 资质是账号级通用资质，通过 `/api/v2/iam/accounts/{id}/qualifications` 管理，不再使用飞手专属资质接口。
 
 ### API v2 联调账号
 
 当前 v2 联调只使用以下 5 个账号，统一密码为 `FrontTest@123`：
 
-| 账号 | 角色 | 说明 |
-| --- | --- | --- |
-| `v2_test_platform_super_admin` | `platform_super_admin` | 平台调试/管理身份，不属于部门业务角色 |
-| `v2_test_department_admin` | `department_admin` | 部门管理员 |
-| `v2_test_task_monitor_dispatcher` | `task_monitor_dispatcher` | 任务派发和监控人员 |
-| `v2_test_pilot` | `pilot` | 飞手 |
-| `v2_test_work_order_handler` | `work_order_handler` | 工单处理者 |
+| 账号 | 姓名 | 手机号 | 邮箱 | 角色 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `v2_test_platform_super_admin` | v2 平台超级管理员 | `13800010001` | `v2_test_platform_super_admin@example.test` | `platform_super_admin` | 平台调试/管理身份，不属于部门业务角色 |
+| `v2_test_department_admin` | v2 部门管理员 | `13800010002` | `v2_test_department_admin@example.test` | `department_admin` | 部门管理员 |
+| `v2_test_task_monitor_dispatcher` | v2 任务派发监控员 | `13800010003` | `v2_test_task_monitor_dispatcher@example.test` | `task_monitor_dispatcher` | 任务派发和监控人员 |
+| `v2_test_pilot` | v2 飞手 | `13800010004` | `v2_test_pilot@example.test` | `pilot` | 飞手 |
+| `v2_test_work_order_handler` | v2 工单处理者 | `13800010005` | `v2_test_work_order_handler@example.test` | `work_order_handler` | 工单处理者 |
 
 `GET /api/v2/iam/roles` 只返回 4 个部门角色，不返回 `platform_super_admin`。前端业务角色选择器不要展示平台身份。
 
@@ -98,6 +101,23 @@ python manage.py createsuperuser
 python manage.py create_business_admin_account --username biz_root --password 'YourStrongPassword'
 python manage.py runserver 0.0.0.0:8001
 ```
+
+### 航线封面对象存储
+
+API v2 航线封面通过 Django default storage 保存。部署到 S3/MinIO 时使用以下环境变量：
+
+```bash
+export OBJECT_STORAGE_BACKEND=minio
+export OBJECT_STORAGE_ACCESS_KEY_ID=...
+export OBJECT_STORAGE_SECRET_ACCESS_KEY=...
+export OBJECT_STORAGE_BUCKET_NAME=dikong-route-covers
+export OBJECT_STORAGE_ENDPOINT_URL=https://minio.example.com
+export AWS_S3_ADDRESSING_STYLE=path
+export AWS_QUERYSTRING_AUTH=true
+export OBJECT_STORAGE_URL_EXPIRE_SECONDS=3600
+```
+
+`OBJECT_STORAGE_PUBLIC_DOMAIN=assets.example.com` 只用于公有 bucket 或 CDN 风格域名，值必须是不带 scheme 和 path 的 host-only 形式。私有 MinIO 需要预签名 URL 时不要设置 `OBJECT_STORAGE_PUBLIC_DOMAIN`，并确保 `OBJECT_STORAGE_ENDPOINT_URL` 是前端浏览器可访问的地址。
 
 临时需要 SQLite 时显式设置 `DB_ENGINE=sqlite`。Django 测试命令和仓库内 v2 回归脚本会固定使用 SQLite，不依赖本地 PostgreSQL。
 
