@@ -21,38 +21,45 @@ class RouteCoverBase64SchemaTests(TestCase):
         request_schema = schema["paths"][path][method]["requestBody"]["content"][content_type]["schema"]
         return self.schema_ref(schema, request_schema).get("properties", {})
 
-    def test_route_save_schema_should_document_json_base64_and_multipart_binary_for_create_and_update(self):
+    def test_route_save_schema_should_document_multipart_create_and_json_metadata_update(self):
         schema = self.schema()
 
-        for method, path in (
-            ("post", "/api/v2/inspection/routes"),
-            ("put", "/api/v2/inspection/routes/{id}"),
-        ):
-            with self.subTest(method=method, path=path):
-                content = schema["paths"][path][method]["requestBody"]["content"]
-                self.assertIn("application/json", content)
-                self.assertIn("multipart/form-data", content)
+        post_content = schema["paths"]["/api/v2/inspection/routes"]["post"]["requestBody"]["content"]
+        self.assertNotIn("application/json", post_content)
+        self.assertIn("multipart/form-data", post_content)
+        post_multipart = self.request_body_properties(
+            schema,
+            path="/api/v2/inspection/routes",
+            method="post",
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(post_multipart["coverImage"]["type"], "string")
+        self.assertEqual(post_multipart["coverImage"]["format"], "binary")
+        self.assertEqual(post_multipart["waypoints"]["type"], "string")
+        self.assertEqual(post_multipart["kmzFile"]["format"], "binary")
 
-                json_properties = self.request_body_properties(
-                    schema,
-                    path=path,
-                    method=method,
-                    content_type="application/json",
-                )
-                self.assertIn("coverImage", json_properties)
-                self.assertIn("waypoints", json_properties)
-                self.assertEqual(json_properties["coverImage"]["type"], "string")
-                self.assertNotEqual(json_properties["coverImage"].get("format"), "binary")
-                self.assertIn("base64", json_properties["coverImage"].get("description", ""))
-                self.assertIn("data:image", json_properties["coverImage"].get("description", ""))
-                self.assertEqual(json_properties["waypoints"]["type"], "array")
+        put_content = schema["paths"]["/api/v2/inspection/routes/{id}"]["put"]["requestBody"]["content"]
+        self.assertIn("application/json", put_content)
+        self.assertIn("multipart/form-data", put_content)
+        put_json = self.request_body_properties(
+            schema,
+            path="/api/v2/inspection/routes/{id}",
+            method="put",
+            content_type="application/json",
+        )
+        self.assertIn("coverImage", put_json)
+        self.assertNotIn("waypoints", put_json)
+        self.assertEqual(put_json["coverImage"]["type"], "string")
+        self.assertNotEqual(put_json["coverImage"].get("format"), "binary")
+        self.assertIn("base64", put_json["coverImage"].get("description", ""))
+        self.assertIn("data:image", put_json["coverImage"].get("description", ""))
 
-                multipart_properties = self.request_body_properties(
-                    schema,
-                    path=path,
-                    method=method,
-                    content_type="multipart/form-data",
-                )
-                self.assertEqual(multipart_properties["coverImage"]["type"], "string")
-                self.assertEqual(multipart_properties["coverImage"]["format"], "binary")
-                self.assertEqual(multipart_properties["waypoints"]["type"], "string")
+        put_multipart = self.request_body_properties(
+            schema,
+            path="/api/v2/inspection/routes/{id}",
+            method="put",
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(put_multipart["coverImage"]["type"], "string")
+        self.assertEqual(put_multipart["coverImage"]["format"], "binary")
+        self.assertEqual(put_multipart["waypoints"]["type"], "string")

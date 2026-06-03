@@ -148,7 +148,6 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/workforce/pilots/{id}",
             "/api/v2/inspection/routes",
             "/api/v2/inspection/routes/{id}",
-            "/api/v2/inspection/routes/{id}/kmz",
             "/api/v2/inspection/missions",
             "/api/v2/inspection/missions/{id}",
             "/api/v2/inspection/missions/{id}/start",
@@ -323,8 +322,6 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("POST", "/api/v2/inspection/missions/{id}/fail"),
             ("POST", "/api/v2/inspection/routes"),
             ("PUT", "/api/v2/inspection/routes/{id}"),
-            ("POST", "/api/v2/inspection/routes/{id}/kmz"),
-            ("PUT", "/api/v2/inspection/routes/{id}/kmz"),
             ("POST", "/api/v2/inspection/telemetry/snapshots"),
             ("POST", "/api/v2/resource/bindings"),
             ("POST", "/api/v2/resource/dji-connections"),
@@ -345,33 +342,44 @@ class ApiV2SchemaBoundaryTests(TestCase):
     def test_v2_schema_should_document_route_cover_multipart_request_body(self):
         schema = self._schema()
 
-        for method, path in (
-            ("post", "/api/v2/inspection/routes"),
-            ("put", "/api/v2/inspection/routes/{id}"),
-        ):
-            with self.subTest(method=method, path=path):
-                content = schema["paths"][path][method]["requestBody"]["content"]
-                self.assertIn("application/json", content)
-                self.assertIn("multipart/form-data", content)
-                multipart_properties = self._request_body_properties(
-                    schema,
-                    path=path,
-                    method=method,
-                    content_type="multipart/form-data",
-                )
-                self.assertIn("coverImage", multipart_properties)
-                self.assertIn("waypoints", multipart_properties)
-                self.assertEqual(multipart_properties["coverImage"]["type"], "string")
-                self.assertEqual(multipart_properties["coverImage"]["format"], "binary")
-                self.assertEqual(multipart_properties["waypoints"]["type"], "string")
+        post_content = schema["paths"]["/api/v2/inspection/routes"]["post"]["requestBody"]["content"]
+        self.assertNotIn("application/json", post_content)
+        self.assertIn("multipart/form-data", post_content)
+        post_multipart = self._request_body_properties(
+            schema,
+            path="/api/v2/inspection/routes",
+            method="post",
+            content_type="multipart/form-data",
+        )
+        self.assertIn("coverImage", post_multipart)
+        self.assertIn("waypoints", post_multipart)
+        self.assertIn("djiConnectionId", post_multipart)
+        self.assertIn("waylineType", post_multipart)
+        self.assertIn("kmzFile", post_multipart)
+        self.assertEqual(post_multipart["coverImage"]["type"], "string")
+        self.assertEqual(post_multipart["coverImage"]["format"], "binary")
+        self.assertEqual(post_multipart["waypoints"]["type"], "string")
+        self.assertEqual(post_multipart["kmzFile"]["format"], "binary")
 
-                json_properties = self._request_body_properties(
-                    schema,
-                    path=path,
-                    method=method,
-                    content_type="application/json",
-                )
-                self.assertEqual(json_properties["waypoints"]["type"], "array")
+        put_content = schema["paths"]["/api/v2/inspection/routes/{id}"]["put"]["requestBody"]["content"]
+        self.assertIn("application/json", put_content)
+        self.assertIn("multipart/form-data", put_content)
+        put_json = self._request_body_properties(
+            schema,
+            path="/api/v2/inspection/routes/{id}",
+            method="put",
+            content_type="application/json",
+        )
+        self.assertIn("coverImage", put_json)
+        self.assertNotIn("waypoints", put_json)
+        put_multipart = self._request_body_properties(
+            schema,
+            path="/api/v2/inspection/routes/{id}",
+            method="put",
+            content_type="multipart/form-data",
+        )
+        self.assertIn("waypoints", put_multipart)
+        self.assertIn("kmzFile", put_multipart)
 
     def test_v2_docs_should_be_available(self):
         response = self.client.get("/api/v2/docs/")

@@ -1,5 +1,8 @@
 import json
+import zipfile
+from io import BytesIO
 from urllib.parse import urlparse
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.storage import Storage
@@ -133,6 +136,30 @@ class RouteCoverObjectStorageTests(TestCase):
             ],
         }
 
+    def kmz_file(self):
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("waylines.wpml", b"<wpml></wpml>")
+        return SimpleUploadedFile("route.kmz", buffer.getvalue(), content_type="application/vnd.google-earth.kmz")
+
+    def multipart_route_payload(self, *, name: str) -> dict:
+        payload = self.route_payload(name=name)
+        payload["waypoints"] = json.dumps(payload["waypoints"])
+        payload["djiConnectionId"] = DjiConnection.objects.get(owner_department=self.department).id
+        payload["waylineType"] = 0
+        payload["kmzFile"] = self.kmz_file()
+        return payload
+
+    def post_route(self, payload):
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
+            return_value={
+                "dji_wayline_id": f"wayline-object-storage-{WaypointRoute.objects.count() + 1}",
+                "download_url": "/waylines/object-storage/url",
+            },
+        ):
+            return self.client.post("/api/v2/inspection/routes", payload, format="multipart")
+
     def assert_object_storage_url(self, url: str, *, extension: str) -> None:
         self.assertFalse(url.startswith("/media/"), url)
         parsed = urlparse(url)
@@ -144,7 +171,7 @@ class RouteCoverObjectStorageTests(TestCase):
 
     def create_route(self, *, name: str = "对象存储航线") -> dict:
         self.authenticate()
-        response = self.client.post("/api/v2/inspection/routes", self.route_payload(name=name), format="json")
+        response = self.post_route(self.multipart_route_payload(name=name))
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
         return response.data["data"]
 
@@ -189,11 +216,10 @@ class RouteCoverObjectStorageTests(TestCase):
 
     def test_multipart_route_cover_should_use_same_object_storage_url_contract(self):
         self.authenticate()
-        payload = self.route_payload(name="multipart 对象存储航线")
-        payload["waypoints"] = json.dumps(payload["waypoints"])
+        payload = self.multipart_route_payload(name="multipart 对象存储航线")
         payload["coverImage"] = SimpleUploadedFile("cover.webp", b"RIFFxxxxWEBP", content_type="image/webp")
 
-        response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
+        response = self.post_route(payload)
 
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
         self.assert_object_storage_url(response.data["data"]["coverImageUrl"], extension=".webp")

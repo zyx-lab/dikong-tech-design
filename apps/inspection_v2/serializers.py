@@ -1,4 +1,5 @@
 import json
+import zipfile
 
 from rest_framework import serializers
 
@@ -46,6 +47,7 @@ class RouteReadSerializer(serializers.ModelSerializer):
     defaultAltitude = serializers.DecimalField(source="default_altitude", max_digits=10, decimal_places=2, allow_null=True, read_only=True)
     defaultSpeed = serializers.DecimalField(source="default_speed", max_digits=10, decimal_places=2, allow_null=True, read_only=True)
     coverImageUrl = serializers.SerializerMethodField()
+    djiFile = serializers.SerializerMethodField()
     waypoints = WaypointReadSerializer(many=True, read_only=True)
 
     class Meta:
@@ -58,6 +60,7 @@ class RouteReadSerializer(serializers.ModelSerializer):
             "defaultAltitude",
             "defaultSpeed",
             "coverImageUrl",
+            "djiFile",
             "remark",
             "waypoints",
             "created_at",
@@ -68,8 +71,15 @@ class RouteReadSerializer(serializers.ModelSerializer):
     def get_coverImageUrl(self, instance: WaypointRoute) -> str:
         return route_cover_image_url(instance)
 
+    def get_djiFile(self, instance: WaypointRoute) -> dict | None:
+        try:
+            cloud_file = instance.cloud_file
+        except WaypointRouteCloudFile.DoesNotExist:
+            return None
+        return dict(RouteCloudFileReadSerializer(cloud_file).data)
 
-class RouteWriteSerializer(StrictSerializer):
+
+class RouteBaseWriteSerializer(StrictSerializer):
     name = serializers.CharField(max_length=128)
     status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
     defaultAltitude = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
@@ -109,16 +119,92 @@ class RouteWriteSerializer(StrictSerializer):
         return validate_route_cover_upload(value)
 
 
-class RouteKmzUploadSerializer(StrictSerializer):
+def validate_route_kmz_upload(value):
+    name = str(getattr(value, "name", "") or "").lower()
+    if not name.endswith(".kmz"):
+        raise serializers.ValidationError("只支持上传 .kmz 文件")
+    try:
+        value.seek(0)
+        is_valid_zip = zipfile.is_zipfile(value)
+    finally:
+        try:
+            value.seek(0)
+        except Exception:  # noqa: BLE001 - upload wrappers expose inconsistent seek behavior.
+            pass
+    if not is_valid_zip:
+        raise serializers.ValidationError("请上传有效的 KMZ/ZIP 文件")
+    return value
+
+
+class RouteCreateSerializer(RouteBaseWriteSerializer):
     djiConnectionId = serializers.IntegerField(min_value=1)
     waylineType = serializers.ChoiceField(choices=WaylineType.choices)
     kmzFile = serializers.FileField()
 
     def validate_kmzFile(self, value):
-        name = str(getattr(value, "name", "") or "").lower()
-        if not name.endswith(".kmz"):
-            raise serializers.ValidationError("只支持上传 .kmz 文件")
-        return value
+        return validate_route_kmz_upload(value)
+
+
+class RouteMetadataUpdateSerializer(StrictSerializer):
+    name = serializers.CharField(max_length=128, required=False)
+    status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
+    coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
+    remark = serializers.CharField(required=False, allow_blank=True)
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and ("coverImage" in data and (data.get("coverImage") == "" or data.get("coverImage") is None)):
+            data = {key: data.get(key) for key in data.keys()}
+            data.pop("coverImage", None)
+        return super().to_internal_value(data)
+
+    def validate_coverImage(self, value):
+        return validate_route_cover_upload(value)
+
+
+class RouteKmzUpdateSerializer(StrictSerializer):
+    name = serializers.CharField(max_length=128, required=False)
+    status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
+    defaultAltitude = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    defaultSpeed = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
+    remark = serializers.CharField(required=False, allow_blank=True)
+    waypoints = serializers.ListField(child=WaypointWriteSerializer(), allow_empty=False, required=False)
+    djiConnectionId = serializers.IntegerField(min_value=1)
+    waylineType = serializers.ChoiceField(choices=WaylineType.choices)
+    kmzFile = serializers.FileField()
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            has_empty_cover = "coverImage" in data and (data.get("coverImage") == "" or data.get("coverImage") is None)
+            has_string_waypoints = isinstance(data.get("waypoints"), str)
+        else:
+            has_empty_cover = False
+            has_string_waypoints = False
+        if isinstance(data, dict) and (has_string_waypoints or has_empty_cover):
+            data = {key: data.get(key) for key in data.keys()}
+            if has_empty_cover:
+                data.pop("coverImage", None)
+        if isinstance(data, dict) and isinstance(data.get("waypoints"), str):
+            try:
+                parsed_waypoints = json.loads(data["waypoints"])
+            except json.JSONDecodeError as exc:
+                raise serializers.ValidationError({"waypoints": ["waypoints 必须是 JSON 数组"]}) from exc
+            if not isinstance(parsed_waypoints, list):
+                raise serializers.ValidationError({"waypoints": ["waypoints 必须是 JSON 数组"]})
+            data["waypoints"] = parsed_waypoints
+        return super().to_internal_value(data)
+
+    def validate_waypoints(self, value):
+        sequences = [item["sequence"] for item in value]
+        if len(sequences) != len(set(sequences)):
+            raise serializers.ValidationError("航点 sequence 不能重复")
+        return sorted(value, key=lambda item: item["sequence"])
+
+    def validate_coverImage(self, value):
+        return validate_route_cover_upload(value)
+
+    def validate_kmzFile(self, value):
+        return validate_route_kmz_upload(value)
 
 
 class RouteCloudFileReadSerializer(serializers.ModelSerializer):

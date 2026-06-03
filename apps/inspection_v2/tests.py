@@ -1,5 +1,7 @@
 import json
 import tempfile
+import zipfile
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -29,6 +31,7 @@ from apps.inspection_v2.models import (
     MissionCloudExecution,
     MissionStatus,
     WaypointRoute,
+    WaypointRouteCloudFile,
 )
 from apps.inspection_v2.services import apply_cloud_execution_event, apply_osd_telemetry
 from apps.inspection_v2.management.commands.run_v2_dji_worker import V2DjiWorker
@@ -97,6 +100,7 @@ class InspectionV2ApiTests(TestCase):
         )
         self.other_pilot = self.create_pilot(self.other_pilot_account, "任务队飞手")
         self.drone = self.bind_drone(self.owner_department, self.owner_admin, "V2-DRONE-001")
+        self.route_upload_counter = 0
 
     def authenticate(self, user):
         self.client.force_authenticate(user)
@@ -176,9 +180,48 @@ class InspectionV2ApiTests(TestCase):
             ],
         }
 
+    def kmz_file(self, name="route.kmz"):
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("waylines.wpml", b"<wpml></wpml>")
+        return SimpleUploadedFile(name, buffer.getvalue(), content_type="application/vnd.google-earth.kmz")
+
+    def next_route_upload_payload(self):
+        self.route_upload_counter += 1
+        wayline_id = f"wayline-kmz-{self.route_upload_counter:03d}"
+        return {"dji_wayline_id": wayline_id, "download_url": f"/waylines/{wayline_id}/url"}
+
+    def dji_connection_for_user(self, user):
+        department = user.v2_account_profile.department
+        connection = DjiConnection.objects.filter(owner_department=department).first()
+        if connection is not None:
+            return connection
+        return DjiConnection.objects.create(
+            owner_department=department,
+            name=f"{department.id} test connection",
+            base_url="https://dji.example.test",
+            username="admin",
+            password="secret",
+            workspace_id=f"workspace-{department.id}",
+            access_token="token",
+            created_by_user=user,
+        )
+
+    def route_multipart_payload(self, user, name="一号航线", *, wayline_type=0):
+        payload = self.route_payload(name)
+        payload["waypoints"] = json.dumps(payload["waypoints"])
+        payload["djiConnectionId"] = self.dji_connection_for_user(user).id
+        payload["waylineType"] = wayline_type
+        payload["kmzFile"] = self.kmz_file()
+        return payload
+
     def create_route_by_api(self, user, name="一号航线"):
         self.authenticate(user)
-        response = self.client.post("/api/v2/inspection/routes", self.route_payload(name), format="json")
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
+            return_value=self.next_route_upload_payload(),
+        ):
+            response = self.client.post("/api/v2/inspection/routes", self.route_multipart_payload(user, name), format="multipart")
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
         return response.data["data"]
 
@@ -220,18 +263,36 @@ class InspectionV2ApiTests(TestCase):
 
     def upload_route_kmz_by_api(self, route_id, connection, *, wayline_type=0):
         self.authenticate(self.owner_dispatcher)
-        kmz_file = SimpleUploadedFile("route.kmz", b"fake-kmz-content", content_type="application/vnd.google-earth.kmz")
+        route = WaypointRoute.objects.prefetch_related("waypoints").get(pk=route_id)
+        payload = {
+            "name": route.name,
+            "defaultAltitude": str(route.default_altitude) if route.default_altitude is not None else "",
+            "defaultSpeed": str(route.default_speed) if route.default_speed is not None else "",
+            "waypoints": json.dumps(
+                [
+                    {
+                        "sequence": waypoint.sequence,
+                        "latitude": str(waypoint.latitude),
+                        "longitude": str(waypoint.longitude),
+                        "altitude": str(waypoint.altitude),
+                        "speed": str(waypoint.speed) if waypoint.speed is not None else None,
+                        "heading": str(waypoint.heading) if waypoint.heading is not None else None,
+                        "hoverSeconds": waypoint.hover_seconds,
+                    }
+                    for waypoint in route.waypoints.order_by("sequence")
+                ]
+            ),
+            "djiConnectionId": connection.id,
+            "waylineType": wayline_type,
+            "kmzFile": self.kmz_file(),
+        }
         with patch(
             "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
-            return_value={"dji_wayline_id": "wayline-kmz-001", "download_url": "/waylines/wayline-kmz-001/url"},
+            return_value=self.next_route_upload_payload(),
         ):
-            response = self.client.post(
-                f"/api/v2/inspection/routes/{route_id}/kmz",
-                {"djiConnectionId": connection.id, "waylineType": wayline_type, "kmzFile": kmz_file},
-                format="multipart",
-            )
+            response = self.client.put(f"/api/v2/inspection/routes/{route_id}", payload, format="multipart")
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
-        return response.data["data"]
+        return response.data["data"]["djiFile"]
 
     def prepare_route_for_cloud_execution(self, route, *, gateway_sn="GATEWAY-TEST-001"):
         connection = DjiConnection.objects.get(owner_department=self.owner_department)
@@ -256,35 +317,57 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         return response
 
-    def test_route_json_create_should_preserve_existing_contract(self):
-        route = self.create_route_by_api(self.owner_dispatcher, name="JSON 基线航线")
+    def test_route_create_should_upload_kmz_and_return_dji_file(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="合并创建航线")
 
-        self.assertEqual(route["name"], "JSON 基线航线")
+        self.assertEqual(route["name"], "合并创建航线")
         self.assertEqual(route["defaultAltitude"], "120.00")
         self.assertEqual(route["defaultSpeed"], "8.50")
         self.assertEqual(len(route["waypoints"]), 2)
+        self.assertEqual(route["djiFile"]["djiConnectionId"], self.dji_connection_for_user(self.owner_dispatcher).id)
+        self.assertRegex(route["djiFile"]["djiFileId"], r"^wayline-kmz-\d{3}$")
 
-    def test_route_json_update_should_preserve_existing_contract(self):
+    def test_route_json_create_should_be_rejected_because_kmz_is_required(self):
+        self.authenticate(self.owner_dispatcher)
+        response = self.client.post("/api/v2/inspection/routes", self.route_payload("JSON 创建航线"), format="json")
+
+        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+        self.assertIn("kmzFile", str(response.data))
+
+    def test_route_json_update_should_allow_display_metadata_only(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="JSON 更新基线航线")
-        payload = self.route_payload(name="JSON 更新后航线")
-        payload["defaultAltitude"] = "130.00"
+        payload = {"name": "JSON 更新后航线", "remark": "只改展示字段", "status": DirectoryStatus.ACTIVE}
 
         self.authenticate(self.owner_dispatcher)
         response = self.client.put(f"/api/v2/inspection/routes/{route['id']}", payload, format="json")
 
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         self.assertEqual(response.data["data"]["name"], "JSON 更新后航线")
-        self.assertEqual(response.data["data"]["defaultAltitude"], "130.00")
+        self.assertEqual(response.data["data"]["defaultAltitude"], "120.00")
+        self.assertEqual(response.data["data"]["remark"], "只改展示字段")
         self.assertEqual(len(response.data["data"]["waypoints"]), 2)
+
+    def test_route_metadata_only_update_should_reject_execution_fields_without_kmz(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="无 KMZ 更新航线")
+        payload = self.route_payload(name="无 KMZ 更新后航线")
+
+        self.authenticate(self.owner_dispatcher)
+        response = self.client.put(f"/api/v2/inspection/routes/{route['id']}", payload, format="json")
+
+        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+        self.assertIn("kmzFile", str(response.data))
 
     def test_route_save_should_accept_cover_image_and_return_cover_image_url(self):
         self.authenticate(self.owner_dispatcher)
-        payload = self.route_payload(name="封面航线")
-        payload["waypoints"] = json.dumps(payload["waypoints"])
+        payload = self.route_multipart_payload(self.owner_dispatcher, name="封面航线")
         payload["coverImage"] = SimpleUploadedFile("cover.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
 
         with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
-            response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
+            with patch(
+                "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
+                return_value=self.next_route_upload_payload(),
+            ):
+                response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
 
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
         self.assertIn("coverImageUrl", response.data["data"])
@@ -292,8 +375,7 @@ class InspectionV2ApiTests(TestCase):
 
     def test_route_save_should_reject_non_image_cover_file(self):
         self.authenticate(self.owner_dispatcher)
-        payload = self.route_payload(name="非法封面航线")
-        payload["waypoints"] = json.dumps(payload["waypoints"])
+        payload = self.route_multipart_payload(self.owner_dispatcher, name="非法封面航线")
         payload["coverImage"] = SimpleUploadedFile("cover.txt", b"not an image", content_type="text/plain")
 
         with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
@@ -305,7 +387,7 @@ class InspectionV2ApiTests(TestCase):
 
     def test_route_multipart_should_reject_invalid_waypoints_json(self):
         self.authenticate(self.owner_dispatcher)
-        payload = self.route_payload(name="非法航点航线")
+        payload = self.route_multipart_payload(self.owner_dispatcher, name="非法航点航线")
         payload["waypoints"] = "[invalid-json"
         payload["coverImage"] = SimpleUploadedFile("cover.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
 
@@ -317,32 +399,33 @@ class InspectionV2ApiTests(TestCase):
 
     def test_route_update_should_replace_cover_image_and_preserve_when_omitted(self):
         self.authenticate(self.owner_dispatcher)
-        create_payload = self.route_payload(name="封面替换航线")
-        create_payload["waypoints"] = json.dumps(create_payload["waypoints"])
+        create_payload = self.route_multipart_payload(self.owner_dispatcher, name="封面替换航线")
         create_payload["coverImage"] = SimpleUploadedFile("cover-a.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
 
         with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
-            create_response = self.client.post("/api/v2/inspection/routes", create_payload, format="multipart")
+            with patch(
+                "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
+                return_value=self.next_route_upload_payload(),
+            ):
+                create_response = self.client.post("/api/v2/inspection/routes", create_payload, format="multipart")
             self.assertEqual(create_response.status_code, 201, getattr(create_response, "data", create_response.content))
             route_id = create_response.data["data"]["id"]
             first_url = create_response.data["data"]["coverImageUrl"]
             route = WaypointRoute.objects.get(pk=route_id)
             first_cover_name = route.cover_image.name
 
-            json_payload = self.route_payload(name="封面保留航线")
+            json_payload = {"name": "封面保留航线"}
             preserve_response = self.client.put(f"/api/v2/inspection/routes/{route_id}", json_payload, format="json")
             self.assertEqual(preserve_response.status_code, 200, getattr(preserve_response, "data", preserve_response.content))
             self.assertEqual(preserve_response.data["data"]["coverImageUrl"], first_url)
 
-            empty_cover_payload = self.route_payload(name="封面空字段保留航线")
-            empty_cover_payload["waypoints"] = json.dumps(empty_cover_payload["waypoints"])
+            empty_cover_payload = {"name": "封面空字段保留航线"}
             empty_cover_payload["coverImage"] = ""
             empty_cover_response = self.client.put(f"/api/v2/inspection/routes/{route_id}", empty_cover_payload, format="multipart")
             self.assertEqual(empty_cover_response.status_code, 200, getattr(empty_cover_response, "data", empty_cover_response.content))
             self.assertEqual(empty_cover_response.data["data"]["coverImageUrl"], first_url)
 
-            replace_payload = self.route_payload(name="封面替换后航线")
-            replace_payload["waypoints"] = json.dumps(replace_payload["waypoints"])
+            replace_payload = {"name": "封面替换后航线"}
             replace_payload["coverImage"] = SimpleUploadedFile("cover-b.png", b"\x89PNG\r\n\x1a\n", content_type="image/png")
             replace_response = self.client.put(f"/api/v2/inspection/routes/{route_id}", replace_payload, format="multipart")
 
@@ -353,11 +436,11 @@ class InspectionV2ApiTests(TestCase):
             self.assertNotEqual(route.cover_image.name, first_cover_name)
             self.assertFalse(route.cover_image.storage.exists(first_cover_name))
 
-    def test_route_json_save_should_remain_backward_compatible_without_cover_image(self):
+    def test_route_json_metadata_update_should_preserve_cover_when_omitted(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="无封面 JSON 航线")
         self.assertEqual(route["coverImageUrl"], "")
 
-        payload = self.route_payload(name="无封面 JSON 更新航线")
+        payload = {"name": "无封面 JSON 更新航线"}
         self.authenticate(self.owner_dispatcher)
         response = self.client.put(f"/api/v2/inspection/routes/{route['id']}", payload, format="json")
 
@@ -366,12 +449,15 @@ class InspectionV2ApiTests(TestCase):
 
     def test_mission_route_snapshot_should_include_route_cover_image_url(self):
         self.authenticate(self.owner_dispatcher)
-        route_payload = self.route_payload(name="任务封面航线")
-        route_payload["waypoints"] = json.dumps(route_payload["waypoints"])
+        route_payload = self.route_multipart_payload(self.owner_dispatcher, name="任务封面航线")
         route_payload["coverImage"] = SimpleUploadedFile("mission-cover.webp", b"RIFFxxxxWEBP", content_type="image/webp")
 
         with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
-            route_response = self.client.post("/api/v2/inspection/routes", route_payload, format="multipart")
+            with patch(
+                "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
+                return_value=self.next_route_upload_payload(),
+            ):
+                route_response = self.client.post("/api/v2/inspection/routes", route_payload, format="multipart")
             self.assertEqual(route_response.status_code, 201, getattr(route_response, "data", route_response.content))
             route = route_response.data["data"]
 
@@ -470,56 +556,126 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(media_response.status_code, 200, getattr(media_response, "data", media_response.content))
         self.assertEqual(media_response.data["data"]["total"], 1)
 
-    def test_route_kmz_upload_should_publish_to_selected_dji_connection(self):
-        route = self.create_route_by_api(self.owner_dispatcher, name="KMZ 航线")
+    def test_route_create_should_publish_to_selected_dji_connection(self):
         connection = DjiConnection.objects.get(owner_department=self.owner_department)
         connection.workspace_id = "workspace-kmz-001"
         connection.save(update_fields=["workspace_id", "updated_at"])
 
         self.authenticate(self.owner_dispatcher)
-        kmz_file = SimpleUploadedFile("route.kmz", b"fake-kmz-content", content_type="application/vnd.google-earth.kmz")
+        payload = self.route_multipart_payload(self.owner_dispatcher, name="KMZ 航线", wayline_type=2)
         with patch(
             "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
             return_value={"dji_wayline_id": "wayline-kmz-001", "download_url": "/waylines/wayline-kmz-001/url"},
         ) as upload_route:
-            response = self.client.post(
-                f"/api/v2/inspection/routes/{route['id']}/kmz",
-                {"djiConnectionId": connection.id, "waylineType": 2, "kmzFile": kmz_file},
-                format="multipart",
-            )
+            response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
 
-        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
-        self.assertEqual(response.data["data"]["djiFileId"], "wayline-kmz-001")
-        self.assertEqual(response.data["data"]["workspaceId"], "workspace-kmz-001")
-        self.assertEqual(response.data["data"]["waylineType"], 2)
+        self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["djiFile"]["djiFileId"], "wayline-kmz-001")
+        self.assertEqual(response.data["data"]["djiFile"]["workspaceId"], "workspace-kmz-001")
+        self.assertEqual(response.data["data"]["djiFile"]["waylineType"], 2)
         upload_route.assert_called_once()
         upload_kwargs = upload_route.call_args.kwargs
         self.assertNotIn("_", upload_kwargs["route_name"])
         self.assertNotIn("_", upload_kwargs["file_obj"].name)
         self.assertRegex(upload_kwargs["route_name"], r"^v2-route-\d+-[0-9a-f]{8}$")
 
-    def test_route_kmz_upload_should_require_wayline_type(self):
-        route = self.create_route_by_api(self.owner_dispatcher, name="缺少航线类型")
-        connection = DjiConnection.objects.get(owner_department=self.owner_department)
-
+    def test_route_create_should_require_wayline_type_and_valid_kmz(self):
         self.authenticate(self.owner_dispatcher)
-        kmz_file = SimpleUploadedFile("route.kmz", b"fake-kmz-content", content_type="application/vnd.google-earth.kmz")
+        payload = self.route_multipart_payload(self.owner_dispatcher, name="缺少航线类型")
+        payload.pop("waylineType")
         response = self.client.post(
-            f"/api/v2/inspection/routes/{route['id']}/kmz",
-            {"djiConnectionId": connection.id, "kmzFile": kmz_file},
+            "/api/v2/inspection/routes",
+            payload,
             format="multipart",
         )
 
         self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
 
-        invalid_file = SimpleUploadedFile("route.kmz", b"fake-kmz-content", content_type="application/vnd.google-earth.kmz")
+        invalid_type_payload = self.route_multipart_payload(self.owner_dispatcher, name="非法航线类型")
+        invalid_type_payload["waylineType"] = 9
         invalid_response = self.client.post(
-            f"/api/v2/inspection/routes/{route['id']}/kmz",
-            {"djiConnectionId": connection.id, "waylineType": 9, "kmzFile": invalid_file},
+            "/api/v2/inspection/routes",
+            invalid_type_payload,
             format="multipart",
         )
 
         self.assertEqual(invalid_response.status_code, 400, getattr(invalid_response, "data", invalid_response.content))
+
+        invalid_kmz_payload = self.route_multipart_payload(self.owner_dispatcher, name="非法 KMZ")
+        invalid_kmz_payload["kmzFile"] = SimpleUploadedFile(
+            "route.kmz",
+            b"not-a-zip",
+            content_type="application/vnd.google-earth.kmz",
+        )
+        invalid_kmz_response = self.client.post("/api/v2/inspection/routes", invalid_kmz_payload, format="multipart")
+
+        self.assertEqual(invalid_kmz_response.status_code, 400, getattr(invalid_kmz_response, "data", invalid_kmz_response.content))
+        self.assertIn("有效的 KMZ/ZIP 文件", str(invalid_kmz_response.data))
+
+    def test_route_kmz_endpoint_should_be_removed(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="旧 KMZ 接口航线")
+
+        self.authenticate(self.owner_dispatcher)
+        response = self.client.post(
+            f"/api/v2/inspection/routes/{route['id']}/kmz",
+            {
+                "djiConnectionId": self.dji_connection_for_user(self.owner_dispatcher).id,
+                "waylineType": 0,
+                "kmzFile": self.kmz_file(),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 404, getattr(response, "data", response.content))
+
+    def test_route_put_with_kmz_should_replace_dji_file_and_cleanup_old_file(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="替换 KMZ 航线")
+        route_id = route["id"]
+        old_file_id = route["djiFile"]["djiFileId"]
+        payload = self.route_multipart_payload(self.owner_dispatcher, name="替换 KMZ 后航线", wayline_type=3)
+        payload["defaultAltitude"] = "130.00"
+
+        self.authenticate(self.owner_dispatcher)
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
+            return_value={"dji_wayline_id": "wayline-kmz-replaced", "download_url": "/waylines/wayline-kmz-replaced/url"},
+        ) as upload_route, patch("apps.inspection_v2.views.DjiConnectionGateway.delete_route", return_value={}) as delete_route:
+            response = self.client.put(f"/api/v2/inspection/routes/{route_id}", payload, format="multipart")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["name"], "替换 KMZ 后航线")
+        self.assertEqual(response.data["data"]["defaultAltitude"], "130.00")
+        self.assertEqual(response.data["data"]["djiFile"]["djiFileId"], "wayline-kmz-replaced")
+        upload_route.assert_called_once()
+        delete_route.assert_called_once_with(old_file_id)
+        self.assertEqual(WaypointRouteCloudFile.objects.get(route_id=route_id).dji_file_id, "wayline-kmz-replaced")
+
+    def test_route_update_should_be_rejected_when_pending_or_running_mission_references_route(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="任务引用航线")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            pilot_id=self.owner_pilot.id,
+        )
+
+        self.authenticate(self.owner_dispatcher)
+        metadata_response = self.client.put(
+            f"/api/v2/inspection/routes/{route['id']}",
+            {"name": "被任务引用后的航线名"},
+            format="json",
+        )
+
+        self.assertEqual(metadata_response.status_code, 409, getattr(metadata_response, "data", metadata_response.content))
+        self.assertIn("待执行或执行中的任务", str(metadata_response.data))
+
+        kmz_payload = self.route_multipart_payload(self.owner_dispatcher, name="被任务引用后的 KMZ 航线")
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.upload_route") as upload_route:
+            kmz_response = self.client.put(f"/api/v2/inspection/routes/{route['id']}", kmz_payload, format="multipart")
+
+        self.assertEqual(kmz_response.status_code, 409, getattr(kmz_response, "data", kmz_response.content))
+        upload_route.assert_not_called()
+        self.assertEqual(InspectionMission.objects.get(pk=mission["id"]).status, MissionStatus.PENDING)
 
     def test_mission_start_should_create_dji_immediate_job_from_route_kmz_and_executor(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="执行航线")

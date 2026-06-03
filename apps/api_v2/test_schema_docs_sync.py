@@ -169,15 +169,8 @@ class ApiV2DocsSyncTests(TestCase):
         )
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/inspection/routes"),
-            {"id", "name", "coverImageUrl", "waypoints"},
+            {"id", "name", "coverImageUrl", "waypoints", "djiFile"},
         )
-        route_json = self._request_body_properties(
-            schema,
-            path="/api/v2/inspection/routes",
-            method="post",
-            content_type="application/json",
-        )
-        self.assertEqual(route_json["waypoints"]["type"], "array")
         route_multipart = self._request_body_properties(
             schema,
             path="/api/v2/inspection/routes",
@@ -187,6 +180,8 @@ class ApiV2DocsSyncTests(TestCase):
         self.assertEqual(route_multipart["coverImage"]["type"], "string")
         self.assertEqual(route_multipart["coverImage"]["format"], "binary")
         self.assertEqual(route_multipart["waypoints"]["type"], "string")
+        self.assertEqual(route_multipart["kmzFile"]["format"], "binary")
+        self._assert_properties_include(route_multipart, {"djiConnectionId", "waylineType", "kmzFile"})
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/inspection/missions"),
             {"id", "routeSnapshot", "droneId", "pilotId", "status"},

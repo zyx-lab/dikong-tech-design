@@ -35,10 +35,10 @@ from apps.inspection_v2.serializers import (
     MissionCloseSerializer,
     MissionReadSerializer,
     MissionWriteSerializer,
-    RouteCloudFileReadSerializer,
-    RouteKmzUploadSerializer,
+    RouteCreateSerializer,
+    RouteKmzUpdateSerializer,
+    RouteMetadataUpdateSerializer,
     RouteReadSerializer,
-    RouteWriteSerializer,
     TelemetrySnapshotReadSerializer,
     TelemetrySnapshotWriteSerializer,
 )
@@ -100,12 +100,38 @@ ROUTE_MULTIPART_WRITE_REQUEST = OpenApiRequest(
             "coverImage": {"type": "string", "format": "binary"},
             "remark": {"type": "string"},
             "waypoints": {"type": "string", "description": "JSON 数组字符串。"},
+            "djiConnectionId": {"type": "integer"},
+            "waylineType": {"type": "integer", "enum": [0, 1, 2, 3]},
+            "kmzFile": {"type": "string", "format": "binary"},
         },
-        "required": ["name", "waypoints"],
+        "required": ["name", "waypoints", "djiConnectionId", "waylineType", "kmzFile"],
     },
     encoding={
         "coverImage": {"contentType": "image/jpeg, image/png, image/webp"},
         "waypoints": {"contentType": "application/json"},
+        "kmzFile": {"contentType": "application/vnd.google-earth.kmz, application/zip"},
+    },
+)
+ROUTE_MULTIPART_UPDATE_REQUEST = OpenApiRequest(
+    request={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "maxLength": 128},
+            "status": {"type": "integer", "enum": [0, 1]},
+            "defaultAltitude": {"type": "string", "format": "decimal", "nullable": True},
+            "defaultSpeed": {"type": "string", "format": "decimal", "nullable": True},
+            "coverImage": {"type": "string", "format": "binary"},
+            "remark": {"type": "string"},
+            "waypoints": {"type": "string", "description": "JSON 数组字符串；只有同时上传 kmzFile 时才允许修改。"},
+            "djiConnectionId": {"type": "integer"},
+            "waylineType": {"type": "integer", "enum": [0, 1, 2, 3]},
+            "kmzFile": {"type": "string", "format": "binary"},
+        },
+    },
+    encoding={
+        "coverImage": {"contentType": "image/jpeg, image/png, image/webp"},
+        "waypoints": {"contentType": "application/json"},
+        "kmzFile": {"contentType": "application/vnd.google-earth.kmz, application/zip"},
     },
 )
 
@@ -195,6 +221,69 @@ def _clone_kmz_for_dji_upload(file_obj, *, upload_name: str) -> SimpleUploadedFi
     return SimpleUploadedFile(name=f"{safe_name}.kmz", content=content, content_type=content_type)
 
 
+def _request_has_file(data, field_name: str) -> bool:
+    if not isinstance(data, dict):
+        return False
+    value = data.get(field_name)
+    return value not in (None, "", b"")
+
+
+def _reject_execution_fields_without_kmz(data) -> None:
+    if not isinstance(data, dict):
+        return
+    execution_fields = {"waypoints", "defaultAltitude", "defaultSpeed", "djiConnectionId", "waylineType"}
+    if execution_fields.intersection(data.keys()):
+        raise serializers.ValidationError({"kmzFile": ["修改航点或默认飞行参数必须同时上传 kmzFile"]})
+
+
+def _ensure_route_without_open_missions(route: WaypointRoute) -> None:
+    if InspectionMission.objects.filter(route=route, status__in=[MissionStatus.PENDING, MissionStatus.RUNNING]).exists():
+        raise StandardConstraintConflict(msg="航线已被待执行或执行中的任务引用，不能更新")
+
+
+def _dji_connection_for_route(route: WaypointRoute, dji_connection_id: int) -> DjiConnection:
+    connection = (
+        DjiConnection.objects.select_related("owner_department")
+        .filter(pk=dji_connection_id, owner_department=route.owner_department)
+        .first()
+    )
+    if connection is None:
+        raise StandardNotFound()
+    return connection
+
+
+def _upload_route_to_dji(*, route: WaypointRoute, connection: DjiConnection, kmz_file) -> dict:
+    gateway = DjiConnectionGateway(connection)
+    upload_name = _safe_dji_upload_name(route_id=route.id)
+    upload_file = _clone_kmz_for_dji_upload(kmz_file, upload_name=upload_name)
+    return gateway.upload_route(route_name=upload_name, file_obj=upload_file)
+
+
+def _sync_route_cloud_file(*, route: WaypointRoute, connection: DjiConnection, upload_payload: dict, wayline_type, user):
+    return WaypointRouteCloudFile.objects.update_or_create(
+        route=route,
+        defaults={
+            "dji_connection": connection,
+            "workspace_id": connection.workspace_id,
+            "dji_file_id": str(upload_payload["dji_wayline_id"]),
+            "wayline_type": wayline_type,
+            "download_url": str(upload_payload.get("download_url") or ""),
+            "raw_response": upload_payload,
+            "uploaded_by_user": user,
+            "uploaded_at": timezone.now(),
+        },
+    )[0]
+
+
+def _delete_dji_route_best_effort(*, connection: DjiConnection | None, dji_file_id: str) -> None:
+    if connection is None or not dji_file_id:
+        return
+    try:
+        DjiConnectionGateway(connection).delete_route(dji_file_id)
+    except Exception:  # noqa: BLE001 - upstream cleanup must not make a committed write fail.
+        logger.warning("failed to delete replaced DJI route file", extra={"dji_file_id": dji_file_id}, exc_info=True)
+
+
 class RouteListCreateView(InspectionV2APIView):
     parser_classes = [parsers.JSONParser, parsers.MultiPartParser, parsers.FormParser]
 
@@ -215,33 +304,56 @@ class RouteListCreateView(InspectionV2APIView):
 
     @extend_schema(
         operation_id="v2_inspection_routes_create",
-        summary="创建巡检航线",
+        summary="创建巡检航线并上传 KMZ",
         request={
-            "application/json": RouteWriteSerializer,
             "multipart/form-data": ROUTE_MULTIPART_WRITE_REQUEST,
         },
         responses={201: OpenApiResponse(response=RouteReadSerializer, description="创建成功。")},
     )
-    @transaction.atomic
     def post(self, request):
         context = resolve_v2_context(request)
         require_dispatcher(context)
-        serializer = RouteWriteSerializer(data=request.data)
+        serializer = RouteCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        route = None
+        connection = None
+        upload_payload = None
         try:
-            route = WaypointRoute.objects.create(
-                owner_department=context.department,
-                name=serializer.validated_data["name"],
-                status=serializer.validated_data.get("status", 1),
-                default_altitude=serializer.validated_data.get("defaultAltitude"),
-                default_speed=serializer.validated_data.get("defaultSpeed"),
-                cover_image=serializer.validated_data.get("coverImage", ""),
-                remark=serializer.validated_data.get("remark", ""),
-                created_by_user=request.user,
-            )
+            with transaction.atomic():
+                route = WaypointRoute.objects.create(
+                    owner_department=context.department,
+                    name=serializer.validated_data["name"],
+                    status=serializer.validated_data.get("status", 1),
+                    default_altitude=serializer.validated_data.get("defaultAltitude"),
+                    default_speed=serializer.validated_data.get("defaultSpeed"),
+                    cover_image=serializer.validated_data.get("coverImage", ""),
+                    remark=serializer.validated_data.get("remark", ""),
+                    created_by_user=request.user,
+                )
+                _replace_waypoints(route, serializer.validated_data["waypoints"])
+                connection = _dji_connection_for_route(route, serializer.validated_data["djiConnectionId"])
+                upload_payload = _upload_route_to_dji(
+                    route=route,
+                    connection=connection,
+                    kmz_file=serializer.validated_data["kmzFile"],
+                )
+                _sync_route_cloud_file(
+                    route=route,
+                    connection=connection,
+                    upload_payload=upload_payload,
+                    wayline_type=serializer.validated_data["waylineType"],
+                    user=request.user,
+                )
         except IntegrityError as exc:
+            if upload_payload is not None:
+                _delete_dji_route_best_effort(connection=connection, dji_file_id=str(upload_payload.get("dji_wayline_id") or ""))
             return _duplicate_response({"detail": str(exc)})
-        _replace_waypoints(route, serializer.validated_data["waypoints"])
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
+        except Exception:
+            if upload_payload is not None:
+                _delete_dji_route_best_effort(connection=connection, dji_file_id=str(upload_payload.get("dji_wayline_id") or ""))
+            raise
         data = RouteReadSerializer(route).data
         log_v2_action(
             request=request,
@@ -272,35 +384,115 @@ class RouteDetailView(InspectionV2APIView):
         operation_id="v2_inspection_routes_update",
         summary="更新巡检航线",
         request={
-            "application/json": RouteWriteSerializer,
-            "multipart/form-data": ROUTE_MULTIPART_WRITE_REQUEST,
+            "application/json": RouteMetadataUpdateSerializer,
+            "multipart/form-data": ROUTE_MULTIPART_UPDATE_REQUEST,
         },
         responses={200: OpenApiResponse(response=RouteReadSerializer, description="更新成功。")},
     )
-    @transaction.atomic
     def put(self, request, id: int):
         context = resolve_v2_context(request)
         require_dispatcher(context)
         route = get_editable_route_or_404(context, id)
-        serializer = RouteWriteSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        _ensure_route_without_open_missions(route)
         before_data = RouteReadSerializer(route).data
-        route.name = serializer.validated_data["name"]
-        route.status = serializer.validated_data.get("status", route.status)
-        route.default_altitude = serializer.validated_data.get("defaultAltitude")
-        route.default_speed = serializer.validated_data.get("defaultSpeed")
-        route.remark = serializer.validated_data.get("remark", "")
+
+        if not _request_has_file(request.data, "kmzFile"):
+            _reject_execution_fields_without_kmz(request.data)
+            serializer = RouteMetadataUpdateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            old_cover_name = route.cover_image.name
+            update_fields = ["updated_at"]
+            if "name" in serializer.validated_data:
+                route.name = serializer.validated_data["name"]
+                update_fields.append("name")
+            if "status" in serializer.validated_data:
+                route.status = serializer.validated_data["status"]
+                update_fields.append("status")
+            if "remark" in serializer.validated_data:
+                route.remark = serializer.validated_data["remark"]
+                update_fields.append("remark")
+            if "coverImage" in serializer.validated_data:
+                route.cover_image = serializer.validated_data["coverImage"]
+                update_fields.append("cover_image")
+            try:
+                with transaction.atomic():
+                    route.save(update_fields=update_fields)
+            except IntegrityError as exc:
+                return _duplicate_response({"detail": str(exc)})
+            _delete_replaced_route_cover(route, old_cover_name)
+            data = RouteReadSerializer(route).data
+            log_v2_action(
+                request=request,
+                context=context,
+                action="update_waypoint_route",
+                target_type="waypoint_route",
+                target_id=route.id,
+                resource_owner_department=route.owner_department,
+                before_data=before_data,
+                after_data=data,
+            )
+            return Response(data, status=status.HTTP_200_OK)
+
+        serializer = RouteKmzUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        connection = _dji_connection_for_route(route, serializer.validated_data["djiConnectionId"])
         old_cover_name = route.cover_image.name
-        update_fields = ["name", "status", "default_altitude", "default_speed", "remark", "updated_at"]
+        try:
+            old_cloud_file = route.cloud_file
+            old_connection = old_cloud_file.dji_connection
+            old_dji_file_id = old_cloud_file.dji_file_id
+        except WaypointRouteCloudFile.DoesNotExist:
+            old_connection = None
+            old_dji_file_id = ""
+        try:
+            upload_payload = _upload_route_to_dji(
+                route=route,
+                connection=connection,
+                kmz_file=serializer.validated_data["kmzFile"],
+            )
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
+        update_fields = ["updated_at"]
+        if "name" in serializer.validated_data:
+            route.name = serializer.validated_data["name"]
+            update_fields.append("name")
+        if "status" in serializer.validated_data:
+            route.status = serializer.validated_data["status"]
+            update_fields.append("status")
+        if "defaultAltitude" in serializer.validated_data:
+            route.default_altitude = serializer.validated_data["defaultAltitude"]
+            update_fields.append("default_altitude")
+        if "defaultSpeed" in serializer.validated_data:
+            route.default_speed = serializer.validated_data["defaultSpeed"]
+            update_fields.append("default_speed")
+        if "remark" in serializer.validated_data:
+            route.remark = serializer.validated_data["remark"]
+            update_fields.append("remark")
         if "coverImage" in serializer.validated_data:
             route.cover_image = serializer.validated_data["coverImage"]
             update_fields.append("cover_image")
         try:
-            route.save(update_fields=update_fields)
+            with transaction.atomic():
+                route.save(update_fields=update_fields)
+                if "waypoints" in serializer.validated_data:
+                    _replace_waypoints(route, serializer.validated_data["waypoints"])
+                _sync_route_cloud_file(
+                    route=route,
+                    connection=connection,
+                    upload_payload=upload_payload,
+                    wayline_type=serializer.validated_data["waylineType"],
+                    user=request.user,
+                )
         except IntegrityError as exc:
+            _delete_dji_route_best_effort(connection=connection, dji_file_id=str(upload_payload.get("dji_wayline_id") or ""))
             return _duplicate_response({"detail": str(exc)})
+        except Exception:
+            _delete_dji_route_best_effort(connection=connection, dji_file_id=str(upload_payload.get("dji_wayline_id") or ""))
+            raise
         _delete_replaced_route_cover(route, old_cover_name)
-        _replace_waypoints(route, serializer.validated_data["waypoints"])
+        if old_dji_file_id and old_dji_file_id != str(upload_payload.get("dji_wayline_id") or ""):
+            _delete_dji_route_best_effort(connection=old_connection, dji_file_id=old_dji_file_id)
+        route.refresh_from_db()
         data = RouteReadSerializer(route).data
         log_v2_action(
             request=request,
@@ -313,71 +505,6 @@ class RouteDetailView(InspectionV2APIView):
             after_data=data,
         )
         return Response(data, status=status.HTTP_200_OK)
-
-
-class RouteKmzView(InspectionV2APIView):
-    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
-
-    @extend_schema(
-        operation_id="v2_inspection_routes_upload_kmz",
-        summary="上传巡检航线 KMZ",
-        request=RouteKmzUploadSerializer,
-        responses={200: OpenApiResponse(response=RouteCloudFileReadSerializer, description="上传成功。")},
-    )
-    @transaction.atomic
-    def post(self, request, id: int):
-        context = resolve_v2_context(request)
-        require_dispatcher(context)
-        route = get_editable_route_or_404(context, id)
-        serializer = RouteKmzUploadSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        connection = (
-            DjiConnection.objects.select_related("owner_department")
-            .filter(pk=serializer.validated_data["djiConnectionId"], owner_department=route.owner_department)
-            .first()
-        )
-        if connection is None:
-            raise StandardNotFound()
-        gateway = DjiConnectionGateway(connection)
-        upload_name = _safe_dji_upload_name(route_id=route.id)
-        upload_file = _clone_kmz_for_dji_upload(serializer.validated_data["kmzFile"], upload_name=upload_name)
-        try:
-            upload_payload = gateway.upload_route(route_name=upload_name, file_obj=upload_file)
-        except DjiGatewayError as exc:
-            return _upstream_error_response(exc)
-        cloud_file, _created = WaypointRouteCloudFile.objects.update_or_create(
-            route=route,
-            defaults={
-                "dji_connection": connection,
-                "workspace_id": connection.workspace_id,
-                "dji_file_id": str(upload_payload["dji_wayline_id"]),
-                "wayline_type": serializer.validated_data["waylineType"],
-                "download_url": str(upload_payload.get("download_url") or ""),
-                "raw_response": upload_payload,
-                "uploaded_by_user": request.user,
-                "uploaded_at": timezone.now(),
-            },
-        )
-        data = RouteCloudFileReadSerializer(cloud_file).data
-        log_v2_action(
-            request=request,
-            context=context,
-            action="upload_route_kmz",
-            target_type="waypoint_route",
-            target_id=route.id,
-            resource_owner_department=route.owner_department,
-            after_data=data,
-        )
-        return Response(data, status=status.HTTP_200_OK)
-
-    @extend_schema(
-        operation_id="v2_inspection_routes_replace_kmz",
-        summary="替换巡检航线 KMZ",
-        request=RouteKmzUploadSerializer,
-        responses={200: OpenApiResponse(response=RouteCloudFileReadSerializer, description="替换成功。")},
-    )
-    def put(self, request, id: int):
-        return self.post(request, id=id)
 
 
 def _validated_mission_inputs(context, data):
