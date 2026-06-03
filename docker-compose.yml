@@ -15,6 +15,14 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   web:
     build: .
     ports:
@@ -27,8 +35,12 @@ services:
       DB_PASSWORD: postgres
       DB_PORT: 5432
       DJANGO_SETTINGS_MODULE: config.settings
+      CHANNEL_REDIS_URL: redis://redis:6379/0
+      DJI_V2_MQTT_REDIS_URL: redis://redis:6379/0
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - .:/app
@@ -36,7 +48,28 @@ services:
       sh -c "python manage.py migrate &&
              python manage.py seed_role_permissions &&
              python manage.py create_business_admin_account --username biz_root --password admin123 --upsert &&
-             python manage.py runserver 0.0.0.0:8000"
+             daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+
+  v2-dji-worker:
+    build: .
+    environment:
+      DB_ENGINE: postgres
+      DB_HOST: db
+      DB_NAME: dikong
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_PORT: 5432
+      DJANGO_SETTINGS_MODULE: config.settings
+      CHANNEL_REDIS_URL: redis://redis:6379/0
+      DJI_V2_MQTT_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: python manage.py run_v2_dji_worker
 
 volumes:
   pgdata:

@@ -1,7 +1,8 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus
@@ -21,8 +22,11 @@ from apps.resource_v2.models import (
     BindingStatus,
     DjiConnection,
     DockResource,
+    DroneTelemetrySnapshot,
     DroneResource,
     GatewayResource,
+    MqttConnectionHealth,
+    MqttLatestMessage,
     PayloadResource,
     ResourceBinding,
     ResourceBindingHistory,
@@ -172,6 +176,115 @@ class ResourceV2ApiTests(TestCase):
             bound_by_user=actor,
         )
         return resource
+
+    @override_settings(DJI_MQTT_OSD_FRESHNESS_SECONDS=60)
+    def test_drone_resource_should_include_latest_mqtt_telemetry_snapshot(self):
+        drone = self.bind_v2_drone(department=self.child, actor=self.child_admin, device_sn="DRONE-MQTT-001")
+        binding = ResourceBinding.objects.get(resource_type=ResourceType.DRONE, resource_object_id=drone.id)
+        DroneTelemetrySnapshot.objects.create(
+            drone=drone,
+            dji_connection=binding.dji_connection,
+            latitude="31.23040000",
+            longitude="121.47370000",
+            altitude="120.50",
+            speed="8.20",
+            heading="91.00",
+            battery_percent=87,
+            reported_at=timezone.now(),
+            raw_payload={"data": {"latitude": 31.2304, "longitude": 121.4737}},
+        )
+
+        self.authenticate(self.child_admin)
+        list_response = self.client.get("/api/v2/resource/drones")
+        detail_response = self.client.get(f"/api/v2/resource/drones/{drone.id}")
+
+        self.assertEqual(list_response.status_code, 200, getattr(list_response, "data", list_response.content))
+        list_item = list_response.data["data"]["list"][0]
+        self.assertEqual(list_item["latestTelemetry"]["latitude"], "31.23040000")
+        self.assertEqual(list_item["latestTelemetry"]["longitude"], "121.47370000")
+        self.assertEqual(list_item["latestTelemetry"]["batteryPercent"], 87)
+        self.assertFalse(list_item["latestTelemetry"]["isStale"])
+        self.assertEqual(list_item["latestTelemetry"]["rawPayload"]["data"]["latitude"], 31.2304)
+
+        self.assertEqual(detail_response.status_code, 200, getattr(detail_response, "data", detail_response.content))
+        self.assertEqual(detail_response.data["data"]["latestTelemetry"]["heading"], "91.00")
+
+    def test_mqtt_health_should_be_visible_to_connection_manager_only(self):
+        child_connection = DjiConnection.objects.create(
+            owner_department=self.child,
+            name="child mqtt",
+            base_url="https://child.example.test",
+            username="admin",
+            password="secret",
+            created_by_user=self.child_admin,
+        )
+        other_connection = DjiConnection.objects.create(
+            owner_department=self.other,
+            name="other mqtt",
+            base_url="https://other.example.test",
+            username="admin",
+            password="secret",
+            created_by_user=self.other_admin,
+        )
+        MqttConnectionHealth.objects.create(
+            dji_connection=child_connection,
+            status="SUBSCRIBED",
+            worker_id="worker-child",
+            mqtt_addr="tcp://broker.example.test:1883",
+            subscribed_topics=["thing/product/+/osd"],
+            last_message_at=timezone.now(),
+            message_count=3,
+        )
+        MqttConnectionHealth.objects.create(
+            dji_connection=other_connection,
+            status="ERROR",
+            worker_id="worker-other",
+            last_error="connect failed",
+        )
+
+        self.authenticate(self.child_admin)
+        response = self.client.get("/api/v2/resource/dji-connections/mqtt-health")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["connectionId"], child_connection.id)
+        self.assertEqual(response.data["data"]["list"][0]["status"], "SUBSCRIBED")
+        self.assertEqual(response.data["data"]["list"][0]["messageCount"], 3)
+
+        self.authenticate(self.other_dispatcher)
+        forbidden_response = self.client.get("/api/v2/resource/dji-connections/mqtt-health")
+        self.assertEqual(forbidden_response.status_code, 403)
+
+    def test_mqtt_latest_messages_should_filter_by_connection_and_visible_device(self):
+        drone = self.bind_v2_drone(department=self.child, actor=self.child_admin, device_sn="DRONE-LATEST-001")
+        binding = ResourceBinding.objects.get(resource_type=ResourceType.DRONE, resource_object_id=drone.id)
+        MqttLatestMessage.objects.create(
+            dji_connection=binding.dji_connection,
+            topic="thing/product/DRONE-LATEST-001/osd",
+            topic_kind="osd",
+            device_sn=drone.device_sn,
+            received_at=timezone.now(),
+            sequence=1,
+            raw_payload={"data": {"latitude": 31.11}},
+        )
+
+        self.authenticate(self.child_admin)
+        response = self.client.get(
+            f"/api/v2/resource/dji-connections/{binding.dji_connection_id}/mqtt-messages/latest",
+            {"deviceSn": drone.device_sn, "topicKind": "osd"},
+        )
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["deviceSn"], drone.device_sn)
+        self.assertEqual(response.data["data"]["list"][0]["rawPayload"]["data"]["latitude"], 31.11)
+
+        self.authenticate(self.other_dispatcher)
+        forbidden_response = self.client.get(
+            f"/api/v2/resource/dji-connections/{binding.dji_connection_id}/mqtt-messages/latest",
+            {"deviceSn": drone.device_sn},
+        )
+        self.assertEqual(forbidden_response.status_code, 403)
 
     def test_v2_resource_endpoints_should_require_fixed_role_operation_permissions(self):
         self.authenticate(self.no_role_user)

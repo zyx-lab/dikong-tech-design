@@ -34,8 +34,11 @@ from apps.inspection_v2.management.commands.run_v2_dji_worker import V2DjiWorker
 from apps.resource_v2.models import (
     BindingStatus,
     DjiConnection,
+    DroneTelemetrySnapshot,
     DroneResource,
     GatewayResource,
+    MqttConnectionHealth,
+    MqttLatestMessage,
     ResourceBinding,
     ResourceSharePermission,
     ResourceType,
@@ -861,6 +864,36 @@ class InspectionV2ApiTests(TestCase):
                 {"status": "offline"},
             )
         status_handler.assert_called_once_with(device_sn="DRONE-WORKER-001", payload={"status": "offline"})
+
+    def test_v2_dji_worker_should_persist_latest_mqtt_message_and_drone_snapshot(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        worker = V2DjiWorker()
+
+        result = worker.handle_message(
+            "thing/product/V2-DRONE-001/osd",
+            {
+                "timestamp": int(timezone.now().timestamp() * 1000),
+                "data": {
+                    "latitude": 31.2304,
+                    "longitude": 121.4737,
+                    "height": 120.5,
+                    "horizontal_speed": 8.2,
+                    "attitude_head": 91.0,
+                    "battery": {"capacity_percent": 87},
+                },
+            },
+            connection=connection,
+        )
+
+        self.assertEqual(result["message"]["topicKind"], "osd")
+        latest = MqttLatestMessage.objects.get(dji_connection=connection, device_sn="V2-DRONE-001", topic_kind="osd")
+        self.assertEqual(latest.raw_payload["data"]["latitude"], 31.2304)
+        snapshot = DroneTelemetrySnapshot.objects.get(drone=self.drone)
+        self.assertEqual(str(snapshot.latitude), "31.23040000")
+        self.assertEqual(snapshot.battery_percent, 87)
+        health = MqttConnectionHealth.objects.get(dji_connection=connection)
+        self.assertEqual(health.message_count, 1)
+        self.assertEqual(health.status, "MESSAGE_RECEIVED")
 
     def test_v2_dji_worker_command_should_support_once_mode(self):
         with patch(

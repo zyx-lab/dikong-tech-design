@@ -5,11 +5,21 @@ from apps.resource_v2 import views
 
 urlpatterns = [
     path("dji-connections", views.DjiConnectionListCreateView.as_view(), name="v2-resource-dji-connections"),
+    path(
+        "dji-connections/mqtt-health",
+        views.DjiConnectionMqttHealthView.as_view(),
+        name="v2-resource-dji-connection-mqtt-health",
+    ),
     path("dji-connections/<int:id>", views.DjiConnectionDetailView.as_view(), name="v2-resource-dji-connection-detail"),
     path(
         "dji-connections/<int:id>/discover",
         views.DjiConnectionDiscoverView.as_view(),
         name="v2-resource-dji-connection-discover",
+    ),
+    path(
+        "dji-connections/<int:id>/mqtt-messages/latest",
+        views.DjiConnectionMqttLatestMessageView.as_view(),
+        name="v2-resource-dji-connection-mqtt-latest-messages",
     ),
     path("drones", views.DroneResourceListView.as_view(), name="v2-resource-drones"),
     path("drones/<int:id>", views.DroneResourceDetailView.as_view(), name="v2-resource-drone-detail"),

@@ -26,6 +26,7 @@ LOGGING = build_logging_config(
 )
 
 INSTALLED_APPS = [
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -33,6 +34,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "channels",
     "apps.access",
     "apps.api_v1",
     "apps.iam_v2",
@@ -83,6 +85,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
 
 def _is_django_test_command(argv):
     options_with_value = {"--settings", "--pythonpath"}
@@ -240,3 +243,22 @@ DJI_INTERNAL_API_TOKEN = os.getenv("DJI_INTERNAL_API_TOKEN", "")
 DJI_MQTT_WATCHER_ENABLED = os.getenv("DJI_MQTT_WATCHER_ENABLED", "true").lower() == "true"
 DJI_MQTT_WATCHER_REFRESH_SECONDS = int(os.getenv("DJI_MQTT_WATCHER_REFRESH_SECONDS", "5"))
 DJI_MQTT_OSD_FRESHNESS_SECONDS = int(os.getenv("DJI_MQTT_OSD_FRESHNESS_SECONDS", "10"))
+DJI_V2_MQTT_EXTRA_TOPICS = os.getenv("DJI_V2_MQTT_EXTRA_TOPICS", "")
+DJI_V2_MQTT_HEARTBEAT_TTL_SECONDS = int(os.getenv("DJI_V2_MQTT_HEARTBEAT_TTL_SECONDS", "30"))
+CHANNEL_REDIS_URL = os.getenv("CHANNEL_REDIS_URL", os.getenv("REDIS_URL", ""))
+DJI_V2_MQTT_REDIS_URL = os.getenv("DJI_V2_MQTT_REDIS_URL", CHANNEL_REDIS_URL)
+if CHANNEL_REDIS_URL:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [CHANNEL_REDIS_URL],
+            },
+        }
+    }
+else:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        }
+    }

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -7,8 +8,11 @@ from apps.iam_v2.models import ResourceShareGroup, ResourceShareGroupTargetDepar
 from apps.resource_v2.models import (
     DjiConnection,
     DockResource,
+    DroneTelemetrySnapshot,
     DroneResource,
     GatewayResource,
+    MqttConnectionHealth,
+    MqttLatestMessage,
     PayloadResource,
     ResourceBinding,
     ResourceSharePermission,
@@ -16,6 +20,7 @@ from apps.resource_v2.models import (
     SHARE_PERMISSION_CHOICES,
     V2AuditLog,
 )
+from apps.resource_v2.mqtt import read_redis_health
 from apps.resource_v2.services import effective_permissions_for_binding, normalize_base_url
 
 
@@ -179,8 +184,62 @@ class ResourceReadSerializer(serializers.Serializer):
     name = serializers.CharField()
     model = serializers.CharField()
     onlineStatus = serializers.BooleanField()
+    lastSeenAt = serializers.DateTimeField(required=False, allow_null=True)
+    latestTelemetry = serializers.DictField(required=False, allow_null=True)
     ownerDepartment = serializers.DictField()
     effectivePermissions = serializers.ListField(child=serializers.CharField())
+
+
+class MqttConnectionHealthReadSerializer(serializers.ModelSerializer):
+    connectionId = serializers.IntegerField(source="dji_connection_id", read_only=True)
+    connectionName = serializers.CharField(source="dji_connection.name", read_only=True)
+    ownerDepartmentId = serializers.IntegerField(source="dji_connection.owner_department_id", read_only=True)
+    workerId = serializers.CharField(source="worker_id", read_only=True)
+    mqttAddr = serializers.CharField(source="mqtt_addr", read_only=True)
+    subscribedTopics = serializers.JSONField(source="subscribed_topics", read_only=True)
+    lastConnectedAt = serializers.DateTimeField(source="last_connected_at", allow_null=True, read_only=True)
+    lastSubscribedAt = serializers.DateTimeField(source="last_subscribed_at", allow_null=True, read_only=True)
+    lastMessageAt = serializers.DateTimeField(source="last_message_at", allow_null=True, read_only=True)
+    lastHeartbeatAt = serializers.DateTimeField(source="last_heartbeat_at", allow_null=True, read_only=True)
+    lastError = serializers.CharField(source="last_error", read_only=True)
+    messageCount = serializers.IntegerField(source="message_count", read_only=True)
+    redisState = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MqttConnectionHealth
+        fields = [
+            "connectionId",
+            "connectionName",
+            "ownerDepartmentId",
+            "status",
+            "workerId",
+            "mqttAddr",
+            "subscribedTopics",
+            "lastConnectedAt",
+            "lastSubscribedAt",
+            "lastMessageAt",
+            "lastHeartbeatAt",
+            "lastError",
+            "messageCount",
+            "redisState",
+        ]
+        read_only_fields = fields
+
+    def get_redisState(self, obj) -> dict:
+        return read_redis_health(obj.dji_connection_id)
+
+
+class MqttLatestMessageReadSerializer(serializers.ModelSerializer):
+    connectionId = serializers.IntegerField(source="dji_connection_id", read_only=True)
+    topicKind = serializers.CharField(source="topic_kind", read_only=True)
+    deviceSn = serializers.CharField(source="device_sn", read_only=True)
+    receivedAt = serializers.DateTimeField(source="received_at", read_only=True)
+    rawPayload = serializers.JSONField(source="raw_payload", read_only=True)
+
+    class Meta:
+        model = MqttLatestMessage
+        fields = ["connectionId", "topic", "topicKind", "deviceSn", "receivedAt", "sequence", "rawPayload"]
+        read_only_fields = fields
 
 
 class BindingCreateSerializer(StrictSerializer):
@@ -298,6 +357,29 @@ class ShareGroupResourceReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+def _telemetry_is_stale(snapshot: DroneTelemetrySnapshot) -> bool:
+    freshness_seconds = max(0, int(getattr(settings, "DJI_MQTT_OSD_FRESHNESS_SECONDS", 10)))
+    return (timezone.now() - snapshot.reported_at).total_seconds() > freshness_seconds
+
+
+def _drone_latest_telemetry(resource) -> dict | None:
+    try:
+        snapshot = resource.latest_telemetry
+    except DroneTelemetrySnapshot.DoesNotExist:
+        return None
+    return {
+        "latitude": str(snapshot.latitude) if snapshot.latitude is not None else None,
+        "longitude": str(snapshot.longitude) if snapshot.longitude is not None else None,
+        "altitude": str(snapshot.altitude) if snapshot.altitude is not None else None,
+        "speed": str(snapshot.speed) if snapshot.speed is not None else None,
+        "heading": str(snapshot.heading) if snapshot.heading is not None else None,
+        "batteryPercent": snapshot.battery_percent,
+        "reportedAt": snapshot.reported_at,
+        "isStale": _telemetry_is_stale(snapshot),
+        "rawPayload": snapshot.raw_payload,
+    }
+
+
 def serialize_resource_binding(binding: ResourceBinding, *, context):
     resource_model = {
         ResourceType.DRONE: DroneResource,
@@ -306,7 +388,7 @@ def serialize_resource_binding(binding: ResourceBinding, *, context):
         ResourceType.PAYLOAD: PayloadResource,
     }[ResourceType(binding.resource_type)]
     resource = resource_model.objects.get(pk=binding.resource_object_id)
-    return {
+    payload = {
         "id": resource.id,
         "resourceType": binding.resource_type,
         "bindingId": binding.id,
@@ -314,6 +396,7 @@ def serialize_resource_binding(binding: ResourceBinding, *, context):
         "name": resource.name,
         "model": resource.model,
         "onlineStatus": resource.online_status,
+        "lastSeenAt": resource.last_seen_at,
         "ownerDepartment": {
             "id": binding.owner_department_id,
             "name": binding.owner_department.name,
@@ -321,3 +404,6 @@ def serialize_resource_binding(binding: ResourceBinding, *, context):
         },
         "effectivePermissions": effective_permissions_for_binding(context, binding),
     }
+    if binding.resource_type == ResourceType.DRONE:
+        payload["latestTelemetry"] = _drone_latest_telemetry(resource)
+    return payload

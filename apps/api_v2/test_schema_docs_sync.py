@@ -144,7 +144,15 @@ class ApiV2DocsSyncTests(TestCase):
         )
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/resource/drones"),
-            {"id", "deviceSn", "name", "onlineStatus", "bindingId", "effectivePermissions"},
+            {"id", "deviceSn", "name", "onlineStatus", "lastSeenAt", "latestTelemetry", "bindingId", "effectivePermissions"},
+        )
+        self._assert_properties_include(
+            self._list_item_properties(schema, path="/api/v2/resource/dji-connections/mqtt-health"),
+            {"connectionId", "status", "mqttAddr", "lastMessageAt", "messageCount"},
+        )
+        self._assert_properties_include(
+            self._list_item_properties(schema, path="/api/v2/resource/dji-connections/{id}/mqtt-messages/latest"),
+            {"connectionId", "topic", "topicKind", "deviceSn", "receivedAt", "sequence", "rawPayload"},
         )
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/workforce/pilots"),
