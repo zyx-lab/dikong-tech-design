@@ -13,6 +13,14 @@ class DjiConnectionStatus(models.TextChoices):
     ERROR = "ERROR", "异常"
 
 
+class MqttHealthStatus(models.TextChoices):
+    DISCONNECTED = "DISCONNECTED", "未连接"
+    CONNECTING = "CONNECTING", "连接中"
+    SUBSCRIBED = "SUBSCRIBED", "已订阅"
+    MESSAGE_RECEIVED = "MESSAGE_RECEIVED", "已收包"
+    ERROR = "ERROR", "异常"
+
+
 class ResourceType(models.TextChoices):
     DRONE = "drone", "无人机"
     DOCK = "dock", "机场"
@@ -71,6 +79,24 @@ class DjiConnection(TimeStampedModel):
         return f"{self.owner_department_id}:{self.name}"
 
 
+class MqttConnectionHealth(TimeStampedModel):
+    dji_connection = models.OneToOneField(DjiConnection, on_delete=models.CASCADE, related_name="mqtt_health")
+    status = models.CharField(max_length=32, choices=MqttHealthStatus.choices, default=MqttHealthStatus.DISCONNECTED)
+    worker_id = models.CharField(max_length=128, blank=True, default="")
+    mqtt_addr = models.CharField(max_length=256, blank=True, default="")
+    subscribed_topics = models.JSONField(default=list, blank=True)
+    last_connected_at = models.DateTimeField(null=True, blank=True)
+    last_subscribed_at = models.DateTimeField(null=True, blank=True)
+    last_message_at = models.DateTimeField(null=True, blank=True)
+    last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    message_count = models.PositiveBigIntegerField(default=0)
+
+    class Meta:
+        db_table = "v2_mqtt_connection_health"
+        ordering = ["-updated_at", "-id"]
+
+
 class DroneResource(TimeStampedModel):
     device_sn = models.CharField(max_length=128, unique=True)
     name = models.CharField(max_length=128, blank=True, default="")
@@ -87,6 +113,23 @@ class DroneResource(TimeStampedModel):
 
     def __str__(self):
         return self.device_sn
+
+
+class DroneTelemetrySnapshot(TimeStampedModel):
+    drone = models.OneToOneField(DroneResource, on_delete=models.CASCADE, related_name="latest_telemetry")
+    dji_connection = models.ForeignKey(DjiConnection, null=True, blank=True, on_delete=models.SET_NULL, related_name="drone_telemetry_snapshots")
+    latitude = models.DecimalField(max_digits=12, decimal_places=8, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=12, decimal_places=8, null=True, blank=True)
+    altitude = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    speed = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    heading = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
+    battery_percent = models.PositiveIntegerField(null=True, blank=True)
+    reported_at = models.DateTimeField()
+    raw_payload = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "v2_drone_telemetry_snapshots"
+        ordering = ["-reported_at", "-id"]
 
 
 class DockResource(TimeStampedModel):
@@ -146,6 +189,27 @@ class PayloadResource(TimeStampedModel):
 
     def __str__(self):
         return self.payload_sn
+
+
+class MqttLatestMessage(TimeStampedModel):
+    dji_connection = models.ForeignKey(DjiConnection, on_delete=models.CASCADE, related_name="mqtt_latest_messages")
+    topic = models.CharField(max_length=512)
+    topic_kind = models.CharField(max_length=64, blank=True, default="")
+    device_sn = models.CharField(max_length=128, blank=True, default="")
+    received_at = models.DateTimeField()
+    sequence = models.PositiveBigIntegerField(default=0)
+    raw_payload = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "v2_mqtt_latest_messages"
+        ordering = ["-received_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["dji_connection", "topic", "device_sn"], name="uniq_v2_mqtt_latest_connection_topic_device"),
+        ]
+        indexes = [
+            models.Index(fields=["dji_connection", "topic_kind", "device_sn"], name="idx_v2_mqtt_latest_filter"),
+            models.Index(fields=["device_sn", "received_at"], name="idx_v2_mqtt_latest_device_time"),
+        ]
 
 
 class ResourceBinding(TimeStampedModel):

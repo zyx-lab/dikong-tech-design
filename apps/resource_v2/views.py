@@ -28,6 +28,8 @@ from apps.resource_v2.models import (
     BindingStatus,
     DjiConnection,
     DjiConnectionStatus,
+    MqttConnectionHealth,
+    MqttLatestMessage,
     ResourceBinding,
     ResourceSharePermission,
     ResourceType,
@@ -40,6 +42,8 @@ from apps.resource_v2.serializers import (
     DjiConnectionCredentialReadSerializer,
     DjiConnectionReadSerializer,
     DjiConnectionWriteSerializer,
+    MqttConnectionHealthReadSerializer,
+    MqttLatestMessageReadSerializer,
     ResourceReadSerializer,
     ShareGroupCreateSerializer,
     ShareGroupReadSerializer,
@@ -56,6 +60,7 @@ from apps.resource_v2.services import (
     get_resource,
     mark_binding_created,
     mark_binding_unbound,
+    can_manage_connection,
     require_bind_connection,
     require_manage_connection,
     require_unbind,
@@ -74,6 +79,8 @@ class V2ResourceAPIView(BusinessApiResponseMixin, GenericAPIView):
 
 DJI_CONNECTION_LIST_RESPONSE = list_data_serializer("V2DjiConnectionListData", DjiConnectionReadSerializer)
 RESOURCE_LIST_RESPONSE = list_data_serializer("V2ResourceListData", ResourceReadSerializer)
+MQTT_HEALTH_LIST_RESPONSE = list_data_serializer("V2MqttHealthListData", MqttConnectionHealthReadSerializer)
+MQTT_LATEST_MESSAGE_LIST_RESPONSE = list_data_serializer("V2MqttLatestMessageListData", MqttLatestMessageReadSerializer)
 SHARE_GROUP_LIST_RESPONSE = list_data_serializer("V2ShareGroupListData", ShareGroupReadSerializer)
 AUDIT_LOG_LIST_RESPONSE = list_data_serializer("V2AuditLogListData", AuditLogReadSerializer)
 
@@ -334,6 +341,80 @@ class DjiConnectionDiscoverView(V2ResourceAPIView):
             ],
         }
         return Response(data, status=status.HTTP_200_OK)
+
+
+class DjiConnectionMqttHealthView(V2ResourceAPIView):
+    @extend_schema(
+        operation_id="v2_resource_dji_connections_mqtt_health",
+        summary="查询 DJI MQTT worker 健康状态",
+        responses={200: OpenApiResponse(response=MQTT_HEALTH_LIST_RESPONSE, description="查询成功。")},
+    )
+    def get(self, request):
+        context = resolve_v2_context(request)
+        if is_platform_super_admin(context):
+            queryset = MqttConnectionHealth.objects.select_related("dji_connection", "dji_connection__owner_department")
+        elif is_department_admin(context):
+            queryset = MqttConnectionHealth.objects.select_related(
+                "dji_connection",
+                "dji_connection__owner_department",
+            ).filter(dji_connection__owner_department=context.department)
+        else:
+            raise StandardForbidden()
+        queryset = queryset.order_by("-updated_at", "-id")
+        serializer = MqttConnectionHealthReadSerializer(queryset, many=True)
+        return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
+
+
+def _can_read_device_mqtt(context, *, connection: DjiConnection, device_sn: str) -> bool:
+    if can_manage_connection(context, connection):
+        return True
+    if not device_sn:
+        return False
+    for resource_type in (ResourceType.DRONE, ResourceType.DOCK, ResourceType.GATEWAY, ResourceType.PAYLOAD):
+        bindings = visible_bindings_queryset(context, resource_type=resource_type).filter(dji_connection=connection)
+        for binding in bindings:
+            resource = get_resource(resource_type, binding.resource_object_id)
+            if getattr(resource, "device_sn", "") != device_sn:
+                continue
+            from apps.resource_v2.services import effective_permissions_for_binding
+
+            return "monitor" in set(effective_permissions_for_binding(context, binding))
+    return False
+
+
+class DjiConnectionMqttLatestMessageView(V2ResourceAPIView):
+    @extend_schema(
+        operation_id="v2_resource_dji_connections_mqtt_latest_messages",
+        summary="查询 DJI MQTT 最新透传消息",
+        parameters=[
+            OpenApiParameter("deviceSn", str, OpenApiParameter.QUERY, required=False, description="设备 SN。"),
+            OpenApiParameter("topicKind", str, OpenApiParameter.QUERY, required=False, description="topic 类型，如 osd/status/events。"),
+            OpenApiParameter("topic", str, OpenApiParameter.QUERY, required=False, description="完整 MQTT topic。"),
+        ],
+        responses={200: OpenApiResponse(response=MQTT_LATEST_MESSAGE_LIST_RESPONSE, description="查询成功。")},
+    )
+    def get(self, request, id: int):
+        context = resolve_v2_context(request)
+        connection = DjiConnection.objects.select_related("owner_department").filter(pk=id).first()
+        if connection is None:
+            return _not_found_response()
+
+        device_sn = str(request.query_params.get("deviceSn", "") or "").strip()
+        if not _can_read_device_mqtt(context, connection=connection, device_sn=device_sn):
+            raise StandardForbidden()
+
+        queryset = MqttLatestMessage.objects.filter(dji_connection=connection)
+        topic_kind = str(request.query_params.get("topicKind", "") or "").strip()
+        topic = str(request.query_params.get("topic", "") or "").strip()
+        if device_sn:
+            queryset = queryset.filter(device_sn=device_sn)
+        if topic_kind:
+            queryset = queryset.filter(topic_kind=topic_kind)
+        if topic:
+            queryset = queryset.filter(topic=topic)
+        queryset = queryset.order_by("-received_at", "-id")
+        serializer = MqttLatestMessageReadSerializer(queryset, many=True)
+        return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
 
 
 class ResourceListView(V2ResourceAPIView):

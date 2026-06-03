@@ -15,6 +15,7 @@ from apps.resource_v2.audit import log_v2_action
 from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import (
     BindingStatus,
+    DjiConnection,
     DockResource,
     DroneResource,
     GatewayResource,
@@ -22,6 +23,7 @@ from apps.resource_v2.models import (
     ResourceSharePermission,
     ResourceType,
 )
+from apps.resource_v2.mqtt import upsert_drone_telemetry_from_osd
 from apps.resource_v2.services import get_resource, visible_bindings_queryset
 from apps.workforce_v2.services import pilot_has_effective_qualification, visible_pilots_queryset
 from apps.inspection_v2.models import (
@@ -1237,9 +1239,10 @@ def apply_device_status_event(*, device_sn: str, payload: dict | None = None) ->
     return {"updated": updated, "onlineStatus": online}
 
 
-def apply_osd_telemetry(*, device_sn: str, payload: dict | None = None) -> dict:
+def apply_osd_telemetry(*, device_sn: str, payload: dict | None = None, dji_connection: DjiConnection | None = None) -> dict:
     payload = payload if isinstance(payload, dict) else {}
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    upsert_drone_telemetry_from_osd(connection=dji_connection, device_sn=device_sn, payload=payload)
     apply_device_status_event(device_sn=device_sn, payload={"online": True, "data": data})
     sessions = FlightSession.objects.select_related("mission").filter(
         status=FlightSessionStatus.RUNNING,
