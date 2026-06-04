@@ -13,7 +13,6 @@ class Migration(migrations.Migration):
         ('access', '0012_authsession'),
         ('iam_v2', '0001_initial'),
         ('inspection_v2', '0001_initial'),
-        ('workforce_v2', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -21,7 +20,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='inspectionmission',
             name='pilot',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='v2_missions', to='workforce_v2.pilotprofile'),
+            field=models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='v2_missions', to='inspection_v2.pilotprofile'),
         ),
         migrations.AddField(
             model_name='inspectionmission',

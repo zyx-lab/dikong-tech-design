@@ -1,11 +1,15 @@
 import json
 import tempfile
 import zipfile
-from io import BytesIO
+from contextlib import contextmanager
+from datetime import timezone as dt_timezone
+from io import BytesIO, StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.storage import Storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import TestCase, override_settings
@@ -19,8 +23,9 @@ from apps.iam_v2.models import (
     FixedRole,
     ResourceShareGroup,
     ResourceShareGroupTargetDepartment,
-    V2AccountProfile,
     V2AccountQualification,
+    V2AccountProfile,
+    V2AccountRoleProfile,
     V2AccountRoleAssignment,
 )
 from apps.inspection_v2.models import (
@@ -47,9 +52,21 @@ from apps.resource_v2.models import (
     ResourceSharePermission,
     ResourceType,
 )
-from apps.workforce_v2.models import PilotProfile
-
 User = get_user_model()
+
+
+class MemoryObjectStorage(Storage):
+    saved_files: dict[str, bytes] = {}
+
+    def _save(self, name, content):
+        self.saved_files[name] = content.read()
+        return name
+
+    def exists(self, name):
+        return name in self.saved_files
+
+    def url(self, name):
+        return f"https://storage.example.test/{name}"
 
 
 def create_v2_actor(*, username: str, role_code: str | None, department: Department):
@@ -106,18 +123,25 @@ class InspectionV2ApiTests(TestCase):
         self.client.force_authenticate(user)
 
     def create_pilot(self, account_profile, name):
-        pilot = PilotProfile.objects.create(account_profile=account_profile, display_name=name)
+        V2AccountRoleProfile.objects.create(
+            account_profile=account_profile,
+            profile_type=FixedRole.PILOT,
+            display_name=name,
+            level="A1",
+            status=DirectoryStatus.ACTIVE,
+            remark="当前有效",
+        )
         V2AccountQualification.objects.create(
             account_profile=account_profile,
-            role_code=FixedRole.PILOT,
+            profile_type=FixedRole.PILOT,
             qualification_type="多旋翼巡检",
-            certificate_no=f"CERT-{pilot.id}",
+            certificate_no=f"CERT-{account_profile.id}",
             issued_at=timezone.now().date(),
             expires_at=timezone.now().date().replace(year=timezone.now().date().year + 1),
             status=DirectoryStatus.ACTIVE,
             remark="当前有效",
         )
-        return pilot
+        return account_profile
 
     def bind_drone(self, department, actor, device_sn):
         connection = DjiConnection.objects.create(
@@ -191,6 +215,26 @@ class InspectionV2ApiTests(TestCase):
         wayline_id = f"wayline-kmz-{self.route_upload_counter:03d}"
         return {"dji_wayline_id": wayline_id, "download_url": f"/waylines/{wayline_id}/url"}
 
+    def signed_route_download_url(self, wayline_id: str, *, issued_at=None, expires: int = 3600) -> str:
+        issued_at = issued_at or timezone.now()
+        amz_date = issued_at.astimezone(dt_timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        return (
+            f"https://dji-download.example.test/waylines/{wayline_id}.kmz"
+            f"?X-Amz-Date={amz_date}&X-Amz-Expires={expires}&X-Amz-Signature=test-signature"
+        )
+
+    @contextmanager
+    def route_upload_mock(self, upload_payload: dict | None = None):
+        upload_payload = upload_payload or self.next_route_upload_payload()
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
+            return_value=upload_payload,
+        ) as upload_route, patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.get_route_download_url",
+            return_value=self.signed_route_download_url(upload_payload["dji_wayline_id"]),
+        ) as get_download_url:
+            yield upload_route, get_download_url
+
     def dji_connection_for_user(self, user):
         department = user.v2_account_profile.department
         connection = DjiConnection.objects.filter(owner_department=department).first()
@@ -217,10 +261,7 @@ class InspectionV2ApiTests(TestCase):
 
     def create_route_by_api(self, user, name="一号航线"):
         self.authenticate(user)
-        with patch(
-            "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
-            return_value=self.next_route_upload_payload(),
-        ):
+        with self.route_upload_mock():
             response = self.client.post("/api/v2/inspection/routes", self.route_multipart_payload(user, name), format="multipart")
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
         return response.data["data"]
@@ -248,7 +289,7 @@ class InspectionV2ApiTests(TestCase):
             "name": name,
             "routeId": route_id,
             "droneId": drone_id,
-            "pilotId": pilot_id,
+            "pilotAccountProfileId": pilot_id,
             "remark": "首版闭环任务",
         }
         if executor_id is not None:
@@ -286,10 +327,7 @@ class InspectionV2ApiTests(TestCase):
             "waylineType": wayline_type,
             "kmzFile": self.kmz_file(),
         }
-        with patch(
-            "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
-            return_value=self.next_route_upload_payload(),
-        ):
+        with self.route_upload_mock():
             response = self.client.put(f"/api/v2/inspection/routes/{route_id}", payload, format="multipart")
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         return response.data["data"]["djiFile"]
@@ -327,6 +365,140 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(route["djiFile"]["djiConnectionId"], self.dji_connection_for_user(self.owner_dispatcher).id)
         self.assertRegex(route["djiFile"]["djiFileId"], r"^wayline-kmz-\d{3}$")
 
+    def test_route_create_should_return_absolute_dji_download_url_and_expiry(self):
+        self.authenticate(self.owner_dispatcher)
+        payload = self.route_multipart_payload(self.owner_dispatcher, name="直链航线")
+        upload_payload = {"dji_wayline_id": "wayline-direct-001", "download_url": "/api/v1/wayline/workspaces/ws/waylines/wayline-direct-001/url"}
+        absolute_url = self.signed_route_download_url("wayline-direct-001")
+
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
+            return_value=upload_payload,
+        ) as upload_route, patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.get_route_download_url",
+            return_value=absolute_url,
+        ) as get_download_url:
+            response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
+
+        self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
+        dji_file = response.data["data"]["djiFile"]
+        self.assertEqual(dji_file["downloadUrl"], absolute_url)
+        self.assertTrue(dji_file["downloadUrlExpiresAt"])
+        persisted = WaypointRouteCloudFile.objects.get(route_id=response.data["data"]["id"])
+        self.assertEqual(persisted.download_url, absolute_url)
+        self.assertIsNotNone(persisted.download_url_expires_at)
+        upload_route.assert_called_once()
+        get_download_url.assert_called_once_with("wayline-direct-001")
+
+    def test_route_detail_should_refresh_relative_dji_download_url(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="详情刷新航线")
+        cloud_file = WaypointRouteCloudFile.objects.get(route_id=route["id"])
+        cloud_file.download_url = "/api/v1/wayline/workspaces/ws/waylines/wayline-refresh-001/url"
+        cloud_file.download_url_expires_at = None
+        cloud_file.save(update_fields=["download_url", "download_url_expires_at", "updated_at"])
+        absolute_url = self.signed_route_download_url(cloud_file.dji_file_id)
+
+        self.authenticate(self.owner_dispatcher)
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.get_route_download_url",
+            return_value=absolute_url,
+        ) as get_download_url:
+            response = self.client.get(f"/api/v2/inspection/routes/{route['id']}")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["djiFile"]["downloadUrl"], absolute_url)
+        self.assertTrue(response.data["data"]["djiFile"]["downloadUrlExpiresAt"])
+        cloud_file.refresh_from_db()
+        self.assertEqual(cloud_file.download_url, absolute_url)
+        self.assertIsNotNone(cloud_file.download_url_expires_at)
+        get_download_url.assert_called_once_with(cloud_file.dji_file_id)
+
+    def test_route_list_should_not_refresh_cached_dji_download_url(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="列表不刷新航线")
+        cloud_file = WaypointRouteCloudFile.objects.get(route_id=route["id"])
+        cloud_file.download_url = "/api/v1/wayline/workspaces/ws/waylines/wayline-list-001/url"
+        cloud_file.download_url_expires_at = None
+        cloud_file.save(update_fields=["download_url", "download_url_expires_at", "updated_at"])
+
+        self.authenticate(self.owner_dispatcher)
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.get_route_download_url") as get_download_url:
+            response = self.client.get("/api/v2/inspection/routes", {"keywords": "列表不刷新航线"})
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["list"][0]["djiFile"]["downloadUrl"], cloud_file.download_url)
+        get_download_url.assert_not_called()
+
+    def test_route_create_should_roll_back_when_dji_download_url_refresh_fails(self):
+        self.authenticate(self.owner_dispatcher)
+        payload = self.route_multipart_payload(self.owner_dispatcher, name="直链失败航线")
+
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
+            return_value={"dji_wayline_id": "wayline-refresh-fail", "download_url": "/waylines/wayline-refresh-fail/url"},
+        ), patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.get_route_download_url",
+            side_effect=DjiGatewayUpstreamError("未获取到航线下载地址", status_code=502),
+        ), patch("apps.inspection_v2.views.DjiConnectionGateway.delete_route", return_value={}) as delete_route:
+            response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
+
+        self.assertEqual(response.status_code, 502, getattr(response, "data", response.content))
+        self.assertFalse(WaypointRoute.objects.filter(name="直链失败航线").exists())
+        self.assertFalse(WaypointRouteCloudFile.objects.filter(dji_file_id="wayline-refresh-fail").exists())
+        delete_route.assert_called_once_with("wayline-refresh-fail")
+
+    def test_migrate_route_covers_to_object_storage_should_upload_existing_local_covers(self):
+        MemoryObjectStorage.saved_files = {}
+        cover_name = "inspection/routes/covers/route-new/local-cover.png"
+        WaypointRoute.objects.create(
+            owner_department=self.owner_department,
+            name="旧封面迁移航线",
+            cover_image=cover_name,
+            created_by_user=self.owner_dispatcher,
+        )
+
+        with tempfile.TemporaryDirectory() as media_root, self.settings(
+            MEDIA_ROOT=Path(media_root),
+            STORAGES={
+                "default": {"BACKEND": "apps.inspection_v2.tests.MemoryObjectStorage"},
+                "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+            },
+        ):
+            local_cover = Path(media_root) / cover_name
+            local_cover.parent.mkdir(parents=True, exist_ok=True)
+            local_cover.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+            call_command("migrate_route_covers_to_object_storage", stdout=StringIO())
+
+        self.assertEqual(MemoryObjectStorage.saved_files[cover_name], b"\x89PNG\r\n\x1a\n")
+
+    def test_refresh_route_kmz_download_urls_should_update_existing_relative_urls(self):
+        route = WaypointRoute.objects.create(
+            owner_department=self.owner_department,
+            name="旧 KMZ 刷新航线",
+            created_by_user=self.owner_dispatcher,
+        )
+        connection = self.dji_connection_for_user(self.owner_dispatcher)
+        cloud_file = WaypointRouteCloudFile.objects.create(
+            route=route,
+            dji_connection=connection,
+            workspace_id=connection.workspace_id,
+            dji_file_id="wayline-refresh-command",
+            wayline_type=0,
+            download_url="/api/v1/wayline/workspaces/ws/waylines/wayline-refresh-command/url",
+        )
+        absolute_url = self.signed_route_download_url(cloud_file.dji_file_id)
+
+        with patch(
+            "apps.inspection_v2.management.commands.refresh_route_kmz_download_urls.DjiConnectionGateway.get_route_download_url",
+            return_value=absolute_url,
+        ) as get_download_url:
+            call_command("refresh_route_kmz_download_urls", stdout=StringIO())
+
+        cloud_file.refresh_from_db()
+        self.assertEqual(cloud_file.download_url, absolute_url)
+        self.assertIsNotNone(cloud_file.download_url_expires_at)
+        get_download_url.assert_called_once_with("wayline-refresh-command")
+
     def test_route_json_create_should_be_rejected_because_kmz_is_required(self):
         self.authenticate(self.owner_dispatcher)
         response = self.client.post("/api/v2/inspection/routes", self.route_payload("JSON 创建航线"), format="json")
@@ -363,10 +535,7 @@ class InspectionV2ApiTests(TestCase):
         payload["coverImage"] = SimpleUploadedFile("cover.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
 
         with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
-            with patch(
-                "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
-                return_value=self.next_route_upload_payload(),
-            ):
+            with self.route_upload_mock():
                 response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
 
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
@@ -403,10 +572,7 @@ class InspectionV2ApiTests(TestCase):
         create_payload["coverImage"] = SimpleUploadedFile("cover-a.jpg", b"\xff\xd8\xff\xd9", content_type="image/jpeg")
 
         with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
-            with patch(
-                "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
-                return_value=self.next_route_upload_payload(),
-            ):
+            with self.route_upload_mock():
                 create_response = self.client.post("/api/v2/inspection/routes", create_payload, format="multipart")
             self.assertEqual(create_response.status_code, 201, getattr(create_response, "data", create_response.content))
             route_id = create_response.data["data"]["id"]
@@ -453,10 +619,7 @@ class InspectionV2ApiTests(TestCase):
         route_payload["coverImage"] = SimpleUploadedFile("mission-cover.webp", b"RIFFxxxxWEBP", content_type="image/webp")
 
         with tempfile.TemporaryDirectory() as media_root, self.storage_settings(media_root):
-            with patch(
-                "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
-                return_value=self.next_route_upload_payload(),
-            ):
+            with self.route_upload_mock():
                 route_response = self.client.post("/api/v2/inspection/routes", route_payload, format="multipart")
             self.assertEqual(route_response.status_code, 201, getattr(route_response, "data", route_response.content))
             route = route_response.data["data"]
@@ -563,10 +726,10 @@ class InspectionV2ApiTests(TestCase):
 
         self.authenticate(self.owner_dispatcher)
         payload = self.route_multipart_payload(self.owner_dispatcher, name="KMZ 航线", wayline_type=2)
-        with patch(
-            "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
-            return_value={"dji_wayline_id": "wayline-kmz-001", "download_url": "/waylines/wayline-kmz-001/url"},
-        ) as upload_route:
+        with self.route_upload_mock({"dji_wayline_id": "wayline-kmz-001", "download_url": "/waylines/wayline-kmz-001/url"}) as (
+            upload_route,
+            _get_download_url,
+        ):
             response = self.client.post("/api/v2/inspection/routes", payload, format="multipart")
 
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
@@ -636,10 +799,11 @@ class InspectionV2ApiTests(TestCase):
         payload["defaultAltitude"] = "130.00"
 
         self.authenticate(self.owner_dispatcher)
-        with patch(
-            "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
-            return_value={"dji_wayline_id": "wayline-kmz-replaced", "download_url": "/waylines/wayline-kmz-replaced/url"},
-        ) as upload_route, patch("apps.inspection_v2.views.DjiConnectionGateway.delete_route", return_value={}) as delete_route:
+        with self.route_upload_mock(
+            {"dji_wayline_id": "wayline-kmz-replaced", "download_url": "/waylines/wayline-kmz-replaced/url"}
+        ) as (upload_route, _get_download_url), patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.delete_route", return_value={}
+        ) as delete_route:
             response = self.client.put(f"/api/v2/inspection/routes/{route_id}", payload, format="multipart")
 
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
@@ -1191,7 +1355,7 @@ class InspectionV2ApiTests(TestCase):
                 "name": "缺少 use 的任务",
                 "routeId": route["id"],
                 "droneId": self.drone.id,
-                "pilotId": self.other_pilot.id,
+                "pilotAccountProfileId": self.other_pilot.id,
             },
             format="json",
         )
@@ -1205,7 +1369,7 @@ class InspectionV2ApiTests(TestCase):
                 "name": "具备 use 的任务",
                 "routeId": route["id"],
                 "droneId": self.drone.id,
-                "pilotId": self.other_pilot.id,
+                "pilotAccountProfileId": self.other_pilot.id,
             },
             format="json",
         )

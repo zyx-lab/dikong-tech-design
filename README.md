@@ -66,12 +66,14 @@
 - 登录：`POST /api/v2/iam/session/login`
 - 刷新令牌：`POST /api/v2/iam/session/refresh`
 - 登出：`POST /api/v2/iam/session/logout`
+- 当前权限上下文：`GET /api/v2/iam/me/context`
+- 当前可见菜单：`GET /api/v2/system/menus/current`
 - 当前账号资料：`GET /api/v2/iam/me/profile`
-- 业务分组：`/api/v2/iam/*`、`/api/v2/resource/*`、`/api/v2/workforce/*`、`/api/v2/inspection/*`
+- 业务分组：`/api/v2/iam/*`、`/api/v2/system/*`、`/api/v2/resource/*`、`/api/v2/inspection/*`
 
 `/api/v1/*` 仍作为 legacy 兼容入口保留，但不作为当前 v2 业务开发和联调入口。DJI 上游协议里的 `/api/v1/manage/*`、`/api/v1/wayline/*`、`/api/v1/media/*` 是 DJI 云平台自身的协议路径，不是本系统对外业务 API。
 
-v2 和 v1 是两套平行体系：v2 账号资料使用 `V2AccountProfile`，不使用 v1 的 `StaffProfile`；v2 不提供公开注册入口，账号由平台超管或部门管理员通过 `/api/v2/iam/accounts` 创建维护。v2 资质是账号级通用资质，通过 `/api/v2/iam/accounts/{id}/qualifications` 管理，不再使用飞手专属资质接口。
+v2 和 v1 是两套平行体系：v2 账号资料使用 `V2AccountProfile`，不使用 v1 的 `StaffProfile`；v2 不提供公开注册入口，账号由平台超管或部门管理员通过 `/api/v2/iam/accounts` 创建维护。账号角色档案和账号资质归属 IAM 域，通过 `/api/v2/iam/accounts/{id}/profiles` 和 `/api/v2/iam/accounts/{id}/qualifications` 维护；巡检任务选择飞手时提交具备 `pilot` 档案和有效 `pilot` 资质的 `pilotAccountProfileId`。
 
 ### API v2 联调账号
 
@@ -85,7 +87,7 @@ v2 和 v1 是两套平行体系：v2 账号资料使用 `V2AccountProfile`，不
 | `v2_test_pilot` | v2 飞手 | `13800010004` | `v2_test_pilot@example.test` | `pilot` | 飞手 |
 | `v2_test_work_order_handler` | v2 工单处理者 | `13800010005` | `v2_test_work_order_handler@example.test` | `work_order_handler` | 工单处理者 |
 
-`GET /api/v2/iam/roles` 只返回 4 个部门角色，不返回 `platform_super_admin`。前端业务角色选择器不要展示平台身份。
+`GET /api/v2/iam/roles` 返回全局角色目录，包含 `platform_super_admin` 等内置系统角色。前端业务角色分配时应优先使用接口返回的 `assignableByDepartmentAdmin`、`dataScope`、`isSuperAdmin` 等字段过滤可分配角色；部门管理员只能分配 `assignableByDepartmentAdmin=true` 且数据范围不是 `ALL` 的角色。
 
 ## 快速启动
 
@@ -96,11 +98,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py seed_role_permissions --mode replace
-python manage.py createsuperuser
-python manage.py create_business_admin_account --username biz_root --password 'YourStrongPassword'
+python manage.py bootstrap_v2_system --reset --username v2_root --password 'YourStrongPassword' --noinput
 python manage.py runserver 0.0.0.0:8001
 ```
+
+`bootstrap_v2_system` 会初始化 v2 根部门、默认角色、权限点、菜单和指定的第一个平台超管账号；不提供前端 setup API，也不内置固定种子账号。仅调试 legacy v1 入口时再单独执行 v1 的初始化命令。
 
 ### 航线封面对象存储
 
@@ -118,6 +120,18 @@ export OBJECT_STORAGE_URL_EXPIRE_SECONDS=3600
 ```
 
 `OBJECT_STORAGE_PUBLIC_DOMAIN=assets.example.com` 只用于公有 bucket 或 CDN 风格域名，值必须是不带 scheme 和 path 的 host-only 形式。私有 MinIO 需要预签名 URL 时不要设置 `OBJECT_STORAGE_PUBLIC_DOMAIN`，并确保 `OBJECT_STORAGE_ENDPOINT_URL` 是前端浏览器可访问的地址。
+
+本仓库的 Docker Compose 本地部署已包含配套 MinIO，默认 bucket 为 `dikong-route-covers`，当前本机默认对外 endpoint 为 `http://192.168.3.99:9000`；如部署机器 IP 不同，用 `OBJECT_STORAGE_ENDPOINT_URL` 覆盖。API v2 保存航线后：
+
+- `coverImageUrl` 返回 MinIO 私有预签名 URL，会过期，前端长期展示前重新读取航线详情即可刷新。
+- `djiFile.downloadUrl` 返回 DJI 上云侧 KMZ 绝对下载链接，KMZ 不会复制到本系统 MinIO。
+
+如果从旧的 filesystem 部署切换到 MinIO，执行以下命令修复历史数据：
+
+```bash
+python manage.py migrate_route_covers_to_object_storage
+python manage.py refresh_route_kmz_download_urls
+```
 
 临时需要 SQLite 时显式设置 `DB_ENGINE=sqlite`。Django 测试命令和仓库内 v2 回归脚本会固定使用 SQLite，不依赖本地 PostgreSQL。
 

@@ -1,6 +1,8 @@
 import re
 import uuid
 import logging
+from datetime import datetime, timedelta, timezone as dt_timezone
+from urllib.parse import parse_qs, urlsplit
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
@@ -14,9 +16,12 @@ from rest_framework.response import Response
 from apps.access.authentication import BearerAuthSessionAuthentication
 from apps.access.api_base import EmptySerializer
 from apps.access.exceptions import StandardConstraintConflict, StandardForbidden, StandardNotFound
+from apps.access.models import DirectoryStatus
 from apps.api_v2.openapi import V2MediaRefreshSerializer, generic_object_response, list_data_serializer
 from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
 from apps.dji_cloud.gateway import DjiGatewayError
+from apps.iam_v2.account_profile_services import account_has_effective_qualification, require_active_account_role_profile
+from apps.iam_v2.models import FixedRole, V2AccountProfile
 from apps.iam_v2.services import resolve_v2_context
 from apps.inspection_v2.models import (
     InspectionMission,
@@ -73,10 +78,10 @@ from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import ResourceType
 from apps.resource_v2.models import DjiConnection
 from apps.resource_v2.services import get_resource
-from apps.workforce_v2.services import pilot_has_effective_qualification, visible_pilots_queryset
 
 
 logger = logging.getLogger(__name__)
+ROUTE_DOWNLOAD_URL_REFRESH_MARGIN = timedelta(minutes=5)
 
 
 class InspectionV2APIView(BusinessApiResponseMixin, GenericAPIView):
@@ -134,6 +139,7 @@ ROUTE_MULTIPART_UPDATE_REQUEST = OpenApiRequest(
         "kmzFile": {"contentType": "application/vnd.google-earth.kmz, application/zip"},
     },
 )
+EMPTY_OBJECT_REQUEST = OpenApiRequest(request={"type": "object", "properties": {}})
 
 
 def _duplicate_response(errors=None):
@@ -252,14 +258,111 @@ def _dji_connection_for_route(route: WaypointRoute, dji_connection_id: int) -> D
     return connection
 
 
+def _is_absolute_http_url(value: str) -> bool:
+    return value.startswith("http://") or value.startswith("https://")
+
+
+def _absolute_dji_url(connection: DjiConnection, value: str) -> str:
+    url = str(value or "").strip()
+    if not url or _is_absolute_http_url(url):
+        return url
+    base_url = str(getattr(connection, "base_url", "") or "").rstrip("/")
+    if not base_url:
+        return url
+    return f"{base_url}/{url.lstrip('/')}"
+
+
+def _parse_download_url_expires_at(download_url: str):
+    query = parse_qs(urlsplit(str(download_url or "")).query)
+    params = {key.lower(): values[-1] for key, values in query.items() if values}
+
+    amz_date = params.get("x-amz-date")
+    amz_expires = params.get("x-amz-expires")
+    if amz_date and amz_expires:
+        try:
+            issued_at = datetime.strptime(amz_date, "%Y%m%dT%H%M%SZ").replace(tzinfo=dt_timezone.utc)
+            return issued_at + timedelta(seconds=int(amz_expires))
+        except (TypeError, ValueError):
+            return None
+
+    epoch_expires = params.get("expires")
+    if epoch_expires:
+        try:
+            return datetime.fromtimestamp(int(epoch_expires), tz=dt_timezone.utc)
+        except (TypeError, ValueError, OSError):
+            return None
+    return None
+
+
+def _resolve_dji_download_url(*, gateway: DjiConnectionGateway, connection: DjiConnection, dji_file_id: str) -> tuple[str, object]:
+    download_url = _absolute_dji_url(connection, str(gateway.get_route_download_url(dji_file_id) or ""))
+    if not download_url or not _is_absolute_http_url(download_url):
+        raise DjiGatewayError(
+            "未获取到可直接访问的航线下载地址",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            data={"dji_file_id": dji_file_id, "download_url": download_url},
+        )
+    return download_url, _parse_download_url_expires_at(download_url)
+
+
+def _download_url_needs_refresh(cloud_file: WaypointRouteCloudFile) -> bool:
+    download_url = str(getattr(cloud_file, "download_url", "") or "").strip()
+    if not download_url or not _is_absolute_http_url(download_url):
+        return True
+    expires_at = getattr(cloud_file, "download_url_expires_at", None)
+    if expires_at is None:
+        return True
+    return expires_at <= timezone.now() + ROUTE_DOWNLOAD_URL_REFRESH_MARGIN
+
+
+def _refresh_route_cloud_file_download_url(cloud_file: WaypointRouteCloudFile) -> WaypointRouteCloudFile:
+    gateway = DjiConnectionGateway(cloud_file.dji_connection)
+    download_url, expires_at = _resolve_dji_download_url(
+        gateway=gateway,
+        connection=cloud_file.dji_connection,
+        dji_file_id=cloud_file.dji_file_id,
+    )
+    cloud_file.download_url = download_url
+    cloud_file.download_url_expires_at = expires_at
+    cloud_file.save(update_fields=["download_url", "download_url_expires_at", "updated_at"])
+    return cloud_file
+
+
+def _refresh_route_cloud_file_download_url_if_needed(route: WaypointRoute) -> None:
+    try:
+        cloud_file = route.cloud_file
+    except WaypointRouteCloudFile.DoesNotExist:
+        return
+    if _download_url_needs_refresh(cloud_file):
+        _refresh_route_cloud_file_download_url(cloud_file)
+
+
 def _upload_route_to_dji(*, route: WaypointRoute, connection: DjiConnection, kmz_file) -> dict:
     gateway = DjiConnectionGateway(connection)
     upload_name = _safe_dji_upload_name(route_id=route.id)
     upload_file = _clone_kmz_for_dji_upload(kmz_file, upload_name=upload_name)
-    return gateway.upload_route(route_name=upload_name, file_obj=upload_file)
+    upload_payload = gateway.upload_route(route_name=upload_name, file_obj=upload_file)
+    dji_file_id = str(upload_payload["dji_wayline_id"])
+    try:
+        download_url, expires_at = _resolve_dji_download_url(
+            gateway=gateway,
+            connection=connection,
+            dji_file_id=dji_file_id,
+        )
+    except DjiGatewayError:
+        _delete_dji_route_best_effort(connection=connection, dji_file_id=dji_file_id)
+        raise
+    normalized_payload = dict(upload_payload)
+    normalized_payload["download_url"] = download_url
+    normalized_payload["download_url_expires_at"] = expires_at
+    return normalized_payload
 
 
 def _sync_route_cloud_file(*, route: WaypointRoute, connection: DjiConnection, upload_payload: dict, wayline_type, user):
+    raw_response = dict(upload_payload)
+    raw_expires_at = raw_response.get("download_url_expires_at")
+    if hasattr(raw_expires_at, "isoformat"):
+        raw_response["download_url_expires_at"] = raw_expires_at.isoformat()
     return WaypointRouteCloudFile.objects.update_or_create(
         route=route,
         defaults={
@@ -268,7 +371,8 @@ def _sync_route_cloud_file(*, route: WaypointRoute, connection: DjiConnection, u
             "dji_file_id": str(upload_payload["dji_wayline_id"]),
             "wayline_type": wayline_type,
             "download_url": str(upload_payload.get("download_url") or ""),
-            "raw_response": upload_payload,
+            "download_url_expires_at": upload_payload.get("download_url_expires_at"),
+            "raw_response": raw_response,
             "uploaded_by_user": user,
             "uploaded_at": timezone.now(),
         },
@@ -378,6 +482,10 @@ class RouteDetailView(InspectionV2APIView):
     def get(self, request, id: int):
         context = resolve_v2_context(request)
         route = get_visible_route_or_404(context, id)
+        try:
+            _refresh_route_cloud_file_download_url_if_needed(route)
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
         return Response(RouteReadSerializer(route).data, status=status.HTTP_200_OK)
 
     @extend_schema(
@@ -511,10 +619,23 @@ def _validated_mission_inputs(context, data):
     route = assignable_routes_queryset(context).filter(pk=data["routeId"]).first()
     if route is None:
         raise StandardNotFound()
-    pilot = visible_pilots_queryset(context).filter(pk=data["pilotId"]).first()
-    if pilot is None:
+    pilot_account = (
+        V2AccountProfile.objects.select_related("user", "department")
+        .filter(
+            pk=data["pilotAccountProfileId"],
+            status=DirectoryStatus.ACTIVE,
+            department__status=DirectoryStatus.ACTIVE,
+        )
+        .first()
+    )
+    if pilot_account is None:
         raise StandardNotFound()
-    if not pilot_has_effective_qualification(pilot):
+    if not context.is_super_admin and not pilot_account.department.path.startswith(context.department.path):
+        raise StandardForbidden()
+    if not pilot_account.role_assignments.filter(role_code=FixedRole.PILOT).exists():
+        raise StandardConstraintConflict(msg="飞手账号未分配 pilot 角色")
+    require_active_account_role_profile(pilot_account, FixedRole.PILOT)
+    if not account_has_effective_qualification(pilot_account, FixedRole.PILOT):
         raise StandardConstraintConflict(msg="飞手缺少有效资质")
     drone_binding = usable_resource_binding(context, ResourceType.DRONE, data["droneId"])
     bindings = [drone_binding]
@@ -543,7 +664,7 @@ def _validated_mission_inputs(context, data):
         executor_id=executor.id if executor else None,
         payload_id=payload.id if payload else None,
     )
-    return route, pilot, drone, dock, executor, payload, bindings
+    return route, pilot_account, drone, dock, executor, payload, bindings
 
 
 class MissionListCreateView(InspectionV2APIView):
@@ -589,7 +710,7 @@ class MissionListCreateView(InspectionV2APIView):
         require_dispatcher(context)
         serializer = MissionWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        route, pilot, drone, dock, executor, payload, bindings = _validated_mission_inputs(context, serializer.validated_data)
+        route, pilot_account, drone, dock, executor, payload, bindings = _validated_mission_inputs(context, serializer.validated_data)
         mission = InspectionMission.objects.create(
             creator_department=context.department,
             primary_resource_owner_department=bindings[0].owner_department,
@@ -600,7 +721,7 @@ class MissionListCreateView(InspectionV2APIView):
             dock=dock,
             executor=executor,
             payload=payload,
-            pilot=pilot,
+            pilot_account_profile=pilot_account,
             scheduled_at=serializer.validated_data.get("scheduledAt"),
             remark=serializer.validated_data.get("remark", ""),
             created_by_user=request.user,
@@ -649,7 +770,7 @@ class MissionDetailView(InspectionV2APIView):
             raise StandardConstraintConflict(msg="只有待执行任务可以编辑")
         serializer = MissionWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        route, pilot, drone, dock, executor, payload, bindings = _validated_mission_inputs(context, serializer.validated_data)
+        route, pilot_account, drone, dock, executor, payload, bindings = _validated_mission_inputs(context, serializer.validated_data)
         before_data = MissionReadSerializer(mission).data
         mission.route = route
         mission.route_snapshot = route_snapshot(route)
@@ -659,7 +780,7 @@ class MissionDetailView(InspectionV2APIView):
         mission.dock = dock
         mission.executor = executor
         mission.payload = payload
-        mission.pilot = pilot
+        mission.pilot_account_profile = pilot_account
         mission.scheduled_at = serializer.validated_data.get("scheduledAt")
         mission.remark = serializer.validated_data.get("remark", "")
         mission.save(
@@ -672,7 +793,7 @@ class MissionDetailView(InspectionV2APIView):
                 "dock",
                 "executor",
                 "payload",
-                "pilot",
+                "pilot_account_profile",
                 "scheduled_at",
                 "remark",
                 "updated_at",

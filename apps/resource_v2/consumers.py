@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.access.authentication import sha256_text
 from apps.access.models import AuthSession, DirectoryStatus, UserStatus
 from apps.iam_v2.models import V2AccountProfile, V2AccountRoleAssignment
-from apps.iam_v2.services import V2RequestContext
+from apps.iam_v2.services import V2RequestContext, active_roles_for_codes, data_scopes_for_roles, permission_codes_for_roles
 from apps.resource_v2.models import MqttLatestMessage, ResourceType
 from apps.resource_v2.mqtt import MQTT_BROADCAST_GROUP, mqtt_message_envelope
 from apps.resource_v2.services import effective_permissions_for_binding, get_resource, visible_bindings_queryset
@@ -148,7 +148,16 @@ def _context_for_user(user_id: int) -> V2RequestContext | None:
         .order_by("id")
         .values_list("role_code", flat=True)
     )
-    return V2RequestContext(user=profile.user, profile=profile, department=profile.department, role_codes=role_codes)
+    roles = active_roles_for_codes(role_codes)
+    return V2RequestContext(
+        user=profile.user,
+        profile=profile,
+        department=profile.department,
+        role_codes=role_codes,
+        permissions=frozenset(permission_codes_for_roles(roles)),
+        data_scopes=data_scopes_for_roles(roles),
+        is_super_admin=any(role.is_super_admin for role in roles),
+    )
 
 
 def _visible_monitor_device_sns(context: V2RequestContext) -> set[str]:

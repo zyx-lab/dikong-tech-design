@@ -2,6 +2,7 @@ import json
 import zipfile
 
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from apps.access.api_base import StrictSerializer
 from apps.access.models import DirectoryStatus
@@ -21,6 +22,23 @@ from apps.inspection_v2.models import (
     route_cover_image_url,
 )
 from apps.inspection_v2.route_cover_images import RouteCoverImageField, validate_route_cover_upload
+from apps.iam_v2.serializers import DepartmentReadSerializer
+
+
+ROUTE_CLOUD_FILE_SCHEMA = {
+    "type": "object",
+    "nullable": True,
+    "properties": {
+        "routeId": {"type": "integer", "readOnly": True},
+        "djiConnectionId": {"type": "integer", "readOnly": True},
+        "workspaceId": {"type": "string", "readOnly": True},
+        "djiFileId": {"type": "string", "readOnly": True},
+        "waylineType": {"type": "integer", "readOnly": True},
+        "downloadUrl": {"type": "string", "readOnly": True},
+        "downloadUrlExpiresAt": {"type": "string", "format": "date-time", "nullable": True, "readOnly": True},
+        "uploadedAt": {"type": "string", "format": "date-time", "nullable": True, "readOnly": True},
+    },
+}
 
 
 class WaypointReadSerializer(serializers.ModelSerializer):
@@ -71,6 +89,7 @@ class RouteReadSerializer(serializers.ModelSerializer):
     def get_coverImageUrl(self, instance: WaypointRoute) -> str:
         return route_cover_image_url(instance)
 
+    @extend_schema_field(ROUTE_CLOUD_FILE_SCHEMA)
     def get_djiFile(self, instance: WaypointRoute) -> dict | None:
         try:
             cloud_file = instance.cloud_file
@@ -214,11 +233,21 @@ class RouteCloudFileReadSerializer(serializers.ModelSerializer):
     djiFileId = serializers.CharField(source="dji_file_id", read_only=True)
     waylineType = serializers.IntegerField(source="wayline_type", read_only=True)
     downloadUrl = serializers.CharField(source="download_url", read_only=True)
+    downloadUrlExpiresAt = serializers.DateTimeField(source="download_url_expires_at", allow_null=True, read_only=True)
     uploadedAt = serializers.DateTimeField(source="uploaded_at", allow_null=True, read_only=True)
 
     class Meta:
         model = WaypointRouteCloudFile
-        fields = ["routeId", "djiConnectionId", "workspaceId", "djiFileId", "waylineType", "downloadUrl", "uploadedAt"]
+        fields = [
+            "routeId",
+            "djiConnectionId",
+            "workspaceId",
+            "djiFileId",
+            "waylineType",
+            "downloadUrl",
+            "downloadUrlExpiresAt",
+            "uploadedAt",
+        ]
         read_only_fields = fields
 
 
@@ -280,6 +309,14 @@ class MissionCloudExecutionReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class InspectionPilotAccountSummarySerializer(serializers.Serializer):
+    accountProfileId = serializers.IntegerField()
+    userId = serializers.IntegerField()
+    username = serializers.CharField()
+    name = serializers.CharField()
+    department = DepartmentReadSerializer()
+
+
 class MissionReadSerializer(serializers.ModelSerializer):
     creatorDepartmentId = serializers.IntegerField(source="creator_department_id", read_only=True)
     primaryResourceOwnerDepartmentId = serializers.IntegerField(source="primary_resource_owner_department_id", read_only=True)
@@ -291,8 +328,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
     dockId = serializers.IntegerField(source="dock_id", allow_null=True, read_only=True)
     executorId = serializers.IntegerField(source="executor_id", allow_null=True, read_only=True)
     payloadId = serializers.IntegerField(source="payload_id", allow_null=True, read_only=True)
-    pilotId = serializers.IntegerField(source="pilot_id", read_only=True)
-    pilotName = serializers.CharField(source="pilot.display_name", read_only=True)
+    pilot = serializers.SerializerMethodField()
     scheduledAt = serializers.DateTimeField(source="scheduled_at", allow_null=True, read_only=True)
     startedAt = serializers.DateTimeField(source="started_at", allow_null=True, read_only=True)
     finishedAt = serializers.DateTimeField(source="finished_at", allow_null=True, read_only=True)
@@ -318,8 +354,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
             "dockId",
             "executorId",
             "payloadId",
-            "pilotId",
-            "pilotName",
+            "pilot",
             "scheduledAt",
             "startedAt",
             "finishedAt",
@@ -334,12 +369,23 @@ class MissionReadSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    @extend_schema_field(InspectionPilotAccountSummarySerializer)
+    def get_pilot(self, obj) -> dict:
+        account = obj.pilot_account_profile
+        return {
+            "accountProfileId": account.id,
+            "userId": account.user_id,
+            "username": account.user.username,
+            "name": account.name,
+            "department": DepartmentReadSerializer(account.department).data,
+        }
+
 
 class MissionWriteSerializer(StrictSerializer):
     name = serializers.CharField(max_length=128)
     routeId = serializers.IntegerField(min_value=1)
     droneId = serializers.IntegerField(min_value=1)
-    pilotId = serializers.IntegerField(min_value=1)
+    pilotAccountProfileId = serializers.IntegerField(min_value=1)
     dockId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     executorId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     payloadId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
@@ -370,8 +416,7 @@ class ActiveFlightReadSerializer(serializers.ModelSerializer):
     droneName = serializers.CharField(source="drone.name", read_only=True)
     dockId = serializers.IntegerField(source="dock_id", allow_null=True, read_only=True)
     payloadId = serializers.IntegerField(source="payload_id", allow_null=True, read_only=True)
-    pilotId = serializers.IntegerField(source="mission.pilot_id", read_only=True)
-    pilotName = serializers.CharField(source="mission.pilot.display_name", read_only=True)
+    pilot = serializers.SerializerMethodField()
     startedAt = serializers.DateTimeField(source="started_at", read_only=True)
     telemetry = TelemetrySnapshotReadSerializer(source="telemetry_snapshot", read_only=True)
     liveStatus = serializers.SerializerMethodField()
@@ -390,8 +435,7 @@ class ActiveFlightReadSerializer(serializers.ModelSerializer):
             "droneName",
             "dockId",
             "payloadId",
-            "pilotId",
-            "pilotName",
+            "pilot",
             "status",
             "startedAt",
             "telemetry",
@@ -400,6 +444,17 @@ class ActiveFlightReadSerializer(serializers.ModelSerializer):
             "liveUrls",
         ]
         read_only_fields = fields
+
+    @extend_schema_field(InspectionPilotAccountSummarySerializer)
+    def get_pilot(self, obj) -> dict:
+        account = obj.mission.pilot_account_profile
+        return {
+            "accountProfileId": account.id,
+            "userId": account.user_id,
+            "username": account.user.username,
+            "name": account.name,
+            "department": DepartmentReadSerializer(account.department).data,
+        }
 
     def _cloud_execution(self, obj):
         try:

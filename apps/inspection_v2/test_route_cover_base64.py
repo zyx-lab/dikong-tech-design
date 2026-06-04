@@ -20,6 +20,10 @@ User = get_user_model()
 PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgo="
 JPEG_RAW_BASE64 = "/9j/2Q=="
 VALIDATION_MESSAGE = "只支持上传 jpg/jpeg/png/webp 图片，且大小不能超过 5MB"
+DJI_DOWNLOAD_URL = (
+    "https://dji-download.example.test/waylines/cover.kmz"
+    "?X-Amz-Date=20990101T000000Z&X-Amz-Expires=3600&X-Amz-Signature=test-signature"
+)
 
 
 def create_dispatcher(*, department: Department):
@@ -95,6 +99,9 @@ class RouteCoverBase64Tests(TestCase):
         with patch(
             "apps.inspection_v2.views.DjiConnectionGateway.upload_route",
             return_value={"dji_wayline_id": f"wayline-cover-{WaypointRoute.objects.count() + 1}", "download_url": "/waylines/cover/url"},
+        ), patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.get_route_download_url",
+            return_value=DJI_DOWNLOAD_URL,
         ):
             return self.client.post("/api/v2/inspection/routes", payload, format="multipart")
 

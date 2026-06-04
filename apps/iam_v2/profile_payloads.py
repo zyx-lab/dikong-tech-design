@@ -1,8 +1,7 @@
-from apps.iam_v2.profile_serializers import AccountQualificationReadSerializer
-from apps.iam_v2.qualification_services import account_qualifications_for_roles
 from apps.iam_v2.serializers import DepartmentReadSerializer
+from apps.iam_v2.serializers import AccountQualificationReadSerializer, AccountRoleProfileReadSerializer
 from apps.iam_v2.services import V2RequestContext
-from apps.workforce_v2.models import PilotProfile
+from apps.iam_v2.account_profile_services import active_qualifications_queryset
 
 
 def v2_account_summary_payload(context: V2RequestContext) -> dict:
@@ -20,41 +19,15 @@ def v2_account_summary_payload(context: V2RequestContext) -> dict:
     }
 
 
-def _pilot_role_profile_payload(profile) -> dict | None:
-    pilot = PilotProfile.objects.filter(account_profile=profile).first()
-    if pilot is None:
-        return None
-    return {
-        "id": pilot.id,
-        "accountProfileId": pilot.account_profile_id,
-        "displayName": pilot.display_name,
-        "level": pilot.level,
-        "status": pilot.status,
-        "remark": pilot.remark,
-        "createdAt": pilot.created_at,
-        "updatedAt": pilot.updated_at,
-    }
-
-
-def role_profiles_payload(context: V2RequestContext) -> dict:
-    return {
-        "departmentAdmin": None,
-        "taskMonitorDispatcher": None,
-        "pilot": _pilot_role_profile_payload(context.profile),
-        "workOrderHandler": None,
-    }
-
-
 def v2_me_profile_payload(context: V2RequestContext) -> dict:
     profile = context.profile
+    role_profiles = profile.role_profiles.select_related("account_profile", "account_profile__user").filter(deleted_at__isnull=True)
+    qualifications = active_qualifications_queryset(profile)
     payload = v2_account_summary_payload(context)
     payload.update(
         {
-            "roleProfiles": role_profiles_payload(context),
-            "qualifications": AccountQualificationReadSerializer(
-                account_qualifications_for_roles(profile, context.role_codes),
-                many=True,
-            ).data,
+            "profiles": AccountRoleProfileReadSerializer(role_profiles, many=True).data,
+            "qualifications": AccountQualificationReadSerializer(qualifications, many=True).data,
             "createdAt": profile.created_at,
             "updatedAt": profile.updated_at,
         }

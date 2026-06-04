@@ -18,6 +18,47 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
+            name='PilotProfile',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('display_name', models.CharField(max_length=128)),
+                ('level', models.CharField(blank=True, default='', max_length=64)),
+                ('status', models.PositiveSmallIntegerField(choices=[(0, 'disabled'), (1, 'active')], default=1)),
+                ('remark', models.TextField(blank=True, default='')),
+                ('deleted_at', models.DateTimeField(blank=True, null=True)),
+                ('account_profile', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='pilot_profile', to='iam_v2.v2accountprofile')),
+            ],
+            options={
+                'db_table': 'v2_inspection_pilot_profiles',
+                'ordering': ['id'],
+                'indexes': [models.Index(fields=['status', 'deleted_at'], name='idx_v2_pilot_profile_status')],
+            },
+        ),
+        migrations.CreateModel(
+            name='PilotQualification',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('qualification_type', models.CharField(max_length=128)),
+                ('certificate_no', models.CharField(max_length=128)),
+                ('issued_at', models.DateField()),
+                ('expires_at', models.DateField()),
+                ('status', models.PositiveSmallIntegerField(choices=[(0, 'disabled'), (1, 'active')])),
+                ('remark', models.TextField()),
+                ('deleted_at', models.DateTimeField(blank=True, null=True)),
+                ('pilot', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='qualifications', to='inspection_v2.pilotprofile')),
+            ],
+            options={
+                'db_table': 'v2_inspection_pilot_qualifications',
+                'ordering': ['-expires_at', '-id'],
+                'indexes': [models.Index(fields=['pilot', 'deleted_at'], name='idx_v2_pilot_qual_pilot')],
+                'constraints': [models.UniqueConstraint(fields=('pilot', 'qualification_type', 'certificate_no'), name='uniq_v2_inspection_pilot_qualification')],
+            },
+        ),
+        migrations.CreateModel(
             name='MissionResourceAssignment',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),

@@ -6,9 +6,8 @@ from django.db import models
 from django.db.models import Q
 
 from apps.access.models import DirectoryStatus, TimeStampedModel
-from apps.iam_v2.models import Department
+from apps.iam_v2.models import Department, V2AccountProfile
 from apps.resource_v2.models import DockResource, DroneResource, GatewayResource, PayloadResource, ResourceType
-from apps.workforce_v2.models import PilotProfile
 
 
 class MissionStatus(models.TextChoices):
@@ -132,6 +131,7 @@ class WaypointRouteCloudFile(TimeStampedModel):
     dji_file_id = models.CharField(max_length=128)
     wayline_type = models.PositiveSmallIntegerField(choices=WaylineType.choices, default=WaylineType.WAYPOINT)
     download_url = models.CharField(max_length=1000, blank=True, default="")
+    download_url_expires_at = models.DateTimeField(null=True, blank=True)
     raw_response = models.JSONField(default=dict, blank=True)
     uploaded_by_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -164,7 +164,7 @@ class InspectionMission(TimeStampedModel):
     dock = models.ForeignKey(DockResource, null=True, blank=True, on_delete=models.PROTECT, related_name="v2_missions")
     executor = models.ForeignKey(GatewayResource, null=True, blank=True, on_delete=models.PROTECT, related_name="v2_missions")
     payload = models.ForeignKey(PayloadResource, null=True, blank=True, on_delete=models.PROTECT, related_name="v2_missions")
-    pilot = models.ForeignKey(PilotProfile, on_delete=models.PROTECT, related_name="v2_missions")
+    pilot_account_profile = models.ForeignKey(V2AccountProfile, on_delete=models.PROTECT, related_name="v2_inspection_missions")
     scheduled_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)

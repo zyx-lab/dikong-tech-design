@@ -72,6 +72,52 @@ class DjiConnectionGateway(DjiGateway):
         return self._request_paginated_items(f"/api/v1/manage/workspaces/{workspace_id}/devices")
 
     @staticmethod
+    def _device_sn(payload: dict) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        for key in ("device_sn", "deviceSn", "sn"):
+            value = payload.get(key)
+            if value not in (None, ""):
+                return str(value).strip()
+        return ""
+
+    @classmethod
+    def _dedupe_devices(cls, devices: list[dict]) -> list[dict]:
+        deduped = []
+        seen = set()
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+            device_sn = cls._device_sn(device)
+            if not device_sn or device_sn in seen:
+                continue
+            seen.add(device_sn)
+            deduped.append(device)
+        return deduped
+
+    @classmethod
+    def _child_drones_from_gateways(cls, gateways: list[dict]) -> list[dict]:
+        drones = []
+        for gateway in gateways:
+            if not isinstance(gateway, dict):
+                continue
+            candidates = []
+            for key in ("children", "child", "sub_devices", "subDevices"):
+                value = gateway.get(key)
+                if isinstance(value, dict):
+                    candidates.append(value)
+                elif isinstance(value, list):
+                    candidates.extend(item for item in value if isinstance(item, dict))
+            for child in candidates:
+                try:
+                    domain = int(child.get("domain"))
+                except (TypeError, ValueError):
+                    continue
+                if domain == RESOURCE_DOMAINS[ResourceType.DRONE]:
+                    drones.append(child)
+        return cls._dedupe_devices(drones)
+
+    @staticmethod
     def _payloads_from_devices(devices: list[dict]) -> list[dict]:
         payloads = []
         seen = set()
@@ -103,9 +149,11 @@ class DjiConnectionGateway(DjiGateway):
     def discover(self) -> dict[str, list[dict]]:
         drones = self.list_resources(ResourceType.DRONE)
         docks = self.list_resources(ResourceType.DOCK)
+        gateways = self.list_gateways()
+        child_drones = self._child_drones_from_gateways(gateways)
         return {
-            "drones": drones,
+            "drones": self._dedupe_devices([*drones, *child_drones]),
             "docks": docks,
-            "gateways": self.list_gateways(),
+            "gateways": gateways,
             "payloads": self._payloads_from_devices([*drones, *docks]),
         }

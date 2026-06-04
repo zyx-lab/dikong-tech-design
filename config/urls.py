@@ -2,14 +2,20 @@ from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularJSONAPIView, SpectacularSwaggerView
 
+from apps.api_v2.docs_metadata import API_V2_FRONTEND_GUIDE_DESCRIPTION
+
 admin.site.site_header = "低空平台权限中心"
 admin.site.site_title = "权限后台"
 admin.site.index_title = "权限与账号管理"
 
 API_V2_SPECTACULAR_SETTINGS = {
     "TITLE": "低空平台 API v2",
-    "DESCRIPTION": "API v2 文档。当前业务开发入口统一收口到 `/api/v2/*`。",
+    "DESCRIPTION": API_V2_FRONTEND_GUIDE_DESCRIPTION,
     "VERSION": "2.0.0",
+    "POSTPROCESSING_HOOKS": [
+        "apps.api_v1.openapi_hooks.standardize_response_schema_hook",
+        "apps.api_v2.openapi_hooks.enrich_v2_frontend_docs_hook",
+    ],
 }
 
 urlpatterns = [

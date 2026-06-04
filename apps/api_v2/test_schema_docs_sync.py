@@ -114,11 +114,24 @@ class ApiV2DocsSyncTests(TestCase):
         me_profile_properties = self._schema_data(schema, path="/api/v2/iam/me/profile", method="get").get("properties", {})
         self._assert_properties_include(
             me_profile_properties,
-            {"userId", "username", "accountProfileId", "name", "phone", "email", "roleCodes", "roleProfiles", "qualifications"},
+            {"userId", "username", "accountProfileId", "name", "phone", "email", "roleCodes", "profiles", "qualifications"},
+        )
+        self._assert_properties_include(
+            self._list_item_properties(schema, path="/api/v2/iam/accounts/{id}/profiles"),
+            {"id", "accountProfileId", "profileType", "displayName", "level", "status"},
+        )
+        self._assert_properties_include(
+            self._request_body_properties(
+                schema,
+                path="/api/v2/iam/accounts/{id}/profiles",
+                method="post",
+                content_type="application/json",
+            ),
+            {"profileType", "displayName", "level", "status", "remark"},
         )
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/iam/accounts/{id}/qualifications"),
-            {"id", "accountProfileId", "roleCode", "qualificationType", "certificateNo", "isEffective"},
+            {"id", "accountProfileId", "profileType", "qualificationType", "certificateNo", "isEffective"},
         )
         self._assert_properties_include(
             self._request_body_properties(
@@ -127,7 +140,7 @@ class ApiV2DocsSyncTests(TestCase):
                 method="post",
                 content_type="application/json",
             ),
-            {"roleCode", "qualificationType", "certificateNo", "issuedAt", "expiresAt", "status", "remark"},
+            {"profileType", "qualificationType", "certificateNo", "issuedAt", "expiresAt", "status", "remark"},
         )
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/resource/dji-connections"),
@@ -155,22 +168,21 @@ class ApiV2DocsSyncTests(TestCase):
             {"connectionId", "topic", "topicKind", "deviceSn", "receivedAt", "sequence", "rawPayload"},
         )
         self._assert_properties_include(
-            self._list_item_properties(schema, path="/api/v2/workforce/pilots"),
-            {"id", "display_name", "departmentId", "status", "level"},
-        )
-        self._assert_properties_include(
             self._request_body_properties(
                 schema,
-                path="/api/v2/workforce/pilots",
+                path="/api/v2/iam/profile-types",
                 method="post",
                 content_type="application/json",
             ),
-            {"accountProfileId", "displayName", "level"},
+            {"code", "name", "status", "sort", "remark"},
         )
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/inspection/routes"),
             {"id", "name", "coverImageUrl", "waypoints", "djiFile"},
         )
+        route_properties = self._list_item_properties(schema, path="/api/v2/inspection/routes")
+        dji_file_schema = self._schema_ref(schema, route_properties["djiFile"])
+        self._assert_properties_include(dji_file_schema.get("properties", {}), {"downloadUrl", "downloadUrlExpiresAt"})
         route_multipart = self._request_body_properties(
             schema,
             path="/api/v2/inspection/routes",
@@ -184,8 +196,61 @@ class ApiV2DocsSyncTests(TestCase):
         self._assert_properties_include(route_multipart, {"djiConnectionId", "waylineType", "kmzFile"})
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/inspection/missions"),
-            {"id", "routeSnapshot", "droneId", "pilotId", "status"},
+            {"id", "routeSnapshot", "droneId", "pilot", "status"},
         )
+
+    def test_v2_schema_should_include_frontend_usage_guide(self):
+        schema = self._schema()
+        description = schema["info"].get("description", "")
+
+        for expected in ("前端接入流程", "Bearer Token", "标准响应", "资源发现与绑定", "MQTT"):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, description)
+
+    def test_v2_operations_should_include_frontend_usage_descriptions(self):
+        schema = self._schema()
+        missing = []
+        too_short = []
+
+        for path, path_item in schema["paths"].items():
+            for method, operation in path_item.items():
+                if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                    continue
+                summary = str(operation.get("summary") or "").strip()
+                description = str(operation.get("description") or "").strip()
+                label = f"{method.upper()} {path}"
+                if not summary:
+                    missing.append(label)
+                if "前端用法" not in description or "下一步" not in description or len(description) < 100:
+                    too_short.append(label)
+
+        self.assertEqual(missing, [])
+        self.assertEqual(too_short, [])
+
+    def test_v2_request_bodies_should_include_frontend_examples(self):
+        schema = self._schema()
+        missing = []
+
+        for path, path_item in schema["paths"].items():
+            for method, operation in path_item.items():
+                if method.lower() not in {"post", "put", "patch", "delete"}:
+                    continue
+                content = operation.get("requestBody", {}).get("content", {})
+                for media_type, media in content.items():
+                    if not ("json" in media_type or media_type == "multipart/form-data"):
+                        continue
+                    if not media.get("examples") and "example" not in media:
+                        missing.append(f"{method.upper()} {path} [{media_type}]")
+
+        self.assertEqual(missing, [])
+
+    def test_v2_frontend_guide_document_should_exist(self):
+        guide_path = Path(settings.BASE_DIR) / "docs" / "api-v2-frontend-guide.md"
+        text = guide_path.read_text(encoding="utf-8")
+
+        for expected in ("# API v2 前端接入指南", "资源发现与绑定", "航线与任务", "MQTT"):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, text)
 
 
 class ApiV2SchemaParityUtilityTests(TestCase):

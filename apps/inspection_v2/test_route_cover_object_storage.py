@@ -13,10 +13,9 @@ from django.utils.encoding import filepath_to_uri
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus
-from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountQualification, V2AccountRoleAssignment
+from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountQualification, V2AccountRoleProfile, V2AccountRoleAssignment
 from apps.inspection_v2.models import WaypointRoute, route_cover_image_url
 from apps.resource_v2.models import BindingStatus, DjiConnection, DroneResource, ResourceBinding, ResourceType
-from apps.workforce_v2.models import PilotProfile
 
 User = get_user_model()
 
@@ -25,6 +24,10 @@ OBJECT_STORAGE_SETTINGS = {
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
 PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgo="
+DJI_DOWNLOAD_URL = (
+    "https://dji-download.example.test/waylines/object-storage.kmz"
+    "?X-Amz-Date=20990101T000000Z&X-Amz-Expires=3600&X-Amz-Signature=test-signature"
+)
 
 
 class FakeSignedMinioStorage(Storage):
@@ -79,10 +82,16 @@ class RouteCoverObjectStorageTests(TestCase):
             role_code=FixedRole.PILOT,
             department=self.department,
         )
-        self.pilot = PilotProfile.objects.create(account_profile=self.pilot_profile, display_name="对象存储飞手")
+        V2AccountRoleProfile.objects.create(
+            account_profile=self.pilot_profile,
+            profile_type=FixedRole.PILOT,
+            display_name="对象存储飞手",
+            status=DirectoryStatus.ACTIVE,
+            remark="当前有效",
+        )
         V2AccountQualification.objects.create(
             account_profile=self.pilot_profile,
-            role_code=FixedRole.PILOT,
+            profile_type=FixedRole.PILOT,
             qualification_type="多旋翼巡检",
             certificate_no="CERT-OBJECT-STORAGE",
             issued_at=timezone.now().date(),
@@ -157,6 +166,9 @@ class RouteCoverObjectStorageTests(TestCase):
                 "dji_wayline_id": f"wayline-object-storage-{WaypointRoute.objects.count() + 1}",
                 "download_url": "/waylines/object-storage/url",
             },
+        ), patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.get_route_download_url",
+            return_value=DJI_DOWNLOAD_URL,
         ):
             return self.client.post("/api/v2/inspection/routes", payload, format="multipart")
 
@@ -201,7 +213,7 @@ class RouteCoverObjectStorageTests(TestCase):
 
         mission_response = self.client.post(
             "/api/v2/inspection/missions",
-            {"name": "对象存储任务", "routeId": route["id"], "droneId": self.drone.id, "pilotId": self.pilot.id},
+            {"name": "对象存储任务", "routeId": route["id"], "droneId": self.drone.id, "pilotAccountProfileId": self.pilot_profile.id},
             format="json",
         )
         self.assertEqual(mission_response.status_code, 201, getattr(mission_response, "data", mission_response.content))

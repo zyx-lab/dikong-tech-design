@@ -62,9 +62,10 @@ case "$mode" in
       apps.api_v2.test_schema_docs_sync
       apps.api_v2.test_route_cover_base64_schema
       apps.api_v2.test_object_storage_settings
+      apps.iam_v2.test_account_role_profiles_api
       apps.iam_v2.test_profile_api
       apps.resource_v2.tests
-      apps.workforce_v2.tests
+      apps.inspection_v2.test_pilot_profiles_api
       apps.inspection_v2.tests
       apps.inspection_v2.test_route_cover_base64
       apps.inspection_v2.test_route_cover_object_storage
@@ -76,9 +77,10 @@ case "$mode" in
       apps.api_v2.test_schema_docs_sync
       apps.api_v2.test_route_cover_base64_schema
       apps.api_v2.test_object_storage_settings
+      apps.iam_v2.test_account_role_profiles_api
       apps.iam_v2.test_profile_api
       apps.resource_v2.tests
-      apps.workforce_v2.tests
+      apps.inspection_v2.test_pilot_profiles_api
       apps.inspection_v2.tests
       apps.inspection_v2.test_route_cover_base64
       apps.inspection_v2.test_route_cover_object_storage

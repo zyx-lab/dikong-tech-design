@@ -34,6 +34,181 @@ PROTECTED_FROM_DEPARTMENT_ADMIN_ROLE_CODES = {
 }
 
 
+class V2Permission(TimeStampedModel):
+    code = models.CharField(max_length=128, unique=True)
+    name = models.CharField(max_length=128)
+    domain = models.CharField(max_length=64)
+    resource = models.CharField(max_length=64)
+    action = models.CharField(max_length=64)
+    status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE)
+    is_system = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "v2_permissions"
+        ordering = ["domain", "resource", "action", "id"]
+        indexes = [
+            models.Index(fields=["domain", "resource", "status"], name="idx_v2_perm_domain_resource"),
+        ]
+
+    def clean(self):
+        parts = str(self.code or "").split(":")
+        if len(parts) != 3 or not all(parts):
+            raise ValidationError({"code": "v2 权限码格式必须为 <domain>:<resource>:<action>"})
+        domain, resource, action = parts
+        if self.domain and self.domain != domain:
+            raise ValidationError({"domain": "domain 必须与权限码第一段一致"})
+        if self.resource and self.resource != resource:
+            raise ValidationError({"resource": "resource 必须与权限码第二段一致"})
+        if self.action and self.action != action:
+            raise ValidationError({"action": "action 必须与权限码第三段一致"})
+        self.domain = domain
+        self.resource = resource
+        self.action = action
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.code
+
+
+class V2Role(TimeStampedModel):
+    class DataScope(models.TextChoices):
+        ALL = "ALL", "全平台数据"
+        DEPT_AND_CHILDREN = "DEPT_AND_CHILDREN", "本部门及下级"
+        DEPT_ONLY = "DEPT_ONLY", "仅本部门"
+        SELF = "SELF", "本人数据"
+        CUSTOM_DEPARTMENTS = "CUSTOM_DEPARTMENTS", "指定部门集合"
+
+    code = models.CharField(max_length=64, unique=True)
+    name = models.CharField(max_length=128)
+    status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE)
+    is_system = models.BooleanField(default=False)
+    is_super_admin = models.BooleanField(default=False)
+    assignable_by_department_admin = models.BooleanField(default=False)
+    data_scope = models.CharField(max_length=32, choices=DataScope.choices, default=DataScope.SELF)
+    sort = models.IntegerField(default=100)
+    remark = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "v2_roles"
+        ordering = ["sort", "id"]
+
+    def clean(self):
+        if self.is_super_admin:
+            self.data_scope = self.DataScope.ALL
+            self.assignable_by_department_admin = False
+        if self.assignable_by_department_admin and self.data_scope == self.DataScope.ALL:
+            raise ValidationError({"data_scope": "部门管理员可分配角色不能使用 ALL 数据范围"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.code}:{self.name}"
+
+
+class V2RoleCustomDepartment(TimeStampedModel):
+    role = models.ForeignKey(V2Role, on_delete=models.CASCADE, related_name="custom_departments")
+    department = models.ForeignKey("Department", on_delete=models.CASCADE, related_name="custom_scope_roles")
+
+    class Meta:
+        db_table = "v2_role_custom_departments"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(fields=["role", "department"], name="uniq_v2_role_custom_department"),
+        ]
+
+
+class V2RolePermissionGrant(TimeStampedModel):
+    class GrantSource(models.TextChoices):
+        DIRECT = "DIRECT", "直接授权"
+        MENU = "MENU", "菜单授权"
+
+    role = models.ForeignKey(V2Role, on_delete=models.CASCADE, related_name="permission_grants")
+    permission = models.ForeignKey(V2Permission, on_delete=models.CASCADE, related_name="role_grants")
+    source = models.CharField(max_length=16, choices=GrantSource.choices, default=GrantSource.DIRECT)
+
+    class Meta:
+        db_table = "v2_role_permission_grants"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(fields=["role", "permission", "source"], name="uniq_v2_role_permission_source"),
+        ]
+
+    def __str__(self):
+        return f"{self.role.code}:{self.permission.code}:{self.source}"
+
+
+class V2Menu(TimeStampedModel):
+    class MenuType(models.TextChoices):
+        DIRECTORY = "DIRECTORY", "目录"
+        MENU = "MENU", "菜单"
+        BUTTON = "BUTTON", "按钮"
+
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="children",
+    )
+    name = models.CharField(max_length=128)
+    code = models.CharField(max_length=128, unique=True)
+    menu_type = models.CharField(max_length=16, choices=MenuType.choices)
+    path = models.CharField(max_length=255, blank=True, default="")
+    component = models.CharField(max_length=255, blank=True, default="")
+    icon = models.CharField(max_length=64, blank=True, default="")
+    sort = models.IntegerField(default=100)
+    status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE)
+    is_system = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "v2_menus"
+        ordering = ["sort", "id"]
+        indexes = [
+            models.Index(fields=["parent", "sort"], name="idx_v2_menu_parent_sort"),
+            models.Index(fields=["menu_type", "status"], name="idx_v2_menu_type_status"),
+        ]
+
+    def clean(self):
+        if self.menu_type == self.MenuType.BUTTON and self.parent_id is None:
+            raise ValidationError({"parent": "按钮必须归属菜单"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.code}:{self.name}"
+
+
+class V2MenuPermissionBinding(TimeStampedModel):
+    menu = models.ForeignKey(V2Menu, on_delete=models.CASCADE, related_name="permission_bindings")
+    permission = models.ForeignKey(V2Permission, on_delete=models.CASCADE, related_name="menu_bindings")
+
+    class Meta:
+        db_table = "v2_menu_permission_bindings"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(fields=["menu", "permission"], name="uniq_v2_menu_permission"),
+        ]
+
+
+class V2RoleMenuGrant(TimeStampedModel):
+    role = models.ForeignKey(V2Role, on_delete=models.CASCADE, related_name="menu_grants")
+    menu = models.ForeignKey(V2Menu, on_delete=models.CASCADE, related_name="role_grants")
+
+    class Meta:
+        db_table = "v2_role_menu_grants"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(fields=["role", "menu"], name="uniq_v2_role_menu"),
+        ]
+
+
 class Department(TimeStampedModel):
     parent = models.ForeignKey(
         "self",
@@ -116,7 +291,7 @@ class V2AccountProfile(TimeStampedModel):
 
 class V2AccountRoleAssignment(TimeStampedModel):
     account_profile = models.ForeignKey(V2AccountProfile, on_delete=models.CASCADE, related_name="role_assignments")
-    role_code = models.CharField(max_length=64, choices=FixedRole.choices)
+    role_code = models.CharField(max_length=64)
     assigned_by_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -136,33 +311,86 @@ class V2AccountRoleAssignment(TimeStampedModel):
         return f"{self.account_profile_id}:{self.role_code}"
 
 
+class V2ProfileType(TimeStampedModel):
+    code = models.CharField(max_length=64, unique=True)
+    name = models.CharField(max_length=128)
+    role_code = models.CharField(max_length=64)
+    status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE)
+    is_system = models.BooleanField(default=False)
+    sort = models.IntegerField(default=100)
+    remark = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "v2_profile_types"
+        ordering = ["sort", "id"]
+
+    def clean(self):
+        if self.code != self.role_code:
+            raise ValidationError({"role_code": "profileType.code 必须等于绑定角色编码"})
+        if self.role_code and not V2Role.objects.filter(code=self.role_code).exists():
+            raise ValidationError({"role_code": "profileType 必须绑定已存在角色"})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.code}:{self.name}"
+
+
+class V2AccountRoleProfile(TimeStampedModel):
+    account_profile = models.ForeignKey(V2AccountProfile, on_delete=models.CASCADE, related_name="role_profiles")
+    profile_type = models.CharField(max_length=64)
+    display_name = models.CharField(max_length=128)
+    level = models.CharField(max_length=64, blank=True, default="")
+    status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices, default=DirectoryStatus.ACTIVE)
+    remark = models.TextField(blank=True, default="")
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "v2_account_role_profiles"
+        ordering = ["account_profile_id", "profile_type"]
+        constraints = [
+            models.UniqueConstraint(fields=["account_profile", "profile_type"], name="uniq_v2_account_role_profile"),
+        ]
+        indexes = [
+            models.Index(fields=["profile_type", "status", "deleted_at"], name="idx_v2_role_profile_type"),
+        ]
+
+    def soft_delete(self):
+        self.deleted_at = timezone.now()
+        self.status = DirectoryStatus.DISABLED
+        self.save(update_fields=["deleted_at", "status", "updated_at"])
+
+    def __str__(self):
+        return f"{self.account_profile_id}:{self.profile_type}"
+
+
 class V2AccountQualification(TimeStampedModel):
     account_profile = models.ForeignKey(V2AccountProfile, on_delete=models.CASCADE, related_name="qualifications")
-    role_code = models.CharField(max_length=64, choices=FixedRole.choices)
+    profile_type = models.CharField(max_length=64)
     qualification_type = models.CharField(max_length=128)
     certificate_no = models.CharField(max_length=128)
     issued_at = models.DateField()
     expires_at = models.DateField()
     status = models.PositiveSmallIntegerField(choices=DirectoryStatus.choices)
-    remark = models.TextField()
+    remark = models.TextField(blank=True, default="")
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "v2_account_qualifications"
-        ordering = ["-expires_at", "-id"]
+        ordering = ["account_profile_id", "profile_type", "-expires_at", "-id"]
         constraints = [
-            models.CheckConstraint(
-                condition=Q(role_code__in=sorted(DEPARTMENT_ROLE_CODES)),
-                name="chk_v2_account_qualification_role",
-            ),
             models.UniqueConstraint(
-                fields=["account_profile", "role_code", "qualification_type", "certificate_no"],
+                fields=["account_profile", "profile_type", "qualification_type", "certificate_no"],
                 name="uniq_v2_account_qualification",
             ),
         ]
+        indexes = [
+            models.Index(fields=["account_profile", "profile_type", "deleted_at"], name="idx_v2_account_qual_profile"),
+        ]
 
     def clean(self):
-        if self.role_code not in DEPARTMENT_ROLE_CODES:
-            raise ValidationError({"role_code": "资质只能归属 v2 部门业务角色"})
         if self.issued_at > self.expires_at:
             raise ValidationError({"expires_at": "有效期结束日期不能早于签发日期"})
 
@@ -172,6 +400,8 @@ class V2AccountQualification(TimeStampedModel):
 
     def is_effective(self, at=None) -> bool:
         today = (at or timezone.now()).date()
+        if self.deleted_at is not None:
+            return False
         if self.status != DirectoryStatus.ACTIVE:
             return False
         if self.issued_at > today:
@@ -180,8 +410,13 @@ class V2AccountQualification(TimeStampedModel):
             return False
         return True
 
+    def soft_delete(self):
+        self.deleted_at = timezone.now()
+        self.status = DirectoryStatus.DISABLED
+        self.save(update_fields=["deleted_at", "status", "updated_at"])
+
     def __str__(self):
-        return f"{self.account_profile_id}:{self.role_code}:{self.qualification_type}:{self.certificate_no}"
+        return f"{self.account_profile_id}:{self.profile_type}:{self.qualification_type}:{self.certificate_no}"
 
 
 class ResourceShareGroup(TimeStampedModel):

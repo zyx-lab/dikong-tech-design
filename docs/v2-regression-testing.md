@@ -18,14 +18,15 @@ This runs:
 - `apps.api_v2.test_schema_docs_sync`
 - `apps.api_v2.test_route_cover_base64_schema`
 - `apps.api_v2.test_object_storage_settings`
+- `apps.iam_v2.test_account_role_profiles_api`
 - `apps.iam_v2.test_profile_api`
 - `apps.resource_v2.tests`
-- `apps.workforce_v2.tests`
+- `apps.inspection_v2.test_pilot_profiles_api`
 - `apps.inspection_v2.tests`
 - `apps.inspection_v2.test_route_cover_base64`
 - `apps.inspection_v2.test_route_cover_object_storage`
 
-Use this for normal changes under `apps/api_v2`, `apps/iam_v2`, `apps/resource_v2`, `apps/workforce_v2`, `apps/inspection_v2`, and the v2 resource-permission design docs.
+Use this for normal changes under `apps/api_v2`, `apps/iam_v2`, `apps/resource_v2`, `apps/inspection_v2`, and the v2 resource-permission design docs.
 
 ## Boundary Smoke Gate
 
@@ -44,7 +45,7 @@ Use this when v2 work touches shared response handling, DJI gateway behavior, sc
 
 ## API v2 Docs Sync
 
-The default v2 gate is the deterministic local check for docs/code synchronization. It verifies the v2-only schema boundary, route/method parity, no tenant/v1 leakage, and representative field-level contracts for IAM, resource, workforce, and inspection.
+The default v2 gate is the deterministic local check for docs/code synchronization. It verifies the v2-only schema boundary, route/method parity, no tenant/v1 leakage, and representative field-level contracts for IAM, resource, and inspection.
 
 Use the live parity command only as an explicit network check:
 

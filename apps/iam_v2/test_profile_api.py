@@ -4,8 +4,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus, UserStatus
-from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountRoleAssignment
-from apps.workforce_v2.models import PilotProfile
+from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountRoleProfile, V2AccountRoleAssignment
 
 User = get_user_model()
 
@@ -45,8 +44,9 @@ class IamV2ProfileApiTests(TestCase):
             role_code=FixedRole.PILOT,
             department=self.department,
         )
-        self.pilot = PilotProfile.objects.create(
+        self.pilot_profile = V2AccountRoleProfile.objects.create(
             account_profile=self.pilot_account,
+            profile_type=FixedRole.PILOT,
             display_name="个人资料飞手",
             level="A1",
             status=DirectoryStatus.ACTIVE,
@@ -57,7 +57,6 @@ class IamV2ProfileApiTests(TestCase):
         issued_at = timezone.now().date()
         expires_at = issued_at.replace(year=issued_at.year + 1)
         return {
-            "roleCode": FixedRole.PILOT,
             "qualificationType": "多旋翼巡检",
             "certificateNo": certificate_no,
             "issuedAt": issued_at.isoformat(),
@@ -142,7 +141,7 @@ class IamV2ProfileApiTests(TestCase):
         self.client.force_authenticate(self.department_admin)
         qualification_response = self.client.post(
             f"/api/v2/iam/accounts/{self.pilot_account.id}/qualifications",
-            self.qualification_payload(certificate_no="CERT-PROFILE-001"),
+            {"profileType": FixedRole.PILOT, **self.qualification_payload(certificate_no="CERT-PROFILE-001")},
             format="json",
         )
         self.assertEqual(
@@ -161,73 +160,9 @@ class IamV2ProfileApiTests(TestCase):
         self.assertEqual(data["accountProfileId"], self.pilot_account.id)
         self.assertEqual(data["department"]["id"], self.department.id)
         self.assertEqual(data["roleCodes"], [FixedRole.PILOT])
-        self.assertEqual(data["roleProfiles"]["pilot"]["displayName"], "个人资料飞手")
-        self.assertEqual(data["roleProfiles"]["departmentAdmin"], None)
-        self.assertEqual(data["qualifications"][0]["roleCode"], FixedRole.PILOT)
+        self.assertEqual(data["profiles"][0]["profileType"], FixedRole.PILOT)
+        self.assertEqual(data["profiles"][0]["displayName"], "个人资料飞手")
         self.assertEqual(data["qualifications"][0]["qualificationType"], "多旋翼巡检")
+        self.assertEqual(data["qualifications"][0]["profileType"], FixedRole.PILOT)
+        self.assertNotIn("roleCode", data["qualifications"][0])
         self.assertTrue(data["qualifications"][0]["isEffective"])
-
-    def test_department_admin_should_manage_only_own_department_account_qualifications(self):
-        other_user, other_account = create_v2_actor(
-            username="profile_other_pilot",
-            role_code=FixedRole.PILOT,
-            department=self.other_department,
-        )
-        del other_user
-        self.client.force_authenticate(self.department_admin)
-
-        create_response = self.client.post(
-            f"/api/v2/iam/accounts/{self.pilot_account.id}/qualifications",
-            self.qualification_payload(certificate_no="CERT-MANAGE-001"),
-            format="json",
-        )
-        self.assertEqual(create_response.status_code, 201, getattr(create_response, "data", create_response.content))
-        qualification_id = create_response.data["data"]["id"]
-
-        update_response = self.client.put(
-            f"/api/v2/iam/accounts/{self.pilot_account.id}/qualifications/{qualification_id}",
-            self.qualification_payload(certificate_no="CERT-UPDATED", status=DirectoryStatus.DISABLED),
-            format="json",
-        )
-        self.assertEqual(update_response.status_code, 200, getattr(update_response, "data", update_response.content))
-        self.assertFalse(update_response.data["data"]["isEffective"])
-
-        denied_response = self.client.post(
-            f"/api/v2/iam/accounts/{other_account.id}/qualifications",
-            {"roleCode": FixedRole.PILOT, "qualificationType": "跨部门资质"},
-            format="json",
-        )
-        self.assertEqual(denied_response.status_code, 403, getattr(denied_response, "data", denied_response.content))
-
-    def test_account_qualification_api_should_reject_duplicates(self):
-        self.client.force_authenticate(self.department_admin)
-
-        first_response = self.client.post(
-            f"/api/v2/iam/accounts/{self.pilot_account.id}/qualifications",
-            self.qualification_payload(certificate_no="CERT-DUP"),
-            format="json",
-        )
-        self.assertEqual(first_response.status_code, 201, getattr(first_response, "data", first_response.content))
-
-        duplicate_response = self.client.post(
-            f"/api/v2/iam/accounts/{self.pilot_account.id}/qualifications",
-            self.qualification_payload(certificate_no="CERT-DUP"),
-            format="json",
-        )
-        self.assertEqual(duplicate_response.status_code, 409, getattr(duplicate_response, "data", duplicate_response.content))
-
-    def test_account_qualification_api_should_require_full_contract_fields(self):
-        self.client.force_authenticate(self.department_admin)
-
-        response = self.client.post(
-            f"/api/v2/iam/accounts/{self.pilot_account.id}/qualifications",
-            {"roleCode": FixedRole.PILOT, "qualificationType": "多旋翼巡检"},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
-        self.assertIn("certificateNo", response.data["data"])
-        self.assertIn("issuedAt", response.data["data"])
-        self.assertIn("expiresAt", response.data["data"])
-        self.assertIn("status", response.data["data"])
-        self.assertIn("remark", response.data["data"])

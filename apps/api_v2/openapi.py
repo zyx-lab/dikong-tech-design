@@ -53,6 +53,8 @@ class V2MeContextSerializer(serializers.Serializer):
     user = V2SessionUserContextSerializer()
     department = serializers.DictField()
     roles = serializers.ListField(child=serializers.CharField())
+    permissions = serializers.ListField(child=serializers.CharField())
+    dataScopes = serializers.ListField(child=serializers.CharField())
 
 
 class V2DiscoveredDeviceSerializer(serializers.Serializer):

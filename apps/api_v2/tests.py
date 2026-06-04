@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.test import TestCase
 from django.urls import URLPattern, URLResolver, get_resolver
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus, UserStatus
@@ -14,7 +15,9 @@ from apps.iam_v2.models import (
     Department,
     FixedRole,
     ROLE_CODE_ORDER,
+    V2AccountQualification,
     V2AccountProfile,
+    V2AccountRoleProfile,
     V2AccountRoleAssignment,
 )
 from apps.resource_v2.models import V2AuditLog
@@ -115,11 +118,15 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/iam/departments/{id}",
             "/api/v2/iam/departments/{id}/enable",
             "/api/v2/iam/departments/{id}/disable",
+            "/api/v2/iam/profile-types",
+            "/api/v2/iam/profile-types/{code}",
             "/api/v2/iam/accounts",
             "/api/v2/iam/accounts/{id}",
-            "/api/v2/iam/accounts/{id}/roles",
+            "/api/v2/iam/accounts/{id}/profiles",
+            "/api/v2/iam/accounts/{id}/profiles/{profile_type}",
             "/api/v2/iam/accounts/{id}/qualifications",
             "/api/v2/iam/accounts/{id}/qualifications/{qualification_id}",
+            "/api/v2/iam/accounts/{id}/roles",
             "/api/v2/iam/roles",
             "/api/v2/resource/dji-connections",
             "/api/v2/resource/dji-connections/mqtt-health",
@@ -144,8 +151,6 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/resource/share-groups/{id}/resources",
             "/api/v2/resource/share-groups/{id}/resources/{resource_share_id}",
             "/api/v2/resource/audit-logs",
-            "/api/v2/workforce/pilots",
-            "/api/v2/workforce/pilots/{id}",
             "/api/v2/inspection/routes",
             "/api/v2/inspection/routes/{id}",
             "/api/v2/inspection/missions",
@@ -191,6 +196,14 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/iam/tenant/dji-platforms",
             "/api/v2/iam/session/register",
             "/api/v2/iam/session/register-by-phone",
+            "/api/v2/inspection/pilot-profiles",
+            "/api/v2/inspection/pilot-profiles/{id}",
+            "/api/v2/inspection/pilot-profiles/{id}/delete",
+            "/api/v2/inspection/pilot-profiles/{id}/qualifications",
+            "/api/v2/inspection/pilot-profiles/{id}/qualifications/{qualification_id}",
+            "/api/v2/inspection/pilot-profiles/{id}/qualifications/{qualification_id}/delete",
+            "/api/v2/workforce/pilots",
+            "/api/v2/workforce/pilots/{id}",
             "/api/v2/workforce/pilots/{pilot_id}/qualifications",
             "/api/v2/workforce/pilots/{pilot_id}/qualifications/{id}",
         }
@@ -246,8 +259,10 @@ class ApiV2SchemaBoundaryTests(TestCase):
         schema = self._schema()
         list_operations = [
             ("GET", "/api/v2/iam/accounts"),
+            ("GET", "/api/v2/iam/accounts/{id}/profiles"),
             ("GET", "/api/v2/iam/accounts/{id}/qualifications"),
             ("GET", "/api/v2/iam/departments"),
+            ("GET", "/api/v2/iam/profile-types"),
             ("GET", "/api/v2/iam/roles"),
             ("GET", "/api/v2/resource/audit-logs"),
             ("GET", "/api/v2/resource/dji-connections"),
@@ -258,7 +273,6 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("GET", "/api/v2/resource/gateways"),
             ("GET", "/api/v2/resource/payloads"),
             ("GET", "/api/v2/resource/share-groups"),
-            ("GET", "/api/v2/workforce/pilots"),
             ("GET", "/api/v2/inspection/active-flights"),
             ("GET", "/api/v2/inspection/flight-records"),
             ("GET", "/api/v2/inspection/media-files"),
@@ -277,8 +291,10 @@ class ApiV2SchemaBoundaryTests(TestCase):
         schema = self._schema()
         expected_statuses = {
             ("POST", "/api/v2/iam/accounts"): "201",
+            ("POST", "/api/v2/iam/accounts/{id}/profiles"): "201",
             ("POST", "/api/v2/iam/accounts/{id}/qualifications"): "201",
             ("POST", "/api/v2/iam/departments"): "201",
+            ("POST", "/api/v2/iam/profile-types"): "201",
             ("POST", "/api/v2/inspection/missions"): "201",
             ("POST", "/api/v2/inspection/routes"): "201",
             ("POST", "/api/v2/resource/bindings"): "201",
@@ -286,7 +302,6 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("POST", "/api/v2/resource/share-groups"): "201",
             ("POST", "/api/v2/resource/share-groups/{id}/departments"): "201",
             ("POST", "/api/v2/resource/share-groups/{id}/resources"): "201",
-            ("POST", "/api/v2/workforce/pilots"): "201",
             ("DELETE", "/api/v2/resource/bindings/{id}"): "200",
             ("DELETE", "/api/v2/resource/share-groups/{id}/departments/{department_id}"): "200",
             ("DELETE", "/api/v2/resource/share-groups/{id}/resources/{resource_share_id}"): "200",
@@ -302,12 +317,16 @@ class ApiV2SchemaBoundaryTests(TestCase):
         schema = self._schema()
         request_body_operations = [
             ("POST", "/api/v2/iam/accounts"),
+            ("POST", "/api/v2/iam/accounts/{id}/profiles"),
+            ("PUT", "/api/v2/iam/accounts/{id}/profiles/{profile_type}"),
             ("POST", "/api/v2/iam/accounts/{id}/qualifications"),
-            ("PUT", "/api/v2/iam/accounts/{id}"),
             ("PUT", "/api/v2/iam/accounts/{id}/qualifications/{qualification_id}"),
+            ("PUT", "/api/v2/iam/accounts/{id}"),
             ("PUT", "/api/v2/iam/accounts/{id}/roles"),
             ("POST", "/api/v2/iam/departments"),
             ("PUT", "/api/v2/iam/departments/{id}"),
+            ("POST", "/api/v2/iam/profile-types"),
+            ("PUT", "/api/v2/iam/profile-types/{code}"),
             ("POST", "/api/v2/iam/session/login"),
             ("POST", "/api/v2/iam/session/refresh"),
             ("PUT", "/api/v2/inspection/flight-records/{id}"),
@@ -331,8 +350,6 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("POST", "/api/v2/resource/share-groups/{id}/departments"),
             ("POST", "/api/v2/resource/share-groups/{id}/resources"),
             ("PUT", "/api/v2/resource/share-groups/{id}/resources/{resource_share_id}"),
-            ("POST", "/api/v2/workforce/pilots"),
-            ("PUT", "/api/v2/workforce/pilots/{id}"),
         ]
 
         for method, path in request_body_operations:
@@ -392,7 +409,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
 class ApiV2ImplementationBoundaryTests(TestCase):
     def test_v2_mainline_should_not_import_v1_or_legacy_dji_bff_modules(self):
         project_root = Path(settings.BASE_DIR)
-        app_names = ("api_v2", "iam_v2", "resource_v2", "workforce_v2", "inspection_v2")
+        app_names = ("api_v2", "iam_v2", "resource_v2", "inspection_v2")
         forbidden_imports = ("apps.api_v1", "apps.access.api_v1", "apps.dji_bff")
         offenders = []
 
@@ -726,13 +743,13 @@ class IamV2ApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403, getattr(response, "data", response.content))
 
-    def test_roles_should_return_fixed_v2_department_role_codes(self):
+    def test_roles_should_return_global_v2_role_catalog_for_super_admin(self):
         response = self.client.get("/api/v2/iam/roles")
 
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         returned = [item["code"] for item in response.data["data"]["list"]]
-        self.assertEqual(returned, [role_code for role_code in ROLE_CODE_ORDER if role_code in DEPARTMENT_ROLE_CODES])
-        self.assertNotIn(FixedRole.PLATFORM_SUPER_ADMIN, returned)
+        self.assertEqual(returned, ROLE_CODE_ORDER)
+        self.assertIn(FixedRole.PLATFORM_SUPER_ADMIN, returned)
 
     def test_account_roles_replace_should_preserve_existing_platform_identity(self):
         response = self.client.put(
@@ -1030,9 +1047,53 @@ class IamV2ApiTests(TestCase):
             getattr(denied_other_account_response, "data", denied_other_account_response.content),
         )
 
+        child_candidate_user, child_candidate_profile = create_v2_actor(
+            username="child_candidate_pilot",
+            role_code=FixedRole.PILOT,
+            department=child,
+        )
+        other_candidate_user, other_candidate_profile = create_v2_actor(
+            username="other_candidate_pilot",
+            role_code=FixedRole.PILOT,
+            department=other,
+        )
+        issued_at = timezone.now().date()
+        expires_at = issued_at.replace(year=issued_at.year + 1)
+        for account_profile, certificate_no in (
+            (child_candidate_profile, "CANDIDATE-CHILD"),
+            (other_candidate_profile, "CANDIDATE-OTHER"),
+        ):
+            V2AccountRoleProfile.objects.create(
+                account_profile=account_profile,
+                profile_type=FixedRole.PILOT,
+                display_name=account_profile.name,
+                status=DirectoryStatus.ACTIVE,
+            )
+            V2AccountQualification.objects.create(
+                account_profile=account_profile,
+                profile_type=FixedRole.PILOT,
+                qualification_type="多旋翼巡检",
+                certificate_no=certificate_no,
+                issued_at=issued_at,
+                expires_at=expires_at,
+                status=DirectoryStatus.ACTIVE,
+            )
+        del child_candidate_user, other_candidate_user
+
         self.client.force_authenticate(dispatcher)
-        forbidden_list_response = self.client.get("/api/v2/iam/accounts")
-        self.assertEqual(forbidden_list_response.status_code, 403, getattr(forbidden_list_response, "data", forbidden_list_response.content))
+        list_response = self.client.get("/api/v2/iam/accounts")
+        self.assertEqual(list_response.status_code, 200, getattr(list_response, "data", list_response.content))
+        listed_ids = {item["id"] for item in list_response.data["data"]["list"]}
+        self.assertIn(child_candidate_profile.id, listed_ids)
+        self.assertNotIn(other_candidate_profile.id, listed_ids)
+
+        candidate_response = self.client.get(
+            "/api/v2/iam/accounts",
+            {"roleCode": FixedRole.PILOT, "profileType": FixedRole.PILOT, "qualified": "true"},
+        )
+        self.assertEqual(candidate_response.status_code, 200, getattr(candidate_response, "data", candidate_response.content))
+        candidate_ids = {item["id"] for item in candidate_response.data["data"]["list"]}
+        self.assertEqual(candidate_ids, {child_candidate_profile.id})
 
     def test_account_api_should_validate_duplicates_roles_departments_and_missing_accounts(self):
         child = Department.objects.create(name="飞行队", parent=self.root)

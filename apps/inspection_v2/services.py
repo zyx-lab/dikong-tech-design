@@ -25,7 +25,6 @@ from apps.resource_v2.models import (
 )
 from apps.resource_v2.mqtt import upsert_drone_telemetry_from_osd
 from apps.resource_v2.services import get_resource, visible_bindings_queryset
-from apps.workforce_v2.services import pilot_has_effective_qualification, visible_pilots_queryset
 from apps.inspection_v2.models import (
     CloudMediaFile,
     CloudMediaType,
@@ -55,7 +54,7 @@ def is_department_admin(context) -> bool:
 
 
 def is_assigned_pilot(context, mission: InspectionMission) -> bool:
-    return FixedRole.PILOT in context.role_codes and mission.pilot.account_profile.user_id == context.user.id
+    return FixedRole.PILOT in context.role_codes and mission.pilot_account_profile.user_id == context.user.id
 
 
 def is_plain_pilot(context) -> bool:
@@ -122,10 +121,9 @@ def visible_missions_queryset(context) -> QuerySet:
             "drone",
             "dock",
             "payload",
-            "pilot",
-            "pilot__account_profile",
-            "pilot__account_profile__user",
-            "pilot__account_profile__department",
+            "pilot_account_profile",
+            "pilot_account_profile__user",
+            "pilot_account_profile__department",
         )
         .prefetch_related("resource_assignments")
         .order_by("-id")
@@ -133,7 +131,7 @@ def visible_missions_queryset(context) -> QuerySet:
     if is_platform_super_admin(context):
         return queryset
     if is_plain_pilot(context):
-        return queryset.filter(pilot__account_profile__user=context.user).distinct()
+        return queryset.filter(pilot_account_profile__user=context.user).distinct()
     return queryset.filter(
         _department_tree_q("creator_department", context)
         | _department_tree_q("primary_resource_owner_department", context)
@@ -205,9 +203,9 @@ def visible_sessions_queryset(context) -> QuerySet:
     queryset = (
         FlightSession.objects.select_related(
             "mission",
-            "mission__pilot",
-            "mission__pilot__account_profile",
-            "mission__pilot__account_profile__user",
+            "mission__pilot_account_profile",
+            "mission__pilot_account_profile__user",
+            "mission__pilot_account_profile__department",
             "mission__cloud_execution",
             "drone",
             "dock",
@@ -220,7 +218,7 @@ def visible_sessions_queryset(context) -> QuerySet:
         return queryset
     queryset = queryset.filter(mission_id__in=visible_missions_queryset(context).values("id"))
     if is_plain_pilot(context):
-        queryset = queryset.filter(mission__pilot__account_profile__user=context.user)
+        queryset = queryset.filter(mission__pilot_account_profile__user=context.user)
     return queryset.distinct()
 
 
@@ -599,7 +597,7 @@ def complete_mission(*, mission: InspectionMission, context, request) -> Inspect
             "route_name": mission.route.name,
             "drone_device_sn": mission.drone.device_sn,
             "drone_name": mission.drone.name,
-            "pilot_name": mission.pilot.display_name,
+            "pilot_name": mission.pilot_account_profile.name,
             "start_time": session.started_at,
             "end_time": now,
             "flight_duration": _duration_seconds(session.started_at, now),
@@ -1092,7 +1090,7 @@ def _flight_record_from_terminal_execution(*, mission: InspectionMission, sessio
             "route_name": mission.route.name,
             "drone_device_sn": mission.drone.device_sn,
             "drone_name": mission.drone.name,
-            "pilot_name": mission.pilot.display_name,
+            "pilot_name": mission.pilot_account_profile.name,
             "start_time": session.started_at,
             "end_time": session.ended_at or timezone.now(),
             "flight_duration": _duration_seconds(session.started_at, session.ended_at or timezone.now()),
@@ -1111,7 +1109,7 @@ def apply_cloud_execution_event(*, dji_job_id: str, status: str, payload: dict |
             "mission__primary_resource_owner_department",
             "mission__route",
             "mission__drone",
-            "mission__pilot",
+            "mission__pilot_account_profile",
             "session",
         )
         .filter(dji_job_id=dji_job_id)

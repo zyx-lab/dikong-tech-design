@@ -12,7 +12,7 @@ from apps.access.session_services import create_auth_session
 from apps.iam_v2.models import V2AccountProfile, V2AccountRoleAssignment
 from apps.iam_v2.profile_payloads import v2_account_summary_payload
 from apps.iam_v2.profile_serializers import V2SessionLoginResponseSerializer
-from apps.iam_v2.services import V2RequestContext
+from apps.iam_v2.services import V2RequestContext, active_roles_for_codes, data_scopes_for_roles, permission_codes_for_roles
 
 
 def _authenticate_v2_user(*, username: str, password: str) -> V2RequestContext:
@@ -31,7 +31,16 @@ def _authenticate_v2_user(*, username: str, password: str) -> V2RequestContext:
         .order_by("id")
         .values_list("role_code", flat=True)
     )
-    return V2RequestContext(user=user, profile=profile, department=profile.department, role_codes=role_codes)
+    roles = active_roles_for_codes(role_codes)
+    return V2RequestContext(
+        user=user,
+        profile=profile,
+        department=profile.department,
+        role_codes=role_codes,
+        permissions=frozenset(permission_codes_for_roles(roles)),
+        data_scopes=data_scopes_for_roles(roles),
+        is_super_admin=any(role.is_super_admin for role in roles),
+    )
 
 
 class SessionLoginView(IamAPIView):

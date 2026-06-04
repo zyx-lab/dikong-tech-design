@@ -541,7 +541,7 @@ class ResourceSummaryView(V2ResourceAPIView):
         context = resolve_v2_context(request)
         require_v2_operation_permission(context, "view")
         from apps.inspection_v2.models import FlightSession, FlightSessionStatus
-        from apps.workforce_v2.services import visible_pilots_queryset
+        from apps.iam_v2.models import FixedRole, V2AccountRoleProfile
 
         summary = {}
         department_rows = {}
@@ -582,13 +582,18 @@ class ResourceSummaryView(V2ResourceAPIView):
                 row = department_row(binding.owner_department)
                 row[f"{resource_type}s"] += 1
 
-        pilot_queryset = visible_pilots_queryset(context)
+        pilot_queryset = V2AccountRoleProfile.objects.select_related("account_profile__department").filter(
+            profile_type=FixedRole.PILOT,
+            deleted_at__isnull=True,
+        )
+        if not context.is_super_admin:
+            pilot_queryset = pilot_queryset.filter(account_profile__department__path__startswith=context.department.path)
         summary["pilots"] = {
             "total": pilot_queryset.count(),
             "active": pilot_queryset.filter(status=DirectoryStatus.ACTIVE).count(),
             "disabled": pilot_queryset.filter(status=DirectoryStatus.DISABLED).count(),
         }
-        for pilot in pilot_queryset.select_related("account_profile__department"):
+        for pilot in pilot_queryset:
             department_row(pilot.account_profile.department)["pilots"] += 1
         summary["departments"] = sorted(department_rows.values(), key=lambda item: (item["departmentPath"], item["departmentId"]))
         return Response(summary, status=status.HTTP_200_OK)

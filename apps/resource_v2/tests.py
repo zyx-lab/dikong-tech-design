@@ -749,7 +749,20 @@ class ResourceV2ApiTests(TestCase):
                     status_code=200,
                     headers={},
                     data={
-                        "list": [{"device_sn": "GATEWAY-RC-001", "device_name": "网关遥控端"}],
+                        "list": [
+                            {
+                                "device_sn": "GATEWAY-RC-001",
+                                "device_name": "网关遥控端",
+                                "children": {
+                                    "device_sn": "GATEWAY-CHILD-DRONE-001",
+                                    "device_name": "遥控器下挂无人机",
+                                    "domain": 0,
+                                    "type": 99,
+                                    "status": False,
+                                    "bound_status": False,
+                                },
+                            }
+                        ],
                         "pagination": {"page": 1, "page_size": 100, "total": 1},
                     },
                 )
@@ -768,6 +781,7 @@ class ResourceV2ApiTests(TestCase):
         self.assertEqual(connection.mqtt_username, "mqtt-user")
         self.assertEqual(connection.status, "ACTIVE")
         self.assertEqual(discovered["drones"][0]["device_sn"], "GATEWAY-DRONE-001")
+        self.assertEqual(discovered["drones"][1]["device_sn"], "GATEWAY-CHILD-DRONE-001")
         self.assertEqual(discovered["docks"][0]["device_sn"], "GATEWAY-DOCK-001")
         self.assertEqual(discovered["gateways"][0]["device_sn"], "GATEWAY-RC-001")
         self.assertFalse(DjiDeviceIndex.objects.filter(device_sn__in=["GATEWAY-DRONE-001", "GATEWAY-DOCK-001"]).exists())
