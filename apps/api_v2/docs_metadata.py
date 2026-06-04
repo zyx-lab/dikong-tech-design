@@ -71,7 +71,7 @@ def _domain_before(path: str) -> str:
     return "需要 Bearer Token。"
 
 
-def _domain_response(path: str) -> str:
+def _domain_response(method: str, path: str) -> str:
     if path.endswith("/login") or path.endswith("/refresh"):
         return "成功后 `data.accessToken` 用于后续 Authorization，`data.refreshToken` 用于续期。"
     if "/dji-connections" in path and path.endswith("/discover"):
@@ -82,6 +82,8 @@ def _domain_response(path: str) -> str:
         return "`data.list[]` 返回每个 topic/device 的最新透传消息，原始 DJI payload 在 `rawPayload`。"
     if "/resource/" in path and path.split("/")[-1] in {"drones", "docks", "gateways", "payloads"}:
         return "`data.list[]` 只包含当前账号可见且已绑定的资源，不包含未绑定的 discover 结果。"
+    if "/routes/" in path and method.upper() == "DELETE":
+        return "返回被删除的本地航线 ID 和 `deleted=true`；DJI 云端 KMZ 文件和封面文件由后端 best-effort 清理。"
     if "/routes" in path:
         return "返回航线基础信息、航点、MinIO 封面预签名 URL 和 DJI 云端 KMZ 文件字段；详情会按过期时间刷新 `djiFile.downloadUrl`。"
     if "/missions" in path:
@@ -106,6 +108,8 @@ def _request_notes(method: str, path: str) -> str:
         return "使用 `multipart/form-data`，必须上传 `kmzFile`；`waypoints` 以 JSON 字符串传入。"
     if "/routes/" in path and method.upper() == "PUT":
         return "不替换 KMZ 时可用 JSON 更新基础信息；替换 KMZ 时用 `multipart/form-data`。"
+    if "/routes/" in path and method.upper() == "DELETE":
+        return "请求体固定为空；只有航线归属部门的调度员或平台超管可删除，且已被任何任务引用的航线不能删除。"
     if "/missions" in path and path.endswith("/start"):
         return "请求体为空对象；后端会启动 DJI 任务、直播和本地飞行会话。"
     if "/missions/" in path and method.upper() == "POST":
@@ -164,7 +168,7 @@ def frontend_description(method: str, path: str, operation: dict) -> str:
                 f"- 用途：{purpose}。",
                 f"- 前置：{_domain_before(path)}",
                 f"- 请求要点：{_request_notes(method, path)}",
-                f"- 响应要点：{_domain_response(path)}",
+                f"- 响应要点：{_domain_response(method, path)}",
                 f"- 下一步：{_next_step(method, path)}",
             ]
         )

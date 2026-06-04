@@ -99,6 +99,11 @@ class RouteReadSerializer(serializers.ModelSerializer):
         return dict(RouteCloudFileReadSerializer(cloud_file).data)
 
 
+class RouteDeleteResponseSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    deleted = serializers.BooleanField()
+
+
 class RouteBaseWriteSerializer(StrictSerializer):
     name = serializers.CharField(max_length=128)
     status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)

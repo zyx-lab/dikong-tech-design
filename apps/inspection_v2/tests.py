@@ -843,6 +843,50 @@ class InspectionV2ApiTests(TestCase):
         upload_route.assert_not_called()
         self.assertEqual(InspectionMission.objects.get(pk=mission["id"]).status, MissionStatus.PENDING)
 
+    def test_route_delete_should_remove_local_route_and_cleanup_dji_file(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="删除航线")
+        route_id = route["id"]
+        dji_file_id = route["djiFile"]["djiFileId"]
+
+        self.authenticate(self.owner_dispatcher)
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.delete_route", return_value={}) as delete_route:
+            response = self.client.delete(f"/api/v2/inspection/routes/{route_id}")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["id"], route_id)
+        self.assertTrue(response.data["data"]["deleted"])
+        self.assertFalse(WaypointRoute.objects.filter(pk=route_id).exists())
+        self.assertFalse(WaypointRouteCloudFile.objects.filter(route_id=route_id).exists())
+        delete_route.assert_called_once_with(dji_file_id)
+
+    def test_route_delete_should_reject_route_referenced_by_any_mission(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="被任务引用不能删")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        InspectionMission.objects.filter(pk=mission["id"]).update(status=MissionStatus.COMPLETED)
+
+        self.authenticate(self.owner_dispatcher)
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.delete_route") as delete_route:
+            response = self.client.delete(f"/api/v2/inspection/routes/{route['id']}")
+
+        self.assertEqual(response.status_code, 409, getattr(response, "data", response.content))
+        self.assertIn("任务引用", str(response.data))
+        self.assertTrue(WaypointRoute.objects.filter(pk=route["id"]).exists())
+        delete_route.assert_not_called()
+
+    def test_route_delete_should_require_edit_permission_on_owner_department(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="他人不可删航线")
+
+        self.authenticate(self.other_dispatcher)
+        response = self.client.delete(f"/api/v2/inspection/routes/{route['id']}")
+
+        self.assertEqual(response.status_code, 404, getattr(response, "data", response.content))
+        self.assertTrue(WaypointRoute.objects.filter(pk=route["id"]).exists())
+
     def test_mission_start_should_create_dji_immediate_job_from_route_kmz_and_executor(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="执行航线")
         connection = DjiConnection.objects.get(owner_department=self.owner_department)

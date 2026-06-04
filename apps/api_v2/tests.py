@@ -176,6 +176,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/inspection/media-files/{id}",
         }
         self.assertTrue(expected_paths.issubset(set(paths)))
+        self.assertIn("delete", paths["/api/v2/inspection/routes/{id}"])
 
         removed_paths = {
             "/api/v2/__internal__/dji/sync/devices",

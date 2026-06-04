@@ -102,7 +102,7 @@ DJI MQTT 由后端 worker 连接，前端不直接连接 DJI broker。
 
 飞手不再是独立资源；它是账号拥有 `pilot` 角色、有效 `pilot` 档案和有效 `pilot` 资质后的业务能力。旧 `/api/v2/workforce/pilots` 和 `/api/v2/inspection/pilot-profiles` 不再作为 v2 接口使用。
 
-创建航线使用 `multipart/form-data`，必须上传 `kmzFile`。更新航线时，如果不替换 KMZ，可以用 JSON 只更新名称、状态、备注、封面等基础信息；如果替换 KMZ，继续用 `multipart/form-data`。
+创建航线使用 `multipart/form-data`，必须上传 `kmzFile`。更新航线时，如果不替换 KMZ，可以用 JSON 只更新名称、状态、备注、封面等基础信息；如果替换 KMZ，继续用 `multipart/form-data`。删除航线调用 `DELETE /api/v2/inspection/routes/{id}`，请求体为空；已被任何任务引用的航线不能删除，未引用航线删除成功后返回 `id` 和 `deleted=true`，前端从列表移除即可。
 
 航线保存成功后会返回两个可访问 URL：
 

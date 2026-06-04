@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
+from django.db.models.deletion import ProtectedError
 from django.db.models import Q
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, OpenApiRequest, OpenApiResponse, extend_schema
@@ -45,6 +46,7 @@ from apps.inspection_v2.serializers import (
     MissionReadSerializer,
     MissionWriteSerializer,
     RouteCreateSerializer,
+    RouteDeleteResponseSerializer,
     RouteKmzUpdateSerializer,
     RouteMetadataUpdateSerializer,
     RouteReadSerializer,
@@ -217,6 +219,15 @@ def _delete_replaced_route_cover(route: WaypointRoute, old_cover_name: str) -> N
         logger.warning("failed to delete replaced route cover", extra={"route_id": route.id, "cover_name": old_cover_name}, exc_info=True)
 
 
+def _delete_route_cover_best_effort(route: WaypointRoute, cover_name: str) -> None:
+    if not cover_name:
+        return
+    try:
+        route.cover_image.storage.delete(cover_name)
+    except Exception:  # noqa: BLE001 - storage cleanup must not make a committed delete fail.
+        logger.warning("failed to delete route cover", extra={"route_id": route.id, "cover_name": cover_name}, exc_info=True)
+
+
 def _safe_dji_upload_name(*, route_id: int) -> str:
     return f"v2-route-{route_id}-{uuid.uuid4().hex[:8]}"
 
@@ -249,6 +260,11 @@ def _reject_execution_fields_without_kmz(data) -> None:
 def _ensure_route_without_open_missions(route: WaypointRoute) -> None:
     if InspectionMission.objects.filter(route=route, status__in=[MissionStatus.PENDING, MissionStatus.RUNNING]).exists():
         raise StandardConstraintConflict(msg="航线已被待执行或执行中的任务引用，不能更新")
+
+
+def _ensure_route_without_missions(route: WaypointRoute) -> None:
+    if InspectionMission.objects.filter(route=route).exists():
+        raise StandardConstraintConflict(msg="航线已被任务引用，不能删除")
 
 
 def _dji_connection_for_route(route: WaypointRoute, dji_connection_id: int) -> DjiConnection:
@@ -617,6 +633,47 @@ class RouteDetailView(InspectionV2APIView):
             after_data=data,
         )
         return Response(data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        operation_id="v2_inspection_routes_delete",
+        summary="删除巡检航线",
+        description="删除未被任务引用的巡检航线；会同步删除本地航点、DJI 云端 KMZ 记录并 best-effort 清理 DJI wayline 文件和封面文件。",
+        request=None,
+        responses={200: OpenApiResponse(response=RouteDeleteResponseSerializer, description="删除成功。")},
+    )
+    def delete(self, request, id: int):
+        context = resolve_v2_context(request)
+        require_dispatcher(context)
+        route = get_editable_route_or_404(context, id)
+        _ensure_route_without_missions(route)
+        before_data = RouteReadSerializer(route).data
+        cover_name = route.cover_image.name
+        try:
+            cloud_file = route.cloud_file
+            dji_connection = cloud_file.dji_connection
+            dji_file_id = cloud_file.dji_file_id
+        except WaypointRouteCloudFile.DoesNotExist:
+            dji_connection = None
+            dji_file_id = ""
+        route_id = route.id
+        owner_department = route.owner_department
+        try:
+            with transaction.atomic():
+                route.delete()
+                log_v2_action(
+                    request=request,
+                    context=context,
+                    action="delete_waypoint_route",
+                    target_type="waypoint_route",
+                    target_id=route_id,
+                    resource_owner_department=owner_department,
+                    before_data=before_data,
+                )
+        except ProtectedError as exc:
+            raise StandardConstraintConflict(msg="航线已被任务引用，不能删除") from exc
+        _delete_route_cover_best_effort(route, cover_name)
+        _delete_dji_route_best_effort(connection=dji_connection, dji_file_id=dji_file_id)
+        return Response({"id": route_id, "deleted": True}, status=status.HTTP_200_OK)
 
 
 def _validated_mission_inputs(context, data):
