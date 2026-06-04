@@ -187,6 +187,20 @@ class DjiGateway:
         payload.update(kwargs)
         return self._request_json("POST", "/api/v1/manage/live/streams/switch", data=payload).data
 
+    def grab_payload_authority(self, gateway_sn: str, payload_index: str):
+        return self._request_json(
+            "POST",
+            f"/api/v1/control/devices/{gateway_sn}/authority/payload",
+            data={"payload_index": payload_index},
+        ).data
+
+    def send_payload_command(self, gateway_sn: str, action: str, data: dict):
+        return self._request_json(
+            "POST",
+            f"/api/v1/control/devices/{gateway_sn}/payload/commands",
+            data={"cmd": action, "data": data},
+        ).data
+
     def set_live_video_quality(self, device_sn: str, **kwargs):
         return self.update_live(device_sn, **kwargs)
 

@@ -29,6 +29,8 @@ from apps.iam_v2.models import (
     V2AccountRoleAssignment,
 )
 from apps.inspection_v2.models import (
+    CameraOperation,
+    CameraOperationStatus,
     CloudMediaFile,
     FlightSession,
     InspectionMission,
@@ -1377,35 +1379,247 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(allowed_response.data["data"]["creatorDepartmentId"], self.other_department.id)
         self.assertEqual(allowed_response.data["data"]["primaryResourceOwnerDepartmentId"], self.owner_department.id)
 
-    def test_live_start_should_require_active_flight_and_proxy_dji_control(self):
-        route = self.create_route_by_api(self.owner_dispatcher, name="直播航线")
-        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-LIVE-001")
-        mission = self.create_mission_by_api(
-            self.owner_dispatcher,
-            route_id=route["id"],
-            drone_id=self.drone.id,
-            executor_id=executor.id,
-            pilot_id=self.owner_pilot.id,
-            name="直播任务",
-        )
-        inactive_response = self.client.post(
-            "/api/v2/inspection/live/start",
-            {"droneId": self.drone.id, "video_id": f"{self.drone.device_sn}/88-0-0/normal-0"},
-            format="json",
-        )
-        self.assertEqual(inactive_response.status_code, 409, getattr(inactive_response, "data", inactive_response.content))
+    def test_live_start_should_allow_online_resource_without_active_flight_and_proxy_dji_control(self):
+        self.authenticate(self.owner_dispatcher)
+        self.assertFalse(FlightSession.objects.filter(drone=self.drone).exists())
 
-        self.start_cloud_mission_by_api(mission["id"], dji_job_id="dji-job-live")
         with patch(
             "apps.inspection_v2.views.DjiConnectionGateway.start_live",
             return_value={"webrtc_url": "https://live.example.test/webrtc", "rtmp_url": "rtmp://live.example.test/app"},
         ) as start_live:
             live_response = self.client.post(
                 "/api/v2/inspection/live/start",
-                {"droneId": self.drone.id, "video_id": f"{self.drone.device_sn}/88-0-0/normal-0", "url_type": 1},
+                {"droneId": self.drone.id, "videoId": f"{self.drone.device_sn}/88-0-0/normal-0", "urlType": 1},
                 format="json",
             )
 
         self.assertEqual(live_response.status_code, 200, getattr(live_response, "data", live_response.content))
         self.assertEqual(live_response.data["data"]["webrtc_url"], "https://live.example.test/webrtc")
-        start_live.assert_called_once()
+        start_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0", url_type=1)
+
+    def test_live_capacity_should_allow_visible_online_drone_without_active_flight(self):
+        self.authenticate(self.owner_dispatcher)
+        self.assertFalse(FlightSession.objects.filter(drone=self.drone).exists())
+
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.get_live_capacity",
+            return_value={"sn": self.drone.device_sn, "cameras_list": [{"index": "88-0-0"}]},
+        ) as get_capacity:
+            response = self.client.get("/api/v2/inspection/live/capacity", {"droneId": self.drone.id})
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["sn"], self.drone.device_sn)
+        get_capacity.assert_called_once_with(self.drone.device_sn)
+
+    def test_live_switch_should_accept_video_type_alias_and_proxy_to_dji(self):
+        self.authenticate(self.owner_dispatcher)
+        video_id = f"{self.drone.device_sn}/88-0-0/wide-0"
+
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.switch_live", return_value={}) as switch_live:
+            response = self.client.post(
+                "/api/v2/inspection/live/switch",
+                {"droneId": self.drone.id, "videoId": video_id, "videoType": "wide"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        switch_live.assert_called_once_with(self.drone.device_sn, video_id=video_id, video_type="wide")
+
+    def test_camera_actions_should_translate_supported_dji_payload_commands_and_record_operation(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        executor = self.bind_gateway(self.owner_department, self.owner_admin, "GATEWAY-CAMERA-001", connection=connection)
+        self.authenticate(self.owner_dispatcher)
+        events = []
+
+        def grab_authority(gateway_sn, payload_index):
+            events.append(("authority", gateway_sn, payload_index))
+            return {"granted": True}
+
+        def send_command(gateway_sn, action, data):
+            events.append(("command", gateway_sn, action, data))
+            return {"accepted": True, "cmd": action}
+
+        cases = [
+            ("camera_photo_take", {}, {"payload_index": "88-0-0"}),
+            ("camera_recording_start", {}, {"payload_index": "88-0-0"}),
+            ("camera_recording_stop", {}, {"payload_index": "88-0-0"}),
+            ("camera_mode_switch", {"cameraMode": 1}, {"payload_index": "88-0-0", "camera_mode": 1}),
+            (
+                "camera_focal_length_set",
+                {"cameraType": "zoom", "zoomFactor": 12.5},
+                {"payload_index": "88-0-0", "camera_type": "zoom", "zoom_factor": 12.5},
+            ),
+            (
+                "camera_aim",
+                {"cameraType": "wide", "locked": False, "x": 0.25, "y": 0.75},
+                {"payload_index": "88-0-0", "camera_type": "wide", "locked": False, "x": 0.25, "y": 0.75},
+            ),
+            ("gimbal_reset", {"resetMode": 0}, {"payload_index": "88-0-0", "reset_mode": 0}),
+        ]
+
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.grab_payload_authority", side_effect=grab_authority), patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.send_payload_command", side_effect=send_command
+        ):
+            for action, extra_payload, expected_dji_data in cases:
+                with self.subTest(action=action):
+                    response = self.client.post(
+                        "/api/v2/inspection/camera/actions",
+                        {
+                            "droneId": self.drone.id,
+                            "executorId": executor.id,
+                            "payloadIndex": "88-0-0",
+                            "action": action,
+                            **extra_payload,
+                        },
+                        format="json",
+                    )
+
+                    self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+                    data = response.data["data"]
+                    self.assertEqual(data["status"], CameraOperationStatus.SUCCEEDED)
+                    self.assertEqual(data["action"], action)
+                    self.assertEqual(data["droneSn"], self.drone.device_sn)
+                    self.assertEqual(data["gatewaySn"], executor.device_sn)
+                    operation = CameraOperation.objects.get(pk=data["operationId"])
+                    self.assertEqual(operation.status, CameraOperationStatus.SUCCEEDED)
+                    self.assertEqual(operation.payload_index, "88-0-0")
+                    self.assertEqual(operation.upstream_request["command"]["data"], expected_dji_data)
+
+        expected_events = []
+        for action, _extra_payload, expected_dji_data in cases:
+            expected_events.append(("authority", executor.device_sn, "88-0-0"))
+            expected_events.append(("command", executor.device_sn, action, expected_dji_data))
+        self.assertEqual(events, expected_events)
+
+    def test_camera_action_validation_should_reject_invalid_action_payloads_before_upstream_call(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        executor = self.bind_gateway(self.owner_department, self.owner_admin, "GATEWAY-CAMERA-VALIDATE-001", connection=connection)
+        self.authenticate(self.owner_dispatcher)
+        base_payload = {"droneId": self.drone.id, "executorId": executor.id, "payloadIndex": "88-0-0"}
+        invalid_payloads = [
+            {**base_payload, "action": "camera_unknown"},
+            {**base_payload, "action": "camera_mode_switch"},
+            {**base_payload, "action": "camera_mode_switch", "cameraMode": 9},
+            {**base_payload, "action": "camera_focal_length_set", "cameraType": "wide", "zoomFactor": 10},
+            {**base_payload, "action": "camera_focal_length_set", "cameraType": "ir", "zoomFactor": 21},
+            {**base_payload, "action": "camera_aim", "cameraType": "zoom", "locked": True, "x": 1.2, "y": 0.5},
+            {**base_payload, "action": "gimbal_reset"},
+            {"droneId": self.drone.id, "executorId": executor.id, "action": "camera_photo_take"},
+        ]
+
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.grab_payload_authority") as grab_authority, patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.send_payload_command"
+        ) as send_command:
+            for payload in invalid_payloads:
+                with self.subTest(payload=payload):
+                    response = self.client.post("/api/v2/inspection/camera/actions", payload, format="json")
+                    self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+
+        grab_authority.assert_not_called()
+        send_command.assert_not_called()
+
+    def test_camera_actions_should_require_operator_permission_online_resources_and_same_dji_connection(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        executor = self.bind_gateway(self.owner_department, self.owner_admin, "GATEWAY-CAMERA-PERM-001", connection=connection)
+        payload = {
+            "droneId": self.drone.id,
+            "executorId": executor.id,
+            "payloadIndex": "88-0-0",
+            "action": "camera_photo_take",
+        }
+
+        no_control_user, _profile = create_v2_actor(username="camera_no_control", role_code=None, department=self.owner_department)
+        self.authenticate(no_control_user)
+        no_control_response = self.client.post("/api/v2/inspection/camera/actions", payload, format="json")
+        self.assertEqual(no_control_response.status_code, 403, getattr(no_control_response, "data", no_control_response.content))
+
+        self.authenticate(self.owner_dispatcher)
+        self.drone.online_status = False
+        self.drone.save(update_fields=["online_status", "updated_at"])
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.grab_payload_authority") as grab_authority:
+            offline_drone_response = self.client.post("/api/v2/inspection/camera/actions", payload, format="json")
+        self.assertEqual(offline_drone_response.status_code, 409, getattr(offline_drone_response, "data", offline_drone_response.content))
+        grab_authority.assert_not_called()
+
+        self.drone.online_status = True
+        self.drone.save(update_fields=["online_status", "updated_at"])
+        executor.online_status = False
+        executor.save(update_fields=["online_status", "updated_at"])
+        offline_executor_response = self.client.post("/api/v2/inspection/camera/actions", payload, format="json")
+        self.assertEqual(offline_executor_response.status_code, 409, getattr(offline_executor_response, "data", offline_executor_response.content))
+
+        executor.online_status = True
+        executor.save(update_fields=["online_status", "updated_at"])
+        other_connection = DjiConnection.objects.create(
+            owner_department=self.owner_department,
+            name="camera second connection",
+            base_url="https://dji-second.example.test",
+            username="admin",
+            password="secret",
+            workspace_id="workspace-second",
+            access_token="token-second",
+            created_by_user=self.owner_admin,
+        )
+        other_executor = self.bind_gateway(
+            self.owner_department,
+            self.owner_admin,
+            "GATEWAY-CAMERA-DIFF-001",
+            connection=other_connection,
+        )
+        mismatch_response = self.client.post(
+            "/api/v2/inspection/camera/actions",
+            {**payload, "executorId": other_executor.id},
+            format="json",
+        )
+        self.assertEqual(mismatch_response.status_code, 409, getattr(mismatch_response, "data", mismatch_response.content))
+
+    def test_camera_action_upstream_failures_should_record_failed_operation(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        executor = self.bind_gateway(self.owner_department, self.owner_admin, "GATEWAY-CAMERA-FAIL-001", connection=connection)
+        self.authenticate(self.owner_dispatcher)
+        payload = {
+            "droneId": self.drone.id,
+            "executorId": executor.id,
+            "payloadIndex": "88-0-0",
+            "action": "camera_photo_take",
+        }
+
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.grab_payload_authority",
+            side_effect=DjiGatewayUpstreamError("authority failed", status_code=502, data={"code": "E0001"}),
+        ) as grab_authority, patch("apps.inspection_v2.views.DjiConnectionGateway.send_payload_command") as send_command:
+            authority_response = self.client.post("/api/v2/inspection/camera/actions", payload, format="json")
+
+        self.assertEqual(authority_response.status_code, 502, getattr(authority_response, "data", authority_response.content))
+        authority_operation = CameraOperation.objects.latest("id")
+        self.assertEqual(authority_operation.status, CameraOperationStatus.FAILED)
+        self.assertIn("authority failed", authority_operation.error_message)
+        grab_authority.assert_called_once_with(executor.device_sn, "88-0-0")
+        send_command.assert_not_called()
+
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.grab_payload_authority", return_value={"granted": True}), patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.send_payload_command",
+            side_effect=DjiGatewayUpstreamError(
+                "DJI upstream business error",
+                status_code=200,
+                data={"code": "E0001", "msg": "The device is offline."},
+            ),
+        ) as send_command:
+            command_response = self.client.post("/api/v2/inspection/camera/actions", payload, format="json")
+
+        self.assertEqual(command_response.status_code, 502, getattr(command_response, "data", command_response.content))
+        command_operation = CameraOperation.objects.latest("id")
+        self.assertEqual(command_operation.status, CameraOperationStatus.FAILED)
+        self.assertEqual(command_operation.upstream_response["authority"], {"granted": True})
+        self.assertEqual(command_operation.upstream_response["error"]["upstream"]["msg"], "The device is offline.")
+        send_command.assert_called_once()
+
+    def test_live_start_should_reject_non_control_actor(self):
+        no_control_user, _profile = create_v2_actor(username="live_no_control", role_code=None, department=self.owner_department)
+        self.authenticate(no_control_user)
+        response = self.client.post(
+            "/api/v2/inspection/live/start",
+            {"droneId": self.drone.id, "video_id": f"{self.drone.device_sn}/88-0-0/normal-0"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, getattr(response, "data", response.content))

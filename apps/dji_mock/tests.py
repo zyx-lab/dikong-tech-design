@@ -239,3 +239,41 @@ class DjiMockServerTests(SimpleTestCase):
         self.assertEqual(not_found_response.status_code, 200)
         self.assertEqual(not_found_response.json()["code"], "D0001")
         self.assertIsNone(not_found_response.json()["data"])
+
+    def test_payload_control_endpoints_should_record_requests_and_support_business_failure(self):
+        token = mock_dji_state.access_token
+
+        authority_response = self.client.post(
+            "/__mock-dji__/api/v1/control/devices/MOCK-GATEWAY-001/authority/payload",
+            data=json.dumps({"payload_index": "88-0-0"}),
+            content_type="application/json",
+            HTTP_X_AUTH_TOKEN=token,
+        )
+        self.assertEqual(authority_response.status_code, 200)
+        self.assertEqual(authority_response.json()["code"], "00000")
+        self.assertEqual(mock_dji_state.payload_authority_requests[0]["payload"], {"payload_index": "88-0-0"})
+
+        command_response = self.client.post(
+            "/__mock-dji__/api/v1/control/devices/MOCK-GATEWAY-001/payload/commands",
+            data=json.dumps({"cmd": "camera_photo_take", "data": {"payload_index": "88-0-0"}}),
+            content_type="application/json",
+            HTTP_X_AUTH_TOKEN=token,
+        )
+        self.assertEqual(command_response.status_code, 200)
+        self.assertEqual(command_response.json()["code"], "00000")
+        self.assertEqual(mock_dji_state.payload_command_requests[0]["payload"]["cmd"], "camera_photo_take")
+
+        mock_dji_state.set_payload_command_error(
+            gateway_sn="MOCK-GATEWAY-001",
+            cmd="gimbal_reset",
+            msg="The device is offline.",
+        )
+        failed_command_response = self.client.post(
+            "/__mock-dji__/api/v1/control/devices/MOCK-GATEWAY-001/payload/commands",
+            data=json.dumps({"cmd": "gimbal_reset", "data": {"payload_index": "88-0-0", "reset_mode": 0}}),
+            content_type="application/json",
+            HTTP_X_AUTH_TOKEN=token,
+        )
+        self.assertEqual(failed_command_response.status_code, 200)
+        self.assertEqual(failed_command_response.json()["code"], "E0001")
+        self.assertEqual(failed_command_response.json()["msg"], "The device is offline.")

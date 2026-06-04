@@ -198,6 +198,24 @@ class ApiV2DocsSyncTests(TestCase):
             self._list_item_properties(schema, path="/api/v2/inspection/missions"),
             {"id", "routeSnapshot", "droneId", "pilot", "status"},
         )
+        self._assert_properties_include(
+            self._request_body_properties(
+                schema,
+                path="/api/v2/inspection/camera/actions",
+                method="post",
+                content_type="application/json",
+            ),
+            {"droneId", "executorId", "payloadIndex", "action", "cameraType", "zoomFactor", "cameraMode", "resetMode"},
+        )
+        self._assert_properties_include(
+            self._request_body_properties(
+                schema,
+                path="/api/v2/inspection/live/switch",
+                method="post",
+                content_type="application/json",
+            ),
+            {"videoId", "videoType"},
+        )
 
     def test_v2_schema_should_include_frontend_usage_guide(self):
         schema = self._schema()

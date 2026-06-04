@@ -168,6 +168,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/inspection/live/stop",
             "/api/v2/inspection/live/update",
             "/api/v2/inspection/live/switch",
+            "/api/v2/inspection/camera/actions",
             "/api/v2/inspection/flight-records",
             "/api/v2/inspection/flight-records/{id}",
             "/api/v2/inspection/flight-records/{id}/refresh-media",
@@ -334,6 +335,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("POST", "/api/v2/inspection/live/stop"),
             ("POST", "/api/v2/inspection/live/switch"),
             ("POST", "/api/v2/inspection/live/update"),
+            ("POST", "/api/v2/inspection/camera/actions"),
             ("POST", "/api/v2/inspection/missions"),
             ("PUT", "/api/v2/inspection/missions/{id}"),
             ("POST", "/api/v2/inspection/missions/{id}/abort"),
@@ -397,6 +399,43 @@ class ApiV2SchemaBoundaryTests(TestCase):
         )
         self.assertIn("waypoints", put_multipart)
         self.assertIn("kmzFile", put_multipart)
+
+    def test_v2_schema_should_document_camera_action_and_live_switch_fields(self):
+        schema = self._schema()
+
+        camera_body = self._request_body_properties(
+            schema,
+            path="/api/v2/inspection/camera/actions",
+            method="post",
+            content_type="application/json",
+        )
+        self.assertTrue(
+            {
+                "droneId",
+                "executorId",
+                "payloadIndex",
+                "action",
+                "cameraMode",
+                "cameraType",
+                "zoomFactor",
+                "locked",
+                "x",
+                "y",
+                "resetMode",
+            }.issubset(camera_body),
+            sorted(camera_body),
+        )
+        self.assertIn("camera_photo_take", camera_body["action"]["enum"])
+        self.assertIn("gimbal_reset", camera_body["action"]["enum"])
+
+        live_switch_body = self._request_body_properties(
+            schema,
+            path="/api/v2/inspection/live/switch",
+            method="post",
+            content_type="application/json",
+        )
+        self.assertIn("videoType", live_switch_body)
+        self.assertIn("video_type", live_switch_body)
 
     def test_v2_docs_should_be_available(self):
         response = self.client.get("/api/v2/docs/")

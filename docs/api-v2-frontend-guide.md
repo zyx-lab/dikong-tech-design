@@ -123,6 +123,46 @@ DJI MQTT 由后端 worker 连接，前端不直接连接 DJI broker。
 
 直播接口会调用 DJI 上游。失败时优先展示 `msg`，并保留当前页面状态，便于用户重试。
 
+直播接口使用本地 `droneId`，后端会映射为 DJI `drone_sn`。`videoId` 使用 DJI 格式 `{drone_sn}/{payload_index}/{video_type}-0`；`payload_index` 可从 capacity 返回的 `cameras_list[].index` 获取。切换广角、变焦或红外镜头时调用 `POST /api/v2/inspection/live/switch`，请求里传 `videoType=wide|zoom|ir`，后端会转成 DJI 上游需要的 `video_type`。
+
+## 相机与云台控制
+
+相机动作统一使用：
+
+```http
+POST /api/v2/inspection/camera/actions
+```
+
+基础请求体：
+
+```json
+{
+  "droneId": 1,
+  "executorId": 2,
+  "payloadIndex": "88-0-0",
+  "action": "camera_photo_take"
+}
+```
+
+字段映射：
+
+- `droneId`：本地无人机资源 ID，响应里会带出 `droneSn`，对应 DJI 视频源设备 SN。
+- `executorId`：本地执行端/网关资源 ID，响应里会带出 `gatewaySn`，对应 DJI `/api/v1/control/devices/{sn}/...` 路径里的 `{sn}`。
+- `payloadIndex`：DJI `payload_index`，从 `GET /api/v2/inspection/live/capacity?droneId=...` 的 `cameras_list[].index` 获取。
+- `action`：DJI payload command 方法名。
+
+第一版支持的动作：
+
+- `camera_mode_switch`：额外传 `cameraMode`，取值 `0=拍照`、`1=录像`、`2=智能低光`、`3=全景`。
+- `camera_photo_take`：拍照，只需要基础字段。
+- `camera_recording_start`：开始录像，只需要基础字段。
+- `camera_recording_stop`：停止录像，只需要基础字段。
+- `camera_focal_length_set`：额外传 `cameraType` 和 `zoomFactor`；`cameraType=zoom` 时 `zoomFactor` 为 `2..200`，`cameraType=ir` 时为 `2..20`。
+- `camera_aim`：额外传 `cameraType`、`locked`、`x`、`y`；`cameraType` 支持 `wide/zoom/ir`，`x/y` 为 `0..1`。
+- `gimbal_reset`：额外传 `resetMode`，取值 `0=回中`、`1=朝下`、`2=偏航回中`、`3=俯仰朝下`。
+
+接口会先抢 DJI payload authority，再发送 payload command，并保存本次后端操作记录。拍照和录像生成的媒体文件不从这个接口返回，继续通过 DJI 媒体同步、回调或飞行记录媒体刷新流程进入系统。
+
 ## 共享与权限
 
 前端菜单正式命名为“资源共享组”，不要使用“用户组管理”。资源共享组用于把本部门已绑定资源授权给其他部门。推荐顺序：

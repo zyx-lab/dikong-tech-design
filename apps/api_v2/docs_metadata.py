@@ -37,6 +37,7 @@ SUMMARY_OVERRIDES = {
     _operation_key("POST", "/api/v2/inspection/live/stop"): "停止 DJI 直播",
     _operation_key("POST", "/api/v2/inspection/live/update"): "更新 DJI 直播参数",
     _operation_key("POST", "/api/v2/inspection/live/switch"): "切换 DJI 直播源",
+    _operation_key("POST", "/api/v2/inspection/camera/actions"): "控制 DJI 相机与云台",
 }
 
 
@@ -89,6 +90,8 @@ def _domain_response(path: str) -> str:
         return "返回运行中飞行和遥测快照；遥测由 MQTT worker 异步写入。"
     if "/live/" in path:
         return "返回 DJI 上游直播能力或操作结果；失败时 `msg` 可作为联调错误提示。"
+    if "/camera/" in path:
+        return "返回本次相机操作记录 ID、DJI 设备映射字段和 authority/command 上游结果；拍照后的媒体文件继续走媒体同步流程。"
     return "成功数据固定放在 `data`；列表接口返回 `list` 和 `total`。"
 
 
@@ -108,7 +111,9 @@ def _request_notes(method: str, path: str) -> str:
     if "/missions/" in path and method.upper() == "POST":
         return "请求体可为空对象；取消/失败接口可传 `reason` 便于审计和前端展示。"
     if "/live/" in path:
-        return "按 DJI 直播动作传 `deviceSn`、`videoId`、质量或镜头参数；字段为空时上游可能拒绝。"
+        return "传本地 `droneId`；`videoId` 从 capacity 的镜头/视频能力组装，切换镜头时传 `videoType=wide|zoom|ir`。"
+    if "/camera/actions" in path:
+        return "传本地 `droneId/executorId` 和 capacity 中的 `payloadIndex`；后端映射为 DJI `gateway_sn/payload_index` 并发送 payload command。"
     if "/session/logout" in path:
         return "请求体为空对象；前端随后清理本地 token。"
     return "按 request schema 传 JSON；未列出的字段会被严格校验器拒绝。"
@@ -139,6 +144,8 @@ def _next_step(method: str, path: str) -> str:
         return "刷新任务列表、活动飞行列表和飞行记录。"
     if "/live/start" in path:
         return "将返回的播放信息展示到监控页；停止时调用 `/live/stop`。"
+    if "/camera/actions" in path:
+        return "根据 `status` 更新当前按钮状态；需要查看新照片或录像时走媒体同步/刷新接口。"
     if method.upper() in {"PUT", "DELETE"}:
         return "刷新详情页或列表页，避免继续展示旧状态。"
     return "根据 `data` 刷新当前页面状态；失败时展示 `msg` 并保留用户输入。"
@@ -261,13 +268,15 @@ def request_example_value(method: str, path: str, media_type: str):
     if path.endswith("/telemetry/snapshots"):
         return {"droneId": 1, "latitude": "22.25000000", "longitude": "113.52000000", "batteryPercent": 88}
     if path.endswith("/live/start"):
-        return {"deviceSn": "1581F7FVC252A00CJ5TT", "videoId": "1581F7FVC252A00CJ5TT/88-0-0/normal-0", "quality": "HD"}
+        return {"droneId": 1, "videoId": "1581F7FVC252A00CJ5TT/88-0-0/normal-0", "urlType": 1, "videoQuality": 1}
     if path.endswith("/live/stop"):
-        return {"deviceSn": "1581F7FVC252A00CJ5TT", "videoId": "1581F7FVC252A00CJ5TT/88-0-0/normal-0"}
+        return {"droneId": 1, "videoId": "1581F7FVC252A00CJ5TT/88-0-0/normal-0"}
     if path.endswith("/live/update"):
-        return {"deviceSn": "1581F7FVC252A00CJ5TT", "videoId": "1581F7FVC252A00CJ5TT/88-0-0/normal-0", "quality": "HD"}
+        return {"droneId": 1, "videoId": "1581F7FVC252A00CJ5TT/88-0-0/normal-0", "videoQuality": 1}
     if path.endswith("/live/switch"):
-        return {"deviceSn": "1581F7FVC252A00CJ5TT", "videoId": "1581F7FVC252A00CJ5TT/88-0-0/normal-0"}
+        return {"droneId": 1, "videoId": "1581F7FVC252A00CJ5TT/88-0-0/zoom-0", "videoType": "zoom"}
+    if path.endswith("/camera/actions"):
+        return {"droneId": 1, "executorId": 2, "payloadIndex": "88-0-0", "action": "camera_photo_take"}
     if path.endswith("/flight-records/{id}"):
         return {"status": "COMPLETED", "remark": "飞行记录确认"}
     if path.endswith("/refresh-media"):

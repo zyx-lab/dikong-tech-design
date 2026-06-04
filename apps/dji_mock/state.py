@@ -47,6 +47,10 @@ class MockDjiState:
             self.jobs: dict[str, dict] = {}
             self.media_files: dict[str, dict] = {}
             self.live_streams: dict[str, dict] = {}
+            self.payload_authority_requests: list[dict] = []
+            self.payload_command_requests: list[dict] = []
+            self.payload_authority_errors: dict[tuple[str, str], dict] = {}
+            self.payload_command_errors: dict[tuple[str, str], dict] = {}
             self.seed_device(device_sn="MOCK-DRONE-001", name="Mock Drone 1", model="Matrice 30T")
             self.seed_device(device_sn="MOCK-DRONE-002", name="Mock Drone 2", model="Matrice 3D")
             self.seed_device(device_sn="MOCK-DOCK-001", name="Mock Dock 1", model="Dock 2", domain=3)
@@ -246,6 +250,34 @@ class MockDjiState:
             if not device_sn or device_sn not in self.bound_device_sns:
                 return None
             return {}
+
+    def set_payload_authority_error(self, *, gateway_sn: str, payload_index: str, code: str = "E0001", msg: str = "mock payload authority failed"):
+        with self._lock:
+            self.payload_authority_errors[(gateway_sn, payload_index)] = {"code": code, "msg": msg}
+
+    def set_payload_command_error(self, *, gateway_sn: str, cmd: str, code: str = "E0001", msg: str = "mock payload command failed"):
+        with self._lock:
+            self.payload_command_errors[(gateway_sn, cmd)] = {"code": code, "msg": msg}
+
+    def grab_payload_authority(self, *, gateway_sn: str, payload: dict) -> dict:
+        with self._lock:
+            payload_index = str(payload.get("payload_index") or "").strip()
+            request = {"gateway_sn": gateway_sn, "payload": deepcopy(payload)}
+            self.payload_authority_requests.append(request)
+            error = self.payload_authority_errors.get((gateway_sn, payload_index))
+            if error:
+                return {"ok": False, **deepcopy(error)}
+            return {"ok": True, "gateway_sn": gateway_sn, "payload_index": payload_index}
+
+    def send_payload_command(self, *, gateway_sn: str, payload: dict) -> dict:
+        with self._lock:
+            cmd = str(payload.get("cmd") or "").strip()
+            request = {"gateway_sn": gateway_sn, "payload": deepcopy(payload)}
+            self.payload_command_requests.append(request)
+            error = self.payload_command_errors.get((gateway_sn, cmd))
+            if error:
+                return {"ok": False, **deepcopy(error)}
+            return {"ok": True, "gateway_sn": gateway_sn, "cmd": cmd, "data": deepcopy(payload.get("data") or {})}
 
     def create_wayline(self, *, name: str, file_name: str | None = None) -> dict:
         with self._lock:

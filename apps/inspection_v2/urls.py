@@ -21,6 +21,7 @@ urlpatterns = [
     path("live/stop", views.LiveStopView.as_view(), name="v2-inspection-live-stop"),
     path("live/update", views.LiveUpdateView.as_view(), name="v2-inspection-live-update"),
     path("live/switch", views.LiveSwitchView.as_view(), name="v2-inspection-live-switch"),
+    path("camera/actions", views.CameraActionView.as_view(), name="v2-inspection-camera-actions"),
     path("flight-records", views.FlightRecordListView.as_view(), name="v2-inspection-flight-records"),
     path("flight-records/<int:id>", views.FlightRecordDetailView.as_view(), name="v2-inspection-flight-record-detail"),
     path(

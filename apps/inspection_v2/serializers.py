@@ -1,4 +1,5 @@
 import json
+import re
 import zipfile
 
 from rest_framework import serializers
@@ -580,10 +581,129 @@ class CloudMediaFileReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+CAMERA_ACTION_CHOICES = [
+    "camera_mode_switch",
+    "camera_photo_take",
+    "camera_recording_start",
+    "camera_recording_stop",
+    "camera_focal_length_set",
+    "camera_aim",
+    "gimbal_reset",
+]
+CAMERA_TYPE_CHOICES = ["wide", "zoom", "ir"]
+FOCAL_CAMERA_TYPE_CHOICES = ["zoom", "ir"]
+PAYLOAD_INDEX_PATTERN = re.compile(r"^\d+-\d+-\d+$")
+
+
+class CameraActionSerializer(StrictSerializer):
+    missing = object()
+
+    droneId = serializers.IntegerField(min_value=1)
+    executorId = serializers.IntegerField(min_value=1)
+    payloadIndex = serializers.CharField(required=False, allow_blank=True)
+    payload_index = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    action = serializers.ChoiceField(choices=CAMERA_ACTION_CHOICES)
+    cameraMode = serializers.IntegerField(required=False)
+    camera_mode = serializers.IntegerField(required=False, write_only=True)
+    cameraType = serializers.ChoiceField(choices=CAMERA_TYPE_CHOICES, required=False)
+    camera_type = serializers.ChoiceField(choices=CAMERA_TYPE_CHOICES, required=False, write_only=True)
+    zoomFactor = serializers.FloatField(required=False)
+    zoom_factor = serializers.FloatField(required=False, write_only=True)
+    locked = serializers.BooleanField(required=False)
+    x = serializers.FloatField(required=False, min_value=0, max_value=1)
+    y = serializers.FloatField(required=False, min_value=0, max_value=1)
+    resetMode = serializers.IntegerField(required=False)
+    reset_mode = serializers.IntegerField(required=False, write_only=True)
+
+    def _alias(self, attrs: dict, camel: str, snake: str):
+        camel_value = attrs.get(camel, self.missing)
+        snake_value = attrs.get(snake, self.missing)
+        if camel_value is not self.missing and snake_value is not self.missing and camel_value != snake_value:
+            raise serializers.ValidationError({camel: [f"{camel} 与 {snake} 不能同时传入不同值"]})
+        if camel_value is not self.missing:
+            return camel_value
+        if snake_value is not self.missing:
+            return snake_value
+        return self.missing
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        payload_index = self._alias(attrs, "payloadIndex", "payload_index")
+        if payload_index is self.missing or not str(payload_index).strip():
+            raise serializers.ValidationError({"payloadIndex": ["该字段是必填项。"]})
+        payload_index = str(payload_index).strip()
+        if not PAYLOAD_INDEX_PATTERN.match(payload_index):
+            raise serializers.ValidationError({"payloadIndex": ["格式必须为 type-subtype-index，例如 88-0-0"]})
+
+        action = attrs["action"]
+        dji_data = {"payload_index": payload_index}
+
+        if action == "camera_mode_switch":
+            camera_mode = self._alias(attrs, "cameraMode", "camera_mode")
+            if camera_mode is self.missing:
+                raise serializers.ValidationError({"cameraMode": ["camera_mode_switch 需要 cameraMode"]})
+            if camera_mode not in {0, 1, 2, 3}:
+                raise serializers.ValidationError({"cameraMode": ["取值必须是 0、1、2 或 3"]})
+            dji_data["camera_mode"] = camera_mode
+
+        if action == "camera_focal_length_set":
+            camera_type = self._alias(attrs, "cameraType", "camera_type")
+            zoom_factor = self._alias(attrs, "zoomFactor", "zoom_factor")
+            if camera_type is self.missing:
+                raise serializers.ValidationError({"cameraType": ["camera_focal_length_set 需要 cameraType"]})
+            if camera_type not in FOCAL_CAMERA_TYPE_CHOICES:
+                raise serializers.ValidationError({"cameraType": ["camera_focal_length_set 只支持 zoom 或 ir"]})
+            if zoom_factor is self.missing:
+                raise serializers.ValidationError({"zoomFactor": ["camera_focal_length_set 需要 zoomFactor"]})
+            max_zoom = 20 if camera_type == "ir" else 200
+            if zoom_factor < 2 or zoom_factor > max_zoom:
+                raise serializers.ValidationError({"zoomFactor": [f"{camera_type} 变焦倍率必须在 2 到 {max_zoom} 之间"]})
+            dji_data["camera_type"] = camera_type
+            dji_data["zoom_factor"] = zoom_factor
+
+        if action == "camera_aim":
+            camera_type = self._alias(attrs, "cameraType", "camera_type")
+            if camera_type is self.missing:
+                raise serializers.ValidationError({"cameraType": ["camera_aim 需要 cameraType"]})
+            missing = [field for field in ("locked", "x", "y") if field not in attrs]
+            if missing:
+                raise serializers.ValidationError({field: ["camera_aim 需要该字段"] for field in missing})
+            dji_data["camera_type"] = camera_type
+            dji_data["locked"] = attrs["locked"]
+            dji_data["x"] = attrs["x"]
+            dji_data["y"] = attrs["y"]
+
+        if action == "gimbal_reset":
+            reset_mode = self._alias(attrs, "resetMode", "reset_mode")
+            if reset_mode is self.missing:
+                raise serializers.ValidationError({"resetMode": ["gimbal_reset 需要 resetMode"]})
+            if reset_mode not in {0, 1, 2, 3}:
+                raise serializers.ValidationError({"resetMode": ["取值必须是 0、1、2 或 3"]})
+            dji_data["reset_mode"] = reset_mode
+
+        attrs["_payload_index"] = payload_index
+        attrs["_dji_data"] = dji_data
+        return attrs
+
+
+class CameraActionResponseSerializer(serializers.Serializer):
+    operationId = serializers.IntegerField()
+    status = serializers.CharField()
+    action = serializers.CharField()
+    droneId = serializers.IntegerField()
+    droneSn = serializers.CharField()
+    executorId = serializers.IntegerField()
+    gatewaySn = serializers.CharField()
+    payloadIndex = serializers.CharField()
+    upstream = serializers.JSONField()
+
+
 class LiveActionSerializer(StrictSerializer):
     droneId = serializers.IntegerField(min_value=1)
     video_id = serializers.CharField(required=False, allow_blank=True)
     videoId = serializers.CharField(required=False, allow_blank=True)
+    video_type = serializers.ChoiceField(choices=["wide", "zoom", "ir", "normal"], required=False)
+    videoType = serializers.ChoiceField(choices=["wide", "zoom", "ir", "normal"], required=False)
     url_type = serializers.IntegerField(required=False)
     urlType = serializers.IntegerField(required=False)
     video_quality = serializers.IntegerField(required=False)

@@ -60,6 +60,11 @@ class LiveStreamStatus(models.TextChoices):
     FAILED = "FAILED", "异常"
 
 
+class CameraOperationStatus(models.TextChoices):
+    SUCCEEDED = "SUCCEEDED", "成功"
+    FAILED = "FAILED", "失败"
+
+
 def route_cover_upload_to(instance, filename):
     extension = Path(str(filename or "")).suffix.lower() or ".bin"
     route_id = instance.pk or "new"
@@ -330,6 +335,39 @@ class MissionCloudExecution(TimeStampedModel):
                 condition=~Q(dji_job_id=""),
                 name="uniq_v2_cloud_execution_job",
             ),
+        ]
+
+
+class CameraOperation(TimeStampedModel):
+    action = models.CharField(max_length=64)
+    status = models.CharField(max_length=16, choices=CameraOperationStatus.choices)
+    drone = models.ForeignKey(DroneResource, on_delete=models.PROTECT, related_name="v2_camera_operations")
+    executor = models.ForeignKey(GatewayResource, on_delete=models.PROTECT, related_name="v2_camera_operations")
+    payload_index = models.CharField(max_length=64)
+    dji_connection = models.ForeignKey(
+        "resource_v2.DjiConnection",
+        on_delete=models.PROTECT,
+        related_name="v2_camera_operations",
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="v2_camera_operations",
+    )
+    started_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
+    upstream_request = models.JSONField(default=dict, blank=True)
+    upstream_response = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "v2_camera_operations"
+        ordering = ["-id"]
+        indexes = [
+            models.Index(fields=["drone", "started_at"], name="idx_v2_camera_drone_time"),
+            models.Index(fields=["status", "started_at"], name="idx_v2_camera_status_time"),
         ]
 
 

@@ -212,6 +212,42 @@ def live_switch(request):
     return _success(result)
 
 
+@csrf_exempt
+@protected_mock_dji_view
+def payload_authority(request, gateway_sn: str):
+    if request.method != "POST":
+        raise Http404
+    payload = _load_json(request)
+    payload_index = str(payload.get("payload_index") or "").strip()
+    if not payload_index:
+        return _error("B0001", "payload_index is required", status=400, data={"payload_index": ["该字段是必填项。"]})
+    result = mock_dji_state.grab_payload_authority(gateway_sn=gateway_sn, payload=payload)
+    if not result.get("ok"):
+        return _error(str(result.get("code") or "E0001"), str(result.get("msg") or "mock payload authority failed"), status=200)
+    result.pop("ok", None)
+    return _success(result)
+
+
+@csrf_exempt
+@protected_mock_dji_view
+def payload_commands(request, gateway_sn: str):
+    if request.method != "POST":
+        raise Http404
+    payload = _load_json(request)
+    cmd = str(payload.get("cmd") or "").strip()
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    payload_index = str(data.get("payload_index") or "").strip()
+    if not cmd:
+        return _error("B0001", "cmd is required", status=400, data={"cmd": ["该字段是必填项。"]})
+    if not payload_index:
+        return _error("B0001", "payload_index is required", status=400, data={"payload_index": ["该字段是必填项。"]})
+    result = mock_dji_state.send_payload_command(gateway_sn=gateway_sn, payload={"cmd": cmd, "data": data})
+    if not result.get("ok"):
+        return _error(str(result.get("code") or "E0001"), str(result.get("msg") or "mock payload command failed"), status=200)
+    result.pop("ok", None)
+    return _success(result)
+
+
 @protected_mock_dji_view
 def wayline_list(request, workspace_id: str):
     if request.method != "GET":

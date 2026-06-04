@@ -24,6 +24,8 @@ from apps.iam_v2.account_profile_services import account_has_effective_qualifica
 from apps.iam_v2.models import FixedRole, V2AccountProfile
 from apps.iam_v2.services import resolve_v2_context
 from apps.inspection_v2.models import (
+    CameraOperation,
+    CameraOperationStatus,
     InspectionMission,
     MissionStatus,
     Waypoint,
@@ -32,6 +34,8 @@ from apps.inspection_v2.models import (
 )
 from apps.inspection_v2.serializers import (
     ActiveFlightReadSerializer,
+    CameraActionResponseSerializer,
+    CameraActionSerializer,
     CloudMediaFileReadSerializer,
     FlightRecordReadSerializer,
     FlightRecordUpdateSerializer,
@@ -77,7 +81,7 @@ from apps.resource_v2.audit import log_v2_action
 from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import ResourceType
 from apps.resource_v2.models import DjiConnection
-from apps.resource_v2.services import get_resource
+from apps.resource_v2.services import effective_permissions_for_binding, get_resource
 
 
 logger = logging.getLogger(__name__)
@@ -976,18 +980,48 @@ class TelemetrySnapshotView(InspectionV2APIView):
 def _live_payload(validated_data: dict) -> dict:
     data = dict(validated_data)
     data.pop("droneId", None)
-    if "videoId" in data and "video_id" not in data:
-        data["video_id"] = data.pop("videoId")
-    if "urlType" in data and "url_type" not in data:
-        data["url_type"] = data.pop("urlType")
-    if "videoQuality" in data and "video_quality" not in data:
-        data["video_quality"] = data.pop("videoQuality")
+    if "videoId" in data:
+        data.setdefault("video_id", data.pop("videoId"))
+    if "videoType" in data:
+        data.setdefault("video_type", data.pop("videoType"))
+    if "urlType" in data:
+        data.setdefault("url_type", data.pop("urlType"))
+    if "videoQuality" in data:
+        data.setdefault("video_quality", data.pop("videoQuality"))
     return data
 
 
-def _require_active_session_for_drone(context, drone_id: int):
-    if not visible_sessions_queryset(context).filter(drone_id=drone_id).exists():
-        raise StandardConstraintConflict(msg="当前无人机没有执行中的飞行会话")
+def _require_control_operator(context) -> None:
+    if context.is_super_admin or is_dispatcher(context) or FixedRole.PILOT in context.role_codes:
+        return
+    raise StandardForbidden()
+
+
+def _resource_binding_for_control(context, resource_type: str, resource_id: int):
+    binding = usable_resource_binding(context, resource_type, resource_id)
+    effective_permissions = set(effective_permissions_for_binding(context, binding))
+    if not context.is_super_admin and not effective_permissions.intersection({"use", "dispatch_task"}):
+        raise StandardForbidden()
+    return binding
+
+
+def _ensure_online(resource, message: str) -> None:
+    if not getattr(resource, "online_status", False):
+        raise StandardConstraintConflict(msg=message)
+
+
+def _camera_action_response(*, operation: CameraOperation, upstream: dict) -> dict:
+    return {
+        "operationId": operation.id,
+        "status": operation.status,
+        "action": operation.action,
+        "droneId": operation.drone_id,
+        "droneSn": operation.drone.device_sn,
+        "executorId": operation.executor_id,
+        "gatewaySn": operation.executor.device_sn,
+        "payloadIndex": operation.payload_index,
+        "upstream": upstream,
+    }
 
 
 class LiveCapacityView(InspectionV2APIView):
@@ -1002,10 +1036,11 @@ class LiveCapacityView(InspectionV2APIView):
         serializer = LiveCapacityQuerySerializer(data=request.query_params.dict())
         serializer.is_valid(raise_exception=True)
         drone_id = serializer.validated_data["droneId"]
-        _require_active_session_for_drone(context, drone_id)
         binding = visible_resource_for_live(context, drone_id)
+        drone = get_resource(ResourceType.DRONE, drone_id)
+        _ensure_online(drone, "无人机不在线")
         try:
-            data = DjiConnectionGateway(binding.dji_connection).get_live_capacity(get_resource(ResourceType.DRONE, drone_id).device_sn)
+            data = DjiConnectionGateway(binding.dji_connection).get_live_capacity(drone.device_sn)
         except DjiGatewayError as exc:
             return _upstream_error_response(exc)
         return Response(data, status=status.HTTP_200_OK)
@@ -1024,9 +1059,10 @@ class LiveActionView(InspectionV2APIView):
         serializer = LiveActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         drone_id = serializer.validated_data["droneId"]
-        _require_active_session_for_drone(context, drone_id)
-        binding = visible_resource_for_live(context, drone_id)
+        _require_control_operator(context)
+        binding = _resource_binding_for_control(context, ResourceType.DRONE, drone_id)
         drone = get_resource(ResourceType.DRONE, drone_id)
+        _ensure_online(drone, "无人机不在线")
         try:
             gateway = DjiConnectionGateway(binding.dji_connection)
             data = getattr(gateway, self.gateway_method)(drone.device_sn, **_live_payload(serializer.validated_data))
@@ -1064,6 +1100,101 @@ class LiveUpdateView(LiveActionView):
 class LiveSwitchView(LiveActionView):
     gateway_method = "switch_live"
     audit_action = "switch_live_stream"
+
+
+class CameraActionView(InspectionV2APIView):
+    @extend_schema(
+        operation_id="v2_inspection_camera_action",
+        summary="控制 DJI 相机与云台",
+        request=CameraActionSerializer,
+        responses={200: OpenApiResponse(response=CameraActionResponseSerializer, description="操作成功。")},
+    )
+    def post(self, request):
+        context = resolve_v2_context(request)
+        _require_control_operator(context)
+        serializer = CameraActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        drone_id = serializer.validated_data["droneId"]
+        executor_id = serializer.validated_data["executorId"]
+        drone_binding = _resource_binding_for_control(context, ResourceType.DRONE, drone_id)
+        executor_binding = _resource_binding_for_control(context, ResourceType.GATEWAY, executor_id)
+        if drone_binding.dji_connection_id != executor_binding.dji_connection_id:
+            raise StandardConstraintConflict(msg="执行端必须与无人机属于同一个 DJI 连接")
+
+        drone = get_resource(ResourceType.DRONE, drone_id)
+        executor = get_resource(ResourceType.GATEWAY, executor_id)
+        _ensure_online(drone, "无人机不在线")
+        _ensure_online(executor, "执行端不在线")
+
+        action = serializer.validated_data["action"]
+        payload_index = serializer.validated_data["_payload_index"]
+        command_data = serializer.validated_data["_dji_data"]
+        operation = CameraOperation.objects.create(
+            action=action,
+            status=CameraOperationStatus.FAILED,
+            drone=drone,
+            executor=executor,
+            payload_index=payload_index,
+            dji_connection=drone_binding.dji_connection,
+            actor=request.user,
+            started_at=timezone.now(),
+            upstream_request={
+                "authority": {"gateway_sn": executor.device_sn, "payload_index": payload_index},
+                "command": {"gateway_sn": executor.device_sn, "cmd": action, "data": command_data},
+            },
+        )
+        gateway = DjiConnectionGateway(drone_binding.dji_connection)
+        authority_payload = None
+        command_payload = None
+        try:
+            authority_payload = gateway.grab_payload_authority(executor.device_sn, payload_index)
+            command_payload = gateway.send_payload_command(executor.device_sn, action, command_data)
+        except DjiGatewayError as exc:
+            operation.status = CameraOperationStatus.FAILED
+            operation.completed_at = timezone.now()
+            operation.upstream_response = {
+                "authority": authority_payload if authority_payload is not None else {},
+                "command": command_payload if command_payload is not None else {},
+                "error": {
+                    "detail": str(exc),
+                    "upstreamStatus": getattr(exc, "status_code", 502),
+                    "upstream": getattr(exc, "data", None),
+                },
+            }
+            operation.error_message = str(exc)
+            operation.save(update_fields=["status", "completed_at", "upstream_response", "error_message", "updated_at"])
+            log_v2_action(
+                request=request,
+                context=context,
+                action="camera_control_action",
+                target_type="camera_operation",
+                target_id=operation.id,
+                resource_owner_department=drone_binding.owner_department,
+                resource_type=ResourceType.DRONE,
+                resource_object_id=drone.id,
+                after_data={"operationId": operation.id, "action": action, "status": operation.status},
+            )
+            return _upstream_error_response(exc)
+
+        upstream = {"authority": authority_payload, "command": command_payload}
+        operation.status = CameraOperationStatus.SUCCEEDED
+        operation.completed_at = timezone.now()
+        operation.upstream_response = upstream
+        operation.error_message = ""
+        operation.save(update_fields=["status", "completed_at", "upstream_response", "error_message", "updated_at"])
+        data = _camera_action_response(operation=operation, upstream=upstream)
+        log_v2_action(
+            request=request,
+            context=context,
+            action="camera_control_action",
+            target_type="camera_operation",
+            target_id=operation.id,
+            resource_owner_department=drone_binding.owner_department,
+            resource_type=ResourceType.DRONE,
+            resource_object_id=drone.id,
+            after_data={"operationId": operation.id, "action": action, "status": operation.status},
+        )
+        return Response(data, status=status.HTTP_200_OK)
 
 
 class FlightRecordListView(InspectionV2APIView):
