@@ -405,6 +405,253 @@ def ensure_resources_available(
         raise StandardConstraintConflict(msg="资源正在执行其他任务", data={"conflicts": conflicts})
 
 
+def _resource_occupancy_conflicts_for_mission(mission: InspectionMission) -> list[dict]:
+    conflicts = []
+    checks = [
+        (ResourceType.DRONE, mission.drone_id),
+        (ResourceType.DOCK, mission.dock_id),
+        (ResourceType.GATEWAY, mission.executor_id),
+        (ResourceType.PAYLOAD, mission.payload_id),
+    ]
+    for resource_type, resource_id in checks:
+        if resource_id and _resource_occupancy_conflict(resource_type, resource_id, exclude_mission_id=mission.id):
+            conflicts.append({"resourceType": resource_type, "resourceId": resource_id})
+    return conflicts
+
+
+def _preflight_item(code: str, label: str, status: str, message: str, detail: dict | None = None) -> dict:
+    item = {
+        "code": code,
+        "label": label,
+        "status": status,
+        "message": message,
+    }
+    if detail is not None:
+        item["detail"] = detail
+    return item
+
+
+def _preflight_fail(code: str, label: str, message: str, detail: dict | None = None) -> dict:
+    return _preflight_item(code, label, "FAIL", message, detail)
+
+
+def _preflight_pass(code: str, label: str, message: str, detail: dict | None = None) -> dict:
+    return _preflight_item(code, label, "PASS", message, detail)
+
+
+def _preflight_warning(code: str, label: str, message: str, detail: dict | None = None) -> dict:
+    return _preflight_item(code, label, "WARNING", message, detail)
+
+
+def _preflight_skipped(code: str, label: str, message: str, detail: dict | None = None) -> dict:
+    return _preflight_item(code, label, "SKIPPED", message, detail)
+
+
+def _preflight_active_binding(resource_type: str, resource_id: int | None) -> ResourceBinding | None:
+    if not resource_id:
+        return None
+    return (
+        ResourceBinding.objects.select_related("owner_department", "dji_connection")
+        .filter(resource_type=resource_type, resource_object_id=resource_id, status=BindingStatus.ACTIVE)
+        .first()
+    )
+
+
+def _preflight_blocking_reasons(checks: list[dict]) -> list[dict]:
+    return [
+        {"code": check["code"], "message": check["message"], "detail": check.get("detail", {})}
+        for check in checks
+        if check.get("status") == "FAIL"
+    ]
+
+
+def _preflight_warnings(checks: list[dict]) -> list[dict]:
+    return [
+        {"code": check["code"], "message": check["message"], "detail": check.get("detail", {})}
+        for check in checks
+        if check.get("status") == "WARNING"
+    ]
+
+
+def build_mission_preflight_check(*, mission: InspectionMission, context) -> dict:
+    require_transition_operator(context, mission)
+    checks = []
+    route_cloud_file = None
+    drone_binding = None
+    executor_binding = None
+    selected_live_video_id = ""
+    dji_connection_id = None
+    workspace_id = ""
+    route_dji_file_id = ""
+
+    if mission.status == MissionStatus.PENDING:
+        checks.append(_preflight_pass("MISSION_PENDING", "任务状态", "任务处于待执行状态"))
+    else:
+        checks.append(
+            _preflight_fail(
+                "MISSION_PENDING",
+                "任务状态",
+                "只有待执行任务可以启动",
+                {"currentStatus": mission.status},
+            )
+        )
+
+    if mission.executor_id:
+        checks.append(_preflight_pass("EXECUTOR_PRESENT", "执行端/网关", "任务已绑定执行端/网关"))
+    else:
+        checks.append(_preflight_fail("EXECUTOR_PRESENT", "执行端/网关", "任务缺少执行端/网关 executorId"))
+
+    try:
+        route_cloud_file = mission.route.cloud_file
+    except WaypointRouteCloudFile.DoesNotExist:
+        checks.append(_preflight_fail("ROUTE_DJI_FILE_PRESENT", "DJI 航线文件", "任务航线尚未上传 KMZ 到 DJI"))
+    else:
+        route_dji_file_id = route_cloud_file.dji_file_id
+        workspace_id = route_cloud_file.workspace_id
+        dji_connection_id = route_cloud_file.dji_connection_id
+        checks.append(
+            _preflight_pass(
+                "ROUTE_DJI_FILE_PRESENT",
+                "DJI 航线文件",
+                "任务航线已上传 DJI",
+                {"djiFileId": route_cloud_file.dji_file_id, "workspaceId": route_cloud_file.workspace_id},
+            )
+        )
+
+    drone_binding = _preflight_active_binding(ResourceType.DRONE, mission.drone_id)
+    if drone_binding is None:
+        checks.append(_preflight_fail("DRONE_BINDING_ACTIVE", "无人机绑定", "无人机没有 active 资源绑定"))
+    else:
+        dji_connection_id = dji_connection_id or drone_binding.dji_connection_id
+        workspace_id = workspace_id or drone_binding.dji_connection.workspace_id
+        checks.append(
+            _preflight_pass(
+                "DRONE_BINDING_ACTIVE",
+                "无人机绑定",
+                "无人机资源绑定有效",
+                {"djiConnectionId": drone_binding.dji_connection_id},
+            )
+        )
+
+    if mission.executor_id:
+        executor_binding = _preflight_active_binding(ResourceType.GATEWAY, mission.executor_id)
+        if executor_binding is None:
+            checks.append(_preflight_fail("EXECUTOR_BINDING_ACTIVE", "执行端绑定", "执行端/网关没有 active 资源绑定"))
+        else:
+            checks.append(
+                _preflight_pass(
+                    "EXECUTOR_BINDING_ACTIVE",
+                    "执行端绑定",
+                    "执行端/网关资源绑定有效",
+                    {"djiConnectionId": executor_binding.dji_connection_id},
+                )
+            )
+    else:
+        checks.append(_preflight_skipped("EXECUTOR_BINDING_ACTIVE", "执行端绑定", "任务缺少 executorId，跳过执行端绑定检查"))
+
+    if route_cloud_file is not None and drone_binding is not None and executor_binding is not None:
+        connection_ids = {route_cloud_file.dji_connection_id, drone_binding.dji_connection_id, executor_binding.dji_connection_id}
+        if len(connection_ids) == 1:
+            checks.append(_preflight_pass("SAME_DJI_CONNECTION", "DJI 连接一致性", "航线、无人机和执行端属于同一个 DJI 连接"))
+        else:
+            checks.append(
+                _preflight_fail(
+                    "SAME_DJI_CONNECTION",
+                    "DJI 连接一致性",
+                    "航线、无人机和执行端必须属于同一个 DJI 连接",
+                    {
+                        "routeDjiConnectionId": route_cloud_file.dji_connection_id,
+                        "droneDjiConnectionId": drone_binding.dji_connection_id,
+                        "executorDjiConnectionId": executor_binding.dji_connection_id,
+                    },
+                )
+            )
+    else:
+        checks.append(_preflight_skipped("SAME_DJI_CONNECTION", "DJI 连接一致性", "缺少航线、无人机或执行端绑定，跳过连接一致性检查"))
+
+    if mission.drone.online_status:
+        checks.append(_preflight_pass("DRONE_ONLINE", "无人机在线状态", "无人机在线"))
+    else:
+        checks.append(_preflight_fail("DRONE_ONLINE", "无人机在线状态", "无人机不在线"))
+
+    if mission.executor_id and mission.executor is not None:
+        if mission.executor.online_status:
+            checks.append(_preflight_pass("EXECUTOR_ONLINE", "执行端在线状态", "执行端/网关在线"))
+        else:
+            checks.append(_preflight_fail("EXECUTOR_ONLINE", "执行端在线状态", "执行端/网关不在线"))
+    else:
+        checks.append(_preflight_skipped("EXECUTOR_ONLINE", "执行端在线状态", "任务缺少 executorId，跳过执行端在线检查"))
+
+    conflicts = _resource_occupancy_conflicts_for_mission(mission)
+    if conflicts:
+        checks.append(_preflight_fail("RESOURCES_AVAILABLE", "资源占用", "资源正在执行其他任务", {"conflicts": conflicts}))
+    else:
+        checks.append(_preflight_pass("RESOURCES_AVAILABLE", "资源占用", "任务资源当前未被其他运行中任务占用"))
+
+    checks.append(
+        _preflight_warning(
+            "WAYLINE_TASK_SUPPORT_UNVERIFIED",
+            "DJI 航线任务支持",
+            "preflight 不下发 DJI wayline flight task，无法证明当前设备类型真实支持航线任务执行",
+        )
+    )
+
+    has_local_failures = any(check.get("status") == "FAIL" for check in checks)
+    if has_local_failures or drone_binding is None:
+        checks.append(_preflight_skipped("LIVE_CAPACITY_AVAILABLE", "DJI 直播能力", "本地前置条件未通过，跳过 DJI live capacity 检查"))
+    else:
+        try:
+            capacity = DjiConnectionGateway(drone_binding.dji_connection).get_live_capacity(mission.drone.device_sn)
+            selected_live_video_id = _select_live_video_id(capacity, device_sn=mission.drone.device_sn)
+        except DjiGatewayError as exc:
+            checks.append(
+                _preflight_fail(
+                    "LIVE_CAPACITY_AVAILABLE",
+                    "DJI 直播能力",
+                    "DJI live capacity 查询失败",
+                    {
+                        "upstreamStatus": getattr(exc, "status_code", 502),
+                        "upstream": getattr(exc, "data", None),
+                    },
+                )
+            )
+        else:
+            if selected_live_video_id:
+                checks.append(
+                    _preflight_pass(
+                        "LIVE_CAPACITY_AVAILABLE",
+                        "DJI 直播能力",
+                        "设备存在可用于任务启动的直播视频源",
+                        {"selectedLiveVideoId": selected_live_video_id},
+                    )
+                )
+            else:
+                checks.append(_preflight_fail("LIVE_CAPACITY_AVAILABLE", "DJI 直播能力", "设备缺少可直播视频能力"))
+
+    blocking_reasons = _preflight_blocking_reasons(checks)
+    return {
+        "missionId": mission.id,
+        "canStart": not blocking_reasons,
+        "status": "BLOCKED" if blocking_reasons else "READY",
+        "blockingReasons": blocking_reasons,
+        "warnings": _preflight_warnings(checks),
+        "checks": checks,
+        "execution": {
+            "routeId": mission.route_id,
+            "droneId": mission.drone_id,
+            "droneSn": mission.drone.device_sn,
+            "executorId": mission.executor_id,
+            "executorSn": mission.executor.device_sn if mission.executor_id and mission.executor is not None else "",
+            "dockId": mission.dock_id,
+            "payloadId": mission.payload_id,
+            "djiConnectionId": dji_connection_id,
+            "workspaceId": workspace_id,
+            "routeDjiFileId": route_dji_file_id,
+            "selectedLiveVideoId": selected_live_video_id,
+        },
+    }
+
+
 def create_assignments(mission: InspectionMission, bindings: list[ResourceBinding]):
     MissionResourceAssignment.objects.bulk_create(
         [
@@ -965,6 +1212,44 @@ def sync_media_for_record(*, record: InspectionFlightRecord) -> dict:
     return {"synced": synced, **counts}
 
 
+def _dji_connection_for_media_file(media: CloudMediaFile) -> DjiConnection:
+    if media.mission_id:
+        execution = (
+            MissionCloudExecution.objects.select_related("dji_connection")
+            .filter(mission_id=media.mission_id)
+            .first()
+        )
+        if execution is not None:
+            return execution.dji_connection
+
+    binding = _resource_binding_for_device_sn(media.device_sn)
+    if binding is not None:
+        return binding.dji_connection
+
+    if media.workspace_id:
+        connections = DjiConnection.objects.filter(workspace_id=media.workspace_id)
+        if connections.count() == 1:
+            return connections.first()
+
+    raise StandardConstraintConflict(msg="无法确定媒体文件所属 DJI 连接")
+
+
+def refresh_cloud_media_file_url(*, media: CloudMediaFile, url_type: str) -> CloudMediaFile:
+    connection = _dji_connection_for_media_file(media)
+    gateway = DjiConnectionGateway(connection)
+    if url_type == "preview":
+        media.preview_url = str(gateway.get_media_preview_url(media.cloud_file_id) or "")
+        update_fields = ["preview_url", "updated_at"]
+    elif url_type == "playback":
+        media.playback_url = str(gateway.get_media_playback_url(media.cloud_file_id) or "")
+        update_fields = ["playback_url", "updated_at"]
+    else:
+        media.download_url = str(gateway.get_media_url(media.cloud_file_id) or "")
+        update_fields = ["download_url", "updated_at"]
+    media.save(update_fields=update_fields)
+    return media
+
+
 def _flight_record_for_v2_mission(mission: InspectionMission | None) -> InspectionFlightRecord | None:
     if mission is None:
         return None
@@ -1174,6 +1459,95 @@ def apply_cloud_execution_event(*, dji_job_id: str, status: str, payload: dict |
         "executionStatus": execution.status,
         "media": media_result,
     }
+
+
+def _dji_job_id(payload: dict) -> str:
+    return _media_string(payload, "dji_job_id", "djiJobId", "job_id", "jobId", "id")
+
+
+def _dji_job_status(payload: dict):
+    for key in ("status", "state", "job_status", "jobStatus"):
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return ""
+
+
+def _cloud_status_from_dji_job_status(value) -> str:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        numeric = None
+    if numeric == 1:
+        return CloudExecutionStatus.STARTING
+    if numeric in {2, 6}:
+        return CloudExecutionStatus.RUNNING
+    if numeric == 3:
+        return CloudExecutionStatus.COMPLETED
+    if numeric == 4:
+        return CloudExecutionStatus.CANCELED
+    if numeric == 5:
+        return CloudExecutionStatus.FAILED
+
+    normalized = str(value or "").strip().lower()
+    if normalized in {"pending", "prepare", "preparing", "starting", "created"}:
+        return CloudExecutionStatus.STARTING
+    if normalized in {"in_progress", "running", "executing", "progress", "paused", "pause"}:
+        return CloudExecutionStatus.RUNNING
+    if normalized in {"success", "succeeded", "completed", "complete", "finished", "ok"}:
+        return CloudExecutionStatus.COMPLETED
+    if normalized in {"cancel", "canceled", "cancelled"}:
+        return CloudExecutionStatus.CANCELED
+    if normalized in {"failed", "failure", "error", "timeout"}:
+        return CloudExecutionStatus.FAILED
+    return CloudExecutionStatus.RUNNING
+
+
+def _event_status_for_cloud_status(status_value: str) -> str:
+    return {
+        CloudExecutionStatus.COMPLETED: "ok",
+        CloudExecutionStatus.CANCELED: "canceled",
+        CloudExecutionStatus.FAILED: "failed",
+    }.get(status_value, "running")
+
+
+def refresh_mission_cloud_execution_from_dji(*, mission: InspectionMission, context) -> InspectionMission:
+    require_transition_operator(context, mission)
+    execution = (
+        MissionCloudExecution.objects.select_related("dji_connection")
+        .filter(mission=mission)
+        .first()
+    )
+    if execution is None or not execution.dji_job_id:
+        raise StandardConstraintConflict(msg="任务缺少 DJI 云端执行记录")
+
+    jobs = DjiConnectionGateway(execution.dji_connection).list_jobs()
+    matched_job = next((job for job in jobs if isinstance(job, dict) and _dji_job_id(job) == execution.dji_job_id), None)
+    if matched_job is None:
+        raise StandardConstraintConflict(msg="DJI jobs 列表中未找到当前任务")
+
+    cloud_status = _cloud_status_from_dji_job_status(_dji_job_status(matched_job))
+    if cloud_status in {CloudExecutionStatus.COMPLETED, CloudExecutionStatus.CANCELED, CloudExecutionStatus.FAILED}:
+        apply_cloud_execution_event(
+            dji_job_id=execution.dji_job_id,
+            status=_event_status_for_cloud_status(cloud_status),
+            payload=matched_job,
+        )
+    else:
+        now = timezone.now()
+        progress = _event_progress(matched_job)
+        execution.status = cloud_status
+        if progress:
+            execution.progress_percent = progress
+        execution.last_event_at = now
+        execution.raw_last_event = matched_job
+        execution.save(update_fields=["status", "progress_percent", "last_event_at", "raw_last_event", "updated_at"])
+        if mission.status != MissionStatus.RUNNING:
+            mission.status = MissionStatus.RUNNING
+            mission.save(update_fields=["status", "updated_at"])
+
+    mission.refresh_from_db()
+    return mission
 
 
 def _osd_reported_at(payload: dict):

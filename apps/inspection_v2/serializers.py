@@ -403,6 +403,44 @@ class MissionCloseSerializer(StrictSerializer):
     reason = serializers.CharField(required=False, allow_blank=True)
 
 
+class MissionPreflightReasonSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    message = serializers.CharField()
+    detail = serializers.JSONField(required=False)
+
+
+class MissionPreflightCheckItemSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    label = serializers.CharField()
+    status = serializers.ChoiceField(choices=["PASS", "FAIL", "WARNING", "SKIPPED"])
+    message = serializers.CharField()
+    detail = serializers.JSONField(required=False)
+
+
+class MissionPreflightExecutionSerializer(serializers.Serializer):
+    routeId = serializers.IntegerField()
+    droneId = serializers.IntegerField()
+    droneSn = serializers.CharField()
+    executorId = serializers.IntegerField(allow_null=True)
+    executorSn = serializers.CharField(allow_blank=True)
+    dockId = serializers.IntegerField(allow_null=True)
+    payloadId = serializers.IntegerField(allow_null=True)
+    djiConnectionId = serializers.IntegerField(allow_null=True)
+    workspaceId = serializers.CharField(allow_blank=True)
+    routeDjiFileId = serializers.CharField(allow_blank=True)
+    selectedLiveVideoId = serializers.CharField(allow_blank=True)
+
+
+class MissionPreflightCheckResponseSerializer(serializers.Serializer):
+    missionId = serializers.IntegerField()
+    canStart = serializers.BooleanField()
+    status = serializers.ChoiceField(choices=["READY", "BLOCKED"])
+    blockingReasons = MissionPreflightReasonSerializer(many=True)
+    warnings = MissionPreflightReasonSerializer(many=True)
+    checks = MissionPreflightCheckItemSerializer(many=True)
+    execution = MissionPreflightExecutionSerializer()
+
+
 class TelemetrySnapshotReadSerializer(serializers.ModelSerializer):
     batteryPercent = serializers.IntegerField(source="battery_percent", allow_null=True, read_only=True)
     reportedAt = serializers.DateTimeField(source="reported_at", read_only=True)
@@ -584,6 +622,10 @@ class CloudMediaFileReadSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = fields
+
+
+class CloudMediaFileUrlRefreshSerializer(StrictSerializer):
+    urlType = serializers.ChoiceField(choices=["download", "preview", "playback"], required=False, default="download")
 
 
 CAMERA_ACTION_CHOICES = [

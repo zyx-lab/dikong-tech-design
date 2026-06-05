@@ -155,6 +155,8 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/inspection/routes/{id}",
             "/api/v2/inspection/missions",
             "/api/v2/inspection/missions/{id}",
+            "/api/v2/inspection/missions/{id}/preflight-check",
+            "/api/v2/inspection/missions/{id}/cloud-execution/refresh",
             "/api/v2/inspection/missions/{id}/start",
             "/api/v2/inspection/missions/{id}/complete",
             "/api/v2/inspection/missions/{id}/cancel",
@@ -174,6 +176,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/inspection/flight-records/{id}/refresh-media",
             "/api/v2/inspection/media-files",
             "/api/v2/inspection/media-files/{id}",
+            "/api/v2/inspection/media-files/{id}/refresh-url",
         }
         self.assertTrue(expected_paths.issubset(set(paths)))
         self.assertIn("delete", paths["/api/v2/inspection/routes/{id}"])
@@ -337,6 +340,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("POST", "/api/v2/inspection/live/switch"),
             ("POST", "/api/v2/inspection/live/update"),
             ("POST", "/api/v2/inspection/camera/actions"),
+            ("POST", "/api/v2/inspection/media-files/{id}/refresh-url"),
             ("POST", "/api/v2/inspection/missions"),
             ("PUT", "/api/v2/inspection/missions/{id}"),
             ("POST", "/api/v2/inspection/missions/{id}/abort"),

@@ -38,11 +38,13 @@ from apps.inspection_v2.serializers import (
     CameraActionResponseSerializer,
     CameraActionSerializer,
     CloudMediaFileReadSerializer,
+    CloudMediaFileUrlRefreshSerializer,
     FlightRecordReadSerializer,
     FlightRecordUpdateSerializer,
     LiveActionSerializer,
     LiveCapacityQuerySerializer,
     MissionCloseSerializer,
+    MissionPreflightCheckResponseSerializer,
     MissionReadSerializer,
     MissionWriteSerializer,
     RouteCreateSerializer,
@@ -56,6 +58,7 @@ from apps.inspection_v2.serializers import (
 from apps.inspection_v2.services import (
     complete_mission,
     assignable_routes_queryset,
+    build_mission_preflight_check,
     create_assignments,
     editable_routes_queryset,
     ensure_resources_available,
@@ -67,6 +70,8 @@ from apps.inspection_v2.services import (
     is_dispatcher,
     require_dispatcher,
     route_snapshot,
+    refresh_mission_cloud_execution_from_dji,
+    refresh_cloud_media_file_url,
     safety_abort_mission,
     start_mission,
     sync_media_for_record,
@@ -895,6 +900,46 @@ class MissionStartView(InspectionV2APIView):
         return Response(MissionReadSerializer(mission).data, status=status.HTTP_200_OK)
 
 
+class MissionPreflightCheckView(InspectionV2APIView):
+    @extend_schema(
+        operation_id="v2_inspection_missions_preflight_check",
+        summary="检查巡检任务是否可以启动",
+        description=(
+            "DJI 上游调用：该接口不会启动直播，也不会创建 DJI wayline flight task。"
+            "它会基于本地 mission、航线 DJI 文件、资源绑定、在线状态和资源占用做启动前检查；"
+            "当本地前置条件通过时，会额外调用 DJI live capacity 这个只读能力，确认能否选出用于任务启动的直播视频源。"
+            "`executorId` 是本地执行端/网关资源 ID，会在真正启动任务时映射为 DJI `dock_sn/gateway_sn`。"
+            "preflight 不能证明设备类型一定支持真实 wayline flight task；若需要真实执行，仍以 `start` 的 DJI 返回为准。"
+        ),
+        request=None,
+        responses={200: OpenApiResponse(response=MissionPreflightCheckResponseSerializer, description="检查完成。")},
+    )
+    def post(self, request, id: int):
+        context = resolve_v2_context(request)
+        mission = get_visible_mission_or_404(context, id)
+        data = build_mission_preflight_check(mission=mission, context=context)
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class MissionCloudExecutionRefreshView(InspectionV2APIView):
+    @extend_schema(
+        operation_id="v2_inspection_missions_cloud_execution_refresh",
+        summary="刷新任务 DJI 云端执行状态",
+        description="请求体固定为空对象或无请求体。",
+        request=None,
+        responses={200: OpenApiResponse(response=MissionReadSerializer, description="刷新成功。")},
+    )
+    @transaction.atomic
+    def post(self, request, id: int):
+        context = resolve_v2_context(request)
+        mission = get_visible_mission_or_404(context, id)
+        try:
+            mission = refresh_mission_cloud_execution_from_dji(mission=mission, context=context)
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
+        return Response(MissionReadSerializer(mission).data, status=status.HTTP_200_OK)
+
+
 class MissionCompleteView(InspectionV2APIView):
     @extend_schema(
         operation_id="v2_inspection_missions_complete",
@@ -1384,4 +1429,26 @@ class MediaFileDetailView(InspectionV2APIView):
         media = visible_media_queryset(context).filter(pk=id).first()
         if media is None:
             raise StandardNotFound()
+        return Response(CloudMediaFileReadSerializer(media).data, status=status.HTTP_200_OK)
+
+
+class MediaFileUrlRefreshView(InspectionV2APIView):
+    @extend_schema(
+        operation_id="v2_inspection_media_files_refresh_url",
+        summary="刷新云媒体文件访问地址",
+        request=CloudMediaFileUrlRefreshSerializer,
+        responses={200: OpenApiResponse(response=CloudMediaFileReadSerializer, description="刷新成功。")},
+    )
+    @transaction.atomic
+    def post(self, request, id: int):
+        context = resolve_v2_context(request)
+        media = visible_media_queryset(context).filter(pk=id).first()
+        if media is None:
+            raise StandardNotFound()
+        serializer = CloudMediaFileUrlRefreshSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            media = refresh_cloud_media_file_url(media=media, url_type=serializer.validated_data["urlType"])
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
         return Response(CloudMediaFileReadSerializer(media).data, status=status.HTTP_200_OK)

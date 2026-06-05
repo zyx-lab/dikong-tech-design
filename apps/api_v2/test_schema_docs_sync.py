@@ -157,7 +157,18 @@ class ApiV2DocsSyncTests(TestCase):
         )
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/resource/drones"),
-            {"id", "deviceSn", "name", "onlineStatus", "lastSeenAt", "latestTelemetry", "bindingId", "effectivePermissions"},
+            {
+                "id",
+                "deviceSn",
+                "name",
+                "onlineStatus",
+                "lastSeenAt",
+                "latestTelemetry",
+                "bindingId",
+                "djiConnectionId",
+                "djiConnectionName",
+                "effectivePermissions",
+            },
         )
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/resource/dji-connections/mqtt-health"),
@@ -215,6 +226,15 @@ class ApiV2DocsSyncTests(TestCase):
                 content_type="application/json",
             ),
             {"videoId", "videoType"},
+        )
+        self._assert_properties_include(
+            self._request_body_properties(
+                schema,
+                path="/api/v2/inspection/media-files/{id}/refresh-url",
+                method="post",
+                content_type="application/json",
+            ),
+            {"urlType"},
         )
 
     def test_v2_schema_should_include_frontend_usage_guide(self):
@@ -309,7 +329,9 @@ class ApiV2DocsSyncTests(TestCase):
             ("get", "/api/v2/inspection/routes/{id}"): ("DJI 上游调用", "downloadUrl"),
             ("put", "/api/v2/inspection/routes/{id}"): ("DJI 上游调用", "只要传了 `kmzFile`"),
             ("delete", "/api/v2/inspection/routes/{id}"): ("DJI 上游调用", "best-effort"),
+            ("post", "/api/v2/inspection/missions/{id}/preflight-check"): ("DJI 上游调用", "live capacity", "canStart", "executorId"),
             ("post", "/api/v2/inspection/missions/{id}/start"): ("DJI 上游调用", "启动直播", "wayline flight task"),
+            ("post", "/api/v2/inspection/missions/{id}/cloud-execution/refresh"): ("DJI 上游调用", "jobs", "cloudExecution"),
             ("post", "/api/v2/inspection/missions/{id}/complete"): ("DJI 上游调用", "媒体同步", "停止直播失败不会阻断"),
             ("post", "/api/v2/inspection/missions/{id}/cancel"): ("DJI 上游调用", "DJI 取消失败"),
             ("post", "/api/v2/inspection/missions/{id}/fail"): ("DJI 上游调用", "不主动取消 DJI wayline job"),
@@ -321,6 +343,7 @@ class ApiV2DocsSyncTests(TestCase):
             ("post", "/api/v2/inspection/live/switch"): ("DJI 上游调用", "live stream switch"),
             ("post", "/api/v2/inspection/camera/actions"): ("DJI 上游调用", "payload authority", "payload commands"),
             ("post", "/api/v2/inspection/flight-records/{id}/refresh-media"): ("DJI 上游调用", "media files", "djiJobId"),
+            ("post", "/api/v2/inspection/media-files/{id}/refresh-url"): ("DJI 上游调用", "signed URL", "urlType"),
         }
 
         for (method, path), terms in expected_schema_terms.items():
@@ -337,9 +360,12 @@ class ApiV2DocsSyncTests(TestCase):
             "GET /api/v1/manage/workspaces/{workspace_id}/devices/bound?domain=0",
             "POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload",
             "POST /api/v1/wayline/workspaces/{workspace_id}/flight-tasks",
+            "POST /api/v2/inspection/missions/{id}/preflight-check",
+            "POST /api/v2/inspection/missions/{id}/cloud-execution/refresh",
             "POST /api/v1/manage/live/streams/start",
             "POST /api/v1/control/devices/{gatewaySn}/payload/commands",
             "GET /api/v1/media/workspaces/{workspace_id}/files",
+            "POST /api/v2/inspection/media-files/{id}/refresh-url",
             "GET /api/v2/inspection/media-files",
         ):
             with self.subTest(expected=expected):

@@ -69,6 +69,8 @@ python manage.py bootstrap_v2_system --reset --username <super_username> --passw
 
 `djiConnectionId` 是 v2 本地 DJI 连接 ID，不是 DJI workspace ID。`resourceType + resourceId` 才能唯一定位一个 v2 资源。
 
+资源列表和详情都会返回 `djiConnectionId`、`djiConnectionName`。前端展示无人机、机场、网关或负载时，可以直接显示资源所属 DJI 连接；排查 MQTT 或 DJI 上游问题时，也可以用这个 ID 去查 `mqtt-health` 和 `mqtt-messages/latest`。
+
 ## MQTT
 
 DJI MQTT 由后端 worker 连接，前端不直接连接 DJI broker。
@@ -109,7 +111,9 @@ POST /api/v1/manage/token/refresh
 | `GET /api/v2/inspection/routes/{id}` | 仅在 DJI KMZ 下载 URL 缺失或快过期时刷新 URL | 下载 KMZ 前先读详情，避免使用列表里的过期 URL |
 | `PUT /api/v2/inspection/routes/{id}` | 只有替换 `kmzFile` 时才重新上传 DJI | 不替换 KMZ 用 JSON；替换 KMZ 用 `multipart/form-data` |
 | `DELETE /api/v2/inspection/routes/{id}` | 本地删除后 best-effort 删除 DJI wayline 文件 | 成功响应以本地删除为准；DJI 清理失败不阻断 |
+| `POST /api/v2/inspection/missions/{id}/preflight-check` | 本地前置检查；条件满足时只读查询 DJI live capacity | 启动任务前先调用；`canStart=false` 时展示 `blockingReasons` |
 | `POST /api/v2/inspection/missions/{id}/start` | 查询直播能力、启动直播、创建 DJI wayline flight task | 任务必须待执行，航线已上传 DJI，资源在线且同 DJI 连接 |
+| `POST /api/v2/inspection/missions/{id}/cloud-execution/refresh` | 查询 DJI jobs 并按本地 `djiJobId` 匹配 | 无机场联调时可手动刷新任务进度；前端读 `data.cloudExecution` |
 | `POST /api/v2/inspection/missions/{id}/complete` | 尝试同步 DJI 媒体列表并停止直播 | 媒体同步失败不阻断完成；媒体没出现时再调用 `refresh-media` |
 | `POST /api/v2/inspection/missions/{id}/cancel` | 已有 `djiJobId` 时取消 DJI job，并停止直播 | DJI 取消失败会返回错误；停止直播失败不阻断取消 |
 | `POST /api/v2/inspection/missions/{id}/fail` | 尝试停止任务直播 | 不主动取消 DJI job；以本地失败状态为准 |
@@ -121,6 +125,7 @@ POST /api/v1/manage/token/refresh
 | `POST /api/v2/inspection/live/switch` | 切换 DJI live stream 镜头 | `videoType` 用 `wide/zoom/ir/normal` |
 | `POST /api/v2/inspection/camera/actions` | 抢占 payload authority 后下发 payload commands | 用本地 `droneId/executorId` 和 capacity 中的 `payloadIndex` |
 | `POST /api/v2/inspection/flight-records/{id}/refresh-media` | 查询 DJI media files 列表并按 `djiJobId` 过滤 | 只刷新媒体索引；不单独生成播放/预览 URL |
+| `POST /api/v2/inspection/media-files/{id}/refresh-url` | 按本地媒体文件刷新 DJI signed URL | `urlType=download|preview|playback`，只刷新当前媒体项 |
 
 资源发现对应的 DJI 参考路径：
 
@@ -153,8 +158,27 @@ DELETE /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}
 GET /api/v1/manage/live/capacity
 POST /api/v1/manage/live/streams/start
 POST /api/v1/wayline/workspaces/{workspace_id}/flight-tasks
+GET /api/v1/wayline/workspaces/{workspace_id}/jobs
 POST /api/v1/manage/live/streams/stop
 ```
+
+启动前建议先调用：
+
+```http
+POST /api/v2/inspection/missions/{id}/preflight-check
+```
+
+preflight 不会启动直播，也不会调用 DJI `flight-tasks` 下发航线任务。它会检查本地任务状态、航线是否已上传 DJI、无人机和执行端/网关是否绑定且在线、是否属于同一个 DJI 连接、资源是否被其他运行中任务占用；这些本地条件都通过后，才会调用只读的 DJI live capacity，确认能否选出 `selectedLiveVideoId`。
+
+响应重点字段：
+
+- `data.canStart`：是否可以让前端展示或启用“开始任务”按钮。
+- `data.blockingReasons[]`：阻断启动的原因；前端按 `message` 展示即可。
+- `data.warnings[]`：不阻断启动的提示。固定会包含 `WAYLINE_TASK_SUPPORT_UNVERIFIED`，表示 preflight 不下发真实 DJI 航线任务，不能提前证明当前设备类型一定支持 wayline flight task。
+- `data.execution.executorId`：本地执行端/网关资源 ID；它不是飞手 ID，也不是无人机 ID。真正启动时后端会把它对应的 `executorSn` 映射为 DJI `dock_sn/gateway_sn`。
+- `data.execution.selectedLiveVideoId`：preflight 从 live capacity 里选出的直播视频源；为空时不能启动。
+
+如果 `canStart=false`，前端不要调用 `start`，应先让用户按 `blockingReasons` 修正资源、航线、执行端或设备在线状态。即使 `canStart=true`，真实 `start` 仍可能因为设备类型或现场状态返回 DJI 错误，例如当前网关不支持 wayline flight task。
 
 `POST /api/v2/inspection/missions/{id}/start` 会先从 capacity 里选择第一个可用视频源启动直播，再创建 DJI wayline flight task。后端字段映射：
 
@@ -166,6 +190,21 @@ POST /api/v1/manage/live/streams/stop
 - 默认 `rth_altitude=100`、`out_of_control_action=0`
 
 如果创建 DJI 任务失败，后端会尝试停止刚启动的直播，然后把 DJI 错误返回给前端。启动成功后，前端主要看任务详情里的云端执行字段和活动飞行列表；任务进度继续通过 MQTT `events/services_reply/status/osd` 和 v2 worker 写入的数据刷新。
+
+如果当前没有机场或没有稳定 MQTT 任务事件，可调用：
+
+```http
+POST /api/v2/inspection/missions/{id}/cloud-execution/refresh
+```
+
+该接口不接受 DJI job id，后端会用本地任务里的 `cloudExecution.djiJobId` 去 DJI jobs 列表匹配。响应仍是任务详情。前端重点读取：
+
+- `data.status`：任务本地状态。
+- `data.cloudExecution.status`：云端执行状态，可能是 `STARTING/RUNNING/COMPLETED/CANCELED/FAILED`。
+- `data.cloudExecution.progressPercent`：DJI job 返回的执行进度。
+- `data.cloudExecution.lastEventAt`：本次从 DJI jobs 刷新的时间。
+
+当 DJI job 已成功、取消或失败时，后端会复用任务事件闭环，自动更新飞行会话、生成飞行记录、同步媒体并停止直播。前端收到终态后刷新任务列表、飞行记录列表和媒体列表。
 
 任务取消和结束对应的 DJI 参考路径：
 
@@ -208,9 +247,28 @@ POST /api/v1/control/devices/{gatewaySn}/payload/commands
 
 ```http
 GET /api/v1/media/workspaces/{workspace_id}/files
+GET /api/v1/media/workspaces/{workspace_id}/files/{file_id}/url
+GET /api/v1/media/workspaces/{workspace_id}/files/{file_id}/preview-url
+GET /api/v1/media/workspaces/{workspace_id}/files/{file_id}/playback-url
 ```
 
 `POST /api/v2/inspection/flight-records/{id}/refresh-media` 会用飞行记录关联任务的 `djiJobId` 过滤媒体列表，并写入本地 `CloudMediaFile`。`GET /api/v2/inspection/media-files` 和 `GET /api/v2/inspection/media-files/{id}` 只读本地媒体表，不会主动调用 DJI；如果要让新拍摄的照片/视频出现，先调用 `refresh-media` 或等待 DJI 回调/worker 写入。
+
+如果媒体已经在本地列表里，但下载、预览或播放地址过期，调用：
+
+```http
+POST /api/v2/inspection/media-files/{id}/refresh-url
+```
+
+请求体：
+
+```json
+{
+  "urlType": "download"
+}
+```
+
+`urlType` 可选 `download`、`preview`、`playback`，省略时默认 `download`。前端只传本地媒体文件 ID，不传任意 DJI file id。成功后按 `urlType` 读取返回的 `downloadUrl`、`previewUrl` 或 `playbackUrl`，替换当前媒体项即可。
 
 ## 航线与任务
 
@@ -221,9 +279,10 @@ GET /api/v1/media/workspaces/{workspace_id}/files
 3. 通过 `/api/v2/iam/accounts/{id}/qualifications` 维护账号资质；飞手证书资质同样使用 `profileType=pilot`。
 4. `POST /api/v2/inspection/routes` 创建航线并上传 KMZ。
 5. 通过 `GET /api/v2/iam/accounts?roleCode=pilot&profileType=pilot&qualified=true` 选择候选飞手账号，并在 `POST /api/v2/inspection/missions` 中提交 `pilotAccountProfileId`。
-6. `POST /api/v2/inspection/missions/{id}/start` 启动任务。
-7. `GET /api/v2/inspection/active-flights` 和 `GET /api/v2/inspection/telemetry/snapshots` 展示飞行过程。
-8. `POST /api/v2/inspection/missions/{id}/complete`、`cancel`、`fail` 或 `abort` 结束任务。
+6. `POST /api/v2/inspection/missions/{id}/preflight-check` 做启动前检查。
+7. `POST /api/v2/inspection/missions/{id}/start` 启动任务。
+8. `GET /api/v2/inspection/active-flights` 和 `GET /api/v2/inspection/telemetry/snapshots` 展示飞行过程；需要手动拉 DJI job 状态时调用 `cloud-execution/refresh`。
+9. `POST /api/v2/inspection/missions/{id}/complete`、`cancel`、`fail` 或 `abort` 结束任务。
 
 飞手不再是独立资源；它是账号拥有 `pilot` 角色、有效 `pilot` 档案和有效 `pilot` 资质后的业务能力。旧 `/api/v2/workforce/pilots` 和 `/api/v2/inspection/pilot-profiles` 不再作为 v2 接口使用。
 

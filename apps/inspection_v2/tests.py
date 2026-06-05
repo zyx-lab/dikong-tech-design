@@ -31,8 +31,10 @@ from apps.iam_v2.models import (
 from apps.inspection_v2.models import (
     CameraOperation,
     CameraOperationStatus,
+    CloudExecutionStatus,
     CloudMediaFile,
     FlightSession,
+    InspectionFlightRecord,
     InspectionMission,
     LiveStreamStatus,
     MissionCloudExecution,
@@ -937,6 +939,135 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(execution.raw_request["task_type"], 0)
         self.assertEqual(execution.raw_request["live"]["video_id"], f"{self.drone.device_sn}/88-0-0/normal-0")
 
+    def test_mission_preflight_check_should_report_ready_without_starting_cloud_execution(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="预检可执行航线")
+        connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-PREFLIGHT-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity",
+            return_value={"cameras_list": [{"index": "88-0-0", "videos_list": [{"index": "normal-0"}]}]},
+        ) as get_capacity, patch("apps.inspection_v2.services.DjiConnectionGateway.start_live") as start_live, patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.create_mission"
+        ) as create_job:
+            response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/preflight-check", {}, format="json")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        data = response.data["data"]
+        self.assertTrue(data["canStart"])
+        self.assertEqual(data["status"], "READY")
+        self.assertEqual(data["blockingReasons"], [])
+        self.assertEqual(data["execution"]["djiConnectionId"], connection.id)
+        self.assertEqual(data["execution"]["executorId"], executor.id)
+        self.assertEqual(data["execution"]["executorSn"], executor.device_sn)
+        self.assertEqual(data["execution"]["routeDjiFileId"], WaypointRouteCloudFile.objects.get(route_id=route["id"]).dji_file_id)
+        self.assertEqual(data["execution"]["selectedLiveVideoId"], f"{self.drone.device_sn}/88-0-0/normal-0")
+        self.assertEqual(
+            {check["code"]: check["status"] for check in data["checks"]}["WAYLINE_TASK_SUPPORT_UNVERIFIED"],
+            "WARNING",
+        )
+        self.assertEqual(len(data["warnings"]), 1)
+        self.assertFalse(FlightSession.objects.filter(mission_id=mission["id"]).exists())
+        self.assertFalse(MissionCloudExecution.objects.filter(mission_id=mission["id"]).exists())
+        get_capacity.assert_called_once_with(self.drone.device_sn)
+        start_live.assert_not_called()
+        create_job.assert_not_called()
+
+    def test_mission_preflight_check_should_report_missing_executor_without_calling_dji(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="预检缺执行端航线")
+        connection = self.dji_connection_for_user(self.owner_dispatcher)
+        self.upload_route_kmz_by_api(route["id"], connection)
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            pilot_id=self.owner_pilot.id,
+        )
+
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity") as get_capacity:
+            response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/preflight-check", {}, format="json")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        data = response.data["data"]
+        self.assertFalse(data["canStart"])
+        self.assertEqual(data["status"], "BLOCKED")
+        self.assertIn("EXECUTOR_PRESENT", [reason["code"] for reason in data["blockingReasons"]])
+        self.assertIsNone(data["execution"]["executorId"])
+        self.assertEqual(data["execution"]["executorSn"], "")
+        self.assertEqual({check["code"]: check["status"] for check in data["checks"]}["LIVE_CAPACITY_AVAILABLE"], "SKIPPED")
+        get_capacity.assert_not_called()
+
+    def test_mission_preflight_check_should_report_offline_resources_without_calling_dji(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="预检离线航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-PREFLIGHT-OFFLINE-001")
+        self.drone.online_status = False
+        self.drone.save(update_fields=["online_status", "updated_at"])
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity") as get_capacity:
+            response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/preflight-check", {}, format="json")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        data = response.data["data"]
+        self.assertFalse(data["canStart"])
+        self.assertIn("DRONE_ONLINE", [reason["code"] for reason in data["blockingReasons"]])
+        self.assertEqual({check["code"]: check["status"] for check in data["checks"]}["LIVE_CAPACITY_AVAILABLE"], "SKIPPED")
+        get_capacity.assert_not_called()
+
+    def test_mission_preflight_check_should_report_live_capacity_upstream_failure(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="预检直播失败航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-PREFLIGHT-LIVE-FAIL-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity",
+            side_effect=DjiGatewayUpstreamError("live capacity failed", status_code=502, data={"code": "E0001", "msg": "upstream failed"}),
+        ):
+            response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/preflight-check", {}, format="json")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        data = response.data["data"]
+        self.assertFalse(data["canStart"])
+        live_check = {check["code"]: check for check in data["checks"]}["LIVE_CAPACITY_AVAILABLE"]
+        self.assertEqual(live_check["status"], "FAIL")
+        self.assertEqual(live_check["detail"]["upstreamStatus"], 502)
+        self.assertEqual(live_check["detail"]["upstream"]["code"], "E0001")
+        self.assertIn("LIVE_CAPACITY_AVAILABLE", [reason["code"] for reason in data["blockingReasons"]])
+
+    def test_mission_preflight_check_should_use_same_operator_permission_as_start(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="预检权限航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-PREFLIGHT-PERM-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+
+        self.authenticate(self.owner_admin)
+        response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/preflight-check", {}, format="json")
+
+        self.assertEqual(response.status_code, 403, getattr(response, "data", response.content))
+
     def test_mission_start_upstream_failure_should_keep_local_task_pending(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="执行失败航线")
         _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-FAIL-001")
@@ -1075,6 +1206,220 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(execution.progress_percent, 100)
         self.assertEqual(execution.live_status, LiveStreamStatus.STOPPED)
         stop_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0")
+
+    def test_cloud_execution_refresh_should_update_running_job_without_finishing_record(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="刷新执行中航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-REFRESH-RUNNING-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        self.start_cloud_mission_by_api(mission["id"], dji_job_id="dji-job-refresh-running")
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.list_jobs",
+            return_value=[
+                {"job_id": "dji-job-refresh-other", "status": 3, "progress": 100},
+                {"job_id": "dji-job-refresh-running", "status": 2, "progress": 45},
+            ],
+        ) as list_jobs:
+            response = self.client.post(
+                f"/api/v2/inspection/missions/{mission['id']}/cloud-execution/refresh",
+                {},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        data = response.data["data"]
+        self.assertEqual(data["status"], MissionStatus.RUNNING)
+        self.assertEqual(data["cloudExecution"]["status"], CloudExecutionStatus.RUNNING)
+        self.assertEqual(data["cloudExecution"]["progressPercent"], 45)
+        self.assertFalse(InspectionFlightRecord.objects.filter(mission_id=mission["id"]).exists())
+        list_jobs.assert_called_once()
+
+    def test_cloud_execution_refresh_should_finish_terminal_job_and_archive_media(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="刷新完成航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-REFRESH-DONE-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        self.start_cloud_mission_by_api(mission["id"], dji_job_id="dji-job-refresh-done")
+        captured_at = timezone.now().isoformat()
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.list_jobs",
+            return_value=[{"job_id": "dji-job-refresh-done", "status": 3, "progress": 100}],
+        ) as list_jobs, patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.list_media_files",
+            return_value=[
+                {
+                    "file_id": "refresh-done-photo-001",
+                    "jobId": "dji-job-refresh-done",
+                    "device_sn": self.drone.device_sn,
+                    "fileName": "refresh-done.jpg",
+                    "mediaType": "photo",
+                    "capturedAt": captured_at,
+                    "downloadUrl": "https://media.example.test/refresh-done.jpg",
+                }
+            ],
+        ) as list_media_files, patch("apps.inspection_v2.services.DjiConnectionGateway.stop_live", return_value={}) as stop_live:
+            response = self.client.post(
+                f"/api/v2/inspection/missions/{mission['id']}/cloud-execution/refresh",
+                {},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        data = response.data["data"]
+        self.assertEqual(data["status"], MissionStatus.COMPLETED)
+        self.assertEqual(data["cloudExecution"]["status"], CloudExecutionStatus.COMPLETED)
+        self.assertEqual(data["cloudExecution"]["progressPercent"], 100)
+        self.assertTrue(InspectionFlightRecord.objects.filter(mission_id=mission["id"]).exists())
+        self.assertTrue(CloudMediaFile.objects.filter(cloud_file_id="refresh-done-photo-001").exists())
+        list_jobs.assert_called_once()
+        list_media_files.assert_called_once()
+        stop_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0")
+
+    def test_cloud_execution_refresh_should_reject_missing_execution_without_calling_dji(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="刷新无执行记录航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-REFRESH-MISSING-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.list_jobs") as list_jobs:
+            response = self.client.post(
+                f"/api/v2/inspection/missions/{mission['id']}/cloud-execution/refresh",
+                {},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 409, getattr(response, "data", response.content))
+        list_jobs.assert_not_called()
+
+    def test_media_file_refresh_url_should_update_download_preview_and_playback(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="媒体 URL 刷新航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-MEDIA-URL-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        self.start_cloud_mission_by_api(mission["id"], dji_job_id="dji-job-media-url")
+        execution = MissionCloudExecution.objects.get(mission_id=mission["id"])
+        media = CloudMediaFile.objects.create(
+            workspace_id=execution.workspace_id,
+            mission_id=mission["id"],
+            device_sn=self.drone.device_sn,
+            dji_job_id=execution.dji_job_id,
+            cloud_file_id="media-refresh-url-001",
+            file_name="media-refresh-url.mp4",
+        )
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_url",
+            return_value="https://media.example.test/download.mp4",
+        ) as get_download_url:
+            download_response = self.client.post(
+                f"/api/v2/inspection/media-files/{media.id}/refresh-url",
+                {"urlType": "download"},
+                format="json",
+            )
+        self.assertEqual(download_response.status_code, 200, getattr(download_response, "data", download_response.content))
+        self.assertEqual(download_response.data["data"]["downloadUrl"], "https://media.example.test/download.mp4")
+        get_download_url.assert_called_once_with("media-refresh-url-001")
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_preview_url",
+            return_value="https://media.example.test/preview.jpg",
+        ) as get_preview_url:
+            preview_response = self.client.post(
+                f"/api/v2/inspection/media-files/{media.id}/refresh-url",
+                {"urlType": "preview"},
+                format="json",
+            )
+        self.assertEqual(preview_response.status_code, 200, getattr(preview_response, "data", preview_response.content))
+        self.assertEqual(preview_response.data["data"]["previewUrl"], "https://media.example.test/preview.jpg")
+        get_preview_url.assert_called_once_with("media-refresh-url-001")
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_playback_url",
+            return_value="https://media.example.test/playback.m3u8",
+        ) as get_playback_url:
+            playback_response = self.client.post(
+                f"/api/v2/inspection/media-files/{media.id}/refresh-url",
+                {"urlType": "playback"},
+                format="json",
+            )
+        self.assertEqual(playback_response.status_code, 200, getattr(playback_response, "data", playback_response.content))
+        self.assertEqual(playback_response.data["data"]["playbackUrl"], "https://media.example.test/playback.m3u8")
+        get_playback_url.assert_called_once_with("media-refresh-url-001")
+
+    def test_media_file_refresh_url_should_hide_invisible_media(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="媒体 URL 权限航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-MEDIA-URL-PERM-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        media = CloudMediaFile.objects.create(
+            workspace_id="workspace-hidden-media",
+            mission_id=mission["id"],
+            device_sn=self.drone.device_sn,
+            cloud_file_id="media-hidden-001",
+        )
+
+        self.authenticate(self.other_dispatcher)
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.get_media_url") as get_media_url:
+            response = self.client.post(
+                f"/api/v2/inspection/media-files/{media.id}/refresh-url",
+                {"urlType": "download"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 404, getattr(response, "data", response.content))
+        get_media_url.assert_not_called()
+
+    def test_media_file_refresh_url_should_reject_when_dji_connection_missing(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="媒体 URL 无连接航线")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        media = CloudMediaFile.objects.create(
+            workspace_id="",
+            mission_id=mission["id"],
+            device_sn="UNKNOWN-MEDIA-DEVICE",
+            cloud_file_id="media-no-connection-001",
+        )
+
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.get_media_url") as get_media_url:
+            response = self.client.post(
+                f"/api/v2/inspection/media-files/{media.id}/refresh-url",
+                {"urlType": "download"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 409, getattr(response, "data", response.content))
+        get_media_url.assert_not_called()
 
     @override_settings(DJI_INTERNAL_API_TOKEN="internal-sync-token")
     def test_media_upload_callback_with_job_id_should_bind_v2_mission_exactly(self):

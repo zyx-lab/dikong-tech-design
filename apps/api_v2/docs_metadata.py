@@ -164,6 +164,20 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
 
 前置要求：任务必须是 `PENDING`，航线已经上传 DJI，无人机和执行端在线，二者和航线属于同一个 DJI 连接，且相关资源没有被其他运行中任务占用。创建 DJI 任务失败时后端会尝试停止刚启动的直播，并把上游错误返回给前端。
 """.strip(),
+    _operation_key("POST", "/api/v2/inspection/missions/{id}/preflight-check"): """
+### DJI 上游调用
+
+该接口是任务启动前检查，不会启动直播，也不会创建 DJI wayline flight task。它先检查本地 mission、DJI 航线文件、资源绑定、在线状态、DJI 连接一致性和资源占用；本地条件通过后，只调用 DJI live capacity 这个只读能力，确认能否选出 `selectedLiveVideoId`。
+
+响应里的 `canStart=false` 表示前端不应继续调用 `start`，应展示 `blockingReasons`。`executorId` 是本地执行端/网关资源 ID，不是飞手 ID；真正启动时会映射为 DJI `dock_sn/gateway_sn`。preflight 不下发真实航线任务，因此不能证明当前设备类型一定支持 wayline flight task。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/missions/{id}/cloud-execution/refresh"): """
+### DJI 上游调用
+
+该接口按本地任务找到 `MissionCloudExecution.djiJobId`，再调用 DJI wayline jobs 列表并匹配同一个 job。前端不传 DJI job id，也不要直接调用上游 jobs 接口；后端会用任务上的 DJI 连接和 workspace 处理。
+
+如果 DJI job 仍在 `PENDING/IN_PROGRESS/PAUSED`，后端只刷新 `data.cloudExecution.status/progressPercent/lastEventAt`，任务保持运行中。如果 DJI job 已 `SUCCESS/CANCEL/FAILED`，后端会复用事件闭环：更新任务和飞行会话、生成飞行记录、按 `djiJobId` 同步媒体，并尝试停止直播。
+""".strip(),
     _operation_key("POST", "/api/v2/inspection/missions/{id}/complete"): """
 ### DJI 上游调用
 
@@ -233,6 +247,13 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
 
 如果飞行记录没有 DJI 执行记录，则不会调用 DJI，只重新计算本地媒体数量。该接口不单独调用 DJI playback 或 preview URL；播放、预览、下载地址来自 DJI 媒体列表或回调中已保存的字段。
 """.strip(),
+    _operation_key("POST", "/api/v2/inspection/media-files/{id}/refresh-url"): """
+### DJI 上游调用
+
+该接口按本地 `CloudMediaFile.id` 刷新单个媒体文件的 signed URL，不接受任意 DJI file id。`urlType=download` 调 DJI media file URL；`urlType=preview` 调 preview URL；`urlType=playback` 调 playback URL。
+
+后端会从媒体所属 mission 的云端执行记录、设备 SN 绑定或 workspace 唯一 DJI 连接解析上游连接。成功后只更新对应字段：`downloadUrl`、`previewUrl` 或 `playbackUrl`；前端刷新当前媒体项即可。
+""".strip(),
 }
 
 
@@ -267,7 +288,7 @@ def _domain_before(path: str) -> str:
 
 
 def _domain_response(method: str, path: str) -> str:
-    if path.endswith("/login") or path.endswith("/refresh"):
+    if path.endswith("/session/login") or path.endswith("/session/refresh"):
         return "成功后 `data.accessToken` 用于后续 Authorization，`data.refreshToken` 用于续期。"
     if "/dji-connections" in path and path.endswith("/discover"):
         return "`data.connectionId` 是当前连接 ID；各资源项内 `resourceType/resourceId/djiConnectionId` 可直接用于绑定。"
@@ -282,6 +303,10 @@ def _domain_response(method: str, path: str) -> str:
     if "/routes" in path:
         return "返回航线基础信息、航点、MinIO 封面预签名 URL 和 DJI 云端 KMZ 文件字段；详情会按过期时间刷新 `djiFile.downloadUrl`。"
     if "/missions" in path:
+        if path.endswith("/preflight-check"):
+            return "返回 `canStart`、`blockingReasons`、`warnings`、逐项检查结果和执行端/航线/直播源映射信息；不会改变任务状态。"
+        if path.endswith("/cloud-execution/refresh"):
+            return "返回最新任务详情；前端重点读取 `data.status` 和 `data.cloudExecution.status/progressPercent/lastEventAt`。"
         return "返回任务状态、航线快照、资源快照、pilot 账号摘要和云端执行字段，用于任务列表和详情页。"
     if "/active-flights" in path or "/telemetry" in path:
         return "返回运行中飞行和遥测快照；遥测由 MQTT worker 异步写入。"
@@ -289,6 +314,8 @@ def _domain_response(method: str, path: str) -> str:
         return "返回 DJI 上游直播能力或操作结果；失败时 `msg` 可作为联调错误提示。"
     if "/camera/" in path:
         return "返回本次相机操作记录 ID、`droneSn/gatewaySn/payloadIndex` 映射字段，以及 `upstream.authority/upstream.command` 两段 DJI 上游结果；拍照和录像媒体文件继续走媒体同步流程。"
+    if path.endswith("/refresh-url"):
+        return "返回更新后的媒体文件详情；按 `urlType` 刷新 `downloadUrl`、`previewUrl` 或 `playbackUrl`。"
     return "成功数据固定放在 `data`；列表接口返回 `list` 和 `total`。"
 
 
@@ -307,12 +334,18 @@ def _request_notes(method: str, path: str) -> str:
         return "请求体固定为空；只有航线归属部门的调度员或平台超管可删除，且已被任何任务引用的航线不能删除。"
     if "/missions" in path and path.endswith("/start"):
         return "请求体为空对象；后端会启动 DJI 任务、直播和本地飞行会话。"
+    if "/missions" in path and path.endswith("/preflight-check"):
+        return "请求体为空对象；该接口只做启动前检查，条件满足时会只读查询 DJI live capacity，不会下发 DJI 航线任务。"
+    if "/missions" in path and path.endswith("/cloud-execution/refresh"):
+        return "请求体为空对象；后端按本地 `djiJobId` 查询 DJI jobs，不允许前端传任意 job id。"
     if "/missions/" in path and method.upper() == "POST":
         return "请求体可为空对象；取消/失败接口可传 `reason` 便于审计和前端展示。"
     if "/live/" in path:
         return "传本地 `droneId`；`videoId` 从 capacity 的镜头/视频能力组装，切换镜头时传 `videoType=wide|zoom|ir`。"
     if "/camera/actions" in path:
         return "传本地 `droneId/executorId` 和 capacity 中的 `payloadIndex`，`action` 选择 DJI payload command；额外字段按 action 传，前端主推 camelCase。"
+    if path.endswith("/refresh-url"):
+        return "`urlType` 可传 `download`、`preview` 或 `playback`；省略时默认刷新下载地址。"
     if "/session/logout" in path:
         return "请求体为空对象；前端随后清理本地 token。"
     return "按 request schema 传 JSON；未列出的字段会被严格校验器拒绝。"
@@ -336,7 +369,11 @@ def _next_step(method: str, path: str) -> str:
     if path.endswith("/routes") and method.upper() == "POST":
         return "使用返回的 route id 创建任务；下载 KMZ 前先读详情获取最新 `djiFile.downloadUrl`。"
     if "/missions" in path and method.upper() == "POST" and path.endswith("/missions"):
-        return "任务创建后调用 `POST /api/v2/inspection/missions/{id}/start`。"
+        return "任务创建后先调用 `POST /api/v2/inspection/missions/{id}/preflight-check`，通过后再调用 `start`。"
+    if path.endswith("/preflight-check"):
+        return "`data.canStart=true` 时再启用 `POST /api/v2/inspection/missions/{id}/start`；否则展示 `blockingReasons` 并引导用户修正资源或设备状态。"
+    if path.endswith("/cloud-execution/refresh"):
+        return "用返回的 `cloudExecution` 刷新任务进度；若任务进入终态，再刷新飞行记录和媒体列表。"
     if path.endswith("/start"):
         return "轮询或订阅 `/active-flights`、`/telemetry/snapshots` 和 MQTT 消息展示执行过程。"
     if any(path.endswith(suffix) for suffix in ("/complete", "/cancel", "/fail", "/abort")):
@@ -345,6 +382,8 @@ def _next_step(method: str, path: str) -> str:
         return "将返回的播放信息展示到监控页；停止时调用 `/live/stop`。"
     if "/camera/actions" in path:
         return "根据 `data.status` 和 `data.upstream.command` 更新当前按钮状态；需要查看新照片或录像时走媒体同步或飞行记录媒体刷新接口。"
+    if path.endswith("/refresh-url"):
+        return "把返回的 URL 写回当前媒体项；如果 URL 仍不可访问，再展示错误并允许用户重试。"
     if method.upper() in {"PUT", "DELETE"}:
         return "刷新详情页或列表页，避免继续展示旧状态。"
     return "根据 `data` 刷新当前页面状态；失败时展示 `msg` 并保留用户输入。"
@@ -465,6 +504,8 @@ def request_example_value(method: str, path: str, media_type: str):
         return {"name": "南区巡检任务", "routeId": 1, "droneId": 1, "pilotAccountProfileId": 1, "scheduledAt": "2026-06-04T10:00:00+08:00"}
     if path.endswith("/inspection/missions/{id}"):
         return {"name": "南区巡检任务", "status": "PENDING", "remark": "前端联调示例"}
+    if path.endswith("/cloud-execution/refresh"):
+        return {}
     if path.endswith("/start") or path.endswith("/complete") or path.endswith("/abort"):
         return {}
     if path.endswith("/cancel") or path.endswith("/fail"):
@@ -481,6 +522,8 @@ def request_example_value(method: str, path: str, media_type: str):
         return {"droneId": 1, "videoId": "1581F7FVC252A00CJ5TT/88-0-0/zoom-0", "videoType": "zoom"}
     if path.endswith("/camera/actions"):
         return {"droneId": 1, "executorId": 2, "payloadIndex": "88-0-0", "action": "camera_photo_take"}
+    if path.endswith("/refresh-url"):
+        return {"urlType": "download"}
     if path.endswith("/flight-records/{id}"):
         return {"status": "COMPLETED", "remark": "飞行记录确认"}
     if path.endswith("/refresh-media"):

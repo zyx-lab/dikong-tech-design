@@ -205,9 +205,13 @@ class ResourceV2ApiTests(TestCase):
         self.assertEqual(list_item["latestTelemetry"]["batteryPercent"], 87)
         self.assertFalse(list_item["latestTelemetry"]["isStale"])
         self.assertEqual(list_item["latestTelemetry"]["rawPayload"]["data"]["latitude"], 31.2304)
+        self.assertEqual(list_item["djiConnectionId"], binding.dji_connection_id)
+        self.assertEqual(list_item["djiConnectionName"], binding.dji_connection.name)
 
         self.assertEqual(detail_response.status_code, 200, getattr(detail_response, "data", detail_response.content))
         self.assertEqual(detail_response.data["data"]["latestTelemetry"]["heading"], "91.00")
+        self.assertEqual(detail_response.data["data"]["djiConnectionId"], binding.dji_connection_id)
+        self.assertEqual(detail_response.data["data"]["djiConnectionName"], binding.dji_connection.name)
 
     def test_mqtt_health_should_be_visible_to_connection_manager_only(self):
         child_connection = DjiConnection.objects.create(

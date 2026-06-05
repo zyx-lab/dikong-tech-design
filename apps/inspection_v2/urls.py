@@ -8,6 +8,12 @@ urlpatterns = [
     path("routes/<int:id>", views.RouteDetailView.as_view(), name="v2-inspection-route-detail"),
     path("missions", views.MissionListCreateView.as_view(), name="v2-inspection-missions"),
     path("missions/<int:id>", views.MissionDetailView.as_view(), name="v2-inspection-mission-detail"),
+    path("missions/<int:id>/preflight-check", views.MissionPreflightCheckView.as_view(), name="v2-inspection-mission-preflight-check"),
+    path(
+        "missions/<int:id>/cloud-execution/refresh",
+        views.MissionCloudExecutionRefreshView.as_view(),
+        name="v2-inspection-mission-cloud-execution-refresh",
+    ),
     path("missions/<int:id>/start", views.MissionStartView.as_view(), name="v2-inspection-mission-start"),
     path("missions/<int:id>/complete", views.MissionCompleteView.as_view(), name="v2-inspection-mission-complete"),
     path("missions/<int:id>/cancel", views.MissionCancelView.as_view(), name="v2-inspection-mission-cancel"),
@@ -31,4 +37,5 @@ urlpatterns = [
     ),
     path("media-files", views.MediaFileListView.as_view(), name="v2-inspection-media-files"),
     path("media-files/<int:id>", views.MediaFileDetailView.as_view(), name="v2-inspection-media-file-detail"),
+    path("media-files/<int:id>/refresh-url", views.MediaFileUrlRefreshView.as_view(), name="v2-inspection-media-file-refresh-url"),
 ]

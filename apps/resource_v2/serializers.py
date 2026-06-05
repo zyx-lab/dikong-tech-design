@@ -180,6 +180,8 @@ class ResourceReadSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     resourceType = serializers.CharField()
     bindingId = serializers.IntegerField()
+    djiConnectionId = serializers.IntegerField()
+    djiConnectionName = serializers.CharField()
     deviceSn = serializers.CharField()
     name = serializers.CharField()
     model = serializers.CharField()
@@ -392,6 +394,8 @@ def serialize_resource_binding(binding: ResourceBinding, *, context):
         "id": resource.id,
         "resourceType": binding.resource_type,
         "bindingId": binding.id,
+        "djiConnectionId": binding.dji_connection_id,
+        "djiConnectionName": binding.dji_connection.name,
         "deviceSn": resource.device_sn,
         "name": resource.name,
         "model": resource.model,
