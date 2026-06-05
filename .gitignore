@@ -6,6 +6,8 @@ deprecated/
 *.pyd
 db.sqlite3
 db.sqlite3.bak.*
+db.local.sqlite3
+db.regression.sqlite3
 .env
 .DS_Store
 .lsp/
@@ -24,3 +26,4 @@ api-tester.html
 .xml
 routes/
 logs/
+run/

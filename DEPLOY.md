@@ -1,6 +1,6 @@
 # 容器化部署指南
 
-本项目使用 Docker Compose 进行容器化部署，包含 PostgreSQL 数据库和 Django 应用。
+本项目使用 Docker Compose 进行容器化部署，当前 v2 正式联调服务包含 PostgreSQL、Redis、MinIO、Django ASGI 应用和 v2 DJI MQTT worker。
 
 如果你的 Django 运行在宿主机而不是容器里，请先看
 [宿主机 Django 切换到 Docker PostgreSQL 操作手册](docs/host-django-postgres-migration.md)；
@@ -12,17 +12,20 @@
 # 1. 克隆项目后，进入项目目录
 cd dikong-tech-design
 
-# 2. 启动所有服务（首次启动会自动迁移数据库和初始化数据）
-docker-compose up -d
+# 2. 启动 8000 正式联调服务
+# OBJECT_STORAGE_ENDPOINT_URL 必须是前端浏览器可访问的 MinIO 地址；本机自测可用 http://127.0.0.1:9000
+OBJECT_STORAGE_ENDPOINT_URL=http://192.168.3.99:9000 docker compose up -d --no-build db redis minio minio-init web v2-dji-worker
 
 # 3. 查看服务状态
-docker-compose ps
+docker compose ps
 
 # 4. 查看日志
-docker-compose logs -f web
+docker compose logs -f web v2-dji-worker
 ```
 
 服务启动后访问 http://localhost:8000
+
+`web` 只负责 HTTP 和 WebSocket 接入；DJI MQTT 设备消息、任务进度和遥测回流依赖独立的 `v2-dji-worker`。正式重启时不要只重启 `web`，否则前端 WebSocket 只能读到数据库中已有的 latest 消息，收不到新的 MQTT 广播。
 
 ## 默认账号
 
@@ -38,16 +41,19 @@ docker-compose logs -f web
 ┌─────────────────────────────────────────────┐
 │                 docker-compose.yml           │
 ├─────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌──────────────────┐   │
-│  │   PostgreSQL │    │     Django       │   │
-│  │    (db)      │◄───│     (web)        │   │
-│  │   :5432      │    │   :8000          │   │
-│  └─────────────┘    └──────────────────┘   │
+│  PostgreSQL(db) + Redis + MinIO              │
+│       │              │                       │
+│       ├──────────────┤                       │
+│       ▼              ▼                       │
+│  Django ASGI(web:8000) + v2-dji-worker       │
 └─────────────────────────────────────────────┘
 ```
 
 - **db**: PostgreSQL 16 数据库容器，数据持久化到 `pgdata` 卷
-- **web**: Django 应用容器，端口映射到主机 8000
+- **redis**: Django Channels 和 MQTT 广播使用的 Redis
+- **minio**: API v2 航线封面等对象存储
+- **web**: Django ASGI 应用容器，端口映射到主机 8000
+- **v2-dji-worker**: DJI MQTT 后台 worker，负责写入 MQTT latest 消息、任务事件和遥测快照
 
 ## 环境变量
 
@@ -66,39 +72,43 @@ docker-compose logs -f web
 ### 启动/停止服务
 
 ```bash
-# 启动（后台运行）
-docker-compose up -d
+# 启动 8000 正式联调服务（后台运行）
+# OBJECT_STORAGE_ENDPOINT_URL 必须是前端浏览器可访问的 MinIO 地址；本机自测可用 http://127.0.0.1:9000
+OBJECT_STORAGE_ENDPOINT_URL=http://192.168.3.99:9000 docker compose up -d --no-build db redis minio minio-init web v2-dji-worker
 
 # 停止
-docker-compose down
+docker compose down
 
 # 停止并删除数据卷（慎用）
-docker-compose down -v
+docker compose down -v
 ```
 
 ### 数据库操作
 
 ```bash
 # 进入 Django 容器
-docker-compose exec web sh
+docker compose exec web sh
 
 # 执行 Django 命令
-docker-compose exec web python manage.py migrate
-docker-compose exec web python manage.py createsuperuser
-docker-compose exec web python manage.py shell
+docker compose exec web python manage.py migrate
+docker compose exec web python manage.py createsuperuser
+docker compose exec web python manage.py shell
 ```
 
 ### 日志查看
 
 ```bash
 # 查看 Web 服务日志
-docker-compose logs -f web
+docker compose logs -f web
 
 # 查看数据库日志
-docker-compose logs -f db
+docker compose logs -f db
+
+# 查看 v2 DJI MQTT worker 日志
+docker compose logs -f v2-dji-worker
 
 # 查看所有日志
-docker-compose logs -f
+docker compose logs -f
 ```
 
 如果你要查 Django 的文件日志、`request_id` / `trace_id`，或者上游调用细节，请看
@@ -108,11 +118,28 @@ docker-compose logs -f
 
 ```bash
 # 重新构建（代码变更后使用）
-docker-compose build --no-cache web
+docker compose build web v2-dji-worker
 
 # 启动并重建
-docker-compose up -d --build
+OBJECT_STORAGE_ENDPOINT_URL=http://192.168.3.99:9000 docker compose up -d --build db redis minio minio-init web v2-dji-worker
 ```
+
+### 重启后的最小验证
+
+```bash
+docker compose ps
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v2/docs/schema/
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9000/minio/health/live
+docker compose exec -T web python manage.py run_v2_dji_worker --once
+```
+
+期望结果：
+
+- `web` 处于 `Up`，并映射 `0.0.0.0:8000->8000`
+- `db`、`redis`、`minio` 处于 healthy
+- `v2-dji-worker` 处于 `Up`
+- schema 和 MinIO health 都返回 `200`
+- `run_v2_dji_worker --once` 能看到当前检查到的 DJI 连接数量
 
 ## 生产环境部署
 
