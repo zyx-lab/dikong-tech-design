@@ -301,6 +301,50 @@ class ApiV2DocsSyncTests(TestCase):
             sorted(examples),
         )
 
+    def test_v2_dji_upstream_docs_should_cover_frontend_proxy_endpoints(self):
+        schema = self._schema()
+        expected_schema_terms = {
+            ("post", "/api/v2/resource/dji-connections/{id}/discover"): ("DJI 上游调用", "资源绑定接口"),
+            ("post", "/api/v2/inspection/routes"): ("DJI 上游调用", "DJI wayline 文件库", "data.djiFile"),
+            ("get", "/api/v2/inspection/routes/{id}"): ("DJI 上游调用", "downloadUrl"),
+            ("put", "/api/v2/inspection/routes/{id}"): ("DJI 上游调用", "只要传了 `kmzFile`"),
+            ("delete", "/api/v2/inspection/routes/{id}"): ("DJI 上游调用", "best-effort"),
+            ("post", "/api/v2/inspection/missions/{id}/start"): ("DJI 上游调用", "启动直播", "wayline flight task"),
+            ("post", "/api/v2/inspection/missions/{id}/complete"): ("DJI 上游调用", "媒体同步", "停止直播失败不会阻断"),
+            ("post", "/api/v2/inspection/missions/{id}/cancel"): ("DJI 上游调用", "DJI 取消失败"),
+            ("post", "/api/v2/inspection/missions/{id}/fail"): ("DJI 上游调用", "不主动取消 DJI wayline job"),
+            ("post", "/api/v2/inspection/missions/{id}/abort"): ("DJI 上游调用", "安全中止"),
+            ("get", "/api/v2/inspection/live/capacity"): ("DJI 上游调用", "live capacity", "payloadIndex"),
+            ("post", "/api/v2/inspection/live/start"): ("DJI 上游调用", "live stream start"),
+            ("post", "/api/v2/inspection/live/stop"): ("DJI 上游调用", "live stream stop"),
+            ("post", "/api/v2/inspection/live/update"): ("DJI 上游调用", "live stream update"),
+            ("post", "/api/v2/inspection/live/switch"): ("DJI 上游调用", "live stream switch"),
+            ("post", "/api/v2/inspection/camera/actions"): ("DJI 上游调用", "payload authority", "payload commands"),
+            ("post", "/api/v2/inspection/flight-records/{id}/refresh-media"): ("DJI 上游调用", "media files", "djiJobId"),
+        }
+
+        for (method, path), terms in expected_schema_terms.items():
+            description = schema["paths"][path][method]["description"]
+            for term in terms:
+                with self.subTest(method=method, path=path, term=term):
+                    self.assertIn(term, description)
+
+        guide_path = Path(settings.BASE_DIR) / "docs" / "api-v2-frontend-guide.md"
+        guide_text = guide_path.read_text(encoding="utf-8")
+        for expected in (
+            "## 内部调用 DJI 上云 API 的接口",
+            "POST /api/v2/inspection/flight-records/{id}/refresh-media",
+            "GET /api/v1/manage/workspaces/{workspace_id}/devices/bound?domain=0",
+            "POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload",
+            "POST /api/v1/wayline/workspaces/{workspace_id}/flight-tasks",
+            "POST /api/v1/manage/live/streams/start",
+            "POST /api/v1/control/devices/{gatewaySn}/payload/commands",
+            "GET /api/v1/media/workspaces/{workspace_id}/files",
+            "GET /api/v2/inspection/media-files",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, guide_text)
+
 
 class ApiV2SchemaParityUtilityTests(TestCase):
     def _load_module(self):

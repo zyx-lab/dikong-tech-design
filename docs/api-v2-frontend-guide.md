@@ -87,6 +87,131 @@ DJI MQTT 由后端 worker 连接，前端不直接连接 DJI broker。
 - `services_reply`：服务调用回复。
 - `status`：上下线和拓扑状态。
 
+## 内部调用 DJI 上云 API 的接口
+
+前端只调用 `/api/v2/*`，不要直接调用 DJI 上云 API。后端会用 `DjiConnection` 保存的 `baseUrl/username/password/loginFlag` 自动登录、续期并带 DJI token 请求上游。DJI 上游失败时，向前端返回标准 envelope，常见 HTTP 状态是 `502`，前端优先展示 `msg` 并保留当前页面状态。
+
+后端内部会按需调用：
+
+```http
+POST /api/v1/manage/login
+POST /api/v1/manage/token/refresh
+```
+
+这两个登录态接口是网关内部细节，前端不需要也不应该保存 DJI token。前端只保存本系统 `POST /api/v2/iam/session/login` 返回的 `accessToken`。
+
+会触发 DJI 上云 HTTP 调用的 v2 接口如下：
+
+| v2 接口 | 后端 DJI 调用 | 前端关注点 |
+| --- | --- | --- |
+| `POST /api/v2/resource/dji-connections/{id}/discover` | 登录/续期后调用 DJI 设备列表 | 返回的是发现结果，不等于已绑定资源；继续用 `resourceType/resourceId/djiConnectionId` 调绑定接口 |
+| `POST /api/v2/inspection/routes` | 上传 KMZ 到 DJI wayline，并获取下载 URL | 必须传真实 `kmzFile`；成功后用本地 `routeId` 创建任务 |
+| `GET /api/v2/inspection/routes/{id}` | 仅在 DJI KMZ 下载 URL 缺失或快过期时刷新 URL | 下载 KMZ 前先读详情，避免使用列表里的过期 URL |
+| `PUT /api/v2/inspection/routes/{id}` | 只有替换 `kmzFile` 时才重新上传 DJI | 不替换 KMZ 用 JSON；替换 KMZ 用 `multipart/form-data` |
+| `DELETE /api/v2/inspection/routes/{id}` | 本地删除后 best-effort 删除 DJI wayline 文件 | 成功响应以本地删除为准；DJI 清理失败不阻断 |
+| `POST /api/v2/inspection/missions/{id}/start` | 查询直播能力、启动直播、创建 DJI wayline flight task | 任务必须待执行，航线已上传 DJI，资源在线且同 DJI 连接 |
+| `POST /api/v2/inspection/missions/{id}/complete` | 尝试同步 DJI 媒体列表并停止直播 | 媒体同步失败不阻断完成；媒体没出现时再调用 `refresh-media` |
+| `POST /api/v2/inspection/missions/{id}/cancel` | 已有 `djiJobId` 时取消 DJI job，并停止直播 | DJI 取消失败会返回错误；停止直播失败不阻断取消 |
+| `POST /api/v2/inspection/missions/{id}/fail` | 尝试停止任务直播 | 不主动取消 DJI job；以本地失败状态为准 |
+| `POST /api/v2/inspection/missions/{id}/abort` | 尝试停止任务直播 | 安全中止场景；不主动取消 DJI job |
+| `GET /api/v2/inspection/live/capacity` | 查询 DJI live capacity | 用 `cameras_list[].index` 取 `payloadIndex`，用视频能力组装 `videoId` |
+| `POST /api/v2/inspection/live/start` | 启动 DJI live stream | 响应可能包含 `url/rtmp_url/webrtc_url/play_url/hls_url` |
+| `POST /api/v2/inspection/live/stop` | 停止 DJI live stream | 成功后停止播放器并清理直播状态 |
+| `POST /api/v2/inspection/live/update` | 更新 DJI live stream | 常用于调整 `videoQuality` |
+| `POST /api/v2/inspection/live/switch` | 切换 DJI live stream 镜头 | `videoType` 用 `wide/zoom/ir/normal` |
+| `POST /api/v2/inspection/camera/actions` | 抢占 payload authority 后下发 payload commands | 用本地 `droneId/executorId` 和 capacity 中的 `payloadIndex` |
+| `POST /api/v2/inspection/flight-records/{id}/refresh-media` | 查询 DJI media files 列表并按 `djiJobId` 过滤 | 只刷新媒体索引；不单独生成播放/预览 URL |
+
+资源发现对应的 DJI 参考路径：
+
+```http
+GET /api/v1/manage/workspaces/{workspace_id}/devices/bound?domain=0
+GET /api/v1/manage/workspaces/{workspace_id}/devices/bound?domain=3
+GET /api/v1/manage/workspaces/{workspace_id}/devices
+```
+
+`domain=0` 用于无人机，`domain=3` 用于机场；网关来自 workspace 设备列表。后端还会从设备 payload 字段里提取负载资源。`discover` 成功后，资源只是进入本地资源池；前端必须再调用 `POST /api/v2/resource/bindings`，资源列表接口才会出现这些资源。
+
+航线和 KMZ 对应的 DJI 参考路径：
+
+```http
+POST /api/v1/wayline/workspaces/{workspace_id}/waylines/files/upload
+GET /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}/url
+DELETE /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}
+```
+
+`POST /api/v2/inspection/routes` 会先上传 KMZ，DJI 返回 `wayline_id/download_url` 后，后端会再取一次可直接访问的下载地址，最终写入 `data.djiFile`。字段含义：
+
+- `data.id`：本地航线 ID，创建任务时传这个 ID。
+- `data.djiFile.djiFileId`：DJI `wayline_id`，前端只展示或排查时使用。
+- `data.djiFile.downloadUrl`：DJI 上云侧 KMZ 下载地址，可能过期。
+- `data.djiFile.downloadUrlExpiresAt`：后端从签名 URL 推断的过期时间；如果为空，也建议下载前重新读详情。
+
+任务启动对应的 DJI 参考路径：
+
+```http
+GET /api/v1/manage/live/capacity
+POST /api/v1/manage/live/streams/start
+POST /api/v1/wayline/workspaces/{workspace_id}/flight-tasks
+POST /api/v1/manage/live/streams/stop
+```
+
+`POST /api/v2/inspection/missions/{id}/start` 会先从 capacity 里选择第一个可用视频源启动直播，再创建 DJI wayline flight task。后端字段映射：
+
+- 本地 `route.cloudFile.djiFileId` -> DJI `file_id`
+- 本地 `executor.deviceSn` -> DJI `dock_sn`
+- 本地 `mission.name` -> DJI `name`
+- 本地 `route.cloudFile.waylineType` -> DJI `wayline_type`
+- 固定 `task_type=0`，表示立即任务
+- 默认 `rth_altitude=100`、`out_of_control_action=0`
+
+如果创建 DJI 任务失败，后端会尝试停止刚启动的直播，然后把 DJI 错误返回给前端。启动成功后，前端主要看任务详情里的云端执行字段和活动飞行列表；任务进度继续通过 MQTT `events/services_reply/status/osd` 和 v2 worker 写入的数据刷新。
+
+任务取消和结束对应的 DJI 参考路径：
+
+```http
+DELETE /api/v1/wayline/workspaces/{workspace_id}/jobs?job_id={job_id}
+POST /api/v1/manage/live/streams/stop
+GET /api/v1/media/workspaces/{workspace_id}/files
+```
+
+`cancel` 只有在本地已有 `djiJobId` 时才会取消 DJI job；`complete/fail/abort` 不主动取消 DJI job，只会尝试停止直播。`complete` 会尝试查询 DJI media files 列表并按 `djiJobId` 关联照片/视频，但失败不阻断完成操作。
+
+直播接口对应的 DJI 参考路径：
+
+```http
+GET /api/v1/manage/live/capacity
+POST /api/v1/manage/live/streams/start
+POST /api/v1/manage/live/streams/stop
+POST /api/v1/manage/live/streams/update
+POST /api/v1/manage/live/streams/switch
+```
+
+前端传本地 `droneId`，后端映射成 DJI `device_sn`。`videoId` 使用 DJI 格式 `{droneSn}/{payloadIndex}/{videoIndex}`，其中 `payloadIndex` 和 `videoIndex` 都来自 capacity。直播响应基本透传 DJI 结果，播放器地址优先按实际返回字段选择，例如 `play_url`、`webrtc_url`、`hls_url`、`rtmp_url` 或 `url`。
+
+相机与云台对应的 DJI 参考路径：
+
+```http
+POST /api/v1/control/devices/{gatewaySn}/authority/payload
+POST /api/v1/control/devices/{gatewaySn}/payload/commands
+```
+
+后端会先抢 payload authority，再发送 payload commands。前端传 camelCase，后端转 DJI snake_case：
+
+- `payloadIndex` -> `payload_index`
+- `cameraMode` -> `camera_mode`
+- `cameraType` -> `camera_type`
+- `zoomFactor` -> `zoom_factor`
+- `resetMode` -> `reset_mode`
+
+媒体刷新对应的 DJI 参考路径：
+
+```http
+GET /api/v1/media/workspaces/{workspace_id}/files
+```
+
+`POST /api/v2/inspection/flight-records/{id}/refresh-media` 会用飞行记录关联任务的 `djiJobId` 过滤媒体列表，并写入本地 `CloudMediaFile`。`GET /api/v2/inspection/media-files` 和 `GET /api/v2/inspection/media-files/{id}` 只读本地媒体表，不会主动调用 DJI；如果要让新拍摄的照片/视频出现，先调用 `refresh-media` 或等待 DJI 回调/worker 写入。
+
 ## 航线与任务
 
 推荐顺序：

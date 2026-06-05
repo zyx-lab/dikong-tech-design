@@ -123,6 +123,119 @@ CAMERA_ACTION_REQUEST_EXAMPLES = {
 }
 
 
+DJI_UPSTREAM_OPERATION_DETAILS = {
+    _operation_key("POST", "/api/v2/resource/dji-connections/{id}/discover"): """
+### DJI 上游调用
+
+该接口会用当前 `DjiConnection` 保存的 `baseUrl/username/password/loginFlag` 登录或续期 DJI 上云，再同步 DJI 工作空间里的设备。后端会读取已绑定设备列表中的无人机和机场、读取设备列表中的网关，并从设备 payload 信息里提取负载；前端拿响应里的 `resourceType/resourceId/djiConnectionId` 继续调用资源绑定接口。
+
+前端不需要传 DJI workspace，也不需要处理 DJI token。DJI 登录、workspace、MQTT 账号和 token 会保存回本地连接。DJI 上游失败时返回标准错误 envelope，常见为 `502`，`msg` 用于展示或联调排查。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/routes"): """
+### DJI 上游调用
+
+创建航线会把 `kmzFile` 上传到 DJI wayline 文件库，然后再获取 DJI 返回的航线下载地址并保存到 `data.djiFile`。前端必须用 `multipart/form-data` 上传真实 KMZ；`djiConnectionId` 决定使用哪一个 DJI 连接和 workspace。
+
+成功后 `data.id` 是本地航线 ID，`data.djiFile.djiFileId` 是 DJI wayline/file id，`data.djiFile.downloadUrl` 是 DJI 上云侧可直接访问的 KMZ 下载地址。后续创建任务使用本地 `routeId`，不需要前端再传 DJI file id。若本地保存失败，后端会 best-effort 删除刚上传的 DJI 航线文件。
+""".strip(),
+    _operation_key("GET", "/api/v2/inspection/routes/{id}"): """
+### DJI 上游调用
+
+读取航线详情通常只读本地数据；当 `data.djiFile.downloadUrl` 缺失或快过期时，后端会向 DJI wayline 获取新的下载地址并刷新本地缓存。前端下载 KMZ 前推荐先读详情，不要直接使用列表页缓存的旧下载地址。
+
+如果 DJI 下载地址刷新失败，本接口会返回 DJI 上游错误；前端应展示 `msg` 并保留当前详情页状态。
+""".strip(),
+    _operation_key("PUT", "/api/v2/inspection/routes/{id}"): """
+### DJI 上游调用
+
+如果请求体不包含 `kmzFile`，该接口只更新本地航线名称、状态、备注或封面，不调用 DJI。只要传了 `kmzFile`，后端会重新上传 KMZ 到 DJI wayline 文件库、获取新的下载地址、替换本地 `djiFile`，并 best-effort 删除旧 DJI 航线文件。
+
+前端替换 KMZ 时必须使用 `multipart/form-data`，同时传 `djiConnectionId/waylineType/kmzFile`；不替换 KMZ 时使用 JSON，不能传执行相关字段。
+""".strip(),
+    _operation_key("DELETE", "/api/v2/inspection/routes/{id}"): """
+### DJI 上游调用
+
+删除航线会先校验本地航线没有被任何任务引用，再删除本地航线和航点，随后 best-effort 删除 DJI wayline 文件。DJI 删除失败不会阻断本地删除结果；前端收到成功后可以直接从列表移除该航线。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/missions/{id}/start"): """
+### DJI 上游调用
+
+启动任务会连续调用 DJI 直播能力、启动直播和创建 wayline flight task。后端用本地任务绑定的 `route.cloudFile.djiFileId` 作为 DJI `file_id`，用本地执行端 `executor.deviceSn` 作为 DJI `dock_sn/gateway_sn`，并自动选择第一个可用 `liveVideoId` 启动直播。
+
+前置要求：任务必须是 `PENDING`，航线已经上传 DJI，无人机和执行端在线，二者和航线属于同一个 DJI 连接，且相关资源没有被其他运行中任务占用。创建 DJI 任务失败时后端会尝试停止刚启动的直播，并把上游错误返回给前端。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/missions/{id}/complete"): """
+### DJI 上游调用
+
+完成任务主要更新本地任务、飞行会话和飞行记录；如果任务存在 DJI 执行记录，后端会尝试拉取 DJI 媒体列表并按 `djiJobId` 关联照片/视频，然后停止任务启动时创建的直播。媒体同步和停止直播失败不会阻断完成操作。
+
+前端收到成功后刷新任务、活动飞行、飞行记录和媒体列表；如果媒体暂时没有出现，可再调用飞行记录的 `refresh-media` 接口。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/missions/{id}/cancel"): """
+### DJI 上游调用
+
+取消任务在存在 DJI `djiJobId` 时会调用 DJI wayline job 删除/取消能力，然后停止任务直播并更新本地状态。DJI 取消失败会返回上游错误；停止直播失败只记录在本地云端执行状态，不阻断取消结果。
+
+前端可传 `reason` 作为取消原因；成功后刷新任务列表、活动飞行列表和飞行记录。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/missions/{id}/fail"): """
+### DJI 上游调用
+
+标记失败不主动取消 DJI wayline job，但如果任务启动过直播，后端会尝试停止直播并记录停止结果。停止直播失败不会阻断本地失败标记。
+
+前端可传 `reason` 作为失败原因；成功后以本地任务状态为准刷新页面。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/missions/{id}/abort"): """
+### DJI 上游调用
+
+安全中止走本地失败闭环，不主动取消 DJI wayline job；如果任务启动过直播，后端会尝试停止直播并记录停止结果。停止直播失败不会阻断本地中止结果。
+
+该接口面向安全处置场景，权限按平台超管、部门管理员、调度员和资源归属关系裁决；前端可传 `reason` 作为中止原因。
+""".strip(),
+    _operation_key("GET", "/api/v2/inspection/live/capacity"): """
+### DJI 上游调用
+
+该接口会调用 DJI live capacity，按本地 `droneId` 映射出的 `drone.deviceSn` 过滤当前无人机的直播能力。响应基本透传 DJI 能力数据，常用字段是 `cameras_list[].index` 和 `videos_list[].index`。
+
+前端用 capacity 组装 `videoId`：`{droneSn}/{payloadIndex}/{videoIndex}`；也用 `cameras_list[].index` 作为相机动作接口的 `payloadIndex`。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/live/start"): """
+### DJI 上游调用
+
+该接口把本地 `droneId` 映射成 DJI `device_sn`，再调用 DJI live stream start。`videoId` 来自 capacity，`urlType/videoQuality` 会转成 DJI 需要的 snake_case 字段。
+
+响应为 DJI 直播启动结果，可能包含 `url/rtmp_url/webrtc_url/play_url/hls_url` 等播放地址；前端按实际返回字段选择播放器地址。上游失败时返回标准错误 envelope。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/live/stop"): """
+### DJI 上游调用
+
+该接口把 `droneId` 映射成 DJI `device_sn`，用前端传入的 `videoId` 调用 DJI live stream stop。成功后前端应停止播放器并清理直播状态。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/live/update"): """
+### DJI 上游调用
+
+该接口把 `droneId` 映射成 DJI `device_sn`，用 `videoId/videoQuality` 调用 DJI live stream update。前端通常用于调整清晰度或码流质量；失败时保持当前播放状态并展示 `msg`。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/live/switch"): """
+### DJI 上游调用
+
+该接口把 `droneId` 映射成 DJI `device_sn`，用 `videoId` 和 `videoType=wide|zoom|ir|normal` 调用 DJI live stream switch。前端切换镜头前应先从 capacity 获取可用 `payloadIndex/videoIndex`，并在切换成功后刷新播放器源。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/camera/actions"): """
+### DJI 上游调用
+
+该接口会先调用 DJI payload authority 抢占 payload 控制权，再调用 DJI payload commands 下发 `action`。前端只传本地资源 ID 和 action 参数；后端负责把本地 `executorId` 映射成 DJI `gatewaySn`，把 camelCase 字段转成 DJI snake_case。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/flight-records/{id}/refresh-media"): """
+### DJI 上游调用
+
+该接口会根据飞行记录关联的任务执行信息，调用 DJI media files 列表，按本次任务的 `djiJobId` 过滤照片/视频并写入本地媒体表。响应里的 `synced/photoCount/videoCount` 是本次刷新后的本地统计。
+
+如果飞行记录没有 DJI 执行记录，则不会调用 DJI，只重新计算本地媒体数量。该接口不单独调用 DJI playback 或 preview URL；播放、预览、下载地址来自 DJI 媒体列表或回调中已保存的字段。
+""".strip(),
+}
+
+
 def frontend_summary(method: str, path: str, operation: dict) -> str:
     summary = str(operation.get("summary") or "").strip()
     if summary:
@@ -257,6 +370,9 @@ def frontend_description(method: str, path: str, operation: dict) -> str:
     )
     if method.upper() == "POST" and path == "/api/v2/inspection/camera/actions":
         parts.append(CAMERA_ACTION_FRONTEND_DETAILS)
+    dji_upstream_details = DJI_UPSTREAM_OPERATION_DETAILS.get(_operation_key(method, path))
+    if dji_upstream_details:
+        parts.append(dji_upstream_details)
     return "\n\n".join(parts)
 
 
