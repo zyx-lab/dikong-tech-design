@@ -81,6 +81,8 @@ def require_manage_connection(context, connection: DjiConnection):
 
 
 def require_bind_connection(context, connection: DjiConnection):
+    if is_platform_super_admin(context):
+        return
     if not (is_department_admin(context) and connection.owner_department_id == context.department.id):
         raise StandardForbidden()
 

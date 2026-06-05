@@ -451,6 +451,38 @@ class ResourceV2ApiTests(TestCase):
             ).exists()
         )
 
+    def test_platform_super_admin_should_bind_resource_for_any_department_connection(self):
+        self.authenticate(self.platform_super)
+        connection = DjiConnection.objects.create(
+            owner_department=self.child,
+            name="飞行队 DJI",
+            base_url="https://dji.example.test",
+            username="adminPC1",
+            password="secret",
+            created_by_user=self.child_admin,
+        )
+        drone = DroneResource.objects.create(device_sn="SUPER-BIND-DRONE", name="超管绑定无人机", model="M30")
+
+        response = self.client.post(
+            "/api/v2/resource/bindings",
+            {"resourceType": ResourceType.DRONE, "resourceId": drone.id, "djiConnectionId": connection.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
+        binding = ResourceBinding.objects.get(pk=response.data["data"]["id"])
+        self.assertEqual(binding.owner_department_id, self.child.id)
+        self.assertEqual(binding.dji_connection_id, connection.id)
+        self.assertTrue(
+            ResourceBindingHistory.objects.filter(
+                action_type=BindingActionType.BIND,
+                resource_type=ResourceType.DRONE,
+                resource_object_id=drone.id,
+                new_department=self.child,
+                actor_user=self.platform_super,
+            ).exists()
+        )
+
     @patch("apps.resource_v2.views.DjiConnectionGateway", FakeDiscoveryGateway)
     def test_discover_bind_conflict_visibility_share_and_unbind(self):
         self.authenticate(self.child_admin)
