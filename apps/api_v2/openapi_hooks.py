@@ -3,7 +3,7 @@ from apps.api_v2.docs_metadata import (
     PUBLIC_METHODS,
     frontend_description,
     frontend_summary,
-    request_example_value,
+    request_examples,
 )
 
 
@@ -30,16 +30,7 @@ def _enrich_request_examples(path: str, method: str, operation: dict) -> None:
             continue
         if not ("json" in media_type or media_type == "multipart/form-data"):
             continue
-        media.setdefault(
-            "examples",
-            {
-                "frontend": {
-                    "summary": "前端调用示例",
-                    "description": "占位值仅用于说明字段形状；真实账号、密码、token、设备 SN 由运行环境提供。",
-                    "value": request_example_value(method, path, media_type),
-                }
-            },
-        )
+        media.setdefault("examples", request_examples(method, path, media_type))
 
 
 def enrich_v2_frontend_docs_hook(result, generator, request, public):

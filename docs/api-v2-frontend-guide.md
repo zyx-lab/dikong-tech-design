@@ -127,13 +127,22 @@ DJI MQTT 由后端 worker 连接，前端不直接连接 DJI broker。
 
 ## 相机与云台控制
 
-相机动作统一使用：
+相机、录像、变焦、点选瞄准和云台复位统一使用一个入口：
 
 ```http
 POST /api/v2/inspection/camera/actions
 ```
 
-基础请求体：
+推荐调用顺序：
+
+1. 完成登录，业务请求带 `Authorization: Bearer <accessToken>`。
+2. 完成 DJI 连接、资源发现和资源绑定。
+3. 通过 `GET /api/v2/resource/drones` 选择本地无人机资源，取 `id` 作为 `droneId`。
+4. 通过 `GET /api/v2/resource/gateways` 选择本地执行端/网关资源，取 `id` 作为 `executorId`。
+5. 调用 `GET /api/v2/inspection/live/capacity?droneId=<droneId>`，从 `data.cameras_list[].index` 取 `payloadIndex`，例如 `88-0-0`。
+6. 调用 `POST /api/v2/inspection/camera/actions` 下发具体动作。
+
+基础请求体如下。字段建议使用 camelCase；后端兼容部分 snake_case 别名，但前端不要混用两种写法。
 
 ```json
 {
@@ -151,17 +160,142 @@ POST /api/v2/inspection/camera/actions
 - `payloadIndex`：DJI `payload_index`，从 `GET /api/v2/inspection/live/capacity?droneId=...` 的 `cameras_list[].index` 获取。
 - `action`：DJI payload command 方法名。
 
-第一版支持的动作：
+后端会替前端调用 DJI 上游，前端不要直接调 DJI：
 
-- `camera_mode_switch`：额外传 `cameraMode`，取值 `0=拍照`、`1=录像`、`2=智能低光`、`3=全景`。
-- `camera_photo_take`：拍照，只需要基础字段。
-- `camera_recording_start`：开始录像，只需要基础字段。
-- `camera_recording_stop`：停止录像，只需要基础字段。
-- `camera_focal_length_set`：额外传 `cameraType` 和 `zoomFactor`；`cameraType=zoom` 时 `zoomFactor` 为 `2..200`，`cameraType=ir` 时为 `2..20`。
-- `camera_aim`：额外传 `cameraType`、`locked`、`x`、`y`；`cameraType` 支持 `wide/zoom/ir`，`x/y` 为 `0..1`。
-- `gimbal_reset`：额外传 `resetMode`，取值 `0=回中`、`1=朝下`、`2=偏航回中`、`3=俯仰朝下`。
+1. 抢占 payload authority（payload 控制权）：`POST /api/v1/control/devices/{gatewaySn}/authority/payload`，body 是 `{ "payload_index": "<payloadIndex>" }`。
+2. 下发 payload commands：`POST /api/v1/control/devices/{gatewaySn}/payload/commands`，body 是 `{ "cmd": "<action>", "data": { ... } }`。
 
-接口会先抢 DJI payload authority，再发送 payload command，并保存本次后端操作记录。拍照和录像生成的媒体文件不从这个接口返回，继续通过 DJI 媒体同步、回调或飞行记录媒体刷新流程进入系统。
+调用前置条件：
+
+- 当前账号必须是平台超管、调度员或飞手。
+- `droneId` 和 `executorId` 必须是当前账号可见且可用的已绑定资源。
+- 无人机和执行端都必须在线。
+- 无人机和执行端必须属于同一个 DJI 连接，否则后端无法用同一个上游连接完成控制。
+
+支持的动作和参数：
+
+| action | 使用场景 | 额外字段 |
+| --- | --- | --- |
+| `camera_photo_take` | 拍照 | 无 |
+| `camera_recording_start` | 开始录像 | 无 |
+| `camera_recording_stop` | 停止录像 | 无 |
+| `camera_mode_switch` | 切换相机模式 | `cameraMode`：`0=拍照`、`1=录像`、`2=智能低光`、`3=全景` |
+| `camera_focal_length_set` | 设置变焦倍率 | `cameraType=zoom|ir`；`cameraType=zoom` 时 `zoomFactor` 为 `2..200`，`cameraType=ir` 时为 `2..20` |
+| `camera_aim` | 点选瞄准/云台指向画面位置 | `cameraType=wide|zoom|ir`、`locked`、`x`、`y`；`x/y` 是直播画面归一化坐标，范围 `0..1` |
+| `gimbal_reset` | 云台复位 | `resetMode`：`0=回中`、`1=朝下`、`2=偏航回中`、`3=俯仰朝下` |
+
+`camera_aim.locked=true` 表示锁定云台，云台和无人机一起转动；`false` 表示只转动云台。`x/y` 建议从播放器点击位置换算：`x = clickX / videoWidth`，`y = clickY / videoHeight`，并限制在 `0..1`。
+
+常用请求示例：
+
+```json
+{
+  "droneId": 1,
+  "executorId": 2,
+  "payloadIndex": "88-0-0",
+  "action": "camera_photo_take"
+}
+```
+
+```json
+{
+  "droneId": 1,
+  "executorId": 2,
+  "payloadIndex": "88-0-0",
+  "action": "camera_mode_switch",
+  "cameraMode": 1
+}
+```
+
+```json
+{
+  "droneId": 1,
+  "executorId": 2,
+  "payloadIndex": "88-0-0",
+  "action": "camera_recording_start"
+}
+```
+
+```json
+{
+  "droneId": 1,
+  "executorId": 2,
+  "payloadIndex": "88-0-0",
+  "action": "camera_recording_stop"
+}
+```
+
+```json
+{
+  "droneId": 1,
+  "executorId": 2,
+  "payloadIndex": "88-0-0",
+  "action": "camera_focal_length_set",
+  "cameraType": "zoom",
+  "zoomFactor": 12
+}
+```
+
+```json
+{
+  "droneId": 1,
+  "executorId": 2,
+  "payloadIndex": "88-0-0",
+  "action": "camera_aim",
+  "cameraType": "zoom",
+  "locked": false,
+  "x": 0.5,
+  "y": 0.4
+}
+```
+
+```json
+{
+  "droneId": 1,
+  "executorId": 2,
+  "payloadIndex": "88-0-0",
+  "action": "gimbal_reset",
+  "resetMode": 0
+}
+```
+
+成功响应示例：
+
+```json
+{
+  "code": "00000",
+  "msg": "success",
+  "data": {
+    "operationId": 12,
+    "status": "SUCCEEDED",
+    "action": "camera_photo_take",
+    "droneId": 1,
+    "droneSn": "1581F7FVC252A00CJ5TT",
+    "executorId": 2,
+    "gatewaySn": "RC-GATEWAY-001",
+    "payloadIndex": "88-0-0",
+    "upstream": {
+      "authority": {},
+      "command": {}
+    }
+  }
+}
+```
+
+响应处理：
+
+- `data.status=SUCCEEDED` 表示后端两步 DJI 调用都已成功。
+- `data.upstream.authority` 是抢占 payload 控制权的上游结果。
+- `data.upstream.command` 是 payload command 的上游结果。
+- `camera_photo_take` 和录像动作不会直接返回照片或视频文件；媒体文件继续通过 DJI 媒体同步、回调或飞行记录媒体刷新流程进入系统。
+
+常见错误：
+
+- `400`：字段缺失、`payloadIndex` 格式不是 `数字-数字-数字`，或 action 的额外字段不合法。
+- `403`：当前账号没有控制权限。
+- `404`：`droneId` 或 `executorId` 不存在，或对当前账号不可见。
+- `409`：无人机/执行端不在线，或二者不属于同一个 DJI 连接。
+- `502`：DJI 上游失败，例如设备离线或 payload command 被上游拒绝；前端优先展示 `msg`，并保留当前按钮/表单状态供用户重试。
 
 ## 共享与权限
 

@@ -270,6 +270,37 @@ class ApiV2DocsSyncTests(TestCase):
             with self.subTest(expected=expected):
                 self.assertIn(expected, text)
 
+    def test_v2_camera_action_docs_should_be_frontend_actionable(self):
+        schema = self._schema()
+        operation = schema["paths"]["/api/v2/inspection/camera/actions"]["post"]
+        description = operation.get("description", "")
+        guide_path = Path(settings.BASE_DIR) / "docs" / "api-v2-frontend-guide.md"
+        guide_text = guide_path.read_text(encoding="utf-8")
+
+        for expected in (
+            "GET /api/v2/resource/gateways",
+            "payload authority",
+            "payload commands",
+            "camera_mode_switch",
+            "camera_focal_length_set",
+            "camera_aim",
+            "gimbal_reset",
+            "upstream.authority",
+            "upstream.command",
+        ):
+            with self.subTest(source="schema", expected=expected):
+                self.assertIn(expected, description)
+            with self.subTest(source="guide", expected=expected):
+                self.assertIn(expected, guide_text)
+
+        examples = operation["requestBody"]["content"]["application/json"]["examples"]
+        self.assertTrue(
+            {"photoTake", "switchToVideo", "recordingStart", "recordingStop", "focalLengthSetZoom", "cameraAim", "gimbalReset"}.issubset(
+                examples
+            ),
+            sorted(examples),
+        )
+
 
 class ApiV2SchemaParityUtilityTests(TestCase):
     def _load_module(self):

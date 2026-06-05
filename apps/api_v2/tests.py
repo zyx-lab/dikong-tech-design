@@ -429,6 +429,30 @@ class ApiV2SchemaBoundaryTests(TestCase):
         self.assertIn("camera_photo_take", camera_body["action"]["enum"])
         self.assertIn("gimbal_reset", camera_body["action"]["enum"])
 
+        camera_operation = schema["paths"]["/api/v2/inspection/camera/actions"]["post"]
+        camera_description = camera_operation.get("description", "")
+        for expected in (
+            "GET /api/v2/resource/gateways",
+            "payload authority",
+            "payload commands",
+            "camera_focal_length_set",
+            "camera_aim",
+            "upstream.authority",
+            "upstream.command",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, camera_description)
+
+        camera_examples = camera_operation["requestBody"]["content"]["application/json"]["examples"]
+        self.assertTrue(
+            {"photoTake", "switchToVideo", "recordingStart", "recordingStop", "focalLengthSetZoom", "cameraAim", "gimbalReset"}.issubset(
+                camera_examples
+            ),
+            sorted(camera_examples),
+        )
+        self.assertEqual(camera_examples["focalLengthSetZoom"]["value"]["action"], "camera_focal_length_set")
+        self.assertEqual(camera_examples["cameraAim"]["value"]["action"], "camera_aim")
+
         live_switch_body = self._request_body_properties(
             schema,
             path="/api/v2/inspection/live/switch",

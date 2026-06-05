@@ -41,6 +41,88 @@ SUMMARY_OVERRIDES = {
 }
 
 
+CAMERA_ACTION_FRONTEND_DETAILS = """
+### 相机动作补充说明
+
+推荐调用流程：先完成登录、DJI 资源发现和资源绑定；从 `GET /api/v2/resource/drones` 选择本地 `droneId`，从 `GET /api/v2/resource/gateways` 选择本地 `executorId`；再调用 `GET /api/v2/inspection/live/capacity?droneId=<droneId>`，从 `data.cameras_list[].index` 取 `payloadIndex`，例如 `88-0-0`。
+
+前端只调用本接口，不直接调用 DJI 上游。后端会按实现固定执行两步：先调用 DJI payload authority，上游请求体是 `{ "payload_index": payloadIndex }`；成功后再调用 DJI payload commands，上游请求体是 `{ "cmd": action, "data": ... }`。对外字段推荐 camelCase；后端会把 `payloadIndex/cameraMode/cameraType/zoomFactor/resetMode` 转成 DJI 需要的 snake_case。
+
+字段含义：`droneId` 是本地无人机资源 ID，用于权限、在线状态和响应里的 `droneSn`；`executorId` 是本地执行端/网关资源 ID，会映射成上游路径里的 `{gatewaySn}`；`payloadIndex` 是 DJI payload index；`action` 是 DJI payload command 的 `cmd`。
+
+前置限制：调用账号必须是平台超管、调度员或飞手；无人机和执行端都必须已绑定、当前账号可用、在线，并且属于同一个 DJI 连接。否则可能返回 `403/404/409`。
+
+| action | 使用场景 | 额外字段 |
+| --- | --- | --- |
+| `camera_photo_take` | 拍照 | 无 |
+| `camera_recording_start` | 开始录像 | 无 |
+| `camera_recording_stop` | 停止录像 | 无 |
+| `camera_mode_switch` | 切换拍照/录像等相机模式 | `cameraMode`：`0=拍照`、`1=录像`、`2=智能低光`、`3=全景` |
+| `camera_focal_length_set` | 设置变焦倍率 | `cameraType=zoom|ir`；`zoomFactor` 在 `cameraType=zoom` 时为 `2..200`，在 `cameraType=ir` 时为 `2..20` |
+| `camera_aim` | 点选瞄准/云台指向画面位置 | `cameraType=wide|zoom|ir`、`locked`、`x`、`y`；`x/y` 是直播画面归一化坐标，范围 `0..1` |
+| `gimbal_reset` | 云台复位 | `resetMode`：`0=回中`、`1=朝下`、`2=偏航回中`、`3=俯仰朝下` |
+
+`camera_aim.locked=true` 表示锁定云台，云台和无人机一起转动；`false` 表示只转动云台。拍照和录像接口只返回操作结果，不直接返回媒体文件；新媒体仍通过 DJI 媒体同步、回调或飞行记录媒体刷新流程进入系统。
+
+成功响应的 `data.upstream.authority` 是抢占 payload 控制权的 DJI 结果，`data.upstream.command` 是 payload command 的 DJI 结果。上游失败通常返回 `502`，`msg` 可直接用于联调提示；后端会把本次 `CameraOperation` 记录为 `FAILED`。
+""".strip()
+
+
+CAMERA_ACTION_REQUEST_EXAMPLES = {
+    "photoTake": {
+        "summary": "拍照",
+        "description": "只需要基础字段；生成的照片不在本接口响应里返回。",
+        "value": {"droneId": 1, "executorId": 2, "payloadIndex": "88-0-0", "action": "camera_photo_take"},
+    },
+    "switchToVideo": {
+        "summary": "切到录像模式",
+        "description": "`cameraMode=1` 对应 DJI VIDEO。",
+        "value": {"droneId": 1, "executorId": 2, "payloadIndex": "88-0-0", "action": "camera_mode_switch", "cameraMode": 1},
+    },
+    "recordingStart": {
+        "summary": "开始录像",
+        "description": "如需确保处于录像模式，可先调用 `camera_mode_switch`。",
+        "value": {"droneId": 1, "executorId": 2, "payloadIndex": "88-0-0", "action": "camera_recording_start"},
+    },
+    "recordingStop": {
+        "summary": "停止录像",
+        "description": "停止录像后，视频文件仍走媒体同步/刷新流程。",
+        "value": {"droneId": 1, "executorId": 2, "payloadIndex": "88-0-0", "action": "camera_recording_stop"},
+    },
+    "focalLengthSetZoom": {
+        "summary": "设置变焦倍率",
+        "description": "`cameraType=zoom` 时 `zoomFactor` 范围是 `2..200`。",
+        "value": {
+            "droneId": 1,
+            "executorId": 2,
+            "payloadIndex": "88-0-0",
+            "action": "camera_focal_length_set",
+            "cameraType": "zoom",
+            "zoomFactor": 12,
+        },
+    },
+    "cameraAim": {
+        "summary": "点选瞄准",
+        "description": "`x/y` 传直播画面上的归一化坐标，范围 `0..1`。",
+        "value": {
+            "droneId": 1,
+            "executorId": 2,
+            "payloadIndex": "88-0-0",
+            "action": "camera_aim",
+            "cameraType": "zoom",
+            "locked": False,
+            "x": 0.5,
+            "y": 0.4,
+        },
+    },
+    "gimbalReset": {
+        "summary": "云台回中",
+        "description": "`resetMode=0` 对应 DJI RECENTER。",
+        "value": {"droneId": 1, "executorId": 2, "payloadIndex": "88-0-0", "action": "gimbal_reset", "resetMode": 0},
+    },
+}
+
+
 def frontend_summary(method: str, path: str, operation: dict) -> str:
     summary = str(operation.get("summary") or "").strip()
     if summary:
@@ -93,7 +175,7 @@ def _domain_response(method: str, path: str) -> str:
     if "/live/" in path:
         return "返回 DJI 上游直播能力或操作结果；失败时 `msg` 可作为联调错误提示。"
     if "/camera/" in path:
-        return "返回本次相机操作记录 ID、DJI 设备映射字段和 authority/command 上游结果；拍照后的媒体文件继续走媒体同步流程。"
+        return "返回本次相机操作记录 ID、`droneSn/gatewaySn/payloadIndex` 映射字段，以及 `upstream.authority/upstream.command` 两段 DJI 上游结果；拍照和录像媒体文件继续走媒体同步流程。"
     return "成功数据固定放在 `data`；列表接口返回 `list` 和 `total`。"
 
 
@@ -117,7 +199,7 @@ def _request_notes(method: str, path: str) -> str:
     if "/live/" in path:
         return "传本地 `droneId`；`videoId` 从 capacity 的镜头/视频能力组装，切换镜头时传 `videoType=wide|zoom|ir`。"
     if "/camera/actions" in path:
-        return "传本地 `droneId/executorId` 和 capacity 中的 `payloadIndex`；后端映射为 DJI `gateway_sn/payload_index` 并发送 payload command。"
+        return "传本地 `droneId/executorId` 和 capacity 中的 `payloadIndex`，`action` 选择 DJI payload command；额外字段按 action 传，前端主推 camelCase。"
     if "/session/logout" in path:
         return "请求体为空对象；前端随后清理本地 token。"
     return "按 request schema 传 JSON；未列出的字段会被严格校验器拒绝。"
@@ -149,7 +231,7 @@ def _next_step(method: str, path: str) -> str:
     if "/live/start" in path:
         return "将返回的播放信息展示到监控页；停止时调用 `/live/stop`。"
     if "/camera/actions" in path:
-        return "根据 `status` 更新当前按钮状态；需要查看新照片或录像时走媒体同步/刷新接口。"
+        return "根据 `data.status` 和 `data.upstream.command` 更新当前按钮状态；需要查看新照片或录像时走媒体同步或飞行记录媒体刷新接口。"
     if method.upper() in {"PUT", "DELETE"}:
         return "刷新详情页或列表页，避免继续展示旧状态。"
     return "根据 `data` 刷新当前页面状态；失败时展示 `msg` 并保留用户输入。"
@@ -173,6 +255,8 @@ def frontend_description(method: str, path: str, operation: dict) -> str:
             ]
         )
     )
+    if method.upper() == "POST" and path == "/api/v2/inspection/camera/actions":
+        parts.append(CAMERA_ACTION_FRONTEND_DETAILS)
     return "\n\n".join(parts)
 
 
@@ -286,3 +370,15 @@ def request_example_value(method: str, path: str, media_type: str):
     if path.endswith("/refresh-media"):
         return {}
     return {"remark": "前端联调示例"}
+
+
+def request_examples(method: str, path: str, media_type: str):
+    if method.upper() == "POST" and path == "/api/v2/inspection/camera/actions" and "json" in media_type:
+        return CAMERA_ACTION_REQUEST_EXAMPLES
+    return {
+        "frontend": {
+            "summary": "前端调用示例",
+            "description": "占位值仅用于说明字段形状；真实账号、密码、token、设备 SN 由运行环境提供。",
+            "value": request_example_value(method, path, media_type),
+        }
+    }
