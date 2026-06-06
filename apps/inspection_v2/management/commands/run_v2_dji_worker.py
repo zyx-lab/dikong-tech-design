@@ -87,7 +87,24 @@ class V2DjiWorker:
             )
             return
         while not self.stop_event.is_set():
-            client.loop(timeout=1.0)
+            try:
+                result_code = client.loop(timeout=1.0)
+            except Exception as exc:
+                mark_mqtt_health(
+                    connection=connection,
+                    status=MqttHealthStatus.ERROR,
+                    mqtt_addr=config.mqtt_addr,
+                    last_error=str(exc),
+                )
+                break
+            if result_code != mqtt.MQTT_ERR_SUCCESS:
+                mark_mqtt_health(
+                    connection=connection,
+                    status=MqttHealthStatus.ERROR,
+                    mqtt_addr=config.mqtt_addr,
+                    last_error=f"MQTT loop returned {result_code}",
+                )
+                break
         client.disconnect()
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):  # pragma: no cover - MQTT callback

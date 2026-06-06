@@ -79,10 +79,10 @@ class ResourceV2MqttWebSocketTests(TransactionTestCase):
     def access_token(self) -> str:
         return create_auth_session(user=self.dispatcher, request=SimpleNamespace(META={}))["accessToken"]
 
-    def test_websocket_should_authenticate_subscribe_and_replay_latest_message(self):
-        async_to_sync(self._run_subscribe_replay)(self.access_token())
+    def test_websocket_should_authenticate_subscribe_and_stream_realtime_messages_only(self):
+        async_to_sync(self._run_subscribe_realtime_only)(self.access_token())
 
-    async def _run_subscribe_replay(self, token: str):
+    async def _run_subscribe_realtime_only(self, token: str):
         communicator = WebsocketCommunicator(application, f"/ws/v2/dji/mqtt?token={token}")
         connected, _subprotocol = await communicator.connect()
         self.assertTrue(connected)
@@ -98,13 +98,7 @@ class ResourceV2MqttWebSocketTests(TransactionTestCase):
         accepted = await communicator.receive_json_from(timeout=1)
         self.assertEqual(accepted["type"], "subscription.accepted")
         self.assertEqual(accepted["deviceSns"], [self.drone.device_sn])
-
-        replay = await communicator.receive_json_from(timeout=1)
-        self.assertEqual(replay["type"], "mqtt.message")
-        self.assertEqual(replay["connectionId"], self.connection.id)
-        self.assertEqual(replay["topicKind"], "osd")
-        self.assertEqual(replay["deviceSn"], self.drone.device_sn)
-        self.assertEqual(replay["rawPayload"]["data"]["latitude"], 31.23)
+        self.assertTrue(await communicator.receive_nothing(timeout=0.1, interval=0.01))
 
         await get_channel_layer().group_send(
             MQTT_BROADCAST_GROUP,

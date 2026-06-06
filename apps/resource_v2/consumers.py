@@ -10,8 +10,8 @@ from apps.access.authentication import sha256_text
 from apps.access.models import AuthSession, DirectoryStatus, UserStatus
 from apps.iam_v2.models import V2AccountProfile, V2AccountRoleAssignment
 from apps.iam_v2.services import V2RequestContext, active_roles_for_codes, data_scopes_for_roles, permission_codes_for_roles
-from apps.resource_v2.models import MqttLatestMessage, ResourceType
-from apps.resource_v2.mqtt import MQTT_BROADCAST_GROUP, mqtt_message_envelope
+from apps.resource_v2.models import ResourceType
+from apps.resource_v2.mqtt import MQTT_BROADCAST_GROUP
 from apps.resource_v2.services import effective_permissions_for_binding, get_resource, visible_bindings_queryset
 
 
@@ -56,8 +56,6 @@ class DjiMqttConsumer(AsyncJsonWebsocketConsumer):
                 "topics": subscription["topics"],
             }
         )
-        for message in subscription["latest"]:
-            await self.send_json(message)
 
     async def mqtt_message(self, event):
         message = event.get("message") if isinstance(event, dict) else None
@@ -104,23 +102,16 @@ class DjiMqttConsumer(AsyncJsonWebsocketConsumer):
     def _resolve_subscription(self, user_id: int, content: dict) -> dict:
         context = _context_for_user(user_id)
         if context is None:
-            return {"deviceSns": [], "topicKinds": [], "topics": [], "latest": []}
+            return {"deviceSns": [], "topicKinds": [], "topics": []}
         visible_sns = _visible_monitor_device_sns(context)
         requested_sns = _string_list(content.get("deviceSns"))
         device_sns = sorted(set(requested_sns).intersection(visible_sns)) if requested_sns else sorted(visible_sns)
         topic_kinds = sorted(set(_string_list(content.get("topicKinds"))))
         topics = sorted(set(_string_list(content.get("topics"))))
-
-        latest = MqttLatestMessage.objects.filter(device_sn__in=device_sns)
-        if topic_kinds:
-            latest = latest.filter(topic_kind__in=topic_kinds)
-        if topics:
-            latest = latest.filter(topic__in=topics)
         return {
             "deviceSns": device_sns,
             "topicKinds": topic_kinds,
             "topics": topics,
-            "latest": [mqtt_message_envelope(message) for message in latest.order_by("-received_at", "-id")[:200]],
         }
 
 

@@ -1636,6 +1636,7 @@ class InspectionV2ApiTests(TestCase):
 
             def loop(self, timeout=1.0):
                 worker.stop_event.set()
+                return 0
 
             def disconnect(self):
                 pass
@@ -1649,6 +1650,50 @@ class InspectionV2ApiTests(TestCase):
         health = MqttConnectionHealth.objects.get(dji_connection=connection)
         self.assertEqual(health.status, "SUBSCRIBED")
         self.assertEqual(health.mqtt_addr, "tcp://broker.example.test:1883")
+
+    def test_v2_dji_worker_should_mark_error_when_mqtt_loop_reports_connection_loss(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        worker = V2DjiWorker()
+        mqtt_config = SimpleNamespace(
+            mqtt_addr="tcp://broker.example.test:1883",
+            mqtt_username="mqtt-user",
+            mqtt_password="mqtt-pass",
+        )
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                self.on_connect = None
+                self.on_message = None
+                self.userdata = None
+
+            def user_data_set(self, userdata):
+                self.userdata = userdata
+
+            def username_pw_set(self, username, password):
+                pass
+
+            def connect(self, host, port, keepalive):
+                self.on_connect(self, self.userdata, None, 0, None)
+
+            def subscribe(self, topic):
+                pass
+
+            def loop(self, timeout=1.0):
+                worker.stop_event.set()
+                return 7
+
+            def disconnect(self):
+                pass
+
+        with patch(
+            "apps.inspection_v2.management.commands.run_v2_dji_worker.DjiConnectionGateway.get_workspace_config",
+            return_value=mqtt_config,
+        ), patch("paho.mqtt.client.Client", FakeClient):
+            worker._run_connection(connection)
+
+        health = MqttConnectionHealth.objects.get(dji_connection=connection)
+        self.assertEqual(health.status, "ERROR")
+        self.assertIn("MQTT loop returned", health.last_error)
 
     def test_v2_dji_worker_command_should_support_once_mode(self):
         with patch(
