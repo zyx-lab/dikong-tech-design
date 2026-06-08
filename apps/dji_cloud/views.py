@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from django.conf import settings
 from django.http import Http404, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from apps.dji_bff.services import (
-    handle_media_group_upload_callback,
-    handle_media_upload_callback,
-)
-from apps.dji_bff.tasks import sync_device_indexes, sync_media_indexes
 from apps.dji_cloud.gateway import DjiGatewayError
+from apps.inspection_v2.services import handle_v2_media_upload_callback
+
+logger = logging.getLogger(__name__)
 
 
 def _success(data=None, *, status: int = 200):
@@ -81,7 +80,7 @@ def _run_internal_post(request, handler, *, parse_json: bool = False, catch_gate
     try:
         if parse_json:
             payload = _load_json(request)
-            result = handler(payload, request=request)
+            result = handler(payload)
         else:
             result = handler()
     except DjiGatewayError as exc:
@@ -92,20 +91,14 @@ def _run_internal_post(request, handler, *, parse_json: bool = False, catch_gate
 
 
 @csrf_exempt
-def sync_devices(request):
-    return _run_internal_post(request, sync_device_indexes, catch_gateway_error=True)
-
-
-@csrf_exempt
-def sync_media(request):
-    return _run_internal_post(request, sync_media_indexes, catch_gateway_error=True)
-
-
-@csrf_exempt
 def media_upload_callback(request):
-    return _run_internal_post(request, handle_media_upload_callback, parse_json=True)
+    return _run_internal_post(request, handle_v2_media_upload_callback, parse_json=True)
 
 
 @csrf_exempt
 def media_group_upload_callback(request):
-    return _run_internal_post(request, handle_media_group_upload_callback, parse_json=True)
+    def _handle_group_payload(payload):
+        logger.info("dji_media_group_upload_callback_ignored", extra={"payload_keys": sorted(payload.keys())})
+        return {"resolved_count": 0, "ignored_count": 1}
+
+    return _run_internal_post(request, _handle_group_payload, parse_json=True)

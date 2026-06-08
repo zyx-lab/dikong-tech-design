@@ -162,10 +162,21 @@ class DjiGateway:
 
     def list_devices(self) -> list[dict]:
         workspace_id = self._workspace_id()
+        return self.list_bound_devices(workspace_id=workspace_id, domain=0)
+
+    def list_bound_devices(self, *, workspace_id: str | None = None, domain: int | None = None) -> list[dict]:
+        workspace_id = workspace_id or self._workspace_id()
+        query = {}
+        if domain is not None:
+            query["domain"] = domain
         return self._request_paginated_items(
             f"/api/v1/manage/workspaces/{workspace_id}/devices/bound",
-            query={"domain": 0},
+            query=query,
         )
+
+    def list_workspace_devices(self, *, workspace_id: str | None = None) -> list[dict]:
+        workspace_id = workspace_id or self._workspace_id()
+        return self._request_paginated_items(f"/api/v1/manage/workspaces/{workspace_id}/devices")
 
     def start_live(self, device_sn: str, **kwargs):
         payload = {"device_sn": device_sn}

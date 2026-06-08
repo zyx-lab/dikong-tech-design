@@ -60,16 +60,11 @@ class DjiConnectionGateway(DjiGateway):
         return connection
 
     def list_resources(self, resource_type: str) -> list[dict]:
-        workspace_id = self._workspace_id()
         domain = RESOURCE_DOMAINS[ResourceType(resource_type)]
-        return self._request_paginated_items(
-            f"/api/v1/manage/workspaces/{workspace_id}/devices/bound",
-            query={"domain": domain},
-        )
+        return self.list_bound_devices(domain=domain)
 
     def list_gateways(self) -> list[dict]:
-        workspace_id = self._workspace_id()
-        return self._request_paginated_items(f"/api/v1/manage/workspaces/{workspace_id}/devices")
+        return self.list_workspace_devices()
 
     @staticmethod
     def _device_sn(payload: dict) -> str:

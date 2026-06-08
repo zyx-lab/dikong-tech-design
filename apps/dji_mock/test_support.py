@@ -8,7 +8,6 @@ from django.conf import settings
 from django.core.wsgi import get_wsgi_application
 from django.test import override_settings
 
-from apps.dji_bff.models import DjiWorkspaceConfig
 from apps.dji_mock.state import mock_dji_state
 
 
@@ -72,16 +71,3 @@ class MockDjiUpstreamTestMixin:
     def setUp(self):
         super().setUp()
         mock_dji_state.reset()
-        DjiWorkspaceConfig.objects.all().delete()
-        workspace = mock_dji_state.current_workspace_payload()
-        user = mock_dji_state.current_user_payload()
-        self.dji_workspace_config = DjiWorkspaceConfig.objects.create(
-            workspace_id=workspace["workspace_id"],
-            dji_user_id=user["user_id"],
-            dji_username=user["username"],
-            dji_user_type=str(user["user_type"]),
-            access_token=user["access_token"],
-            mqtt_username=user["mqtt_username"],
-            mqtt_password=user["mqtt_password"],
-            mqtt_addr=user["mqtt_addr"],
-        )

@@ -95,7 +95,7 @@ class SQLitePostgresMigrationHelperTests(TestCase):
                 postgres_port="5432",
                 postgres_volume="dikong_pgdata",
                 django_settings_module="config.settings",
-                apps=("access", "dji_bff"),
+                apps=("access", "iam_v2"),
             )
             path = state_file_path(backup_dir)
             write_state(state, path)
@@ -105,7 +105,7 @@ class SQLitePostgresMigrationHelperTests(TestCase):
             self.assertEqual(loaded.root_dir, "/repo")
             self.assertEqual(loaded.backup_dir, str(backup_dir))
             self.assertEqual(loaded.dump_path, str(backup_dir / "business-data.json"))
-            self.assertEqual(loaded.apps, ("access", "dji_bff"))
+            self.assertEqual(loaded.apps, ("access", "iam_v2"))
 
     def test_sqlite_backup_candidates_only_include_existing_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -150,14 +150,14 @@ class SQLitePostgresMigrationHelperTests(TestCase):
             postgres_port="5432",
             postgres_volume="dikong_pgdata",
             django_settings_module="config.settings",
-            apps=("access", "dji_bff"),
+            apps=("access", "iam_v2"),
         )
 
         text = render_state_json(state)
 
         self.assertTrue(text.endswith("\n"))
         self.assertIn('"backup_dir": "/tmp/dikong/2026-04-20_164000"', text)
-        self.assertIn('"apps": [\n    "access",\n    "dji_bff"\n  ]', text)
+        self.assertIn('"apps": [\n    "access",\n    "iam_v2"\n  ]', text)
 
     def test_require_state_file_raises_with_next_step_hint(self):
         missing_backup_dir = Path("/tmp/dikong/2026-04-20_181825")

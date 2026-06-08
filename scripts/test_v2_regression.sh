@@ -6,12 +6,11 @@ cd "$ROOT_DIR"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/test_v2_regression.sh [fast|boundary|legacy] [django-test-options...]
+Usage: scripts/test_v2_regression.sh [fast|boundary] [django-test-options...]
 
 Modes:
   fast      Run the default v2 development gate.
-  boundary  Run fast plus a small legacy/API-DJI boundary smoke suite.
-  legacy    Run the wider legacy regression used before this script existed.
+  boundary  Run fast plus the preserved DJI upstream mock smoke suite.
 
 Environment:
   PYTHON_BIN=path/to/python  Override Python. Defaults to .venv/bin/python.
@@ -84,20 +83,7 @@ case "$mode" in
       apps.inspection_v2.tests
       apps.inspection_v2.test_route_cover_base64
       apps.inspection_v2.test_route_cover_object_storage
-      apps.api_v1.tests.BusinessApiResponseContractTests
-      apps.dji_bff.test_v2_platform_models
       apps.dji_mock.tests.DjiMockServerTests
-      apps.dji_bff.tests.DjiBffSyncAndInternalApiTests.test_internal_sync_endpoint_should_require_system_token
-      apps.dji_bff.tests.DjiBffSyncAndInternalApiTests.test_internal_sync_endpoints_should_follow_minimal_contract
-      apps.dji_bff.tests.DjiBffSyncAndInternalApiTests.test_internal_sync_missions_endpoint_should_be_removed
-    )
-    ;;
-  legacy)
-    labels=(
-      apps.api_v1.tests
-      apps.dji_bff.tests
-      apps.dji_bff.test_v2_platform_models
-      apps.dji_mock.tests
     )
     ;;
   *)

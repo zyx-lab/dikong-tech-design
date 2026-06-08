@@ -13,19 +13,13 @@ API_V2_SPECTACULAR_SETTINGS = {
     "DESCRIPTION": API_V2_FRONTEND_GUIDE_DESCRIPTION,
     "VERSION": "2.0.0",
     "POSTPROCESSING_HOOKS": [
-        "apps.api_v1.openapi_hooks.standardize_response_schema_hook",
+        "apps.api_v2.openapi_hooks.standardize_v2_response_schema_hook",
         "apps.api_v2.openapi_hooks.enrich_v2_frontend_docs_hook",
     ],
 }
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path(
-        "api/v1/docs/schema/",
-        SpectacularJSONAPIView.as_view(urlconf="config.business_api_urlconf"),
-        name="business-docs-schema",
-    ),
-    path("api/v1/docs/", SpectacularSwaggerView.as_view(url_name="business-docs-schema"), name="business-docs"),
     path(
         "api/v2/docs/schema/",
         SpectacularJSONAPIView.as_view(
@@ -39,7 +33,6 @@ urlpatterns = [
         SpectacularSwaggerView.as_view(url_name="api-v2-docs-schema", title="低空平台 API v2"),
         name="api-v2-docs",
     ),
-    path("api/v1/", include("apps.api_v1.urls")),
     path("api/v2/", include("apps.api_v2.urls")),
     path("api/internal/dji/", include("apps.dji_cloud.urls")),
     path("__mock-dji__/", include("apps.dji_mock.urls")),

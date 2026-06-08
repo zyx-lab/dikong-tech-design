@@ -4,6 +4,7 @@ import re
 
 from django.contrib.auth import get_user_model
 from django.conf import settings
+from django.db import connection
 from django.test import TestCase
 from django.urls import URLPattern, URLResolver, get_resolver
 from django.utils import timezone
@@ -475,14 +476,50 @@ class ApiV2SchemaBoundaryTests(TestCase):
 
 
 class ApiV2ImplementationBoundaryTests(TestCase):
-    def test_v2_mainline_should_not_import_v1_or_legacy_dji_bff_modules(self):
+    def test_system_v1_and_legacy_internal_sync_routes_should_be_removed(self):
+        client = APIClient()
+        removed_routes = [
+            "/api/v1/",
+            "/api/v1/docs/",
+            "/api/v1/docs/schema/",
+            "/api/v1/iam/session/login",
+            "/api/v1/drones",
+            "/api/internal/dji/sync/devices",
+            "/api/internal/dji/sync/media",
+        ]
+
+        for route in removed_routes:
+            with self.subTest(route=route):
+                response = client.post(route, {}, format="json")
+                self.assertEqual(response.status_code, 404, getattr(response, "data", response.content))
+
+    def test_v2_mainline_should_not_import_v1_or_legacy_modules(self):
         project_root = Path(settings.BASE_DIR)
-        app_names = ("api_v2", "iam_v2", "resource_v2", "inspection_v2")
-        forbidden_imports = ("apps.api_v1", "apps.access.api_v1", "apps.dji_bff")
+        source_roots = [
+            project_root / "config",
+            project_root / "apps" / "access",
+            project_root / "apps" / "api_v2",
+            project_root / "apps" / "iam_v2",
+            project_root / "apps" / "resource_v2",
+            project_root / "apps" / "inspection_v2",
+            project_root / "apps" / "dji_cloud",
+        ]
+        forbidden_imports = (
+            "apps.api_v1",
+            "apps.access.api_v1",
+            "apps.dji_bff",
+            "apps.drone",
+            "apps.drone_assignment",
+            "apps.route",
+            "apps.waypoint",
+            "apps.mission",
+            "apps.flight_record",
+            "apps.media_file",
+        )
         offenders = []
 
-        for app_name in app_names:
-            for path in (project_root / "apps" / app_name).rglob("*.py"):
+        for source_root in source_roots:
+            for path in source_root.rglob("*.py"):
                 if "migrations" in path.parts or path.name == "tests.py" or path.name.startswith("test_"):
                     continue
                 text = path.read_text(encoding="utf-8")
@@ -491,6 +528,92 @@ class ApiV2ImplementationBoundaryTests(TestCase):
                         offenders.append(f"{path.relative_to(project_root)} imports {forbidden}")
 
         self.assertEqual(offenders, [])
+
+    def test_system_v1_string_references_should_be_limited_to_dji_protocol_surfaces(self):
+        project_root = Path(settings.BASE_DIR)
+        forbidden_fragment = "/api/" + "v1"
+        scanned_roots = [
+            project_root / "apps",
+            project_root / "config",
+            project_root / "scripts",
+            project_root / "tools",
+            project_root / "README.md",
+        ]
+        text_suffixes = {".py", ".md", ".sh", ".txt", ".yaml", ".yml", ".json"}
+        offenders = []
+
+        def is_allowed(path: Path) -> bool:
+            relative = path.relative_to(project_root)
+            return (
+                str(relative) == "README.md"
+                or str(relative) == "apps/dji_cloud/gateway.py"
+                or relative.parts[:2] == ("apps", "dji_mock")
+            )
+
+        def should_skip(path: Path) -> bool:
+            relative_parts = set(path.relative_to(project_root).parts)
+            if relative_parts.intersection({".git", "__pycache__", ".pytest_cache", ".mypy_cache"}):
+                return True
+            if path.name == "tests.py" or path.name.startswith("test_"):
+                return True
+            return path.suffix not in text_suffixes
+
+        files = []
+        for root in scanned_roots:
+            if root.is_file():
+                files.append(root)
+            elif root.exists():
+                files.extend(path for path in root.rglob("*") if path.is_file())
+
+        for path in files:
+            if should_skip(path) or is_allowed(path):
+                continue
+            text = path.read_text(encoding="utf-8")
+            if forbidden_fragment in text:
+                offenders.append(str(path.relative_to(project_root)))
+
+        self.assertEqual(offenders, [])
+
+    def test_legacy_tables_should_be_removed_while_v2_and_auth_tables_remain(self):
+        table_names = set(connection.introspection.table_names())
+        legacy_tables = {
+            "auth_audit_logs",
+            "staff_profiles",
+            "tenants",
+            "roles",
+            "permissions",
+            "role_permission_grants",
+            "qualification_types",
+            "tenant_members",
+            "tenant_member_roles",
+            "tenant_member_qualifications",
+            "dji_workspace_configs",
+            "dji_cloud_platforms",
+            "dji_device_indexes",
+            "tenant_route_indexes",
+            "tenant_media_indexes",
+            "drones",
+            "drone_assignments",
+            "routes",
+            "waypoints",
+            "missions",
+            "flight_records",
+            "media_files",
+        }
+        required_tables = {
+            "auth_users",
+            "auth_sessions",
+            "v2_departments",
+            "v2_account_profiles",
+            "v2_dji_connections",
+            "v2_drone_resources",
+            "v2_waypoint_routes",
+            "v2_inspection_missions",
+            "v2_cloud_media_files",
+        }
+
+        self.assertEqual(sorted(legacy_tables.intersection(table_names)), [])
+        self.assertTrue(required_tables.issubset(table_names), sorted(required_tables - table_names))
 
     def test_default_local_chain_script_should_use_v2_routes_only(self):
         script_path = Path(settings.BASE_DIR) / "scripts" / "local_chain_client.sh"

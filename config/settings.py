@@ -36,20 +36,12 @@ INSTALLED_APPS = [
     "rest_framework",
     "channels",
     "apps.access",
-    "apps.api_v1",
     "apps.iam_v2",
     "apps.resource_v2",
     "apps.inspection_v2",
     "apps.system_v2",
     "apps.api_v2",
-    "apps.drone",
-    "apps.drone_assignment",
-    "apps.route",
-    "apps.waypoint",
-    "apps.mission",
-    "apps.flight_record",
-    "apps.media_file",
-    "apps.dji_bff",
+    "apps.dji_mock",
     "drf_spectacular",
 ]
 
@@ -63,7 +55,6 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.access.middleware.RequestContextMiddleware",
     "apps.access.middleware.RequestLifecycleLoggingMiddleware",
-    "apps.access.middleware.TenantContextMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -217,20 +208,16 @@ REST_FRAMEWORK = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "低空平台 API",
-    "DESCRIPTION": "正式 `/api/v1/*` 接口文档，其中 IAM 正式能力统一挂载在 `/api/v1/iam/*`。",
-    "VERSION": "1.0.0",
+    "TITLE": "低空平台 API v2",
+    "DESCRIPTION": "正式 `/api/v2/*` 接口文档。DJI 上游协议路径只在网关和 mock 中保留，不属于本系统对外业务 API。",
+    "VERSION": "2.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "POSTPROCESSING_HOOKS": [
-        "apps.api_v1.openapi_hooks.standardize_response_schema_hook",
+        "apps.api_v2.openapi_hooks.standardize_v2_response_schema_hook",
+        "apps.api_v2.openapi_hooks.enrich_v2_frontend_docs_hook",
     ],
     "ENUM_NAME_OVERRIDES": {
         "ActiveDisabledStatusEnum": "apps.access.models.DirectoryStatus",
-        "DroneAssignmentStatusEnum": "apps.drone_assignment.models.DroneAssignmentStatus",
-        "DroneStatusEnum": "apps.drone.models.DroneStatus",
-        "FlightRecordStatusEnum": "apps.flight_record.models.FlightRecordStatus",
-        "MediaTypeEnum": "apps.media_file.models.MediaType",
-        "MissionStatusEnum": "apps.mission.models.MissionStatus",
     },
 }
 

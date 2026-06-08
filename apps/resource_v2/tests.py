@@ -1,13 +1,13 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db import connection as db_connection
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus
 from apps.dji_cloud.gateway import GatewayResponse
-from apps.dji_bff.models import DjiDeviceIndex
 from apps.iam_v2.models import (
     Department,
     FixedRole,
@@ -507,7 +507,7 @@ class ResourceV2ApiTests(TestCase):
         dock = DockResource.objects.get(device_sn="DOCK-SN-001")
         gateway = GatewayResource.objects.get(device_sn="GATEWAY-SN-001")
         payload = PayloadResource.objects.get(payload_sn="PAYLOAD-SN-001")
-        self.assertFalse(DjiDeviceIndex.objects.filter(device_sn="DRONE-SN-001").exists())
+        self.assertNotIn("dji_device_indexes", db_connection.introspection.table_names())
         self.assertIn("connectionId", discover_response.data["data"])
         self.assertEqual(discover_response.data["data"]["connectionId"], connection.id)
         self.assertEqual(discover_response.data["data"]["drones"][0]["id"], drone.id)
@@ -820,7 +820,7 @@ class ResourceV2ApiTests(TestCase):
         self.assertEqual(discovered["drones"][1]["device_sn"], "GATEWAY-CHILD-DRONE-001")
         self.assertEqual(discovered["docks"][0]["device_sn"], "GATEWAY-DOCK-001")
         self.assertEqual(discovered["gateways"][0]["device_sn"], "GATEWAY-RC-001")
-        self.assertFalse(DjiDeviceIndex.objects.filter(device_sn__in=["GATEWAY-DRONE-001", "GATEWAY-DOCK-001"]).exists())
+        self.assertNotIn("dji_device_indexes", db_connection.introspection.table_names())
         self.assertTrue(any(path == "/api/v1/manage/login" for _method, path, _headers in calls))
         self.assertTrue(any("domain=0" in path for _method, path, _headers in calls))
         self.assertTrue(any("domain=3" in path for _method, path, _headers in calls))

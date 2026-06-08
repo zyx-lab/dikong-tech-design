@@ -6,7 +6,6 @@ from rest_framework.exceptions import APIException, AuthenticationFailed, NotAut
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
 
-from apps.api_v1.business_response import build_standard_response, standard_error_payload
 from apps.access.request_logging import (
     build_exception_log_payload,
     build_request_context,
@@ -14,6 +13,7 @@ from apps.access.request_logging import (
     build_response_log_payload,
     log_json,
 )
+from apps.common.api_response import build_standard_response, standard_error_payload
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +111,7 @@ def custom_exception_handler(exc, context):
     """DRF exception handler with a dedicated standard envelope for formal APIs."""
     response = exception_handler(exc, context)
     request = context.get("request")
-    is_business_api = request is not None and (
-        request.path.startswith("/api/v1/") or request.path.startswith("/api/v2/")
-    )
+    is_business_api = request is not None and request.path.startswith("/api/v2/")
 
     if response is not None:
         if is_business_api:

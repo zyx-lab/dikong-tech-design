@@ -2,9 +2,6 @@ import logging
 import time
 import uuid
 
-from django.core.exceptions import PermissionDenied
-
-from apps.access.models import Tenant, TenantStatus
 from apps.access.request_logging import (
     build_exception_log_payload,
     build_request_context,
@@ -19,7 +16,7 @@ logger = logging.getLogger("apps.access.lifecycle")
 
 def _should_log_api_lifecycle(request) -> bool:
     path = getattr(request, "path", "")
-    return isinstance(path, str) and path.startswith(("/api/v1/", "/api/v2/"))
+    return isinstance(path, str) and path.startswith(("/api/v2/", "/api/internal/dji/"))
 
 
 class RequestContextMiddleware:
@@ -110,34 +107,3 @@ class RequestLifecycleLoggingMiddleware:
             )
         return response
 
-
-class TenantContextMiddleware:
-    """解析租户 header，并为请求附加租户上下文。"""
-
-    header_name = "HTTP_X_TENANT_CODE"
-
-    def __init__(self, get_response):
-        self.get_response = get_response
-
-    def __call__(self, request):
-        raw_tenant_code = request.META.get(self.header_name)
-        tenant_code = raw_tenant_code.strip() if isinstance(raw_tenant_code, str) else raw_tenant_code
-
-        request.tenant_context_code = tenant_code or None
-        request.tenant_context = None
-
-        if not tenant_code:
-            return self.get_response(request)
-
-        tenant = Tenant.objects.filter(code=tenant_code).first()
-        request.tenant_context = tenant
-
-        if request.path.startswith(("/api/v1/iam/", "/api/v2/iam/")):
-            return self.get_response(request)
-
-        if tenant is None or tenant.status != TenantStatus.ACTIVE:
-            raise PermissionDenied("Invalid or disabled tenant")
-
-        if hasattr(request, "log_context"):
-            request.log_context = build_request_context(request)
-        return self.get_response(request)

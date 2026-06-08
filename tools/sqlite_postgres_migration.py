@@ -14,14 +14,10 @@ from typing import Sequence
 
 DEFAULT_DUMP_APPS: tuple[str, ...] = (
     "access",
-    "drone",
-    "drone_assignment",
-    "route",
-    "waypoint",
-    "mission",
-    "flight_record",
-    "media_file",
-    "dji_bff",
+    "iam_v2",
+    "resource_v2",
+    "inspection_v2",
+    "system_v2",
 )
 
 DEFAULT_SQLITE_BACKUP_FILES: tuple[str, ...] = (
