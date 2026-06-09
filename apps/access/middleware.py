@@ -106,4 +106,3 @@ class RequestLifecycleLoggingMiddleware:
                 duration_ms=self._duration_ms(request),
             )
         return response
-
