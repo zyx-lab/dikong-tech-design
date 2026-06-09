@@ -34,6 +34,7 @@ from apps.resource_v2.models import (
     ResourceType,
     V2AuditLog,
 )
+from apps.resource_v2.serializers import upsert_resource_from_payload
 
 User = get_user_model()
 
@@ -487,7 +488,7 @@ class ResourceV2ApiTests(TestCase):
             ).exists()
         )
 
-    @patch("apps.resource_v2.views.DjiConnectionGateway", FakeDiscoveryGateway)
+    @patch("apps.resource_v2.gateway.DjiConnectionGateway", FakeDiscoveryGateway)
     def test_discover_bind_conflict_visibility_share_and_unbind(self):
         self.authenticate(self.child_admin)
         connection = DjiConnection.objects.create(
@@ -780,6 +781,12 @@ class ResourceV2ApiTests(TestCase):
                         "pagination": {"page": 1, "page_size": 100, "total": 1},
                     },
                 )
+            if "domain=2" in path:
+                return GatewayResponse(
+                    status_code=200,
+                    headers={},
+                    data={"list": [], "pagination": {"page": 1, "page_size": 100, "total": 0}},
+                )
             if "/devices?" in path and "domain=" not in path:
                 return GatewayResponse(
                     status_code=200,
@@ -823,8 +830,165 @@ class ResourceV2ApiTests(TestCase):
         self.assertNotIn("dji_device_indexes", db_connection.introspection.table_names())
         self.assertTrue(any(path == "/api/v1/manage/login" for _method, path, _headers in calls))
         self.assertTrue(any("domain=0" in path for _method, path, _headers in calls))
+        self.assertTrue(any("domain=2" in path for _method, path, _headers in calls))
         self.assertTrue(any("domain=3" in path for _method, path, _headers in calls))
         self.assertTrue(any("/devices?" in path and "domain=" not in path for _method, path, _headers in calls))
+
+    def test_dji_gateway_should_discover_offline_child_drone_from_bound_gateway(self):
+        connection = DjiConnection.objects.create(
+            owner_department=self.child,
+            name="飞行队 DJI",
+            base_url="https://dji.example.test",
+            username="adminPC1",
+            password="secret",
+            created_by_user=self.child_admin,
+            workspace_id="workspace-v2-001",
+            access_token="mock-access-token",
+            status="ACTIVE",
+        )
+        calls = []
+
+        def fake_request(method, path, *, data, headers, follow_redirects):
+            calls.append((method, path, dict(headers)))
+            if "domain=0" in path:
+                return GatewayResponse(status_code=200, headers={}, data={"list": []})
+            if "domain=2" in path:
+                return GatewayResponse(
+                    status_code=200,
+                    headers={},
+                    data={
+                        "list": [
+                            {
+                                "device_sn": "GATEWAY-RC-001",
+                                "device_name": "网关遥控端",
+                                "domain": 2,
+                                "status": False,
+                                "children": {
+                                    "device_sn": "GATEWAY-CHILD-DRONE-001",
+                                    "device_name": "遥控器下挂无人机",
+                                    "domain": 0,
+                                    "type": 99,
+                                    "status": False,
+                                    "bound_status": False,
+                                },
+                            }
+                        ]
+                    },
+                )
+            if "domain=3" in path:
+                return GatewayResponse(status_code=200, headers={}, data={"list": []})
+            if "/devices?" in path and "domain=" not in path:
+                return GatewayResponse(status_code=200, headers={}, data={"list": []})
+            raise AssertionError(f"unexpected upstream request: {method} {path}")
+
+        with patch.object(DjiConnectionGateway, "_request", side_effect=fake_request), patch.object(
+            DjiConnectionGateway,
+            "_validate_workspace",
+            return_value=True,
+        ):
+            discovered = DjiConnectionGateway(connection).discover()
+
+        self.assertEqual(discovered["drones"][0]["device_sn"], "GATEWAY-CHILD-DRONE-001")
+        self.assertIs(discovered["drones"][0]["status"], False)
+        self.assertTrue(any("domain=2" in path for _method, path, _headers in calls))
+
+    def test_upsert_resource_should_apply_explicit_offline_status_and_clear_last_seen(self):
+        last_seen_at = timezone.now()
+        drone = DroneResource.objects.create(
+            device_sn="OFFLINE-SYNC-DRONE",
+            name="缓存在线无人机",
+            model="M30",
+            online_status=True,
+            last_seen_at=last_seen_at,
+        )
+
+        updated = upsert_resource_from_payload(
+            ResourceType.DRONE,
+            {
+                "device_sn": drone.device_sn,
+                "device_name": "缓存在线无人机",
+                "type": 99,
+                "status": False,
+            },
+        )
+
+        updated.refresh_from_db()
+        self.assertFalse(updated.online_status)
+        self.assertIsNone(updated.last_seen_at)
+
+    def test_upsert_resource_should_not_overwrite_online_status_without_status_field(self):
+        last_seen_at = timezone.now()
+        drone = DroneResource.objects.create(
+            device_sn="NO-STATUS-DRONE",
+            name="无状态 payload 无人机",
+            model="M30",
+            online_status=True,
+            last_seen_at=last_seen_at,
+        )
+
+        updated = upsert_resource_from_payload(
+            ResourceType.DRONE,
+            {
+                "device_sn": drone.device_sn,
+                "device_name": "无状态 payload 无人机",
+                "type": 99,
+            },
+        )
+
+        updated.refresh_from_db()
+        self.assertTrue(updated.online_status)
+        self.assertEqual(updated.last_seen_at, last_seen_at)
+
+    def test_sync_connection_resources_should_update_bound_drone_from_upstream_child_status(self):
+        from apps.resource_v2.services import sync_connection_resources_from_upstream
+
+        connection = DjiConnection.objects.create(
+            owner_department=self.child,
+            name="飞行队 DJI",
+            base_url="https://dji.example.test",
+            username="adminPC1",
+            password="secret",
+            created_by_user=self.child_admin,
+        )
+        drone = DroneResource.objects.create(
+            device_sn="SYNC-CHILD-DRONE-001",
+            name="缓存在线无人机",
+            model="M30",
+            online_status=True,
+            last_seen_at=timezone.now(),
+        )
+        ResourceBinding.objects.create(
+            resource_type=ResourceType.DRONE,
+            resource_object_id=drone.id,
+            owner_department=self.child,
+            dji_connection=connection,
+            status=BindingStatus.ACTIVE,
+            bound_by_user=self.child_admin,
+        )
+
+        with patch.object(
+            DjiConnectionGateway,
+            "discover",
+            return_value={
+                "drones": [{"device_sn": drone.device_sn, "device_name": drone.name, "domain": 0, "status": False}],
+                "docks": [],
+                "gateways": [],
+                "payloads": [],
+            },
+        ):
+            result = sync_connection_resources_from_upstream(connection)
+
+        drone.refresh_from_db()
+        self.assertEqual(len(result["drones"]), 1)
+        self.assertFalse(drone.online_status)
+        self.assertIsNone(drone.last_seen_at)
+
+        self.authenticate(self.child_admin)
+        response = self.client.get("/api/v2/resource/drones")
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["total"], 1)
+        self.assertEqual(response.data["data"]["list"][0]["deviceSn"], drone.device_sn)
+        self.assertFalse(response.data["data"]["list"][0]["onlineStatus"])
 
     def test_share_group_api_should_manage_targets_resources_visibility_and_audit(self):
         connection = DjiConnection.objects.create(

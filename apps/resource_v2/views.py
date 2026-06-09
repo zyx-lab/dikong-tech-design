@@ -23,11 +23,9 @@ from apps.iam_v2.services import (
     resolve_v2_context,
 )
 from apps.resource_v2.audit import log_v2_action
-from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import (
     BindingStatus,
     DjiConnection,
-    DjiConnectionStatus,
     MqttConnectionHealth,
     MqttLatestMessage,
     ResourceBinding,
@@ -54,7 +52,6 @@ from apps.resource_v2.serializers import (
     ShareGroupTargetReadSerializer,
     ShareGroupUpdateSerializer,
     serialize_resource_binding,
-    upsert_resource_from_payload,
 )
 from apps.resource_v2.services import (
     get_resource,
@@ -64,6 +61,7 @@ from apps.resource_v2.services import (
     require_bind_connection,
     require_manage_connection,
     require_unbind,
+    sync_connection_resources_from_upstream,
     visible_bindings_queryset,
 )
 
@@ -304,36 +302,22 @@ class DjiConnectionDiscoverView(V2ResourceAPIView):
         if connection is None:
             return _not_found_response()
         require_manage_connection(context, connection)
-        discovered = DjiConnectionGateway(connection).discover()
-        drones = [
-            upsert_resource_from_payload(ResourceType.DRONE, payload)
-            for payload in discovered.get("drones", [])
-            if isinstance(payload, dict)
-        ]
-        docks = [
-            upsert_resource_from_payload(ResourceType.DOCK, payload)
-            for payload in discovered.get("docks", [])
-            if isinstance(payload, dict)
-        ]
-        gateways = [
-            upsert_resource_from_payload(ResourceType.GATEWAY, payload)
-            for payload in discovered.get("gateways", [])
-            if isinstance(payload, dict)
-        ]
-        payloads = [
-            upsert_resource_from_payload(ResourceType.PAYLOAD, payload)
-            for payload in discovered.get("payloads", [])
-            if isinstance(payload, dict)
-        ]
-        connection.status = DjiConnectionStatus.ACTIVE
-        connection.last_checked_at = timezone.now()
-        connection.save(update_fields=["status", "last_checked_at", "updated_at"])
+        discovered = sync_connection_resources_from_upstream(connection)
         data = {
             "connectionId": connection.id,
-            "drones": [_discovered_device(item, resource_type=ResourceType.DRONE, connection_id=connection.id) for item in drones],
-            "docks": [_discovered_device(item, resource_type=ResourceType.DOCK, connection_id=connection.id) for item in docks],
-            "gateways": [_discovered_device(item, resource_type=ResourceType.GATEWAY, connection_id=connection.id) for item in gateways],
-            "payloads": [_discovered_payload(item, connection_id=connection.id) for item in payloads],
+            "drones": [
+                _discovered_device(item, resource_type=ResourceType.DRONE, connection_id=connection.id)
+                for item in discovered["drones"]
+            ],
+            "docks": [
+                _discovered_device(item, resource_type=ResourceType.DOCK, connection_id=connection.id)
+                for item in discovered["docks"]
+            ],
+            "gateways": [
+                _discovered_device(item, resource_type=ResourceType.GATEWAY, connection_id=connection.id)
+                for item in discovered["gateways"]
+            ],
+            "payloads": [_discovered_payload(item, connection_id=connection.id) for item in discovered["payloads"]],
         }
         return Response(data, status=status.HTTP_200_OK)
 

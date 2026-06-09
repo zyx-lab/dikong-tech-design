@@ -1,233 +1,292 @@
-# 容器化部署指南
+# 本地部署说明
 
-本项目使用 Docker Compose 进行容器化部署，当前 v2 正式联调服务包含 PostgreSQL、Redis、MinIO、Django ASGI 应用和 v2 DJI MQTT worker。
+本文档说明如何在本机用 Docker Compose 启动低空平台后端服务。当前本地部署会启动 PostgreSQL、Redis、MinIO、Django ASGI 应用和 v2 DJI MQTT worker。
 
-如果你的 Django 运行在宿主机而不是容器里，请先看
-[宿主机 Django 切换到 Docker PostgreSQL 操作手册](docs/host-django-postgres-migration.md)；
-下面的 compose 启动步骤只适用于 web 和 db 都放进容器的场景。
+如果你想让 Django 运行在宿主机 Python 环境，而只把 PostgreSQL 放进 Docker，请看 [宿主机 Django 切换到 Docker PostgreSQL 操作手册](docs/host-django-postgres-migration.md)。下面默认使用全容器方式。
 
-## 快速启动
+## 需要准备
+
+- Docker Desktop 或 Docker Engine
+- Docker Compose v2，也就是 `docker compose` 命令
+- 可用端口：
+  - `8000`：Django API / Swagger / WebSocket
+  - `9000`：MinIO S3 API
+  - `9001`：MinIO Console
+
+先确认 Docker 可用：
 
 ```bash
-# 1. 克隆项目后，进入项目目录
+docker --version
+docker compose version
+```
+
+## 启动方式
+
+在项目根目录执行：
+
+```bash
 cd dikong-tech-design
 
-# 2. 启动 8000 正式联调服务
-# OBJECT_STORAGE_ENDPOINT_URL 必须是前端浏览器可访问的 MinIO 地址；本机自测可用 http://127.0.0.1:9000
-OBJECT_STORAGE_ENDPOINT_URL=http://192.168.3.99:9000 docker compose up -d --no-build db redis minio minio-init web v2-dji-worker
+OBJECT_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000 \
+docker compose up -d --build db redis minio minio-init web v2-dji-worker
+```
 
-# 3. 查看服务状态
+说明：
+
+- `OBJECT_STORAGE_ENDPOINT_URL` 必须是浏览器能访问的 MinIO 地址。本机部署通常用 `http://127.0.0.1:9000`。
+- 第一次启动建议带 `--build`，确保镜像按当前代码构建。
+- 后续没有改 Python 依赖时，可以使用 `--no-build` 加快启动。
+
+启动后查看状态：
+
+```bash
 docker compose ps
-
-# 4. 查看日志
-docker compose logs -f web v2-dji-worker
 ```
 
-服务启动后访问 http://localhost:8000
+正常情况下应该看到：
 
-`web` 只负责 HTTP 和 WebSocket 接入；DJI MQTT 设备消息、任务进度和遥测回流依赖独立的 `v2-dji-worker`。正式重启时不要只重启 `web`，否则前端 WebSocket 只能读到数据库中已有的 latest 消息，收不到新的 MQTT 广播。
+- `db`、`redis`、`minio` 为 healthy
+- `web` 为 Up
+- `v2-dji-worker` 为 Up
+- `minio-init` 已退出且状态为成功完成
 
-## 默认账号
+## 会启动几个容器
 
-| 角色 | 用户名 | 密码 | 说明 |
-|------|--------|------|------|
-| 超级管理员 | `admin` | `admin123` | Django Admin 后台，有全部权限 |
-| 运维管理员 | `ops_admin` | `ops_admin123` | Django Admin 后台，有全部权限 |
-| 业务管理员 | `biz_root` | `admin123` | 业务 API 账号，不可登录 Admin |
+`docker-compose.yml` 定义了 6 个 service：
 
-## 架构说明
+| service | 是否常驻 | 作用 |
+| --- | --- | --- |
+| `db` | 是 | PostgreSQL 16 数据库 |
+| `redis` | 是 | Django Channels 和 MQTT 广播使用的 Redis |
+| `minio` | 是 | 航线封面等对象存储 |
+| `minio-init` | 否 | 初始化 MinIO bucket，执行完成后退出 |
+| `web` | 是 | Django ASGI 应用，提供 HTTP 和 WebSocket |
+| `v2-dji-worker` | 是 | DJI MQTT 后台 worker，处理设备消息、任务事件和遥测 |
 
-```
-┌─────────────────────────────────────────────┐
-│                 docker-compose.yml           │
-├─────────────────────────────────────────────┤
-│  PostgreSQL(db) + Redis + MinIO              │
-│       │              │                       │
-│       ├──────────────┤                       │
-│       ▼              ▼                       │
-│  Django ASGI(web:8000) + v2-dji-worker       │
-└─────────────────────────────────────────────┘
-```
+因此本地部署时会创建 6 个 service，其中 5 个长期运行，1 个一次性初始化。
 
-- **db**: PostgreSQL 16 数据库容器，数据持久化到 `pgdata` 卷
-- **redis**: Django Channels 和 MQTT 广播使用的 Redis
-- **minio**: API v2 航线封面等对象存储
-- **web**: Django ASGI 应用容器，端口映射到主机 8000
-- **v2-dji-worker**: DJI MQTT 后台 worker，负责写入 MQTT latest 消息、任务事件和遥测快照
+## 访问地址
 
-## 环境变量
+服务启动后访问：
 
-| 变量名 | 默认值 | 说明 |
-|--------|--------|------|
-| `DB_ENGINE` | `postgres` | 数据库引擎 |
-| `DB_HOST` | `db` | 数据库主机 |
-| `DB_NAME` | `dikong` | 数据库名称 |
-| `DB_USER` | `postgres` | 数据库用户 |
-| `DB_PASSWORD` | `postgres` | 数据库密码 |
-| `DB_PORT` | `5432` | 数据库端口 |
-| `DJANGO_SETTINGS_MODULE` | `config.settings` | Django 设置模块 |
+- API 根服务：`http://127.0.0.1:8000`
+- API v2 Swagger：`http://127.0.0.1:8000/api/v2/docs/`
+- API v2 OpenAPI Schema：`http://127.0.0.1:8000/api/v2/docs/schema/`
+- MinIO Console：`http://127.0.0.1:9001`
+- MinIO S3 API：`http://127.0.0.1:9000`
 
-## 常用命令
+MinIO 默认账号来自 `docker-compose.yml`：
 
-### 启动/停止服务
+| 用户名 | 密码 |
+| --- | --- |
+| `minioadmin` | `minioadmin123` |
+
+## v2 初始化
+
+当前 compose 启动时，`web` 容器会自动执行迁移、v2 权限/角色/菜单同步和航线封面对象存储迁移。
+
+不会内置固定业务账号。如果本地库需要创建或重置一个 v2 平台超管账号，手动执行：
 
 ```bash
-# 启动 8000 正式联调服务（后台运行）
-# OBJECT_STORAGE_ENDPOINT_URL 必须是前端浏览器可访问的 MinIO 地址；本机自测可用 http://127.0.0.1:9000
-OBJECT_STORAGE_ENDPOINT_URL=http://192.168.3.99:9000 docker compose up -d --no-build db redis minio minio-init web v2-dji-worker
-
-# 停止
-docker compose down
-
-# 停止并删除数据卷（慎用）
-docker compose down -v
+docker compose exec web python manage.py bootstrap_v2_system --reset --username <super_username> --password '<strong_password>' --noinput
 ```
 
-### 数据库操作
+如果需要 Django Admin 超级管理员，进入容器后手动创建：
 
 ```bash
-# 进入 Django 容器
-docker compose exec web sh
-
-# 执行 Django 命令
-docker compose exec web python manage.py migrate
 docker compose exec web python manage.py createsuperuser
-docker compose exec web python manage.py shell
 ```
 
-### 日志查看
+## 最小验证
 
-```bash
-# 查看 Web 服务日志
-docker compose logs -f web
-
-# 查看数据库日志
-docker compose logs -f db
-
-# 查看 v2 DJI MQTT worker 日志
-docker compose logs -f v2-dji-worker
-
-# 查看所有日志
-docker compose logs -f
-```
-
-如果你要查 Django 的文件日志、`request_id` / `trace_id`，或者上游调用细节，请看
-[Django 日志排查指南](docs/django-logging-guide.md)。
-
-### 重新构建镜像
-
-```bash
-# 重新构建（代码变更后使用）
-docker compose build web v2-dji-worker
-
-# 启动并重建
-OBJECT_STORAGE_ENDPOINT_URL=http://192.168.3.99:9000 docker compose up -d --build db redis minio minio-init web v2-dji-worker
-```
-
-### 重启后的最小验证
+启动后执行以下检查：
 
 ```bash
 docker compose ps
-curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v2/docs/schema/
-curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9000/minio/health/live
+
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  http://127.0.0.1:8000/api/v2/docs/schema/
+
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  http://127.0.0.1:9000/minio/health/live
+
 docker compose exec -T web python manage.py run_v2_dji_worker --once
 ```
 
 期望结果：
 
-- `web` 处于 `Up`，并映射 `0.0.0.0:8000->8000`
-- `db`、`redis`、`minio` 处于 healthy
-- `v2-dji-worker` 处于 `Up`
-- schema 和 MinIO health 都返回 `200`
-- `run_v2_dji_worker --once` 能看到当前检查到的 DJI 连接数量
+- API schema 返回 `200`
+- MinIO health 返回 `200`
+- `run_v2_dji_worker --once` 输出当前检查到的 DJI 连接数量
 
-## 生产环境部署
-
-当前 `docker-compose.yml` 仅适用于开发环境。生产部署需做以下调整：
-
-### 1. 修改数据库密码
-
-```yaml
-# docker-compose.yml
-environment:
-  POSTGRES_PASSWORD: <strong-password>
-  DB_PASSWORD: <strong-password>
-```
-
-### 2. 使用外部数据库
-
-```yaml
-# docker-compose.yml
-db:
-  image: postgres:16-alpine
-  # 注释掉 volumes，使用外部数据库
-  # volumes:
-  #   - pgdata:/var/lib/postgresql/data
-  # 使用外部 PostgreSQL
-  # 移除 db 服务，改用外部数据库
-```
-
-### 3. 使用 Gunicorn 替代开发服务器
-
-```dockerfile
-# Dockerfile 添加
-RUN pip install gunicorn
-
-# docker-compose.yml command 修改
-command: gunicorn config.asgi:application -b 0.0.0.0:8000 --workers 4
-```
-
-### 4. 配置静态文件
-
-```python
-# config/settings/production.py
-STATIC_ROOT = '/staticfiles'
-MEDIA_ROOT = '/mediafiles'
-
-# Nginx 配置
-location /static/ {
-    alias /staticfiles/;
-}
-location /media/ {
-    alias /mediafiles/;
-}
-```
-
-### 5. 安全建议
-
-- 使用环境变量或 Docker Secret 存储敏感信息
-- 启用 HTTPS
-- 限制容器网络访问
-- 定期备份数据库
-
-## 故障排查
-
-### 服务启动失败
+如果 API schema 不是 `200`，先看 `web` 日志：
 
 ```bash
-# 检查端口是否被占用
-netstat -tlnp | grep 8000
-
-# 查看详细错误日志
-docker-compose logs web
+docker compose logs -f web
 ```
 
-### 数据库连接失败
+## 常用操作
+
+查看日志：
 
 ```bash
-# 检查数据库健康状态
-docker-compose ps
-
-# 测试数据库连接
-docker-compose exec db psql -U postgres -c "SELECT 1"
+docker compose logs -f web
+docker compose logs -f v2-dji-worker
+docker compose logs -f db
+docker compose logs -f redis
+docker compose logs -f minio
 ```
 
-### 数据迁移问题
+进入 Django 容器：
 
 ```bash
-# 查看迁移状态
-docker-compose exec web python manage.py showmigrations
-
-# 重新执行迁移
-docker-compose exec web python manage.py migrate --fake-initial
+docker compose exec web sh
 ```
+
+执行 Django 命令：
+
+```bash
+docker compose exec web python manage.py migrate
+docker compose exec web python manage.py showmigrations
+docker compose exec web python manage.py shell
+```
+
+重启应用容器：
+
+```bash
+docker compose restart web v2-dji-worker
+```
+
+代码或依赖更新后重新构建：
+
+```bash
+OBJECT_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000 \
+docker compose up -d --build web v2-dji-worker
+```
+
+停止服务：
+
+```bash
+docker compose down
+```
+
+停止并删除数据库、对象存储数据卷：
+
+```bash
+docker compose down -v
+```
+
+`down -v` 会删除 PostgreSQL 和 MinIO 数据，只在你确认要重置本地环境时使用。
+
+## 本地数据重置
+
+如果想重建一个干净环境：
+
+```bash
+docker compose down -v
+
+OBJECT_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000 \
+docker compose up -d --build db redis minio minio-init web v2-dji-worker
+```
+
+启动后重新创建需要的 Django Admin 账号：
+
+```bash
+docker compose exec web python manage.py createsuperuser
+```
+
+## DJI 联调配置
+
+`web` 负责 HTTP 和 WebSocket；`v2-dji-worker` 负责 MQTT 后台消息。正式联调 DJI 设备时，不要只启动 `web`。
+
+如果要连接真实 DJI 上游，需要在启动前补充上游环境变量。可以直接放在命令前，也可以写入 `.env`：
+
+```bash
+DJI_UPSTREAM_BASE_URL=https://example-dji-upstream.test \
+DJI_UPSTREAM_USERNAME=your-username \
+DJI_UPSTREAM_PASSWORD=your-password \
+DJI_UPSTREAM_LOGIN_FLAG=1 \
+OBJECT_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000 \
+docker compose up -d --build db redis minio minio-init web v2-dji-worker
+```
+
+如果只做普通 API 本地验证，不配置 DJI 上游也可以启动项目。此时涉及真实 DJI 网关的接口可能会因为缺少上游配置而返回上游调用错误。
+
+## 对象存储说明
+
+本地 compose 已包含 MinIO，默认 bucket 为 `dikong-route-covers`。API v2 航线封面通过 Django default storage 写入 MinIO。
+
+关键环境变量：
+
+| 变量名 | 本地默认值 | 说明 |
+| --- | --- | --- |
+| `OBJECT_STORAGE_BACKEND` | `minio` | 使用 MinIO/S3 兼容存储 |
+| `OBJECT_STORAGE_ACCESS_KEY_ID` | `minioadmin` | MinIO access key |
+| `OBJECT_STORAGE_SECRET_ACCESS_KEY` | `minioadmin123` | MinIO secret key |
+| `OBJECT_STORAGE_BUCKET_NAME` | `dikong-route-covers` | bucket 名 |
+| `OBJECT_STORAGE_ENDPOINT_URL` | `http://127.0.0.1:9000` | 浏览器可访问的 MinIO S3 endpoint |
+| `AWS_S3_ADDRESSING_STYLE` | `path` | MinIO 推荐 path-style |
+| `AWS_QUERYSTRING_AUTH` | `true` | 返回私有对象预签名 URL |
+
+如果部署机器不是本机访问，`OBJECT_STORAGE_ENDPOINT_URL` 要改成前端浏览器能访问到的地址，例如 `http://192.168.x.x:9000`。
+
+## 常见问题
+
+### 端口被占用
+
+检查占用：
+
+```bash
+lsof -i :8000
+lsof -i :9000
+lsof -i :9001
+```
+
+解决方式是停止占用进程，或者修改 `docker-compose.yml` 里的端口映射。
+
+### `web` 启动失败
+
+查看日志：
+
+```bash
+docker compose logs --tail=200 web
+```
+
+常见原因：
+
+- 数据库未 healthy
+- 迁移失败
+- 环境变量错误
+- MinIO endpoint 不可访问
+
+### `v2-dji-worker` 没有收到新消息
+
+先确认 worker 在运行：
+
+```bash
+docker compose ps v2-dji-worker
+docker compose logs -f v2-dji-worker
+```
+
+再确认 Redis、DJI 上游和数据库连接配置。`web` 只负责 HTTP/WebSocket，新的 DJI MQTT 消息依赖 `v2-dji-worker`。
+
+### MinIO 图片链接打不开
+
+确认 `OBJECT_STORAGE_ENDPOINT_URL` 是浏览器可访问地址：
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9000/minio/health/live
+```
+
+如果你从另一台机器访问前端，不能用 `127.0.0.1`，要改成部署机器 IP 或域名。
+
+## 生产部署提醒
+
+当前 `docker-compose.yml` 更适合本地部署和正式联调。生产环境至少需要做这些调整：
+
+- 修改 PostgreSQL、MinIO、Django secret 等敏感密码
+- 使用 `.env`、Docker Secret 或部署平台密钥管理，不要把生产密码写进仓库
+- 使用外部 PostgreSQL、Redis、S3/MinIO 时，删除或替换 compose 内置基础设施 service
+- 使用 HTTPS 和反向代理，例如 Nginx、Traefik 或云负载均衡
+- 为 PostgreSQL 和对象存储配置备份
+- 根据访问量横向扩展 `web`，但 `v2-dji-worker` 是否能多副本运行需要先确认 MQTT 订阅和重复消费策略

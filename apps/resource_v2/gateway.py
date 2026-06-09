@@ -8,6 +8,7 @@ RESOURCE_DOMAINS = {
     ResourceType.DRONE: 0,
     ResourceType.DOCK: 3,
 }
+DJI_GATEWAY_DOMAIN = 2
 
 
 class DjiConnectionGateway(DjiGateway):
@@ -65,6 +66,9 @@ class DjiConnectionGateway(DjiGateway):
 
     def list_gateways(self) -> list[dict]:
         return self.list_workspace_devices()
+
+    def list_bound_gateways(self) -> list[dict]:
+        return self.list_bound_devices(domain=DJI_GATEWAY_DOMAIN)
 
     @staticmethod
     def _device_sn(payload: dict) -> str:
@@ -144,8 +148,10 @@ class DjiConnectionGateway(DjiGateway):
     def discover(self) -> dict[str, list[dict]]:
         drones = self.list_resources(ResourceType.DRONE)
         docks = self.list_resources(ResourceType.DOCK)
-        gateways = self.list_gateways()
-        child_drones = self._child_drones_from_gateways(gateways)
+        bound_gateways = self.list_bound_gateways()
+        workspace_gateways = self.list_gateways()
+        gateways = self._dedupe_devices([*bound_gateways, *workspace_gateways])
+        child_drones = self._child_drones_from_gateways([*bound_gateways, *workspace_gateways])
         return {
             "drones": self._dedupe_devices([*drones, *child_drones]),
             "docks": docks,

@@ -53,27 +53,36 @@ def _payload_string(payload: dict, *keys: str) -> str:
     return ""
 
 
-def _payload_online(payload: dict) -> bool:
-    value = payload.get("online_status", payload.get("status", False))
+def _payload_online(payload: dict) -> bool | None:
+    value = None
+    for key in ("online_status", "onlineStatus", "online", "status"):
+        if key in payload:
+            value = payload.get(key)
+            break
+    if value is None or value == "":
+        return None
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
         return bool(value)
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "online", "active"}
-    return False
+    return None
 
 
 def _resource_defaults(payload: dict) -> dict:
-    return {
+    defaults = {
         "name": _payload_string(payload, "name", "device_name", "nickname") or _payload_string(payload, "device_sn"),
         "model": _payload_string(payload, "model", "device_model", "product_type", "type"),
-        "online_status": _payload_online(payload),
         "firmware_version": _payload_string(payload, "firmware_version", "firmwareVersion"),
         "firmware_status": _payload_string(payload, "firmware_status", "firmwareStatus"),
         "last_payload": payload,
-        "last_seen_at": timezone.now(),
     }
+    online = _payload_online(payload)
+    if online is not None:
+        defaults["online_status"] = online
+        defaults["last_seen_at"] = timezone.now() if online else None
+    return defaults
 
 
 def upsert_resource_from_payload(resource_type: str, payload: dict):

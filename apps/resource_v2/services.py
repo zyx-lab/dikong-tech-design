@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.db.models import Q, QuerySet
+from django.utils import timezone
 
 from apps.access.exceptions import StandardForbidden, StandardNotFound
 from apps.access.models import DirectoryStatus
@@ -16,6 +17,7 @@ from apps.resource_v2.models import (
     BindingActionType,
     BindingStatus,
     DjiConnection,
+    DjiConnectionStatus,
     DockResource,
     DroneResource,
     GatewayResource,
@@ -153,6 +155,30 @@ def effective_permissions_for_binding(context, binding: ResourceBinding) -> list
 
     shared = _shared_permissions_for_department(context, binding)
     return shared or []
+
+
+def sync_connection_resources_from_upstream(connection: DjiConnection) -> dict:
+    from apps.resource_v2.gateway import DjiConnectionGateway
+    from apps.resource_v2.serializers import upsert_resource_from_payload
+
+    discovered = DjiConnectionGateway(connection).discover()
+    resources = {"drones": [], "docks": [], "gateways": [], "payloads": []}
+    for payload in discovered.get("drones", []):
+        if isinstance(payload, dict):
+            resources["drones"].append(upsert_resource_from_payload(ResourceType.DRONE, payload))
+    for payload in discovered.get("docks", []):
+        if isinstance(payload, dict):
+            resources["docks"].append(upsert_resource_from_payload(ResourceType.DOCK, payload))
+    for payload in discovered.get("gateways", []):
+        if isinstance(payload, dict):
+            resources["gateways"].append(upsert_resource_from_payload(ResourceType.GATEWAY, payload))
+    for payload in discovered.get("payloads", []):
+        if isinstance(payload, dict):
+            resources["payloads"].append(upsert_resource_from_payload(ResourceType.PAYLOAD, payload))
+    connection.status = DjiConnectionStatus.ACTIVE
+    connection.last_checked_at = timezone.now()
+    connection.save(update_fields=["status", "last_checked_at", "updated_at"])
+    return resources
 
 
 def create_binding_history(*, binding: ResourceBinding, context, action_type: str, previous_department=None, new_department=None):

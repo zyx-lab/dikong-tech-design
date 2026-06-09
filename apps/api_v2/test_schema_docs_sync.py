@@ -95,6 +95,45 @@ class ApiV2DocsSyncTests(TestCase):
         self.assertEqual(docs_response.status_code, 200)
         self.assertContains(docs_response, "/api/v2/docs/schema/")
 
+    def test_v2_schema_should_document_frontend_bootstrap_and_current_routes(self):
+        schema = self._schema()
+        description = schema["info"]["description"]
+
+        for expected in (
+            "10 分钟接入流程",
+            "只调用 `/api/v2/*`",
+            "旧 API v1 已移除",
+            "POST /api/v2/iam/session/login",
+            "GET /api/v2/system/menus/current",
+            "bootstrap_v2_system --reset",
+            "docs/api-v2-frontend-guide.md",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, description)
+
+    def test_v2_schema_should_not_expose_fake_permission_sync_delete(self):
+        schema = self._schema()
+
+        self.assertEqual(set(schema["paths"]["/api/v2/iam/permissions/sync"].keys()), {"post"})
+        self.assertIn("delete", schema["paths"]["/api/v2/iam/roles/{id}"])
+        self.assertEqual(schema["paths"]["/api/v2/iam/roles/{id}"]["delete"]["summary"], "删除 v2 角色")
+
+    def test_frontend_guide_should_list_every_public_v2_operation(self):
+        schema = self._schema()
+        guide_path = Path(settings.BASE_DIR) / "docs" / "api-v2-frontend-guide.md"
+        guide_text = guide_path.read_text(encoding="utf-8")
+
+        missing = []
+        for path, path_item in sorted(schema["paths"].items()):
+            for method in sorted(path_item):
+                if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                    continue
+                marker = f"`{method.upper()} {path}`"
+                if marker not in guide_text:
+                    missing.append(marker)
+
+        self.assertEqual(missing, [])
+
     def test_v2_schema_should_document_representative_domain_fields(self):
         schema = self._schema()
 

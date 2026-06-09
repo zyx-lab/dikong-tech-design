@@ -1,25 +1,39 @@
 API_V2_FRONTEND_GUIDE_DESCRIPTION = """
-API v2 文档。当前业务开发入口统一收口到 `/api/v2/*`。
+API v2 文档。前端只调用 `/api/v2/*`；旧 API v1 已移除。文档页是 `/api/v2/docs/`，OpenAPI JSON 是 `/api/v2/docs/schema/`。
 
-## 前端接入流程
+## 前端接入流程（10 分钟接入流程）
 
-1. 调用 `POST /api/v2/iam/session/login` 获取 `accessToken`，后续请求统一带 Bearer Token：`Authorization: Bearer <accessToken>`。
-2. 调用 `/api/v2/iam/me/context` 和 `/api/v2/iam/me/profile` 初始化当前账号、部门、角色和资质。
-3. 资源侧按“DJI 连接 -> 资源发现与绑定 -> 资源列表”使用；`discover` 返回的是发现结果，资源列表只返回已绑定资源。
-4. 巡检侧按“航线 KMZ 上传 -> 创建任务 -> 启动任务 -> 活动飞行/遥测/直播 -> 完成或取消”使用。航线封面 `coverImageUrl` 是 MinIO 私有预签名 URL；`djiFile.downloadUrl` 是 DJI 上云侧可直接下载的 KMZ 绝对链接。
-5. MQTT 实时数据由 worker 写入 v2，前端通过 `mqtt-health`、`mqtt-messages/latest` 或 WebSocket 读取，不直接连接 DJI broker。
+1. 本地联调没有固定内置业务账号；需要账号时让后端先执行 `python manage.py bootstrap_v2_system --reset --username <super_username> --password '<strong_password>' --noinput`。
+2. 调用 `POST /api/v2/iam/session/login` 获取 `accessToken` 和 `refreshToken`。
+3. 后续业务请求统一带 Bearer Token：`Authorization: Bearer <accessToken>`。
+4. 首屏初始化依次调用 `GET /api/v2/iam/me/context`、`GET /api/v2/system/menus/current`、`GET /api/v2/iam/me/profile`。
+5. access token 过期时调用 `POST /api/v2/iam/session/refresh`，成功后替换本地 token 并重试原请求。
+
+## 模块接入顺序
+
+- IAM：部门、账号、角色、权限和菜单先完成；飞手不是独立资源，而是账号具备 `pilot` 角色、`pilot` 档案和有效 `pilot` 资质后的能力。
+- 资源发现与绑定：按“创建 DJI 连接 -> discover 发现资源 -> bindings 绑定资源 -> drones/docks/gateways/payloads 列表展示”接入；`discover` 返回发现结果，资源列表只返回已绑定资源。
+- 巡检：按“航线 KMZ 上传 -> 创建任务 -> preflight-check -> start -> active-flights/telemetry/live/camera -> complete/cancel/fail/abort -> flight-records/media-files”接入。
+- 系统：`GET /api/v2/system/menus/current` 驱动当前用户导航和按钮；日志接口用于后台审计页。
 
 ## 标准响应
 
-所有 v2 HTTP 接口返回标准 JSON envelope：`code`、`msg`、`data`。成功时 `code` 固定为 `00000`，业务数据在 `data` 内；列表数据通常是 `{ "list": [], "total": 0 }`。
+所有 v2 HTTP 接口返回标准 JSON envelope：`code`、`msg`、`data`。成功时 `code` 固定为 `00000`；失败时前端优先展示 `msg`。列表数据通常是 `{ "list": [], "total": 0 }`。
 
-## 资源发现与绑定
+## 关键字段
 
-`djiConnectionId` 是 v2 本地 DJI 连接 ID，不是 DJI workspace ID。`resourceId` 是资源类型内 ID；前端混合展示资源时应使用 `resourceType + resourceId` 作为唯一 key。
+- `djiConnectionId` 是本系统 v2 本地 DJI 连接 ID，不是 DJI workspace ID。
+- `resourceId` 是资源类型内 ID；混合展示资源时用 `${resourceType}:${resourceId}` 做 key。
+- `route.id` 是本地航线 ID，创建任务传它；`djiFile.djiFileId` 是 DJI wayline/file id，仅用于展示和排查。
+- `coverImageUrl` 是本系统 MinIO 私有预签名 URL；`djiFile.downloadUrl` 是 DJI 上云侧 KMZ 下载 URL，可能过期，下载前推荐读取航线详情刷新。
 
 ## MQTT
 
-DJI OSD、state、events、services_reply、status 会被 v2 worker 记录为最新消息。前端先看 `mqtt-health` 判断 worker 是否连接，再按 `deviceSn` 和 `topicKind` 查询最新消息。
+DJI OSD、state、events、services_reply、status 会被 v2 worker 记录为最新消息。前端先看 `GET /api/v2/resource/dji-connections/mqtt-health`，再按 `deviceSn/topicKind` 查询 latest 消息，或通过 WebSocket `/ws/v2/dji/mqtt?token=<accessToken>` 订阅实时数据。
+
+## DJI 上游边界
+
+前端不要直接调用 DJI 上云 v1 manage、wayline、media 协议路径。这些是 DJI 上游协议，不是本系统业务 API。后端会通过 v2 接口代理登录、续期、资源发现、航线上传、任务下发、直播、相机控制和媒体 URL 刷新。
 
 更完整的前端使用流程见仓库文档：`docs/api-v2-frontend-guide.md`。
 """.strip()

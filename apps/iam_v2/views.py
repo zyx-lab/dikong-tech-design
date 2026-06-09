@@ -697,6 +697,32 @@ class RoleDetailView(V2IamAPIView):
         )
         return Response(data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        operation_id="v2_iam_roles_delete",
+        summary="删除 v2 角色",
+        responses={200: OpenApiResponse(response=V2RoleReadSerializer, description="删除成功。")},
+    )
+    @transaction.atomic
+    def delete(self, request, id: int):
+        context = require_platform_super_admin(request)
+        require_v2_permission(context, "iam:role:delete")
+        role = self._role(id)
+        if role is None:
+            return _not_found_response()
+        if role.is_system or role.is_super_admin:
+            raise serializers.ValidationError({"id": ["内置角色和超管角色不可删除"]})
+        data = V2RoleReadSerializer(role).data
+        role.delete()
+        log_v2_action(
+            request=request,
+            context=context,
+            action="delete_role",
+            target_type="v2_role",
+            target_id=id,
+            before_data=data,
+        )
+        return Response(data, status=status.HTTP_200_OK)
+
 
 class RoleMenusView(V2IamAPIView):
     @extend_schema(
@@ -846,32 +872,6 @@ class PermissionSyncView(V2IamAPIView):
             target_type="v2_permission",
             before_data=before_data,
             after_data={"total": queryset.count()},
-        )
-        return Response(data, status=status.HTTP_200_OK)
-
-    @extend_schema(
-        operation_id="v2_iam_roles_delete",
-        summary="删除 v2 角色",
-        responses={200: OpenApiResponse(response=V2RoleReadSerializer, description="删除成功。")},
-    )
-    @transaction.atomic
-    def delete(self, request, id: int):
-        context = require_platform_super_admin(request)
-        require_v2_permission(context, "iam:role:delete")
-        role = self._role(id)
-        if role is None:
-            return _not_found_response()
-        if role.is_system or role.is_super_admin:
-            raise serializers.ValidationError({"id": ["内置角色和超管角色不可删除"]})
-        data = V2RoleReadSerializer(role).data
-        role.delete()
-        log_v2_action(
-            request=request,
-            context=context,
-            action="delete_role",
-            target_type="v2_role",
-            target_id=id,
-            before_data=data,
         )
         return Response(data, status=status.HTTP_200_OK)
 

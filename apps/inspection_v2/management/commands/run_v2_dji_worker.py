@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
+import time
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
 
@@ -13,6 +16,9 @@ from apps.inspection_v2.services import apply_cloud_execution_event, apply_devic
 from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import DjiConnection, DjiConnectionStatus, MqttHealthStatus
 from apps.resource_v2.mqtt import DEFAULT_MQTT_TOPICS, configured_mqtt_topics, mark_mqtt_health, record_mqtt_message
+from apps.resource_v2.services import sync_connection_resources_from_upstream
+
+logger = logging.getLogger(__name__)
 
 
 class V2DjiWorker:
@@ -21,9 +27,22 @@ class V2DjiWorker:
     def __init__(self, *, stop_event: threading.Event | None = None):
         self.stop_event = stop_event or threading.Event()
         self.client_id_prefix = f"v2-dji-worker-{uuid4().hex[:10]}"
+        self._last_resource_sync_at: dict[int, float] = {}
 
     def run_once(self) -> dict[str, int]:
-        return {"connections": DjiConnection.objects.filter(status=DjiConnectionStatus.ACTIVE).count()}
+        connections = list(DjiConnection.objects.filter(status=DjiConnectionStatus.ACTIVE).order_by("id"))
+        succeeded = 0
+        failed = 0
+        for connection in connections:
+            if self._sync_connection_resources(connection):
+                succeeded += 1
+            else:
+                failed += 1
+        return {
+            "connections": len(connections),
+            "resourceSyncSucceeded": succeeded,
+            "resourceSyncFailed": failed,
+        }
 
     def run_forever(self, *, reconnect_seconds: int = 5) -> None:
         while not self.stop_event.is_set():
@@ -105,7 +124,26 @@ class V2DjiWorker:
                     last_error=f"MQTT loop returned {result_code}",
                 )
                 break
+            self._sync_connection_resources_if_due(connection)
         client.disconnect()
+
+    def _sync_connection_resources(self, connection: DjiConnection) -> bool:
+        try:
+            sync_connection_resources_from_upstream(connection)
+        except Exception:
+            logger.exception("v2 DJI resource status sync failed", extra={"dji_connection_id": connection.id})
+            return False
+        self._last_resource_sync_at[connection.id] = time.monotonic()
+        return True
+
+    def _sync_connection_resources_if_due(self, connection: DjiConnection) -> None:
+        interval = int(getattr(settings, "DJI_V2_RESOURCE_STATUS_SYNC_SECONDS", 60))
+        if interval <= 0:
+            return
+        now = time.monotonic()
+        last_synced_at = self._last_resource_sync_at.get(connection.id, 0)
+        if now - last_synced_at >= interval:
+            self._sync_connection_resources(connection)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):  # pragma: no cover - MQTT callback
         connection = self._connection_from_userdata(userdata)

@@ -2,6 +2,8 @@
 
 本文面向前端联调人员，说明 `/api/v2/*` 接口的推荐调用顺序、关键字段和常见误区。Swagger 入口是 `/api/v2/docs/`，schema 入口是 `/api/v2/docs/schema/`。
 
+前端只调用 `/api/v2/*`。旧 `/api/v1/*` 已移除；文档里出现的 `/api/v1/manage/*`、`/api/v1/wayline/*`、`/api/v1/media/*` 都是 DJI 上云内部协议路径，不是本系统前端业务 API。
+
 ## 通用规则
 
 - 登录后所有业务请求都带 `Authorization: Bearer <accessToken>`。
@@ -9,6 +11,156 @@
 - 成功时 `code` 固定为 `00000`；失败时优先展示 `msg`，再按页面场景决定是否保留表单输入。
 - 列表接口通常返回 `{ "list": [], "total": 0 }`，前端不要假设所有列表都有分页。
 - `resourceId` 不是全局唯一 ID。混合展示资源时用 `${resourceType}:${resourceId}` 作为 key。
+
+## 10 分钟接入流程
+
+1. 确认后端已经创建 v2 平台超管账号。本地联调没有固定内置业务账号；需要重置账号时让后端执行：
+
+   ```bash
+   python manage.py bootstrap_v2_system --reset --username <super_username> --password '<strong_password>' --noinput
+   ```
+
+2. 调用 `POST /api/v2/iam/session/login`，保存 `accessToken` 和 `refreshToken`。
+3. 所有业务请求带 `Authorization: Bearer <accessToken>`。
+4. 首屏初始化依次调用 `GET /api/v2/iam/me/context`、`GET /api/v2/system/menus/current`、`GET /api/v2/iam/me/profile`。
+5. access token 过期时调用 `POST /api/v2/iam/session/refresh`，成功后替换本地 token 并重试原请求。
+6. 资源页面按“DJI 连接 -> discover 发现资源 -> bindings 绑定资源 -> drones/docks/gateways/payloads 列表”接。
+7. 巡检页面按“上传 KMZ 航线 -> 创建任务 -> preflight-check -> start -> active-flights/telemetry/live/camera -> complete/cancel/fail/abort -> flight-records/media-files”接。
+
+## 接口总览
+
+下面清单来自当前 `/api/v2/docs/schema/`。字段结构、枚举和请求示例以 Swagger 为准；这里用于让前端快速判断“哪个页面该调哪个接口”。
+
+### IAM 与当前用户
+
+| 接口 | 用途 |
+| --- | --- |
+| `POST /api/v2/iam/session/login` | 登录，换取 `accessToken/refreshToken`。 |
+| `POST /api/v2/iam/session/refresh` | access token 过期后续期。 |
+| `POST /api/v2/iam/session/logout` | 注销当前会话。 |
+| `GET /api/v2/iam/me/context` | 当前账号部门、角色、权限码、数据范围。 |
+| `GET /api/v2/iam/me/profile` | 当前账号资料、角色档案、资质摘要。 |
+| `GET /api/v2/iam/departments` | 部门树/列表。 |
+| `POST /api/v2/iam/departments` | 创建部门。 |
+| `PUT /api/v2/iam/departments/{id}` | 更新部门。 |
+| `POST /api/v2/iam/departments/{id}/enable` | 启用部门。 |
+| `POST /api/v2/iam/departments/{id}/disable` | 禁用部门。 |
+| `GET /api/v2/iam/accounts` | 账号列表；常用于账号管理和飞手候选人选择。 |
+| `POST /api/v2/iam/accounts` | 创建账号。 |
+| `PUT /api/v2/iam/accounts/{id}` | 更新账号。 |
+| `DELETE /api/v2/iam/accounts/{id}` | 删除账号。 |
+| `POST /api/v2/iam/accounts/{id}/enable` | 启用账号。 |
+| `POST /api/v2/iam/accounts/{id}/disable` | 禁用账号。 |
+| `POST /api/v2/iam/accounts/{id}/reset-password` | 重置账号密码。 |
+| `PUT /api/v2/iam/accounts/{id}/roles` | 替换账号角色。 |
+| `GET /api/v2/iam/accounts/{id}/profiles` | 查询账号角色档案。 |
+| `POST /api/v2/iam/accounts/{id}/profiles` | 创建账号角色档案。 |
+| `GET /api/v2/iam/accounts/{id}/profiles/{profile_type}` | 读取账号角色档案。 |
+| `PUT /api/v2/iam/accounts/{id}/profiles/{profile_type}` | 更新账号角色档案。 |
+| `DELETE /api/v2/iam/accounts/{id}/profiles/{profile_type}` | 删除账号角色档案。 |
+| `GET /api/v2/iam/accounts/{id}/qualifications` | 查询账号资质。 |
+| `POST /api/v2/iam/accounts/{id}/qualifications` | 创建账号资质。 |
+| `GET /api/v2/iam/accounts/{id}/qualifications/{qualification_id}` | 读取账号资质。 |
+| `PUT /api/v2/iam/accounts/{id}/qualifications/{qualification_id}` | 更新账号资质。 |
+| `DELETE /api/v2/iam/accounts/{id}/qualifications/{qualification_id}` | 删除账号资质。 |
+| `GET /api/v2/iam/profile-types` | 查询账号档案类型。 |
+| `POST /api/v2/iam/profile-types` | 创建账号档案类型。 |
+| `GET /api/v2/iam/profile-types/{code}` | 读取账号档案类型。 |
+| `PUT /api/v2/iam/profile-types/{code}` | 更新账号档案类型。 |
+| `DELETE /api/v2/iam/profile-types/{code}` | 删除账号档案类型。 |
+| `GET /api/v2/iam/roles` | 查询角色目录。 |
+| `POST /api/v2/iam/roles` | 创建角色。 |
+| `GET /api/v2/iam/roles/{id}` | 读取角色详情。 |
+| `PUT /api/v2/iam/roles/{id}` | 更新角色。 |
+| `DELETE /api/v2/iam/roles/{id}` | 删除非内置角色。 |
+| `PUT /api/v2/iam/roles/{id}/menus` | 替换角色菜单授权。 |
+| `PUT /api/v2/iam/roles/{id}/permissions` | 替换角色高级权限授权。 |
+| `PUT /api/v2/iam/roles/{id}/data-scope` | 更新角色数据范围。 |
+| `GET /api/v2/iam/permissions` | 查询权限点。 |
+| `POST /api/v2/iam/permissions/sync` | 同步后端注册权限点；平台管理动作，普通前端页面通常不调用。 |
+
+### 资源与 DJI 连接
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /api/v2/resource/dji-connections` | 查询 DJI 连接列表。 |
+| `POST /api/v2/resource/dji-connections` | 创建 DJI 连接。 |
+| `GET /api/v2/resource/dji-connections/{id}` | 读取 DJI 连接详情。 |
+| `PUT /api/v2/resource/dji-connections/{id}` | 更新 DJI 连接。 |
+| `POST /api/v2/resource/dji-connections/{id}/discover` | 登录 DJI 并发现无人机、机场、网关、负载。 |
+| `GET /api/v2/resource/dji-connections/mqtt-health` | 查询 MQTT worker 健康状态。 |
+| `GET /api/v2/resource/dji-connections/{id}/mqtt-messages/latest` | 查询指定连接的最新 MQTT 透传消息。 |
+| `POST /api/v2/resource/bindings` | 把发现资源绑定到部门。 |
+| `DELETE /api/v2/resource/bindings/{id}` | 解绑资源。 |
+| `GET /api/v2/resource/drones` | 查询当前账号可见无人机。 |
+| `GET /api/v2/resource/drones/{id}` | 读取无人机详情。 |
+| `GET /api/v2/resource/docks` | 查询当前账号可见机场。 |
+| `GET /api/v2/resource/docks/{id}` | 读取机场详情。 |
+| `GET /api/v2/resource/gateways` | 查询当前账号可见网关/执行端。 |
+| `GET /api/v2/resource/gateways/{id}` | 读取网关/执行端详情。 |
+| `GET /api/v2/resource/payloads` | 查询当前账号可见负载。 |
+| `GET /api/v2/resource/payloads/{id}` | 读取负载详情。 |
+| `GET /api/v2/resource/summary` | 资源总览统计。 |
+| `GET /api/v2/resource/share-groups` | 查询资源共享组。 |
+| `POST /api/v2/resource/share-groups` | 创建资源共享组。 |
+| `PUT /api/v2/resource/share-groups/{id}` | 更新资源共享组。 |
+| `POST /api/v2/resource/share-groups/{id}/departments` | 添加共享目标部门。 |
+| `DELETE /api/v2/resource/share-groups/{id}/departments/{department_id}` | 移除共享目标部门。 |
+| `POST /api/v2/resource/share-groups/{id}/resources` | 添加共享资源。 |
+| `PUT /api/v2/resource/share-groups/{id}/resources/{resource_share_id}` | 更新共享资源权限。 |
+| `DELETE /api/v2/resource/share-groups/{id}/resources/{resource_share_id}` | 移除共享资源。 |
+| `GET /api/v2/resource/audit-logs` | 查询资源审计日志。 |
+
+### 巡检、直播、相机和媒体
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /api/v2/inspection/routes` | 查询航线列表。 |
+| `POST /api/v2/inspection/routes` | 创建航线并上传 KMZ。 |
+| `GET /api/v2/inspection/routes/{id}` | 读取航线详情；下载 KMZ 前用它刷新 DJI 下载 URL。 |
+| `PUT /api/v2/inspection/routes/{id}` | 更新航线；替换 KMZ 时用 `multipart/form-data`。 |
+| `DELETE /api/v2/inspection/routes/{id}` | 删除未被任务引用的航线。 |
+| `GET /api/v2/inspection/missions` | 查询任务列表。 |
+| `POST /api/v2/inspection/missions` | 创建任务。 |
+| `GET /api/v2/inspection/missions/{id}` | 读取任务详情。 |
+| `PUT /api/v2/inspection/missions/{id}` | 更新任务。 |
+| `POST /api/v2/inspection/missions/{id}/preflight-check` | 启动前检查；不下发 DJI 任务。 |
+| `POST /api/v2/inspection/missions/{id}/start` | 启动任务、直播和 DJI wayline flight task。 |
+| `POST /api/v2/inspection/missions/{id}/cloud-execution/refresh` | 手动刷新 DJI job 执行状态。 |
+| `POST /api/v2/inspection/missions/{id}/complete` | 完成任务并尝试同步媒体、停止直播。 |
+| `POST /api/v2/inspection/missions/{id}/cancel` | 取消任务；已有 `djiJobId` 时取消 DJI job。 |
+| `POST /api/v2/inspection/missions/{id}/fail` | 标记任务失败。 |
+| `POST /api/v2/inspection/missions/{id}/abort` | 安全中止任务。 |
+| `GET /api/v2/inspection/active-flights` | 查询活动飞行列表。 |
+| `GET /api/v2/inspection/active-flights/{id}` | 读取活动飞行详情。 |
+| `POST /api/v2/inspection/telemetry/snapshots` | 上报遥测快照；通常由后端/设备链路使用。 |
+| `GET /api/v2/inspection/live/capacity` | 查询 DJI 直播能力，获取 `payloadIndex/videoIndex`。 |
+| `POST /api/v2/inspection/live/start` | 启动直播。 |
+| `POST /api/v2/inspection/live/stop` | 停止直播。 |
+| `POST /api/v2/inspection/live/update` | 更新直播质量等参数。 |
+| `POST /api/v2/inspection/live/switch` | 切换直播镜头。 |
+| `POST /api/v2/inspection/camera/actions` | 相机拍照、录像、变焦、点选瞄准和云台复位。 |
+| `GET /api/v2/inspection/flight-records` | 查询飞行记录。 |
+| `GET /api/v2/inspection/flight-records/{id}` | 读取飞行记录详情。 |
+| `PUT /api/v2/inspection/flight-records/{id}` | 更新飞行记录备注。 |
+| `POST /api/v2/inspection/flight-records/{id}/refresh-media` | 按飞行记录关联任务刷新媒体索引。 |
+| `GET /api/v2/inspection/media-files` | 查询云媒体文件。 |
+| `GET /api/v2/inspection/media-files/{id}` | 读取云媒体文件详情。 |
+| `POST /api/v2/inspection/media-files/{id}/refresh-url` | 刷新媒体下载、预览或播放 URL。 |
+
+### 系统菜单和日志
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /api/v2/system/menus/current` | 当前账号可见菜单树，驱动导航和按钮。 |
+| `GET /api/v2/system/menus/tree` | 查询全部菜单树，角色授权页使用。 |
+| `GET /api/v2/system/menus` | 查询菜单列表。 |
+| `POST /api/v2/system/menus` | 创建菜单。 |
+| `PUT /api/v2/system/menus/{id}` | 更新菜单。 |
+| `DELETE /api/v2/system/menus/{id}` | 删除菜单。 |
+| `GET /api/v2/system/operation-logs` | 查询操作日志。 |
+| `GET /api/v2/system/login-logs` | 查询登录日志。 |
+| `GET /api/v2/system/file-logs` | 查询文件日志。 |
 
 ## 登录与账号上下文
 

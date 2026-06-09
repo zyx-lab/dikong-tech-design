@@ -1703,6 +1703,36 @@ class InspectionV2ApiTests(TestCase):
             call_command("run_v2_dji_worker", "--once")
         run_once.assert_called_once()
 
+    def test_v2_dji_worker_once_should_sync_resource_status_for_active_connections(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        worker = V2DjiWorker()
+
+        with patch(
+            "apps.inspection_v2.management.commands.run_v2_dji_worker.sync_connection_resources_from_upstream",
+            return_value={"drones": 1, "docks": 0, "gateways": 0, "payloads": 0},
+        ) as sync_resources:
+            summary = worker.run_once()
+
+        sync_resources.assert_called_once_with(connection)
+        self.assertEqual(summary["connections"], 1)
+        self.assertEqual(summary["resourceSyncSucceeded"], 1)
+        self.assertEqual(summary["resourceSyncFailed"], 0)
+
+    def test_v2_dji_worker_once_should_report_resource_sync_errors_without_failing(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        worker = V2DjiWorker()
+
+        with patch(
+            "apps.inspection_v2.management.commands.run_v2_dji_worker.sync_connection_resources_from_upstream",
+            side_effect=RuntimeError("upstream unavailable"),
+        ) as sync_resources:
+            summary = worker.run_once()
+
+        sync_resources.assert_called_once_with(connection)
+        self.assertEqual(summary["connections"], 1)
+        self.assertEqual(summary["resourceSyncSucceeded"], 0)
+        self.assertEqual(summary["resourceSyncFailed"], 1)
+
     def test_pilot_should_only_see_own_execution_data_and_cannot_cancel_task(self):
         second_pilot_user, second_pilot_account = create_v2_actor(
             username="owner_second_pilot",
