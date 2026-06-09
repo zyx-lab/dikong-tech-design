@@ -70,7 +70,7 @@ class ObjectStorageSettingsTests(SimpleTestCase):
                 "-c",
                 (
                     "from django.conf import settings; "
-                    "assert settings.STORAGES['default']['BACKEND'] == 'storages.backends.s3.S3Storage'; "
+                    "assert settings.STORAGES['default']['BACKEND'] == 'apps.access.storage_backends.LoggedS3Storage'; "
                     "assert settings.AWS_S3_ADDRESSING_STYLE == 'path'; "
                     "assert settings.AWS_QUERYSTRING_EXPIRE == 3600"
                 ),

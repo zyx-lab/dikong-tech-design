@@ -16,6 +16,7 @@ DJANGO_LOG_MAX_BYTES = int(os.getenv("DJANGO_LOG_MAX_BYTES", str(10 * 1024 * 102
 DJANGO_LOG_BACKUP_COUNT = int(os.getenv("DJANGO_LOG_BACKUP_COUNT", "10"))
 DJANGO_LOG_BODY_MAX_CHARS = int(os.getenv("DJANGO_LOG_BODY_MAX_CHARS", "20000"))
 DJANGO_LOG_HEADER_MAX_CHARS = int(os.getenv("DJANGO_LOG_HEADER_MAX_CHARS", "4096"))
+DJANGO_LOG_REDACT_PAYLOADS = os.getenv("DJANGO_LOG_REDACT_PAYLOADS", "false").lower() in {"1", "true", "yes"}
 
 LOGGING = build_logging_config(
     base_dir=BASE_DIR,
@@ -183,7 +184,7 @@ if OBJECT_STORAGE_BACKEND in {"s3", "minio"}:
     AWS_QUERYSTRING_AUTH = os.getenv("AWS_QUERYSTRING_AUTH", "true").lower() == "true"
     AWS_DEFAULT_ACL = os.getenv("AWS_DEFAULT_ACL", "private")
     STORAGES["default"] = {
-        "BACKEND": "storages.backends.s3.S3Storage",
+        "BACKEND": "apps.access.storage_backends.LoggedS3Storage",
     }
 else:
     STORAGES["default"] = {

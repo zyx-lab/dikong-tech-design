@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import base64
-import logging
 import json
-import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,9 +15,13 @@ from typing import Any
 from django.conf import settings
 from django.utils import timezone
 
-from apps.access.request_logging import log_json, redact_payload
-
-logger = logging.getLogger(__name__)
+from apps.access.external_call_logging import (
+    log_external_call_failed,
+    log_external_call_finished,
+    log_external_call_retry,
+    log_external_call_started,
+)
+from apps.access.request_logging import redact_payload
 
 # 缓存 workspace 验证结果，避免频繁调用登录接口
 _workspace_validated_at: dict[str, datetime] = {}
@@ -82,8 +84,16 @@ class DjiGateway:
         self.base_url = (base_url or configured_base_url or getattr(settings, "DJI_UPSTREAM_BASE_URL", "")).rstrip("/")
         self.timeout = timeout or int(getattr(settings, "DJI_UPSTREAM_TIMEOUT_SECONDS", 10))
 
-    def _log_upstream_event(self, event: str, *, level: int = logging.INFO, **payload: Any) -> None:
-        log_json(logger, level, event, **payload)
+    def _start_external_call(self, *, operation: str, request: dict[str, Any]):
+        return log_external_call_started(
+            service="dji_cloud",
+            operation=operation,
+            method=str(request.get("method") or ""),
+            url=str(request.get("url") or ""),
+            path=str(request.get("path") or ""),
+            request=request,
+            attempt=request.get("attempt"),
+        )
 
     def _urlopen(self):
         return urlopen
@@ -466,31 +476,44 @@ class DjiGateway:
                 data=login_data,
                 headers={"Content-Type": "application/json"},
             )
+            request_payload = self._upstream_request_payload(
+                method="POST",
+                path="/api/v1/manage/login",
+                headers={"Content-Type": "application/json"},
+                body={"username": username, "password": password, "flag": self._configured_login_flag()},
+                attempt=1,
+            )
+            external_call = self._start_external_call(operation="workspace_validate", request=request_payload)
             with self._urlopen()(login_req, timeout=self.timeout) as resp:
                 login_resp = _json.loads(resp.read().decode("utf-8"))
                 current_workspace_id = login_resp.get("data", {}).get("workspace_id")
+            log_external_call_finished(
+                external_call,
+                response={"status_code": getattr(resp, "status", None), "body": login_resp},
+                attempt=1,
+            )
 
             # 更新缓存时间
             _workspace_validated_at[cache_key] = now
 
             # 比较是否一致
             if current_workspace_id and current_workspace_id != config.workspace_id:
-                self._log_upstream_event(
-                    "workspace_mismatch",
-                    level=logging.WARNING,
-                    stored_workspace_id=config.workspace_id,
-                    current_workspace_id=current_workspace_id,
+                log_external_call_failed(
+                    external_call,
+                    error={
+                        "type": "workspace_mismatch",
+                        "message": "DJI workspace_id changed",
+                        "stored_workspace_id": config.workspace_id,
+                        "current_workspace_id": current_workspace_id,
+                    },
+                    attempt=1,
                 )
                 return False
 
             return True
         except Exception as exc:
-            self._log_upstream_event(
-                "workspace_validate_error",
-                level=logging.WARNING,
-                workspace_id=config.workspace_id,
-                error=str(exc),
-            )
+            if "external_call" in locals():
+                log_external_call_failed(external_call, error=exc, attempt=1)
             return True  # 验证失败时假设 workspace 仍然有效，避免频繁重新登录
 
     def _ensure_authenticated(self):
@@ -535,8 +558,7 @@ class DjiGateway:
             body=payload,
             attempt=1,
         )
-        started_at = time.monotonic()
-        self._log_upstream_event("upstream_login_request", request=request_payload)
+        external_call = self._start_external_call(operation="upstream_login_request", request=request_payload)
         try:
             response = self._request(
                 "POST",
@@ -546,36 +568,15 @@ class DjiGateway:
                 follow_redirects=True,
             )
         except DjiGatewayUpstreamError as exc:
-            self._log_upstream_event(
-                "upstream_error",
-                level=logging.ERROR,
-                request=request_payload,
-                error=self._upstream_error_payload(exc),
-                attempt=1,
-                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-            )
+            log_external_call_failed(external_call, error=self._upstream_error_payload(exc), attempt=1)
             raise
 
         response_payload = self._upstream_response_payload(response)
-        self._log_upstream_event(
-            "upstream_login_response",
-            response=response_payload,
-            request=request_payload,
-            attempt=1,
-            duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-        )
+        log_external_call_finished(external_call, response=response_payload, attempt=1)
         try:
             return self._save_session(response.data, config=config)
         except DjiGatewayUpstreamError as exc:
-            self._log_upstream_event(
-                "upstream_error",
-                level=logging.ERROR,
-                request=request_payload,
-                response=response_payload,
-                error=self._upstream_error_payload(exc),
-                attempt=1,
-                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-            )
+            log_external_call_failed(external_call, response=response_payload, error=self._upstream_error_payload(exc), attempt=1)
             raise
 
     def _refresh_session(self, config):
@@ -588,8 +589,7 @@ class DjiGateway:
             headers=headers,
             attempt=1,
         )
-        started_at = time.monotonic()
-        self._log_upstream_event("upstream_refresh_request", request=request_payload)
+        external_call = self._start_external_call(operation="upstream_refresh_request", request=request_payload)
         try:
             response = self._request(
                 "POST",
@@ -599,36 +599,15 @@ class DjiGateway:
                 follow_redirects=True,
             )
         except DjiGatewayUpstreamError as exc:
-            self._log_upstream_event(
-                "upstream_error",
-                level=logging.ERROR,
-                request=request_payload,
-                error=self._upstream_error_payload(exc),
-                attempt=1,
-                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-            )
+            log_external_call_failed(external_call, error=self._upstream_error_payload(exc), attempt=1)
             raise
 
         response_payload = self._upstream_response_payload(response)
-        self._log_upstream_event(
-            "upstream_refresh_response",
-            response=response_payload,
-            request=request_payload,
-            attempt=1,
-            duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-        )
+        log_external_call_finished(external_call, response=response_payload, attempt=1)
         try:
             return self._save_session(response.data, config=config)
         except DjiGatewayUpstreamError as exc:
-            self._log_upstream_event(
-                "upstream_error",
-                level=logging.ERROR,
-                request=request_payload,
-                response=response_payload,
-                error=self._upstream_error_payload(exc),
-                attempt=1,
-                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-            )
+            log_external_call_failed(external_call, response=response_payload, error=self._upstream_error_payload(exc), attempt=1)
             raise
 
     def _save_session(
@@ -743,30 +722,14 @@ class DjiGateway:
             body=data,
             attempt=1,
         )
-        started_at = time.monotonic()
-        self._log_upstream_event(request_event, request=request_payload)
+        external_call = self._start_external_call(operation=request_event, request=request_payload)
         try:
             response = self._request(method, path, data=body, headers=headers, follow_redirects=follow_redirects)
         except DjiGatewayUpstreamError as exc:
             if not authenticate or not self._is_auth_error(exc):
-                self._log_upstream_event(
-                    "upstream_error",
-                    level=logging.ERROR,
-                    request=request_payload,
-                    error=self._upstream_error_payload(exc),
-                    attempt=1,
-                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-                )
+                log_external_call_failed(external_call, error=self._upstream_error_payload(exc), attempt=1)
                 raise
-            self._log_upstream_event(
-                "upstream_retry",
-                level=logging.WARNING,
-                request=request_payload,
-                error=self._upstream_error_payload(exc),
-                reason="auth_error",
-                attempt=2,
-                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-            )
+            log_external_call_retry(external_call, reason="auth_error", error=self._upstream_error_payload(exc), attempt=2)
             headers = self._headers(content_type="application/json", auth_token=self._reauthenticate().access_token)
             request_payload = self._upstream_request_payload(
                 method=method,
@@ -775,25 +738,16 @@ class DjiGateway:
                 body=data,
                 attempt=2,
             )
-            self._log_upstream_event(request_event, request=request_payload)
             try:
                 response = self._request(method, path, data=body, headers=headers, follow_redirects=follow_redirects)
             except DjiGatewayUpstreamError as retry_exc:
-                self._log_upstream_event(
-                    "upstream_error",
-                    level=logging.ERROR,
-                    request=request_payload,
-                    error=self._upstream_error_payload(retry_exc),
-                    attempt=2,
-                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-                )
+                log_external_call_failed(external_call, error=self._upstream_error_payload(retry_exc), attempt=2)
                 raise
-        self._log_upstream_event(
-            response_event,
+        del response_event
+        log_external_call_finished(
+            external_call,
             response=self._upstream_response_payload(response),
-            request=request_payload,
             attempt=request_payload.get("attempt", 1),
-            duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
         )
         return response
 
@@ -846,30 +800,14 @@ class DjiGateway:
             body=data,
             attempt=1,
         )
-        started_at = time.monotonic()
-        self._log_upstream_event(request_event, request=request_payload)
+        external_call = self._start_external_call(operation=request_event, request=request_payload)
         try:
             response = self._request_raw(method, path, data=data, headers=headers, follow_redirects=follow_redirects)
         except DjiGatewayUpstreamError as exc:
             if not authenticate or not self._is_auth_error(exc):
-                self._log_upstream_event(
-                    "upstream_error",
-                    level=logging.ERROR,
-                    request=request_payload,
-                    error=self._upstream_error_payload(exc),
-                    attempt=1,
-                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-                )
+                log_external_call_failed(external_call, error=self._upstream_error_payload(exc), attempt=1)
                 raise
-            self._log_upstream_event(
-                "upstream_retry",
-                level=logging.WARNING,
-                request=request_payload,
-                error=self._upstream_error_payload(exc),
-                reason="auth_error",
-                attempt=2,
-                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-            )
+            log_external_call_retry(external_call, reason="auth_error", error=self._upstream_error_payload(exc), attempt=2)
             headers = self._headers(auth_token=self._reauthenticate().access_token, accept="*/*")
             request_payload = self._upstream_request_payload(
                 method=method,
@@ -878,25 +816,16 @@ class DjiGateway:
                 body=data,
                 attempt=2,
             )
-            self._log_upstream_event(request_event, request=request_payload)
             try:
                 response = self._request_raw(method, path, data=data, headers=headers, follow_redirects=follow_redirects)
             except DjiGatewayUpstreamError as retry_exc:
-                self._log_upstream_event(
-                    "upstream_error",
-                    level=logging.ERROR,
-                    request=request_payload,
-                    error=self._upstream_error_payload(retry_exc),
-                    attempt=2,
-                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-                )
+                log_external_call_failed(external_call, error=self._upstream_error_payload(retry_exc), attempt=2)
                 raise
-        self._log_upstream_event(
-            response_event,
+        del response_event
+        log_external_call_finished(
+            external_call,
             response=self._upstream_response_payload(response),
-            request=request_payload,
             attempt=request_payload.get("attempt", 1),
-            duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
         )
         return response
 
@@ -937,30 +866,14 @@ class DjiGateway:
             body={"fields": fields, "files": files},
             attempt=1,
         )
-        started_at = time.monotonic()
-        self._log_upstream_event(request_event, request=request_payload)
+        external_call = self._start_external_call(operation=request_event, request=request_payload)
         try:
             response = self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
         except DjiGatewayUpstreamError as exc:
             if not self._is_auth_error(exc):
-                self._log_upstream_event(
-                    "upstream_error",
-                    level=logging.ERROR,
-                    request=request_payload,
-                    error=self._upstream_error_payload(exc),
-                    attempt=1,
-                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-                )
+                log_external_call_failed(external_call, error=self._upstream_error_payload(exc), attempt=1)
                 raise
-            self._log_upstream_event(
-                "upstream_retry",
-                level=logging.WARNING,
-                request=request_payload,
-                error=self._upstream_error_payload(exc),
-                reason="auth_error",
-                attempt=2,
-                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-            )
+            log_external_call_retry(external_call, reason="auth_error", error=self._upstream_error_payload(exc), attempt=2)
             headers = self._headers(
                 content_type=f"multipart/form-data; boundary={boundary}",
                 auth_token=self._reauthenticate().access_token,
@@ -972,25 +885,16 @@ class DjiGateway:
                 body={"fields": fields, "files": files},
                 attempt=2,
             )
-            self._log_upstream_event(request_event, request=request_payload)
             try:
                 response = self._request(method, path, data=bytes(body), headers=headers, follow_redirects=True)
             except DjiGatewayUpstreamError as retry_exc:
-                self._log_upstream_event(
-                    "upstream_error",
-                    level=logging.ERROR,
-                    request=request_payload,
-                    error=self._upstream_error_payload(retry_exc),
-                    attempt=2,
-                    duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
-                )
+                log_external_call_failed(external_call, error=self._upstream_error_payload(retry_exc), attempt=2)
                 raise
-        self._log_upstream_event(
-            response_event,
+        del response_event
+        log_external_call_finished(
+            external_call,
             response=self._upstream_response_payload(response),
-            request=request_payload,
             attempt=request_payload.get("attempt", 1),
-            duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
         )
         return response
 

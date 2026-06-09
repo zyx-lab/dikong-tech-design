@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import traceback
@@ -59,6 +60,7 @@ def _is_sensitive_key(key: Any) -> bool:
     key_text = str(key).strip().lower()
     if not key_text:
         return False
+    compact_key = key_text.replace("_", "").replace("-", "")
     if key_text in SENSITIVE_KEYS:
         return True
     if key_text.startswith("x-auth-"):
@@ -69,13 +71,17 @@ def _is_sensitive_key(key: Any) -> bool:
         return True
     if "password" in key_text:
         return True
-    if key_text.endswith("_token") or key_text.endswith("-token"):
+    if "token" in compact_key:
         return True
     if key_text.endswith("_secret") or key_text.endswith("-secret"):
         return True
     if key_text == "token":
         return True
     return False
+
+
+def _should_redact_payloads() -> bool:
+    return bool(getattr(settings, "DJANGO_LOG_REDACT_PAYLOADS", False))
 
 
 def _is_json_scalar(value: Any) -> bool:
@@ -87,6 +93,7 @@ def _summarize_binary(value: bytes | bytearray | memoryview) -> dict[str, Any]:
     return {
         "type": "binary",
         "size": len(binary),
+        "sha256": hashlib.sha256(binary).hexdigest(),
     }
 
 
@@ -103,6 +110,28 @@ def _summarize_file(value: Any) -> dict[str, Any]:
     content_type = getattr(value, "content_type", None)
     if content_type:
         summary["content_type"] = truncate_text(str(content_type), _max_header_chars())
+    try:
+        position = value.tell()
+    except Exception:  # noqa: BLE001 - file-like objects do not guarantee tell support.
+        position = None
+    if position is None:
+        return summary
+    try:
+        value.seek(0)
+        content = value.read()
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        if isinstance(content, (bytes, bytearray, memoryview)):
+            binary = bytes(content)
+            summary["size"] = len(binary)
+            summary["sha256"] = hashlib.sha256(binary).hexdigest()
+    except Exception:  # noqa: BLE001 - logging must never fail because a stream cannot be summarized.
+        pass
+    finally:
+        try:
+            value.seek(position)
+        except Exception:  # noqa: BLE001
+            pass
     return summary
 
 
@@ -128,7 +157,7 @@ def redact_payload(value: Any, *, max_text_chars: int | None = None) -> Any:
     if isinstance(value, Mapping):
         redacted: dict[Any, Any] = {}
         for key, item in value.items():
-            if _is_sensitive_key(key):
+            if _should_redact_payloads() and _is_sensitive_key(key):
                 redacted[key] = "***REDACTED***"
             else:
                 redacted[key] = redact_payload(item, max_text_chars=resolved_max_text_chars)

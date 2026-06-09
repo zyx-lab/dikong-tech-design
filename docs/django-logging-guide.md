@@ -1,6 +1,6 @@
 # Django 日志排查指南
 
-这份文档用于排查 Django 后端和上游 DJI 服务的问题。当前项目已经把请求日志、异常日志和上游调用日志写到文件里，通常只要拿到一次请求的 `request_id`，就能把这条链路从头到尾串起来。
+这份文档用于排查 Django 后端、DJI 上云 API、MinIO/S3 对象存储等问题。当前项目已经把入口请求日志、异常日志和外部调用日志写到文件里，通常只要拿到一次请求的 `request_id`，就能把这条链路从头到尾串起来。
 
 ## 后台管理入口
 
@@ -21,11 +21,12 @@
 - `DJANGO_LOG_BACKUP_COUNT`：保留多少个轮转备份
 - `DJANGO_LOG_BODY_MAX_CHARS`：请求/响应体最大保留字符数
 - `DJANGO_LOG_HEADER_MAX_CHARS`：请求/响应头最大保留字符数
+- `DJANGO_LOG_REDACT_PAYLOADS`：是否脱敏敏感字段，默认 `false`，即记录原始 headers/body
 
 当前默认会生成两个文件：
 
-- `app.log`：正常业务日志、请求完成日志、上游请求/响应日志
-- `error.log`：错误级别日志、异常堆栈、上游失败日志
+- `app.log`：正常业务日志、请求完成日志、外部调用成功日志
+- `error.log`：错误级别日志、异常堆栈、外部调用失败日志
 
 日志是 **JSON 行** 格式，也就是一行一条记录。建议优先用 `jq`、`grep`、`tail -f` 来看，不要靠肉眼翻长文本。
 
@@ -51,16 +52,12 @@
 
 - `request_finished`：一次请求正常结束，或者业务层正常返回
 - `request_exception`：请求过程中抛异常，已经被异常处理器捕获
-- `upstream_request`：向 DJI 上游发起请求
-- `upstream_response`：收到 DJI 上游响应
-- `upstream_login_request`：向 DJI 登录上游
-- `upstream_login_response`：收到 DJI 登录响应
-- `upstream_refresh_request`：刷新上游 token
-- `upstream_refresh_response`：收到刷新结果
-- `upstream_retry`：因为认证失败等原因触发重试
-- `upstream_error`：上游超时、不可达、HTTP 错误、业务错误等
+- `external_call_started`：后端开始调用外部服务
+- `external_call_finished`：外部调用成功结束
+- `external_call_retry`：外部调用因认证失败等原因准备重试
+- `external_call_failed`：外部调用失败，包含异常或上游错误信息
 
-如果你在查 502、超时、上游接口异常，通常要同时看 `request_finished`、`request_exception` 和 `upstream_*` 事件。
+如果你在查 502、超时、上云接口异常，通常要同时看 `request_finished`、`request_exception` 和 `external_call_*` 事件。
 
 ## 常用查法
 
@@ -113,26 +110,36 @@ jq -c 'select(.event=="request_exception" and .request_id=="req-123")' logs/erro
 - `request.path`
 - `response.status_code`
 
-### 4. 查上游 DJI 调用
+### 4. 查外部调用
 
-如果是 DJI 相关接口，优先看上游调用事件：
+如果是 DJI、MinIO/S3 或其他后端外部调用问题，优先看外部调用事件：
 
 ```bash
-jq -c 'select(.event|startswith("upstream_"))' logs/app.log
-jq -c 'select(.event=="upstream_error")' logs/error.log
+jq -c 'select(.event|startswith("external_call_"))' logs/app.log logs/error.log
+jq -c 'select(.event=="external_call_failed")' logs/error.log
 ```
 
 如果你知道链路号，也可以直接按链路过滤：
 
 ```bash
-jq -c 'select(.request_id=="req-123" and (.event | startswith("upstream_")))' logs/app.log
+jq -c 'select(.request_id=="req-123" and (.event | startswith("external_call_")))' logs/app.log logs/error.log
 ```
 
-上游日志里通常会有：
+按服务过滤：
 
-- `request.method`
-- `request.path`
-- `request.url`
+```bash
+jq -c 'select(.service=="dji_cloud")' logs/app.log logs/error.log
+jq -c 'select(.service=="object_storage")' logs/app.log logs/error.log
+```
+
+外部调用日志里通常会有：
+
+- `service`：例如 `dji_cloud`、`object_storage`
+- `operation`：例如 `upstream_request`、`upstream_login_request`、`save`、`delete`、`url`
+- `method`
+- `url`
+- `path`
+- `call_id`
 - `request.headers`
 - `request.body`
 - `response.status_code`
@@ -148,7 +155,7 @@ jq -c 'select(.request_id=="req-123" and (.event | startswith("upstream_")))' lo
 
 特征：
 
-- `request_finished` 有记录，但没有对应的 `upstream_*`
+- `request_finished` 有记录，但没有对应的 `external_call_*`
 - 或者 `request_exception` 里是本地 Python 异常、校验异常、权限异常
 
 常见结论：
@@ -162,7 +169,7 @@ jq -c 'select(.request_id=="req-123" and (.event | startswith("upstream_")))' lo
 
 特征：
 
-- `upstream_error.type` 是 `timeout` 或 `unreachable`
+- `external_call_failed.error.type` 是 `timeout` 或 `unreachable`
 - `error.message` 里有 `timed out` 或 `unreachable`
 - `status_code` 通常是 `502`
 
@@ -176,8 +183,8 @@ jq -c 'select(.request_id=="req-123" and (.event | startswith("upstream_")))' lo
 
 特征：
 
-- `upstream_error.type` 是 `auth_error`
-- 先出现 `upstream_retry`
+- `external_call_failed.error.type` 是 `auth_error`
+- 先出现 `external_call_retry`
 - 随后又发起第二次上游请求
 
 常见结论：
@@ -190,7 +197,7 @@ jq -c 'select(.request_id=="req-123" and (.event | startswith("upstream_")))' lo
 
 特征：
 
-- `upstream_error.type` 是 `business_error`
+- `external_call_failed.error.type` 是 `business_error`
 - 上游已经返回了响应，但业务状态不允许继续
 
 常见结论：
@@ -207,15 +214,16 @@ jq -c 'select(.request_id=="req-123" and (.event | startswith("upstream_")))' lo
 1. 先拿到这次请求的 `request_id`
 2. 查 `app.log` 里的 `request_finished`
 3. 如果返回 5xx，再查 `error.log` 里的 `request_exception`
-4. 再查同一个 `request_id` 下的 `upstream_request` / `upstream_response` / `upstream_error`
-5. 如果看到 `upstream_retry`，再看第一次失败和第二次成功/失败的差别
+4. 再查同一个 `request_id` 下的 `external_call_started` / `external_call_finished` / `external_call_failed`
+5. 如果看到 `external_call_retry`，再看第一次失败和第二次成功/失败的差别
 6. 如果是 `capacity` 里找不到设备，再确认上游是否真的返回了设备、设备状态是否在线、是否被租户或 workspace 过滤
 
 ## 看日志时要注意什么
 
-- 请求体和响应体会被脱敏，常见敏感字段包括 `Authorization`、`Cookie`、`password`、`token`、`secret`、`mqtt_password`
+- 默认 `DJANGO_LOG_REDACT_PAYLOADS=false`，请求体、响应体和 headers 会尽量原样记录，包括 `Authorization`、`Cookie`、`password`、`token`、`secret`、`mqtt_password`
+- 如果部署环境需要避免凭据入日志，设置 `DJANGO_LOG_REDACT_PAYLOADS=true`
 - 大 body 会被截断，避免日志无限膨胀
-- 二进制内容只会记录类型和大小，不会直接展开
+- 二进制内容只会记录类型、大小和 sha256，不会直接展开
 - `error.log` 里的错误通常也会在 `app.log` 里出现一份，因为两者都挂在同一个 root logger 上
 - 如果日志文件滚动了，注意同时看 `app.log.1`、`error.log.1` 之类的历史文件
 
@@ -248,7 +256,7 @@ tail -f logs/error.log
 
 - 如果是业务参数问题，重点看 `request_finished` 里的 `request.body` 和 `response.body`
 - 如果是权限问题，重点看 `context.user_id`、`context.username`、`context.tenant_code`
-- 如果是上游问题，重点看 `upstream_error`、`upstream_response`、`duration_ms`、`attempt`
+- 如果是上云或外部调用问题，重点看 `external_call_failed`、`external_call_finished`、`service`、`operation`、`duration_ms`、`attempt`
 - 如果是 404 / 502 / timeout，一般先看 `error.log`，再回 `app.log` 复盘整条链路
 
 ## 快速命令模板
@@ -266,8 +274,14 @@ jq -c 'select(.request_id=="req-123")' logs/app.log logs/error.log
 # 4. 查某次请求的异常
 jq -c 'select(.event=="request_exception" and .request_id=="req-123")' logs/error.log
 
-# 5. 查某次请求的上游调用
-jq -c 'select(.request_id=="req-123" and (.event=="upstream_request" or .event=="upstream_response" or .event=="upstream_error"))' logs/app.log logs/error.log
+# 5. 查某次请求的外部调用
+jq -c 'select(.request_id=="req-123" and (.event | startswith("external_call_")))' logs/app.log logs/error.log
+
+# 6. 查最近对象存储失败
+jq -c 'select(.service=="object_storage" and .event=="external_call_failed")' logs/error.log
+
+# 7. 查最近 DJI 上云调用
+jq -c 'select(.service=="dji_cloud" and (.event | startswith("external_call_")))' logs/app.log logs/error.log
 ```
 
 这份文档的目标很简单：先把 `request_id` 找出来，再把 `app.log` 和 `error.log` 串起来看。只要链路号一致，通常就能定位问题落在哪一层。
