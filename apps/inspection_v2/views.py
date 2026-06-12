@@ -33,6 +33,7 @@ from apps.inspection_v2.models import (
     WaypointRouteCloudFile,
     WaypointRoute,
 )
+from apps.inspection_v2.route_kmz import parse_route_kmz
 from apps.inspection_v2.serializers import (
     ActiveFlightReadSerializer,
     CameraActionResponseSerializer,
@@ -111,20 +112,15 @@ ROUTE_MULTIPART_WRITE_REQUEST = OpenApiRequest(
         "properties": {
             "name": {"type": "string", "maxLength": 128},
             "status": {"type": "integer", "enum": [0, 1]},
-            "defaultAltitude": {"type": "string", "format": "decimal", "nullable": True},
-            "defaultSpeed": {"type": "string", "format": "decimal", "nullable": True},
             "coverImage": {"type": "string", "format": "binary"},
             "remark": {"type": "string"},
-            "waypoints": {"type": "string", "description": "JSON 数组字符串。"},
             "djiConnectionId": {"type": "integer"},
-            "waylineType": {"type": "integer", "enum": [0, 1, 2, 3]},
             "kmzFile": {"type": "string", "format": "binary"},
         },
-        "required": ["name", "waypoints", "djiConnectionId", "waylineType", "kmzFile"],
+        "required": ["name", "djiConnectionId", "kmzFile"],
     },
     encoding={
         "coverImage": {"contentType": "image/jpeg, image/png, image/webp"},
-        "waypoints": {"contentType": "application/json"},
         "kmzFile": {"contentType": "application/vnd.google-earth.kmz, application/zip"},
     },
 )
@@ -134,19 +130,15 @@ ROUTE_MULTIPART_UPDATE_REQUEST = OpenApiRequest(
         "properties": {
             "name": {"type": "string", "maxLength": 128},
             "status": {"type": "integer", "enum": [0, 1]},
-            "defaultAltitude": {"type": "string", "format": "decimal", "nullable": True},
-            "defaultSpeed": {"type": "string", "format": "decimal", "nullable": True},
             "coverImage": {"type": "string", "format": "binary"},
             "remark": {"type": "string"},
-            "waypoints": {"type": "string", "description": "JSON 数组字符串；只有同时上传 kmzFile 时才允许修改。"},
             "djiConnectionId": {"type": "integer"},
-            "waylineType": {"type": "integer", "enum": [0, 1, 2, 3]},
             "kmzFile": {"type": "string", "format": "binary"},
         },
+        "required": ["djiConnectionId", "kmzFile"],
     },
     encoding={
         "coverImage": {"contentType": "image/jpeg, image/png, image/webp"},
-        "waypoints": {"contentType": "application/json"},
         "kmzFile": {"contentType": "application/vnd.google-earth.kmz, application/zip"},
     },
 )
@@ -444,6 +436,7 @@ class RouteListCreateView(InspectionV2APIView):
         require_dispatcher(context)
         serializer = RouteCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        parsed_kmz = parse_route_kmz(serializer.validated_data["kmzFile"])
         route = None
         connection = None
         upload_payload = None
@@ -453,13 +446,13 @@ class RouteListCreateView(InspectionV2APIView):
                     owner_department=context.department,
                     name=serializer.validated_data["name"],
                     status=serializer.validated_data.get("status", 1),
-                    default_altitude=serializer.validated_data.get("defaultAltitude"),
-                    default_speed=serializer.validated_data.get("defaultSpeed"),
+                    default_altitude=parsed_kmz.default_altitude,
+                    default_speed=parsed_kmz.default_speed,
                     cover_image=serializer.validated_data.get("coverImage", ""),
                     remark=serializer.validated_data.get("remark", ""),
                     created_by_user=request.user,
                 )
-                _replace_waypoints(route, serializer.validated_data["waypoints"])
+                _replace_waypoints(route, parsed_kmz.waypoints)
                 connection = _dji_connection_for_route(route, serializer.validated_data["djiConnectionId"])
                 upload_payload = _upload_route_to_dji(
                     route=route,
@@ -470,7 +463,7 @@ class RouteListCreateView(InspectionV2APIView):
                     route=route,
                     connection=connection,
                     upload_payload=upload_payload,
-                    wayline_type=serializer.validated_data["waylineType"],
+                    wayline_type=parsed_kmz.wayline_type,
                     user=request.user,
                 )
         except IntegrityError as exc:
@@ -568,6 +561,7 @@ class RouteDetailView(InspectionV2APIView):
 
         serializer = RouteKmzUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        parsed_kmz = parse_route_kmz(serializer.validated_data["kmzFile"])
         connection = _dji_connection_for_route(route, serializer.validated_data["djiConnectionId"])
         old_cover_name = route.cover_image.name
         try:
@@ -592,12 +586,10 @@ class RouteDetailView(InspectionV2APIView):
         if "status" in serializer.validated_data:
             route.status = serializer.validated_data["status"]
             update_fields.append("status")
-        if "defaultAltitude" in serializer.validated_data:
-            route.default_altitude = serializer.validated_data["defaultAltitude"]
-            update_fields.append("default_altitude")
-        if "defaultSpeed" in serializer.validated_data:
-            route.default_speed = serializer.validated_data["defaultSpeed"]
-            update_fields.append("default_speed")
+        route.default_altitude = parsed_kmz.default_altitude
+        update_fields.append("default_altitude")
+        route.default_speed = parsed_kmz.default_speed
+        update_fields.append("default_speed")
         if "remark" in serializer.validated_data:
             route.remark = serializer.validated_data["remark"]
             update_fields.append("remark")
@@ -607,13 +599,12 @@ class RouteDetailView(InspectionV2APIView):
         try:
             with transaction.atomic():
                 route.save(update_fields=update_fields)
-                if "waypoints" in serializer.validated_data:
-                    _replace_waypoints(route, serializer.validated_data["waypoints"])
+                _replace_waypoints(route, parsed_kmz.waypoints)
                 _sync_route_cloud_file(
                     route=route,
                     connection=connection,
                     upload_payload=upload_payload,
-                    wayline_type=serializer.validated_data["waylineType"],
+                    wayline_type=parsed_kmz.wayline_type,
                     user=request.user,
                 )
         except IntegrityError as exc:
@@ -704,6 +695,12 @@ def _validated_mission_inputs(context, data):
     if not account_has_effective_qualification(pilot_account, FixedRole.PILOT):
         raise StandardConstraintConflict(msg="飞手缺少有效资质")
     drone_binding = usable_resource_binding(context, ResourceType.DRONE, data["droneId"])
+    try:
+        route_cloud_file = route.cloud_file
+    except WaypointRouteCloudFile.DoesNotExist as exc:
+        raise StandardConstraintConflict(msg="任务航线尚未同步到当前 DJI 连接，请重新上传/更新航线") from exc
+    if route_cloud_file.dji_connection_id != drone_binding.dji_connection_id:
+        raise StandardConstraintConflict(msg="任务航线尚未同步到当前 DJI 连接，请重新上传/更新航线")
     bindings = [drone_binding]
     drone = get_resource(ResourceType.DRONE, data["droneId"])
     dock = None
@@ -713,7 +710,10 @@ def _validated_mission_inputs(context, data):
     executor_id = data.get("executorId")
     payload_id = data.get("payloadId")
     if dock_id:
-        bindings.append(usable_resource_binding(context, ResourceType.DOCK, dock_id))
+        dock_binding = usable_resource_binding(context, ResourceType.DOCK, dock_id)
+        if dock_binding.dji_connection_id != drone_binding.dji_connection_id:
+            raise StandardConstraintConflict(msg="机场必须与无人机属于同一个 DJI 连接")
+        bindings.append(dock_binding)
         dock = get_resource(ResourceType.DOCK, dock_id)
     if executor_id:
         executor_binding = usable_resource_binding(context, ResourceType.GATEWAY, executor_id)
@@ -880,6 +880,37 @@ class MissionDetailView(InspectionV2APIView):
         )
         return Response(data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        operation_id="v2_inspection_missions_delete",
+        summary="删除巡检任务",
+        description="删除待执行巡检任务；该接口只删除本地 PENDING 任务，不取消 DJI job，也不停止直播。",
+        request=None,
+        responses={200: OpenApiResponse(response=RouteDeleteResponseSerializer, description="删除成功。")},
+    )
+    @transaction.atomic
+    def delete(self, request, id: int):
+        context = resolve_v2_context(request)
+        require_dispatcher(context)
+        mission = get_visible_mission_or_404(context, id)
+        if mission.creator_department_id != context.department.id:
+            raise StandardForbidden()
+        if mission.status != MissionStatus.PENDING:
+            raise StandardConstraintConflict(msg="只有待执行任务可以删除")
+        before_data = MissionReadSerializer(mission).data
+        mission_id = mission.id
+        owner_department = mission.primary_resource_owner_department
+        mission.delete()
+        log_v2_action(
+            request=request,
+            context=context,
+            action="delete_inspection_mission",
+            target_type="inspection_mission",
+            target_id=mission_id,
+            resource_owner_department=owner_department,
+            before_data=before_data,
+        )
+        return Response({"id": mission_id, "deleted": True}, status=status.HTTP_200_OK)
+
 
 class MissionStartView(InspectionV2APIView):
     @extend_schema(
@@ -907,9 +938,9 @@ class MissionPreflightCheckView(InspectionV2APIView):
         description=(
             "DJI 上游调用：该接口不会启动直播，也不会创建 DJI wayline flight task。"
             "它会基于本地 mission、航线 DJI 文件、资源绑定、在线状态和资源占用做启动前检查；"
-            "当本地前置条件通过时，会额外调用 DJI live capacity 这个只读能力，确认能否选出用于任务启动的直播视频源。"
-            "`executorId` 是本地执行端/网关资源 ID，会在真正启动任务时映射为 DJI `dock_sn/gateway_sn`。"
-            "preflight 不能证明设备类型一定支持真实 wayline flight task；若需要真实执行，仍以 `start` 的 DJI 返回为准。"
+            "当本地前置条件通过时，会额外调用 DJI live capacity 这个只读能力。"
+            "`dockId` 表示机场自动执行，`executorId` 表示 Pilot2/遥控器手动执行，二者必须且只能一个。"
+            "Dock 模式直播能力失败会阻断启动；Pilot2 模式直播失败只进入 warnings，不影响飞手在遥控器执行。"
         ),
         request=None,
         responses={200: OpenApiResponse(response=MissionPreflightCheckResponseSerializer, description="检查完成。")},

@@ -25,7 +25,7 @@
 4. 首屏初始化依次调用 `GET /api/v2/iam/me/context`、`GET /api/v2/system/menus/current`、`GET /api/v2/iam/me/profile`。
 5. access token 过期时调用 `POST /api/v2/iam/session/refresh`，成功后替换本地 token 并重试原请求。
 6. 资源页面按“DJI 连接 -> discover 发现资源 -> bindings 绑定资源 -> drones/docks/gateways/payloads 列表”接。
-7. 巡检页面按“上传 KMZ 航线 -> 创建任务 -> preflight-check -> start -> active-flights/telemetry/live/camera -> complete/cancel/fail/abort -> flight-records/media-files”接。
+7. 巡检页面按“上传 KMZ 航线 -> 选择无人机 -> 选择 `dockId` 或 `executorId` -> 创建任务 -> preflight-check -> start -> active-flights/telemetry/live/camera -> complete/cancel/fail/abort -> flight-records/media-files”接。`dockId` 是机场自动执行，会创建 DJI wayline flight task；`executorId` 是 Pilot2 手动执行，不会调用 `/flight-tasks`。
 
 ## 接口总览
 
@@ -124,11 +124,12 @@
 | `POST /api/v2/inspection/missions` | 创建任务。 |
 | `GET /api/v2/inspection/missions/{id}` | 读取任务详情。 |
 | `PUT /api/v2/inspection/missions/{id}` | 更新任务。 |
+| `DELETE /api/v2/inspection/missions/{id}` | 删除待执行任务；不取消 DJI job。 |
 | `POST /api/v2/inspection/missions/{id}/preflight-check` | 启动前检查；不下发 DJI 任务。 |
-| `POST /api/v2/inspection/missions/{id}/start` | 启动任务、直播和 DJI wayline flight task。 |
-| `POST /api/v2/inspection/missions/{id}/cloud-execution/refresh` | 手动刷新 DJI job 执行状态。 |
+| `POST /api/v2/inspection/missions/{id}/start` | 启动任务；Dock 模式创建 DJI flight task，Pilot2 模式只建本地执行记录。 |
+| `POST /api/v2/inspection/missions/{id}/cloud-execution/refresh` | 手动刷新 Dock 模式 DJI job 执行状态；Pilot2 模式不可用。 |
 | `POST /api/v2/inspection/missions/{id}/complete` | 完成任务并尝试同步媒体、停止直播。 |
-| `POST /api/v2/inspection/missions/{id}/cancel` | 取消任务；已有 `djiJobId` 时取消 DJI job。 |
+| `POST /api/v2/inspection/missions/{id}/cancel` | 取消任务；仅 Dock 模式已有 `djiJobId` 时取消 DJI job。 |
 | `POST /api/v2/inspection/missions/{id}/fail` | 标记任务失败。 |
 | `POST /api/v2/inspection/missions/{id}/abort` | 安全中止任务。 |
 | `GET /api/v2/inspection/active-flights` | 查询活动飞行列表。 |
@@ -259,15 +260,15 @@ POST /api/v1/manage/token/refresh
 | v2 接口 | 后端 DJI 调用 | 前端关注点 |
 | --- | --- | --- |
 | `POST /api/v2/resource/dji-connections/{id}/discover` | 登录/续期后调用 DJI 设备列表 | 返回的是发现结果，不等于已绑定资源；继续用 `resourceType/resourceId/djiConnectionId` 调绑定接口 |
-| `POST /api/v2/inspection/routes` | 上传 KMZ 到 DJI wayline，并获取下载 URL | 必须传真实 `kmzFile`；成功后用本地 `routeId` 创建任务 |
+| `POST /api/v2/inspection/routes` | 上传 DJI WPML KMZ 到 DJI wayline，并获取下载 URL | 必须传真实 `kmzFile`；后端自动解析航点和 `waylineType`，成功后用本地 `routeId` 创建任务 |
 | `GET /api/v2/inspection/routes/{id}` | 仅在 DJI KMZ 下载 URL 缺失或快过期时刷新 URL | 下载 KMZ 前先读详情，避免使用列表里的过期 URL |
-| `PUT /api/v2/inspection/routes/{id}` | 只有替换 `kmzFile` 时才重新上传 DJI | 不替换 KMZ 用 JSON；替换 KMZ 用 `multipart/form-data` |
+| `PUT /api/v2/inspection/routes/{id}` | 只有替换 `kmzFile` 时才重新上传 DJI | 不替换 KMZ 用 JSON；替换 KMZ 用 `multipart/form-data`，航点和 `waylineType` 由后端重新解析 |
 | `DELETE /api/v2/inspection/routes/{id}` | 本地删除后 best-effort 删除 DJI wayline 文件 | 成功响应以本地删除为准；DJI 清理失败不阻断 |
 | `POST /api/v2/inspection/missions/{id}/preflight-check` | 本地前置检查；条件满足时只读查询 DJI live capacity | 启动任务前先调用；`canStart=false` 时展示 `blockingReasons` |
-| `POST /api/v2/inspection/missions/{id}/start` | 查询直播能力、启动直播、创建 DJI wayline flight task | 任务必须待执行，航线已上传 DJI，资源在线且同 DJI 连接 |
-| `POST /api/v2/inspection/missions/{id}/cloud-execution/refresh` | 查询 DJI jobs 并按本地 `djiJobId` 匹配 | 无机场联调时可手动刷新任务进度；前端读 `data.cloudExecution` |
-| `POST /api/v2/inspection/missions/{id}/complete` | 尝试同步 DJI 媒体列表并停止直播 | 媒体同步失败不阻断完成；媒体没出现时再调用 `refresh-media` |
-| `POST /api/v2/inspection/missions/{id}/cancel` | 已有 `djiJobId` 时取消 DJI job，并停止直播 | DJI 取消失败会返回错误；停止直播失败不阻断取消 |
+| `POST /api/v2/inspection/missions/{id}/start` | Dock 模式启动直播并创建 DJI wayline flight task；Pilot2 模式只创建本地执行记录，直播 best-effort | 任务必须待执行；`dockId/executorId` 二选一；航线、无人机和执行资源必须同 DJI 连接 |
+| `POST /api/v2/inspection/missions/{id}/cloud-execution/refresh` | Dock 模式查询 DJI jobs 并按本地 `djiJobId` 匹配；Pilot2 模式返回 409 | 只有机场自动执行任务可用；Pilot2 手动任务通过 `complete/cancel/fail` 推进 |
+| `POST /api/v2/inspection/missions/{id}/complete` | Dock 按 `djiJobId` 同步媒体；Pilot2 绑定已回调落库且落在会话窗口内的媒体；随后停止直播 | 媒体同步失败不阻断完成；媒体没出现时再调用 `refresh-media` |
+| `POST /api/v2/inspection/missions/{id}/cancel` | Dock 且已有 `djiJobId` 时取消 DJI job；Pilot2 只更新本地状态并停止直播 | DJI 取消失败会返回错误；停止直播失败不阻断取消 |
 | `POST /api/v2/inspection/missions/{id}/fail` | 尝试停止任务直播 | 不主动取消 DJI job；以本地失败状态为准 |
 | `POST /api/v2/inspection/missions/{id}/abort` | 尝试停止任务直播 | 安全中止场景；不主动取消 DJI job |
 | `GET /api/v2/inspection/live/capacity` | 查询 DJI live capacity | 用 `cameras_list[].index` 取 `payloadIndex`，用视频能力组装 `videoId` |
@@ -297,14 +298,14 @@ GET /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}/url
 DELETE /api/v1/wayline/workspaces/{workspace_id}/waylines/{wayline_id}
 ```
 
-`POST /api/v2/inspection/routes` 会先上传 KMZ，DJI 返回 `wayline_id/download_url` 后，后端会再取一次可直接访问的下载地址，最终写入 `data.djiFile`。字段含义：
+`POST /api/v2/inspection/routes` 会先解析 DJI WPML KMZ，生成本地 `waypoints/defaultAltitude/defaultSpeed/waylineType`，再上传 KMZ。DJI 返回 `wayline_id/download_url` 后，后端会再取一次可直接访问的下载地址，最终写入 `data.djiFile`。字段含义：
 
 - `data.id`：本地航线 ID，创建任务时传这个 ID。
 - `data.djiFile.djiFileId`：DJI `wayline_id`，前端只展示或排查时使用。
 - `data.djiFile.downloadUrl`：DJI 上云侧 KMZ 下载地址，可能过期。
 - `data.djiFile.downloadUrlExpiresAt`：后端从签名 URL 推断的过期时间；如果为空，也建议下载前重新读详情。
 
-任务启动对应的 DJI 参考路径：
+任务启动对应的 DJI 参考路径。注意：`/flight-tasks` 只用于 Dock 自动模式，Pilot2 手动模式不会调用它：
 
 ```http
 GET /api/v1/manage/live/capacity
@@ -320,36 +321,43 @@ POST /api/v1/manage/live/streams/stop
 POST /api/v2/inspection/missions/{id}/preflight-check
 ```
 
-preflight 不会启动直播，也不会调用 DJI `flight-tasks` 下发航线任务。它会检查本地任务状态、航线是否已上传 DJI、无人机和执行端/网关是否绑定且在线、是否属于同一个 DJI 连接、资源是否被其他运行中任务占用；这些本地条件都通过后，才会调用只读的 DJI live capacity，确认能否选出 `selectedLiveVideoId`。
+preflight 不会启动直播，也不会调用 DJI `flight-tasks` 下发航线任务。它会检查本地任务状态、航线是否已上传 DJI、无人机和执行资源是否绑定且在线、是否属于同一个 DJI 连接、资源是否被其他运行中任务占用；这些本地条件都通过后，才会调用只读的 DJI live capacity。Dock 模式下直播能力失败会阻断启动；Pilot2 手动模式下直播能力失败只进入 `warnings`。
 
 响应重点字段：
 
 - `data.canStart`：是否可以让前端展示或启用“开始任务”按钮。
 - `data.blockingReasons[]`：阻断启动的原因；前端按 `message` 展示即可。
-- `data.warnings[]`：不阻断启动的提示。固定会包含 `WAYLINE_TASK_SUPPORT_UNVERIFIED`，表示 preflight 不下发真实 DJI 航线任务，不能提前证明当前设备类型一定支持 wayline flight task。
-- `data.execution.executorId`：本地执行端/网关资源 ID；它不是飞手 ID，也不是无人机 ID。真正启动时后端会把它对应的 `executorSn` 映射为 DJI `dock_sn/gateway_sn`。
-- `data.execution.selectedLiveVideoId`：preflight 从 live capacity 里选出的直播视频源；为空时不能启动。
+- `data.warnings[]`：不阻断启动的提示。Pilot2 手动模式下，直播能力查询失败或没有可用视频源会在这里提示，但不阻断飞手在遥控器执行航线。
+- `data.execution.executionMode`：`DOCK_AUTO` 表示机场自动执行，`PILOT2_MANUAL` 表示 Pilot2/遥控器手动执行。
+- `data.execution.dockId`：Dock 自动模式的机场资源 ID。
+- `data.execution.executorId`：Pilot2 手动模式的执行端/遥控器资源 ID；它不是飞手 ID，也不是无人机 ID。
+- `data.execution.selectedLiveVideoId`：preflight 从 live capacity 里选出的直播视频源；Pilot2 模式为空也可以启动，Dock 模式为空会阻断。
 
-如果 `canStart=false`，前端不要调用 `start`，应先让用户按 `blockingReasons` 修正资源、航线、执行端或设备在线状态。即使 `canStart=true`，真实 `start` 仍可能因为设备类型或现场状态返回 DJI 错误，例如当前网关不支持 wayline flight task。
+如果 `canStart=false`，前端不要调用 `start`，应先让用户按 `blockingReasons` 修正资源、航线、执行端或设备在线状态。即使 `canStart=true`，Dock 模式真实 `start` 仍可能因为设备类型或现场状态返回 DJI 错误；Pilot2 模式不会创建 DJI job。
 
-`POST /api/v2/inspection/missions/{id}/start` 会先从 capacity 里选择第一个可用视频源启动直播，再创建 DJI wayline flight task。后端字段映射：
+`POST /api/v2/inspection/missions/{id}/start` 按 `executionMode` 分流：
+
+- `DOCK_AUTO`：先从 capacity 里选择第一个可用视频源启动直播，再创建 DJI wayline flight task。
+- `PILOT2_MANUAL`：创建本地 `FlightSession` 和 `MissionCloudExecution`，`djiJobId=""`；直播是 best-effort，失败只写入 `liveStatus=FAILED/liveErrorMessage`，任务仍进入 `RUNNING`。
+
+Dock 自动模式的 DJI 字段映射：
 
 - 本地 `route.cloudFile.djiFileId` -> DJI `file_id`
-- 本地 `executor.deviceSn` -> DJI `dock_sn`
+- 本地 `dock.deviceSn` -> DJI `dock_sn`
 - 本地 `mission.name` -> DJI `name`
-- 本地 `route.cloudFile.waylineType` -> DJI `wayline_type`
+- 本地 `route.cloudFile.waylineType` -> DJI `wayline_type`，该值由后端从 KMZ `templateType` 推导
 - 固定 `task_type=0`，表示立即任务
-- 默认 `rth_altitude=100`、`out_of_control_action=0`
+- 默认 `rth_altitude=30`、`out_of_control_action=0`
 
-如果创建 DJI 任务失败，后端会尝试停止刚启动的直播，然后把 DJI 错误返回给前端。启动成功后，前端主要看任务详情里的云端执行字段和活动飞行列表；任务进度继续通过 MQTT `events/services_reply/status/osd` 和 v2 worker 写入的数据刷新。
+如果 Dock 模式创建 DJI 任务失败，后端会尝试停止刚启动的直播，然后把 DJI 错误返回给前端。启动成功后，前端主要看任务详情里的 `executionMode/cloudExecution` 和活动飞行列表；任务进度继续通过 MQTT `events/services_reply/status/osd` 和 v2 worker 写入的数据刷新。
 
-如果当前没有机场或没有稳定 MQTT 任务事件，可调用：
+Dock 模式如果没有稳定 MQTT 任务事件，可调用：
 
 ```http
 POST /api/v2/inspection/missions/{id}/cloud-execution/refresh
 ```
 
-该接口不接受 DJI job id，后端会用本地任务里的 `cloudExecution.djiJobId` 去 DJI jobs 列表匹配。响应仍是任务详情。前端重点读取：
+该接口不接受 DJI job id，后端会用本地任务里的 `cloudExecution.djiJobId` 去 DJI jobs 列表匹配。Pilot2 手动模式没有 DJI job，调用会返回 409，前端应使用 `complete/cancel/fail` 推进本地状态。Dock 模式响应仍是任务详情，前端重点读取：
 
 - `data.status`：任务本地状态。
 - `data.cloudExecution.status`：云端执行状态，可能是 `STARTING/RUNNING/COMPLETED/CANCELED/FAILED`。
@@ -366,7 +374,7 @@ POST /api/v1/manage/live/streams/stop
 GET /api/v1/media/workspaces/{workspace_id}/files
 ```
 
-`cancel` 只有在本地已有 `djiJobId` 时才会取消 DJI job；`complete/fail/abort` 不主动取消 DJI job，只会尝试停止直播。`complete` 会尝试查询 DJI media files 列表并按 `djiJobId` 关联照片/视频，但失败不阻断完成操作。
+`cancel` 只有在 Dock 自动模式且本地已有 `djiJobId` 时才会取消 DJI job；Pilot2 模式只更新本地状态并停止直播。`complete/fail/abort` 不主动取消 DJI job，只会尝试停止直播。Dock 模式 `complete` 会尝试查询 DJI media files 列表并按 `djiJobId` 关联照片/视频；Pilot2 模式只绑定已回调落库且同 workspace、同无人机、拍摄时间落在会话窗口内的媒体。媒体同步失败不阻断完成操作。
 
 直播接口对应的 DJI 参考路径：
 
@@ -404,7 +412,7 @@ GET /api/v1/media/workspaces/{workspace_id}/files/{file_id}/preview-url
 GET /api/v1/media/workspaces/{workspace_id}/files/{file_id}/playback-url
 ```
 
-`POST /api/v2/inspection/flight-records/{id}/refresh-media` 会用飞行记录关联任务的 `djiJobId` 过滤媒体列表，并写入本地 `CloudMediaFile`。`GET /api/v2/inspection/media-files` 和 `GET /api/v2/inspection/media-files/{id}` 只读本地媒体表，不会主动调用 DJI；如果要让新拍摄的照片/视频出现，先调用 `refresh-media` 或等待 DJI 回调/worker 写入。
+`POST /api/v2/inspection/flight-records/{id}/refresh-media` 对 Dock 模式会用飞行记录关联任务的 `djiJobId` 过滤媒体列表，并写入本地 `CloudMediaFile`；对 Pilot2 模式会按本地会话窗口绑定已回调落库的无 job 媒体。`GET /api/v2/inspection/media-files` 和 `GET /api/v2/inspection/media-files/{id}` 只读本地媒体表，不会主动调用 DJI；如果要让新拍摄的照片/视频出现，先调用 `refresh-media` 或等待 DJI 回调/worker 写入。
 
 如果媒体已经在本地列表里，但下载、预览或播放地址过期，调用：
 
@@ -430,15 +438,57 @@ POST /api/v2/inspection/media-files/{id}/refresh-url
 2. 通过 `GET/POST /api/v2/iam/accounts/{id}/profiles` 维护账号角色档案；飞手档案使用 `profileType=pilot`。
 3. 通过 `/api/v2/iam/accounts/{id}/qualifications` 维护账号资质；飞手证书资质同样使用 `profileType=pilot`。
 4. `POST /api/v2/inspection/routes` 创建航线并上传 KMZ。
-5. 通过 `GET /api/v2/iam/accounts?roleCode=pilot&profileType=pilot&qualified=true` 选择候选飞手账号，并在 `POST /api/v2/inspection/missions` 中提交 `pilotAccountProfileId`。
-6. `POST /api/v2/inspection/missions/{id}/preflight-check` 做启动前检查。
-7. `POST /api/v2/inspection/missions/{id}/start` 启动任务。
-8. `GET /api/v2/inspection/active-flights` 和 `GET /api/v2/inspection/telemetry/snapshots` 展示飞行过程；需要手动拉 DJI job 状态时调用 `cloud-execution/refresh`。
-9. `POST /api/v2/inspection/missions/{id}/complete`、`cancel`、`fail` 或 `abort` 结束任务。
+5. 通过 `GET /api/v2/resource/drones` 选择本地无人机资源，取 `id` 作为 `droneId`。
+6. 选择执行资源：机场自动执行从 `GET /api/v2/resource/docks` 取 `id` 作为 `dockId`；Pilot2 手动执行从 `GET /api/v2/resource/gateways` 取 `id` 作为 `executorId`。二者必须且只能提交一个。
+7. 通过 `GET /api/v2/iam/accounts?roleCode=pilot&profileType=pilot&qualified=true` 选择候选飞手账号，并在 `POST /api/v2/inspection/missions` 中提交 `pilotAccountProfileId`。
+8. `POST /api/v2/inspection/missions/{id}/preflight-check` 做启动前检查。
+9. `POST /api/v2/inspection/missions/{id}/start` 启动任务。
+10. `GET /api/v2/inspection/active-flights` 和 `GET /api/v2/inspection/telemetry/snapshots` 展示飞行过程；Dock 自动模式需要手动拉 DJI job 状态时调用 `cloud-execution/refresh`，Pilot2 手动模式不调用该接口。
+11. `POST /api/v2/inspection/missions/{id}/complete`、`cancel`、`fail` 或 `abort` 结束任务。
+
+创建 Pilot2 手动执行任务的最小请求体示例：
+
+```json
+{
+  "name": "巡检任务",
+  "routeId": 7,
+  "droneId": 1,
+  "executorId": 1,
+  "pilotAccountProfileId": 3,
+  "scheduledAt": null,
+  "remark": ""
+}
+```
+
+创建 Dock 自动执行任务时，把 `executorId` 换成 `dockId`：
+
+```json
+{
+  "name": "机场自动巡检任务",
+  "routeId": 7,
+  "droneId": 1,
+  "dockId": 2,
+  "pilotAccountProfileId": 3,
+  "scheduledAt": null,
+  "remark": ""
+}
+```
+
+`executorId` 是本系统本地 Pilot2 执行端/遥控器资源 ID，对应后端 `GatewayResource.id`，也就是 `GET /api/v2/resource/gateways` 返回列表项里的 `id`。它不是飞手 ID、无人机 ID、机场 ID、DJI workspace ID，也不是 DJI 原始设备 SN。代码里任务表字段 `InspectionMission.executor` 指向 `GatewayResource`；资源类型枚举里 `gateway` 的含义是“执行端/网关”。
+
+Pilot2 手动执行的实际动作发生在遥控器上：后端只要求任务航线已同步到同一 DJI workspace，飞手在 Pilot2 里选择航线并执行；平台通过 `start/complete/cancel/fail` 推进本地任务闭环。
+
+Dock 自动执行时，后端会读取机场资源的 `deviceSn`，并把它作为 DJI 上游 `/flight-tasks` 请求里的 `dock_sn` 使用。当前实现要求：
+
+- `dockId` 或 `executorId` 对应的执行资源必须已绑定且当前账号可用。
+- 航线 `routeSnapshot.djiFile.djiConnectionId`、`droneId` 对应无人机、所选 `dockId/executorId` 必须属于同一个 `djiConnectionId`。
+- 所选执行资源必须在线。
+
+如果任务同时提交 `dockId` 和 `executorId`，或二者都不提交，创建/更新接口会返回 400。
 
 飞手不再是独立资源；它是账号拥有 `pilot` 角色、有效 `pilot` 档案和有效 `pilot` 资质后的业务能力。旧 `/api/v2/workforce/pilots` 和 `/api/v2/inspection/pilot-profiles` 不再作为 v2 接口使用。
 
-创建航线使用 `multipart/form-data`，必须上传 `kmzFile`。更新航线时，如果不替换 KMZ，可以用 JSON 只更新名称、状态、备注、封面等基础信息；如果替换 KMZ，继续用 `multipart/form-data`。删除航线调用 `DELETE /api/v2/inspection/routes/{id}`，请求体为空；已被任何任务引用的航线不能删除，未引用航线删除成功后返回 `id` 和 `deleted=true`，前端从列表移除即可。
+创建航线使用 `multipart/form-data`，必须上传 DJI WPML `kmzFile`，并传 `name/djiConnectionId`。前端不要传 `waypoints/waylineType/defaultAltitude/defaultSpeed`，这些字段由后端解析 KMZ 后返回。更新航线时，如果不替换 KMZ，可以用 JSON 只更新名称、状态、备注、封面等基础信息；如果替换 KMZ，继续用 `multipart/form-data`，传 `djiConnectionId/kmzFile`。删除航线调用 `DELETE /api/v2/inspection/routes/{id}`，请求体为空；已被任何任务引用的航线不能删除，未引用航线删除成功后返回 `id` 和 `deleted=true`，前端从列表移除即可。
 
 航线保存成功后会返回两个可访问 URL：
 

@@ -13,7 +13,7 @@ API v2 文档。前端只调用 `/api/v2/*`；旧 API v1 已移除。文档页�
 
 - IAM：部门、账号、角色、权限和菜单先完成；飞手不是独立资源，而是账号具备 `pilot` 角色、`pilot` 档案和有效 `pilot` 资质后的能力。
 - 资源发现与绑定：按“创建 DJI 连接 -> discover 发现资源 -> bindings 绑定资源 -> drones/docks/gateways/payloads 列表展示”接入；`discover` 返回发现结果，资源列表只返回已绑定资源。
-- 巡检：按“航线 KMZ 上传 -> 创建任务 -> preflight-check -> start -> active-flights/telemetry/live/camera -> complete/cancel/fail/abort -> flight-records/media-files”接入。
+- 巡检：按“航线 KMZ 上传 -> 选择无人机 -> 选择 dockId 或 executorId -> 创建任务 -> preflight-check -> start -> active-flights/telemetry/live/camera -> complete/cancel/fail/abort -> flight-records/media-files”接入。`dockId` 是机场自动执行，会创建 DJI wayline flight task；`executorId` 是 Pilot2 手动执行，不会调用 `/flight-tasks`。
 - 系统：`GET /api/v2/system/menus/current` 驱动当前用户导航和按钮；日志接口用于后台审计页。
 
 ## 标准响应
@@ -33,7 +33,7 @@ DJI OSD、state、events、services_reply、status 会被 v2 worker 记录为最
 
 ## DJI 上游边界
 
-前端不要直接调用 DJI 上云 v1 manage、wayline、media 协议路径。这些是 DJI 上游协议，不是本系统业务 API。后端会通过 v2 接口代理登录、续期、资源发现、航线上传、任务下发、直播、相机控制和媒体 URL 刷新。
+前端不要直接调用 DJI 上云 v1 manage、wayline、media 协议路径。这些是 DJI 上游协议，不是本系统业务 API。后端会通过 v2 接口代理登录、续期、资源发现、航线上传、Dock 任务下发、Pilot2 本地任务闭环、直播、相机控制和媒体 URL 刷新。
 
 更完整的前端使用流程见仓库文档：`docs/api-v2-frontend-guide.md`。
 """.strip()
@@ -164,7 +164,7 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
 
 如果请求体不包含 `kmzFile`，该接口只更新本地航线名称、状态、备注或封面，不调用 DJI。只要传了 `kmzFile`，后端会重新上传 KMZ 到 DJI wayline 文件库、获取新的下载地址、替换本地 `djiFile`，并 best-effort 删除旧 DJI 航线文件。
 
-前端替换 KMZ 时必须使用 `multipart/form-data`，同时传 `djiConnectionId/waylineType/kmzFile`；不替换 KMZ 时使用 JSON，不能传执行相关字段。
+前端替换 KMZ 时必须使用 `multipart/form-data`，同时传 `djiConnectionId/kmzFile`；不替换 KMZ 时使用 JSON，不能传执行相关字段。航点和 `waylineType` 由后端解析 DJI WPML KMZ 得到，前端不要传。
 """.strip(),
     _operation_key("DELETE", "/api/v2/inspection/routes/{id}"): """
 ### DJI 上游调用
@@ -174,35 +174,35 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
     _operation_key("POST", "/api/v2/inspection/missions/{id}/start"): """
 ### DJI 上游调用
 
-启动任务会连续调用 DJI 直播能力、启动直播和创建 wayline flight task。后端用本地任务绑定的 `route.cloudFile.djiFileId` 作为 DJI `file_id`，用本地执行端 `executor.deviceSn` 作为 DJI `dock_sn/gateway_sn`，并自动选择第一个可用 `liveVideoId` 启动直播。
+启动任务按 `executionMode` 分流。`DOCK_AUTO` 会连续调用 DJI 直播能力、启动直播和创建 wayline flight task；后端用本地任务绑定的 `route.cloudFile.djiFileId` 作为 DJI `file_id`，用本地机场 `dock.deviceSn` 作为 DJI `dock_sn`。`PILOT2_MANUAL` 只创建本地 `FlightSession/MissionCloudExecution`，确保航线已同步到同一 DJI workspace 供 Pilot2 读取，绝不调用 `/flight-tasks`。
 
-前置要求：任务必须是 `PENDING`，航线已经上传 DJI，无人机和执行端在线，二者和航线属于同一个 DJI 连接，且相关资源没有被其他运行中任务占用。创建 DJI 任务失败时后端会尝试停止刚启动的直播，并把上游错误返回给前端。
+前置要求：任务必须是 `PENDING`，创建或编辑任务时 `dockId/executorId` 必须二选一，航线已经上传 DJI，无人机、航线和所选执行资源属于同一个 DJI 连接，且相关资源没有被其他运行中任务占用。Pilot2 模式下直播是辅助能力，启动直播失败不会阻断任务进入 `RUNNING`；Dock 模式创建 DJI 任务失败时后端会尝试停止刚启动的直播，并把上游错误返回给前端。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/missions/{id}/preflight-check"): """
 ### DJI 上游调用
 
-该接口是任务启动前检查，不会启动直播，也不会创建 DJI wayline flight task。它先检查本地 mission、DJI 航线文件、资源绑定、在线状态、DJI 连接一致性和资源占用；本地条件通过后，只调用 DJI live capacity 这个只读能力，确认能否选出 `selectedLiveVideoId`。
+该接口是任务启动前检查，不会启动直播，也不会创建 DJI wayline flight task。它先检查本地 mission、DJI 航线文件、资源绑定、在线状态、DJI 连接一致性和资源占用；本地条件通过后，只调用 DJI live capacity 这个只读能力。Dock 模式下直播能力失败会阻断启动；Pilot2 手动模式下直播能力失败只进入 `warnings`。
 
-响应里的 `canStart=false` 表示前端不应继续调用 `start`，应展示 `blockingReasons`。`executorId` 是本地执行端/网关资源 ID，不是飞手 ID；真正启动时会映射为 DJI `dock_sn/gateway_sn`。preflight 不下发真实航线任务，因此不能证明当前设备类型一定支持 wayline flight task。
+响应里的 `canStart=false` 表示前端不应继续调用 `start`，应展示 `blockingReasons`。`execution.executionMode` 为 `DOCK_AUTO` 时 `dockId` 对应机场自动执行；为 `PILOT2_MANUAL` 时 `executorId` 对应遥控器/Pilot2 执行端，不是飞手 ID，也不是 DJI job。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/missions/{id}/cloud-execution/refresh"): """
 ### DJI 上游调用
 
-该接口按本地任务找到 `MissionCloudExecution.djiJobId`，再调用 DJI wayline jobs 列表并匹配同一个 job。前端不传 DJI job id，也不要直接调用上游 jobs 接口；后端会用任务上的 DJI 连接和 workspace 处理。
+该接口只适用于 `DOCK_AUTO` 且存在 `MissionCloudExecution.djiJobId` 的任务：后端调用 DJI wayline jobs 列表并匹配同一个 job。`PILOT2_MANUAL` 没有 DJI job，调用本接口会返回 409，前端应让用户通过 `complete/cancel/fail` 推进本地状态。
 
 如果 DJI job 仍在 `PENDING/IN_PROGRESS/PAUSED`，后端只刷新 `data.cloudExecution.status/progressPercent/lastEventAt`，任务保持运行中。如果 DJI job 已 `SUCCESS/CANCEL/FAILED`，后端会复用事件闭环：更新任务和飞行会话、生成飞行记录、按 `djiJobId` 同步媒体，并尝试停止直播。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/missions/{id}/complete"): """
 ### DJI 上游调用
 
-完成任务主要更新本地任务、飞行会话和飞行记录；如果任务存在 DJI 执行记录，后端会尝试拉取 DJI 媒体列表并按 `djiJobId` 关联照片/视频，然后停止任务启动时创建的直播。媒体同步和停止直播失败不会阻断完成操作。
+完成任务主要更新本地任务、飞行会话和飞行记录。Dock 模式会按 `djiJobId` 同步媒体；Pilot2 模式没有 `djiJobId`，只会把已回调落库且满足同 workspace、同无人机、拍摄时间落在会话窗口内的媒体绑定到飞行记录。媒体同步和停止直播失败不会阻断完成操作。
 
 前端收到成功后刷新任务、活动飞行、飞行记录和媒体列表；如果媒体暂时没有出现，可再调用飞行记录的 `refresh-media` 接口。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/missions/{id}/cancel"): """
 ### DJI 上游调用
 
-取消任务在存在 DJI `djiJobId` 时会调用 DJI wayline job 删除/取消能力，然后停止任务直播并更新本地状态。DJI 取消失败会返回上游错误；停止直播失败只记录在本地云端执行状态，不阻断取消结果。
+取消任务只有在 `DOCK_AUTO` 且存在 DJI `djiJobId` 时才调用 DJI wayline job 删除/取消能力；Pilot2 模式只更新本地状态并停止任务直播。DJI 取消失败会返回上游错误；停止直播失败只记录在本地云端执行状态，不阻断取消结果。
 
 前端可传 `reason` 作为取消原因；成功后刷新任务列表、活动飞行列表和飞行记录。
 """.strip(),
@@ -257,7 +257,7 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
     _operation_key("POST", "/api/v2/inspection/flight-records/{id}/refresh-media"): """
 ### DJI 上游调用
 
-该接口会根据飞行记录关联的任务执行信息，调用 DJI media files 列表，按本次任务的 `djiJobId` 过滤照片/视频并写入本地媒体表。响应里的 `synced/photoCount/videoCount` 是本次刷新后的本地统计。
+该接口会根据飞行记录关联的任务执行信息分流。Dock 模式会调用 DJI media files 列表，按本次任务的 `djiJobId` 过滤照片/视频并写入本地媒体表；Pilot2 模式没有 DJI job，只按同 workspace、同无人机和会话时间窗口绑定已回调落库的媒体。响应里的 `synced/photoCount/videoCount` 是本次刷新后的本地统计。
 
 如果飞行记录没有 DJI 执行记录，则不会调用 DJI，只重新计算本地媒体数量。该接口不单独调用 DJI playback 或 preview URL；播放、预览、下载地址来自 DJI 媒体列表或回调中已保存的字段。
 """.strip(),
@@ -317,6 +317,8 @@ def _domain_response(method: str, path: str) -> str:
     if "/routes" in path:
         return "返回航线基础信息、航点、MinIO 封面预签名 URL 和 DJI 云端 KMZ 文件字段；详情会按过期时间刷新 `djiFile.downloadUrl`。"
     if "/missions" in path:
+        if "/missions/" in path and method.upper() == "DELETE":
+            return "返回被删除的本地任务 ID 和 `deleted=true`；该接口只删除待执行任务，不取消 DJI job。"
         if path.endswith("/preflight-check"):
             return "返回 `canStart`、`blockingReasons`、`warnings`、逐项检查结果和执行端/航线/直播源映射信息；不会改变任务状态。"
         if path.endswith("/cloud-execution/refresh"):
@@ -341,17 +343,19 @@ def _request_notes(method: str, path: str) -> str:
     if path.endswith("/bindings"):
         return "必须传 `resourceType`、`resourceId`、`djiConnectionId`；这些值可直接从 discover 响应资源项读取。"
     if "/routes" in path and method.upper() == "POST":
-        return "使用 `multipart/form-data`，必须上传 `kmzFile`；`waypoints` 以 JSON 字符串传入。"
+        return "使用 `multipart/form-data`，必须上传 `kmzFile`；航点和 `waylineType` 由后端解析 DJI WPML KMZ 得到。"
     if "/routes/" in path and method.upper() == "PUT":
         return "不替换 KMZ 时可用 JSON 更新基础信息；替换 KMZ 时用 `multipart/form-data`。"
     if "/routes/" in path and method.upper() == "DELETE":
         return "请求体固定为空；只有航线归属部门的调度员或平台超管可删除，且已被任何任务引用的航线不能删除。"
+    if "/missions/" in path and method.upper() == "DELETE":
+        return "请求体固定为空；只有创建部门调度员可删除，且任务必须仍是 `PENDING`。运行中或终态任务应使用取消、失败、安全中止或完成接口。"
     if "/missions" in path and path.endswith("/start"):
-        return "请求体为空对象；后端会启动 DJI 任务、直播和本地飞行会话。"
+        return "请求体为空对象；Dock 模式会启动 DJI 任务和直播，Pilot2 模式只创建本地飞行会话并 best-effort 启动直播。"
     if "/missions" in path and path.endswith("/preflight-check"):
         return "请求体为空对象；该接口只做启动前检查，条件满足时会只读查询 DJI live capacity，不会下发 DJI 航线任务。"
     if "/missions" in path and path.endswith("/cloud-execution/refresh"):
-        return "请求体为空对象；后端按本地 `djiJobId` 查询 DJI jobs，不允许前端传任意 job id。"
+        return "请求体为空对象；仅 Dock 模式按本地 `djiJobId` 查询 DJI jobs，不允许前端传任意 job id。Pilot2 模式会返回 409。"
     if "/missions/" in path and method.upper() == "POST":
         return "请求体可为空对象；取消/失败接口可传 `reason` 便于审计和前端展示。"
     if "/live/" in path:
@@ -383,11 +387,11 @@ def _next_step(method: str, path: str) -> str:
     if path.endswith("/routes") and method.upper() == "POST":
         return "使用返回的 route id 创建任务；下载 KMZ 前先读详情获取最新 `djiFile.downloadUrl`。"
     if "/missions" in path and method.upper() == "POST" and path.endswith("/missions"):
-        return "任务创建后先调用 `POST /api/v2/inspection/missions/{id}/preflight-check`，通过后再调用 `start`。"
+        return "`dockId` 与 `executorId` 必须二选一：Dock 自动执行用 `dockId`，Pilot2 手动执行用 `executorId`。创建后先调用 `preflight-check`，通过后再调用 `start`。"
     if path.endswith("/preflight-check"):
         return "`data.canStart=true` 时再启用 `POST /api/v2/inspection/missions/{id}/start`；否则展示 `blockingReasons` 并引导用户修正资源或设备状态。"
     if path.endswith("/cloud-execution/refresh"):
-        return "用返回的 `cloudExecution` 刷新任务进度；若任务进入终态，再刷新飞行记录和媒体列表。"
+        return "仅 Dock 自动模式可用；Pilot2 手动模式没有 DJI job，应通过 `complete/cancel/fail` 推进本地状态。"
     if path.endswith("/start"):
         return "轮询或订阅 `/active-flights`、`/telemetry/snapshots` 和 MQTT 消息展示执行过程。"
     if any(path.endswith(suffix) for suffix in ("/complete", "/cancel", "/fail", "/abort")):
@@ -435,9 +439,7 @@ def request_example_value(method: str, path: str, media_type: str):
         return {
             "name": "南区巡检航线",
             "djiConnectionId": 1,
-            "waylineType": 0,
             "kmzFile": "<binary: route.kmz>",
-            "waypoints": '[{"lat":22.25,"lng":113.52,"alt":80}]',
             "coverImage": "<binary: cover.png>",
             "remark": "前端联调示例",
         }
@@ -445,9 +447,7 @@ def request_example_value(method: str, path: str, media_type: str):
         return {
             "name": "南区巡检航线-更新",
             "djiConnectionId": 1,
-            "waylineType": 0,
             "kmzFile": "<binary: route.kmz>",
-            "waypoints": '[{"lat":22.25,"lng":113.52,"alt":80}]',
         }
 
     if path.endswith("/session/login"):
@@ -511,11 +511,11 @@ def request_example_value(method: str, path: str, media_type: str):
     if path.endswith("/share-groups/{id}/resources/{resource_share_id}"):
         return {"permissions": ["view", "monitor"]}
     if path.endswith("/inspection/routes"):
-        return {"name": "南区巡检航线", "djiConnectionId": 1, "waylineType": 0, "waypoints": [{"lat": 22.25, "lng": 113.52, "alt": 80}]}
+        return {"name": "南区巡检航线", "djiConnectionId": 1, "kmzFile": "<binary: route.kmz>"}
     if path.endswith("/inspection/routes/{id}"):
         return {"name": "南区巡检航线-更新", "status": 1, "remark": "仅更新基础信息"}
     if path.endswith("/inspection/missions"):
-        return {"name": "南区巡检任务", "routeId": 1, "droneId": 1, "pilotAccountProfileId": 1, "scheduledAt": "2026-06-04T10:00:00+08:00"}
+        return {"name": "南区巡检任务", "routeId": 1, "droneId": 1, "executorId": 2, "pilotAccountProfileId": 1, "scheduledAt": "2026-06-04T10:00:00+08:00"}
     if path.endswith("/inspection/missions/{id}"):
         return {"name": "南区巡检任务", "status": "PENDING", "remark": "前端联调示例"}
     if path.endswith("/cloud-execution/refresh"):

@@ -181,6 +181,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
         }
         self.assertTrue(expected_paths.issubset(set(paths)))
         self.assertIn("delete", paths["/api/v2/inspection/routes/{id}"])
+        self.assertIn("delete", paths["/api/v2/inspection/missions/{id}"])
 
         removed_paths = {
             "/api/v2/__internal__/dji/sync/devices",
@@ -308,6 +309,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("POST", "/api/v2/resource/share-groups"): "201",
             ("POST", "/api/v2/resource/share-groups/{id}/departments"): "201",
             ("POST", "/api/v2/resource/share-groups/{id}/resources"): "201",
+            ("DELETE", "/api/v2/inspection/missions/{id}"): "200",
             ("DELETE", "/api/v2/resource/bindings/{id}"): "200",
             ("DELETE", "/api/v2/resource/share-groups/{id}/departments/{department_id}"): "200",
             ("DELETE", "/api/v2/resource/share-groups/{id}/resources/{resource_share_id}"): "200",
@@ -377,13 +379,14 @@ class ApiV2SchemaBoundaryTests(TestCase):
             content_type="multipart/form-data",
         )
         self.assertIn("coverImage", post_multipart)
-        self.assertIn("waypoints", post_multipart)
         self.assertIn("djiConnectionId", post_multipart)
-        self.assertIn("waylineType", post_multipart)
         self.assertIn("kmzFile", post_multipart)
+        self.assertNotIn("waypoints", post_multipart)
+        self.assertNotIn("waylineType", post_multipart)
+        self.assertNotIn("defaultAltitude", post_multipart)
+        self.assertNotIn("defaultSpeed", post_multipart)
         self.assertEqual(post_multipart["coverImage"]["type"], "string")
         self.assertEqual(post_multipart["coverImage"]["format"], "binary")
-        self.assertEqual(post_multipart["waypoints"]["type"], "string")
         self.assertEqual(post_multipart["kmzFile"]["format"], "binary")
 
         put_content = schema["paths"]["/api/v2/inspection/routes/{id}"]["put"]["requestBody"]["content"]
@@ -403,8 +406,12 @@ class ApiV2SchemaBoundaryTests(TestCase):
             method="put",
             content_type="multipart/form-data",
         )
-        self.assertIn("waypoints", put_multipart)
         self.assertIn("kmzFile", put_multipart)
+        self.assertIn("djiConnectionId", put_multipart)
+        self.assertNotIn("waypoints", put_multipart)
+        self.assertNotIn("waylineType", put_multipart)
+        self.assertNotIn("defaultAltitude", put_multipart)
+        self.assertNotIn("defaultSpeed", put_multipart)
 
     def test_v2_schema_should_document_camera_action_and_live_switch_fields(self):
         schema = self._schema()
