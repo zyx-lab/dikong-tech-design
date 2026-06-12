@@ -52,6 +52,11 @@ class CloudExecutionStatus(models.TextChoices):
     FAILED = "FAILED", "失败"
 
 
+class MissionExecutionMode(models.TextChoices):
+    DOCK_AUTO = "DOCK_AUTO", "机场自动执行"
+    PILOT2_MANUAL = "PILOT2_MANUAL", "Pilot2 手动执行"
+
+
 class LiveStreamStatus(models.TextChoices):
     STOPPED = "STOPPED", "已停止"
     STARTING = "STARTING", "启动中"
@@ -194,6 +199,14 @@ class InspectionMission(TimeStampedModel):
             models.Index(fields=["primary_resource_owner_department", "status"], name="idx_v2_mission_owner_status"),
         ]
 
+    @property
+    def execution_mode(self) -> str:
+        if self.dock_id:
+            return MissionExecutionMode.DOCK_AUTO
+        if self.executor_id:
+            return MissionExecutionMode.PILOT2_MANUAL
+        return ""
+
 
 class MissionResourceAssignment(TimeStampedModel):
     mission = models.ForeignKey(InspectionMission, on_delete=models.CASCADE, related_name="resource_assignments")
@@ -305,6 +318,11 @@ class MissionCloudExecution(TimeStampedModel):
         related_name="mission_executions",
     )
     workspace_id = models.CharField(max_length=128)
+    execution_mode = models.CharField(
+        max_length=16,
+        choices=MissionExecutionMode.choices,
+        default=MissionExecutionMode.PILOT2_MANUAL,
+    )
     dji_job_id = models.CharField(max_length=128, blank=True, default="")
     executor_sn = models.CharField(max_length=128)
     drone_sn = models.CharField(max_length=128)

@@ -4,7 +4,6 @@ import threading
 from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
-from django.conf import settings
 from django.core.wsgi import get_wsgi_application
 from django.test import override_settings
 
@@ -27,7 +26,6 @@ class MockDjiUpstreamTestMixin:
     _mock_server_thread = None
     _mock_server_url = ""
     _mock_settings = None
-    _old_dji_upstream_base_url = ""
 
     @classmethod
     def setUpClass(cls):
@@ -48,8 +46,6 @@ class MockDjiUpstreamTestMixin:
             cls._mock_server = server
             cls._mock_server_thread = thread
             cls._mock_server_url = f"http://127.0.0.1:{server.server_port}/__mock-dji__"
-            cls._old_dji_upstream_base_url = settings.DJI_UPSTREAM_BASE_URL
-            settings.DJI_UPSTREAM_BASE_URL = cls._mock_server_url
         except Exception:
             cls._mock_settings.disable()
             raise
@@ -57,7 +53,6 @@ class MockDjiUpstreamTestMixin:
     @classmethod
     def tearDownClass(cls):
         try:
-            settings.DJI_UPSTREAM_BASE_URL = cls._old_dji_upstream_base_url
             if cls._mock_server is not None:
                 cls._mock_server.shutdown()
                 cls._mock_server.server_close()

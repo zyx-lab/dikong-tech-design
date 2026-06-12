@@ -195,7 +195,7 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
     _operation_key("POST", "/api/v2/inspection/missions/{id}/complete"): """
 ### DJI 上游调用
 
-完成任务主要更新本地任务、飞行会话和飞行记录。Dock 模式会按 `djiJobId` 同步媒体；Pilot2 模式没有 `djiJobId`，只会把已回调落库且满足同 workspace、同无人机、拍摄时间落在会话窗口内的媒体绑定到飞行记录。媒体同步和停止直播失败不会阻断完成操作。
+完成任务主要更新本地任务、飞行会话和飞行记录。Dock 模式会按 `djiJobId` 同步媒体；Pilot2 模式没有 `djiJobId`，会拉取 DJI media files 中的无 job 媒体，并结合已回调落库且满足同 workspace、同无人机、拍摄时间落在会话窗口内的媒体绑定到飞行记录。媒体同步和停止直播失败不会阻断完成操作。
 
 前端收到成功后刷新任务、活动飞行、飞行记录和媒体列表；如果媒体暂时没有出现，可再调用飞行记录的 `refresh-media` 接口。
 """.strip(),
@@ -257,7 +257,7 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
     _operation_key("POST", "/api/v2/inspection/flight-records/{id}/refresh-media"): """
 ### DJI 上游调用
 
-该接口会根据飞行记录关联的任务执行信息分流。Dock 模式会调用 DJI media files 列表，按本次任务的 `djiJobId` 过滤照片/视频并写入本地媒体表；Pilot2 模式没有 DJI job，只按同 workspace、同无人机和会话时间窗口绑定已回调落库的媒体。响应里的 `synced/photoCount/videoCount` 是本次刷新后的本地统计。
+该接口会根据飞行记录关联的任务执行信息分流。Dock 模式会调用 DJI media files 列表，按本次任务的 `djiJobId` 过滤照片/视频并写入本地媒体表；Pilot2 模式没有 DJI job，会拉取 DJI media files 中的无 job 媒体，并结合已回调落库媒体，按同 workspace、同无人机和会话时间窗口绑定。响应里的 `synced/photoCount/videoCount` 是本次刷新后的本地统计。
 
 如果飞行记录没有 DJI 执行记录，则不会调用 DJI，只重新计算本地媒体数量。该接口不单独调用 DJI playback 或 preview URL；播放、预览、下载地址来自 DJI 媒体列表或回调中已保存的字段。
 """.strip(),

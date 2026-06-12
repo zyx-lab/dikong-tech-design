@@ -1,4 +1,3 @@
-import json
 import re
 import zipfile
 
@@ -14,6 +13,7 @@ from apps.inspection_v2.models import (
     InspectionFlightRecord,
     InspectionMission,
     MissionCloudExecution,
+    MissionExecutionMode,
     MissionResourceAssignment,
     MissionStatus,
     Waypoint,
@@ -107,38 +107,18 @@ class RouteDeleteResponseSerializer(serializers.Serializer):
 class RouteBaseWriteSerializer(StrictSerializer):
     name = serializers.CharField(max_length=128)
     status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
-    defaultAltitude = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
-    defaultSpeed = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
     coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
     remark = serializers.CharField(required=False, allow_blank=True)
-    waypoints = serializers.ListField(child=WaypointWriteSerializer(), allow_empty=False)
 
     def to_internal_value(self, data):
         if isinstance(data, dict):
             has_empty_cover = "coverImage" in data and (data.get("coverImage") == "" or data.get("coverImage") is None)
-            has_string_waypoints = isinstance(data.get("waypoints"), str)
         else:
             has_empty_cover = False
-            has_string_waypoints = False
-        if isinstance(data, dict) and (has_string_waypoints or has_empty_cover):
+        if isinstance(data, dict) and has_empty_cover:
             data = {key: data.get(key) for key in data.keys()}
-            if has_empty_cover:
-                data.pop("coverImage", None)
-        if isinstance(data, dict) and isinstance(data.get("waypoints"), str):
-            try:
-                parsed_waypoints = json.loads(data["waypoints"])
-            except json.JSONDecodeError as exc:
-                raise serializers.ValidationError({"waypoints": ["waypoints 必须是 JSON 数组"]}) from exc
-            if not isinstance(parsed_waypoints, list):
-                raise serializers.ValidationError({"waypoints": ["waypoints 必须是 JSON 数组"]})
-            data["waypoints"] = parsed_waypoints
+            data.pop("coverImage", None)
         return super().to_internal_value(data)
-
-    def validate_waypoints(self, value):
-        sequences = [item["sequence"] for item in value]
-        if len(sequences) != len(set(sequences)):
-            raise serializers.ValidationError("航点 sequence 不能重复")
-        return sorted(value, key=lambda item: item["sequence"])
 
     def validate_coverImage(self, value):
         return validate_route_cover_upload(value)
@@ -163,7 +143,6 @@ def validate_route_kmz_upload(value):
 
 class RouteCreateSerializer(RouteBaseWriteSerializer):
     djiConnectionId = serializers.IntegerField(min_value=1)
-    waylineType = serializers.ChoiceField(choices=WaylineType.choices)
     kmzFile = serializers.FileField()
 
     def validate_kmzFile(self, value):
@@ -189,41 +168,20 @@ class RouteMetadataUpdateSerializer(StrictSerializer):
 class RouteKmzUpdateSerializer(StrictSerializer):
     name = serializers.CharField(max_length=128, required=False)
     status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
-    defaultAltitude = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
-    defaultSpeed = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
     coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
     remark = serializers.CharField(required=False, allow_blank=True)
-    waypoints = serializers.ListField(child=WaypointWriteSerializer(), allow_empty=False, required=False)
     djiConnectionId = serializers.IntegerField(min_value=1)
-    waylineType = serializers.ChoiceField(choices=WaylineType.choices)
     kmzFile = serializers.FileField()
 
     def to_internal_value(self, data):
         if isinstance(data, dict):
             has_empty_cover = "coverImage" in data and (data.get("coverImage") == "" or data.get("coverImage") is None)
-            has_string_waypoints = isinstance(data.get("waypoints"), str)
         else:
             has_empty_cover = False
-            has_string_waypoints = False
-        if isinstance(data, dict) and (has_string_waypoints or has_empty_cover):
+        if isinstance(data, dict) and has_empty_cover:
             data = {key: data.get(key) for key in data.keys()}
-            if has_empty_cover:
-                data.pop("coverImage", None)
-        if isinstance(data, dict) and isinstance(data.get("waypoints"), str):
-            try:
-                parsed_waypoints = json.loads(data["waypoints"])
-            except json.JSONDecodeError as exc:
-                raise serializers.ValidationError({"waypoints": ["waypoints 必须是 JSON 数组"]}) from exc
-            if not isinstance(parsed_waypoints, list):
-                raise serializers.ValidationError({"waypoints": ["waypoints 必须是 JSON 数组"]})
-            data["waypoints"] = parsed_waypoints
+            data.pop("coverImage", None)
         return super().to_internal_value(data)
-
-    def validate_waypoints(self, value):
-        sequences = [item["sequence"] for item in value]
-        if len(sequences) != len(set(sequences)):
-            raise serializers.ValidationError("航点 sequence 不能重复")
-        return sorted(value, key=lambda item: item["sequence"])
 
     def validate_coverImage(self, value):
         return validate_route_cover_upload(value)
@@ -272,6 +230,7 @@ class MissionCloudExecutionReadSerializer(serializers.ModelSerializer):
     djiConnectionId = serializers.IntegerField(source="dji_connection_id", read_only=True)
     routeCloudFileId = serializers.IntegerField(source="route_cloud_file_id", read_only=True)
     workspaceId = serializers.CharField(source="workspace_id", read_only=True)
+    executionMode = serializers.CharField(source="execution_mode", read_only=True)
     djiJobId = serializers.CharField(source="dji_job_id", read_only=True)
     executorSn = serializers.CharField(source="executor_sn", read_only=True)
     droneSn = serializers.CharField(source="drone_sn", read_only=True)
@@ -295,6 +254,7 @@ class MissionCloudExecutionReadSerializer(serializers.ModelSerializer):
             "djiConnectionId",
             "routeCloudFileId",
             "workspaceId",
+            "executionMode",
             "djiJobId",
             "executorSn",
             "droneSn",
@@ -334,6 +294,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
     dockId = serializers.IntegerField(source="dock_id", allow_null=True, read_only=True)
     executorId = serializers.IntegerField(source="executor_id", allow_null=True, read_only=True)
     payloadId = serializers.IntegerField(source="payload_id", allow_null=True, read_only=True)
+    executionMode = serializers.CharField(source="execution_mode", read_only=True)
     pilot = serializers.SerializerMethodField()
     scheduledAt = serializers.DateTimeField(source="scheduled_at", allow_null=True, read_only=True)
     startedAt = serializers.DateTimeField(source="started_at", allow_null=True, read_only=True)
@@ -360,6 +321,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
             "dockId",
             "executorId",
             "payloadId",
+            "executionMode",
             "pilot",
             "scheduledAt",
             "startedAt",
@@ -393,10 +355,23 @@ class MissionWriteSerializer(StrictSerializer):
     droneId = serializers.IntegerField(min_value=1)
     pilotAccountProfileId = serializers.IntegerField(min_value=1)
     dockId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
-    executorId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    executorId = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        allow_null=True,
+        help_text="Pilot2 手动执行端/遥控器资源 ID；与 dockId 必须二选一。"
+    )
     payloadId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     scheduledAt = serializers.DateTimeField(required=False, allow_null=True)
     remark = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        has_dock = attrs.get("dockId") is not None
+        has_executor = attrs.get("executorId") is not None
+        if has_dock == has_executor:
+            raise serializers.ValidationError({"dockId": ["dockId 与 executorId 必须二选一"], "executorId": ["dockId 与 executorId 必须二选一"]})
+        return attrs
 
 
 class MissionCloseSerializer(StrictSerializer):
@@ -418,6 +393,7 @@ class MissionPreflightCheckItemSerializer(serializers.Serializer):
 
 
 class MissionPreflightExecutionSerializer(serializers.Serializer):
+    executionMode = serializers.ChoiceField(choices=MissionExecutionMode.choices, allow_blank=True)
     routeId = serializers.IntegerField()
     droneId = serializers.IntegerField()
     droneSn = serializers.CharField()

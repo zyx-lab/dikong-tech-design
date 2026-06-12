@@ -86,15 +86,18 @@ python manage.py refresh_route_kmz_download_urls
 
 v2 资源发现通过 `/api/v2/resource/dji-connections/{id}/discover` 触发，并使用 `apps.resource_v2.gateway.DjiConnectionGateway` 复用 `apps.dji_cloud.gateway.DjiGateway`。
 
-常用变量：
+v2 正式业务链路没有全局 DJI 上游地址、账号或密码环境变量。上云地址、账号、密码和登录 flag 由 `POST /api/v2/resource/dji-connections` 写入 `v2_dji_connections` 表；后续资源发现、航线上传、任务、直播、相机控制和 `v2-dji-worker` 都通过对应 `DjiConnection.base_url/username/password/login_flag` 调用上游。
 
-```bash
-export DJI_UPSTREAM_BASE_URL=https://example-dji-cloud
-export DJI_UPSTREAM_USERNAME=admin
-export DJI_UPSTREAM_PASSWORD=secret
-export DJI_UPSTREAM_LOGIN_FLAG=1
-export DJI_UPSTREAM_TIMEOUT_SECONDS=10
-export DJI_INTERNAL_API_TOKEN=change-me
+最小请求体示例：
+
+```json
+{
+  "name": "本地 DJI",
+  "baseUrl": "https://example-dji-cloud",
+  "username": "admin",
+  "password": "secret",
+  "loginFlag": 1
+}
 ```
 
 DJI 媒体回调通过 `/api/internal/dji/callbacks/media-upload` 进入 v2 inspection 服务。带 `job_id` 的媒体会按 `MissionCloudExecution` 精确绑定任务；不带 `job_id` 时会按设备绑定写入未绑定云媒体记录。

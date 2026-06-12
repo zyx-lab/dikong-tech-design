@@ -199,18 +199,42 @@ docker compose exec web python manage.py createsuperuser
 
 `web` 负责 HTTP 和 WebSocket；`v2-dji-worker` 负责 MQTT 后台消息。正式联调 DJI 设备时，不要只启动 `web`。
 
-如果要连接真实 DJI 上游，需要在启动前补充上游环境变量。可以直接放在命令前，也可以写入 `.env`：
+当前 v2 没有全局 DJI 上游地址、账号或密码环境变量。真实 DJI 上游连接来自数据库中的 `DjiConnection` 记录，而不是部署环境变量。
+
+启动服务：
 
 ```bash
-DJI_UPSTREAM_BASE_URL=https://example-dji-upstream.test \
-DJI_UPSTREAM_USERNAME=your-username \
-DJI_UPSTREAM_PASSWORD=your-password \
-DJI_UPSTREAM_LOGIN_FLAG=1 \
+export DJI_INTERNAL_API_TOKEN='<shared-callback-token>'
+
 OBJECT_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000 \
 docker compose up -d --build db redis minio minio-init web v2-dji-worker
 ```
 
-如果只做普通 API 本地验证，不配置 DJI 上游也可以启动项目。此时涉及真实 DJI 网关的接口可能会因为缺少上游配置而返回上游调用错误。
+服务启动后，通过 v2 API 创建 DJI 连接。请求体里的 `baseUrl/username/password/loginFlag` 会保存到 `v2_dji_connections`；资源发现、航线上传、任务、直播、相机控制和 `v2-dji-worker` 都读取这条连接配置：
+
+```http
+POST /api/v2/resource/dji-connections
+Content-Type: application/json
+
+{
+  "name": "本地 DJI",
+  "baseUrl": "https://example-dji-upstream.test",
+  "username": "your-username",
+  "password": "your-password",
+  "loginFlag": 1
+}
+```
+
+如果要让 DJI 媒体上传结果主动回调本系统，还需要在 DJI 上云侧配置回调地址，并让上云侧请求头 `X-DJI-Internal-Token` 使用同一个 `DJI_INTERNAL_API_TOKEN`：
+
+```http
+POST http://<django-host>:8000/api/internal/dji/callbacks/media-upload
+X-DJI-Internal-Token: <shared-callback-token>
+```
+
+没有设置 `DJI_INTERNAL_API_TOKEN` 时，Django 会拒绝内部回调。回调不是唯一媒体同步机制：任务完成时会自动同步媒体，前端仍可通过 `POST /api/v2/inspection/flight-records/{id}/refresh-media` 主动刷新飞行记录媒体，历史飞行记录可通过 `python manage.py refresh_v2_flight_record_media --all-completed` 一次性回填。
+
+如果只做普通 API 本地验证，可以不创建 DJI 连接。此时涉及真实 DJI 上游的接口会因为没有可用 `DjiConnection`、未发现/未绑定资源或上游调用失败而返回业务错误。
 
 ## 对象存储说明
 

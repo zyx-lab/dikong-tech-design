@@ -241,9 +241,12 @@ class ApiV2DocsSyncTests(TestCase):
         )
         self.assertEqual(route_multipart["coverImage"]["type"], "string")
         self.assertEqual(route_multipart["coverImage"]["format"], "binary")
-        self.assertEqual(route_multipart["waypoints"]["type"], "string")
         self.assertEqual(route_multipart["kmzFile"]["format"], "binary")
-        self._assert_properties_include(route_multipart, {"djiConnectionId", "waylineType", "kmzFile"})
+        self._assert_properties_include(route_multipart, {"djiConnectionId", "kmzFile"})
+        self.assertNotIn("waypoints", route_multipart)
+        self.assertNotIn("waylineType", route_multipart)
+        self.assertNotIn("defaultAltitude", route_multipart)
+        self.assertNotIn("defaultSpeed", route_multipart)
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/inspection/missions"),
             {"id", "routeSnapshot", "droneId", "pilot", "status"},

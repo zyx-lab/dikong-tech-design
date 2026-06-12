@@ -1,4 +1,3 @@
-import json
 import zipfile
 from io import BytesIO
 from urllib.parse import urlparse
@@ -15,7 +14,7 @@ from rest_framework.test import APIClient
 from apps.access.models import DirectoryStatus
 from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountQualification, V2AccountRoleProfile, V2AccountRoleAssignment
 from apps.inspection_v2.models import WaypointRoute, route_cover_image_url
-from apps.resource_v2.models import BindingStatus, DjiConnection, DroneResource, ResourceBinding, ResourceType
+from apps.resource_v2.models import BindingStatus, DjiConnection, DroneResource, GatewayResource, ResourceBinding, ResourceType
 
 User = get_user_model()
 
@@ -100,6 +99,7 @@ class RouteCoverObjectStorageTests(TestCase):
             remark="当前有效",
         )
         self.drone = self.create_drone()
+        self.executor = self.create_executor()
 
     def create_drone(self):
         connection = DjiConnection.objects.create(
@@ -123,39 +123,59 @@ class RouteCoverObjectStorageTests(TestCase):
         )
         return drone
 
+    def create_executor(self):
+        connection = DjiConnection.objects.get(owner_department=self.department)
+        executor = GatewayResource.objects.create(device_sn="OBJECT-STORAGE-GATEWAY", name="对象存储执行端", model="RC Plus")
+        ResourceBinding.objects.create(
+            resource_type=ResourceType.GATEWAY,
+            resource_object_id=executor.id,
+            owner_department=self.department,
+            dji_connection=connection,
+            status=BindingStatus.ACTIVE,
+            bound_by_user=self.dispatcher,
+        )
+        return executor
+
     def authenticate(self):
         self.client.force_authenticate(self.dispatcher)
 
     def route_payload(self, *, name: str) -> dict:
         return {
             "name": name,
-            "defaultAltitude": "120.00",
-            "defaultSpeed": "8.50",
             "coverImage": PNG_DATA_URL,
-            "waypoints": [
-                {
-                    "sequence": 1,
-                    "latitude": "31.23040000",
-                    "longitude": "121.47370000",
-                    "altitude": "120.00",
-                    "speed": "8.50",
-                    "heading": "90.00",
-                    "hoverSeconds": 3,
-                }
-            ],
         }
 
     def kmz_file(self):
         buffer = BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
-            archive.writestr("waylines.wpml", b"<wpml></wpml>")
+            archive.writestr(
+                "wpmz/template.kml",
+                """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.6">
+  <Document><Folder><wpml:templateType>waypoint</wpml:templateType></Folder></Document>
+</kml>
+""",
+            )
+            archive.writestr(
+                "wpmz/waylines.wpml",
+                """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.6">
+  <Document><Folder><wpml:autoFlightSpeed>8.50</wpml:autoFlightSpeed>
+    <Placemark>
+      <Point><coordinates>121.47370000,31.23040000</coordinates></Point>
+      <wpml:index>0</wpml:index>
+      <wpml:executeHeight>120.00</wpml:executeHeight>
+      <wpml:waypointSpeed>8.50</wpml:waypointSpeed>
+    </Placemark>
+  </Folder></Document>
+</kml>
+""",
+            )
         return SimpleUploadedFile("route.kmz", buffer.getvalue(), content_type="application/vnd.google-earth.kmz")
 
     def multipart_route_payload(self, *, name: str) -> dict:
         payload = self.route_payload(name=name)
-        payload["waypoints"] = json.dumps(payload["waypoints"])
         payload["djiConnectionId"] = DjiConnection.objects.get(owner_department=self.department).id
-        payload["waylineType"] = 0
         payload["kmzFile"] = self.kmz_file()
         return payload
 
@@ -213,7 +233,13 @@ class RouteCoverObjectStorageTests(TestCase):
 
         mission_response = self.client.post(
             "/api/v2/inspection/missions",
-            {"name": "对象存储任务", "routeId": route["id"], "droneId": self.drone.id, "pilotAccountProfileId": self.pilot_profile.id},
+            {
+                "name": "对象存储任务",
+                "routeId": route["id"],
+                "droneId": self.drone.id,
+                "executorId": self.executor.id,
+                "pilotAccountProfileId": self.pilot_profile.id,
+            },
             format="json",
         )
         self.assertEqual(mission_response.status_code, 201, getattr(mission_response, "data", mission_response.content))

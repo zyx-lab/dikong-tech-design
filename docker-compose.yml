@@ -63,6 +63,7 @@ services:
       DB_PASSWORD: postgres
       DB_PORT: 5432
       DJANGO_SETTINGS_MODULE: config.settings
+      DJI_INTERNAL_API_TOKEN: ${DJI_INTERNAL_API_TOKEN:-}
       CHANNEL_REDIS_URL: redis://redis:6379/0
       DJI_V2_MQTT_REDIS_URL: redis://redis:6379/0
       OBJECT_STORAGE_BACKEND: minio

@@ -1,5 +1,4 @@
 import base64
-import json
 import tempfile
 import zipfile
 from io import BytesIO
@@ -66,32 +65,39 @@ class RouteCoverBase64Tests(TestCase):
     def route_payload(self, *, name: str) -> dict:
         return {
             "name": name,
-            "defaultAltitude": "120.00",
-            "defaultSpeed": "8.50",
-            "waypoints": [
-                {
-                    "sequence": 1,
-                    "latitude": "31.23040000",
-                    "longitude": "121.47370000",
-                    "altitude": "120.00",
-                    "speed": "8.50",
-                    "heading": "90.00",
-                    "hoverSeconds": 3,
-                }
-            ],
         }
 
     def kmz_file(self):
         buffer = BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
-            archive.writestr("waylines.wpml", b"<wpml></wpml>")
+            archive.writestr(
+                "wpmz/template.kml",
+                """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.6">
+  <Document><Folder><wpml:templateType>waypoint</wpml:templateType></Folder></Document>
+</kml>
+""",
+            )
+            archive.writestr(
+                "wpmz/waylines.wpml",
+                """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.6">
+  <Document><Folder><wpml:autoFlightSpeed>8.50</wpml:autoFlightSpeed>
+    <Placemark>
+      <Point><coordinates>121.47370000,31.23040000</coordinates></Point>
+      <wpml:index>0</wpml:index>
+      <wpml:executeHeight>120.00</wpml:executeHeight>
+      <wpml:waypointSpeed>8.50</wpml:waypointSpeed>
+    </Placemark>
+  </Folder></Document>
+</kml>
+""",
+            )
         return SimpleUploadedFile("route.kmz", buffer.getvalue(), content_type="application/vnd.google-earth.kmz")
 
     def multipart_route_payload(self, *, name: str) -> dict:
         payload = self.route_payload(name=name)
-        payload["waypoints"] = json.dumps(payload["waypoints"])
         payload["djiConnectionId"] = self.connection.id
-        payload["waylineType"] = 0
         payload["kmzFile"] = self.kmz_file()
         return payload
 

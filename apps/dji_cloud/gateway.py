@@ -81,7 +81,7 @@ class DjiGateway:
         self.platform = platform
         self._session: DjiCloudSession | None = None
         configured_base_url = getattr(platform, "base_url", "") if platform is not None else ""
-        self.base_url = (base_url or configured_base_url or getattr(settings, "DJI_UPSTREAM_BASE_URL", "")).rstrip("/")
+        self.base_url = (base_url or configured_base_url or "").rstrip("/")
         self.timeout = timeout or int(getattr(settings, "DJI_UPSTREAM_TIMEOUT_SECONDS", 10))
 
     def _start_external_call(self, *, operation: str, request: dict[str, Any]):
@@ -326,7 +326,7 @@ class DjiGateway:
             f"/api/v1/wayline/workspaces/{workspace_id}/waylines/{dji_wayline_id}",
         ).data
 
-    def create_mission(
+    def create_dock_flight_task(
         self,
         *,
         mission_name: str,
@@ -359,6 +359,27 @@ class DjiGateway:
         if isinstance(response, dict) and response.get("job_id"):
             return {"dji_job_id": response["job_id"]}
         raise DjiGatewayUpstreamError("创建 DJI 任务后未返回 dji_job_id", status_code=502, data=response)
+
+    def create_mission(
+        self,
+        *,
+        mission_name: str,
+        file_id: str,
+        dock_sn: str | None = None,
+        wayline_type: int | None = None,
+        task_type: int | None = None,
+        rth_altitude: int | None = None,
+        out_of_control_action: int | None = None,
+    ):
+        return self.create_dock_flight_task(
+            mission_name=mission_name,
+            file_id=file_id,
+            dock_sn=dock_sn,
+            wayline_type=wayline_type,
+            task_type=task_type,
+            rth_altitude=rth_altitude,
+            out_of_control_action=out_of_control_action,
+        )
 
     def cancel_mission(self, dji_job_id: str):
         workspace_id = self._workspace_id()
@@ -658,27 +679,22 @@ class DjiGateway:
         return workspace_config
 
     def _configured_credentials(self) -> tuple[str, str]:
-        if self.platform is not None:
-            username = str(self.platform.username or "").strip()
-            password = str(self.platform.password or "")
-            if not username or not password:
-                raise DjiGatewayConfigurationError("DJI upstream 账号或密码未配置", status_code=500)
-            return username, password
-        username = str(getattr(settings, "DJI_UPSTREAM_USERNAME", "") or "").strip()
-        password = str(getattr(settings, "DJI_UPSTREAM_PASSWORD", "") or "")
+        if self.platform is None:
+            raise DjiGatewayConfigurationError("DjiGateway requires platform credentials", status_code=500)
+        username = str(self.platform.username or "").strip()
+        password = str(self.platform.password or "")
         if not username or not password:
             raise DjiGatewayConfigurationError("DJI upstream 账号或密码未配置", status_code=500)
         return username, password
 
     def _configured_login_flag(self) -> int:
-        if self.platform is not None:
-            raw = self.platform.login_flag
-        else:
-            raw = getattr(settings, "DJI_UPSTREAM_LOGIN_FLAG", 1)
+        if self.platform is None:
+            raise DjiGatewayConfigurationError("DjiGateway requires platform credentials", status_code=500)
+        raw = self.platform.login_flag
         try:
             return int(raw)
         except (TypeError, ValueError) as exc:
-            raise DjiGatewayConfigurationError("DJI_UPSTREAM_LOGIN_FLAG 配置无效", status_code=500) from exc
+            raise DjiGatewayConfigurationError("DJI upstream loginFlag 配置无效", status_code=500) from exc
 
     def _headers(
         self,
@@ -688,7 +704,7 @@ class DjiGateway:
         accept: str | None = "application/json",
     ) -> dict[str, str]:
         if not self.base_url:
-            raise DjiGatewayConfigurationError("DJI_UPSTREAM_BASE_URL 未配置", status_code=500)
+            raise DjiGatewayConfigurationError("DJI upstream baseUrl 未配置", status_code=500)
 
         headers: dict[str, str] = {}
         if accept:

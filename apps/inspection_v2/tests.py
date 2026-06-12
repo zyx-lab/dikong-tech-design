@@ -11,7 +11,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.files.storage import Storage
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.core.management import call_command
+from django.core.management import call_command, CommandError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -1525,6 +1525,42 @@ class InspectionV2ApiTests(TestCase):
         list_media_files.assert_called_once()
         stop_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0")
 
+    def test_dock_complete_without_dji_job_should_not_bind_no_job_session_window_media(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="机场无 job 媒体航线")
+        connection, dock = self.prepare_route_for_dock_execution(route, dock_sn="DOCK-NO-JOB-MEDIA-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            dock_id=dock.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        self.start_cloud_mission_by_api(mission["id"], dji_job_id="dji-job-will-be-cleared")
+        execution = MissionCloudExecution.objects.get(mission_id=mission["id"])
+        execution.dji_job_id = ""
+        execution.save(update_fields=["dji_job_id", "updated_at"])
+        session = FlightSession.objects.get(mission_id=mission["id"])
+        local_media = CloudMediaFile.objects.create(
+            workspace_id=connection.workspace_id,
+            device_sn=self.drone.device_sn,
+            cloud_file_id="dock-no-job-local-photo",
+            file_name="dock-no-job-local.jpg",
+            captured_at=session.started_at,
+        )
+
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.list_media_files", return_value=[]) as list_media_files, patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.stop_live",
+            return_value={},
+        ):
+            complete_response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/complete", {}, format="json")
+
+        self.assertEqual(complete_response.status_code, 200, getattr(complete_response, "data", complete_response.content))
+        local_media.refresh_from_db()
+        self.assertIsNone(local_media.mission_id)
+        self.assertIsNone(local_media.flight_record_id)
+        self.assertEqual(complete_response.data["data"]["photoCount"], 0)
+        list_media_files.assert_not_called()
+
     def test_cloud_execution_refresh_should_reject_missing_execution_without_calling_dji(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="刷新无执行记录航线")
         _connection, dock = self.prepare_route_for_dock_execution(route, dock_sn="DOCK-REFRESH-MISSING-001")
@@ -1648,7 +1684,7 @@ class InspectionV2ApiTests(TestCase):
             captured_at=None,
         )
 
-        with patch("apps.inspection_v2.services.DjiConnectionGateway.list_media_files") as list_media_files:
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.list_media_files", return_value=[]) as list_media_files:
             complete_response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/complete", {}, format="json")
 
         self.assertEqual(complete_response.status_code, 200, getattr(complete_response, "data", complete_response.content))
@@ -1659,7 +1695,158 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(inside.flight_record_id, complete_response.data["data"]["id"])
         self.assertIsNone(outside.mission_id)
         self.assertIsNone(no_time.mission_id)
-        list_media_files.assert_not_called()
+        list_media_files.assert_called_once()
+
+    def test_pilot2_refresh_media_should_pull_replay_video_from_dji_media_list(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="Pilot2 回放媒体航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-REPLAY-PILOT2-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        started_at = timezone.datetime(2026, 6, 12, 10, 1, 24, 292646, tzinfo=dt_timezone.utc)
+        ended_at = timezone.datetime(2026, 6, 12, 10, 2, 3, 911428, tzinfo=dt_timezone.utc)
+        with patch("apps.inspection_v2.services.timezone.now", return_value=started_at), patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity",
+            side_effect=DjiGatewayUpstreamError("live capacity unavailable", status_code=502),
+        ):
+            start_response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/start", {}, format="json")
+        self.assertEqual(start_response.status_code, 200, getattr(start_response, "data", start_response.content))
+
+        replay_payload = {
+            "file_id": "pilot2-replay-video-001",
+            "file_name": "2026-06-12_10-01-24-797904.mp4",
+            "file_path": "/live/replay/pilot2-replay-video-001_2026-06-12_10-01-24-797904.mp4",
+            "object_key": "live/replay/pilot2-replay-video-001_2026-06-12_10-01-24-797904.mp4",
+            "drone": self.drone.device_sn,
+            "create_time": "2026-06-12 18:02:05",
+            "job_id": "",
+        }
+        with patch("apps.inspection_v2.services.timezone.now", return_value=ended_at), patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.list_media_files",
+            return_value=[replay_payload],
+        ) as list_media_files, patch("apps.inspection_v2.services.DjiConnectionGateway.stop_live", return_value={}):
+            complete_response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/complete", {}, format="json")
+
+        self.assertEqual(complete_response.status_code, 200, getattr(complete_response, "data", complete_response.content))
+        list_media_files.assert_called_once()
+        media = CloudMediaFile.objects.get(cloud_file_id="pilot2-replay-video-001")
+        self.assertEqual(media.mission_id, mission["id"])
+        self.assertEqual(media.flight_record_id, complete_response.data["data"]["id"])
+        self.assertEqual(media.media_type, "VIDEO")
+        self.assertEqual(media.captured_at, timezone.datetime(2026, 6, 12, 10, 1, 24, 797904, tzinfo=dt_timezone.utc))
+        self.assertEqual(complete_response.data["data"]["videoCount"], 1)
+
+    def _completed_pilot2_record(self, *, route_name: str, gateway_sn: str):
+        route = self.create_route_by_api(self.owner_dispatcher, name=route_name)
+        connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn=gateway_sn)
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity",
+            side_effect=DjiGatewayUpstreamError("live capacity unavailable", status_code=502),
+        ):
+            start_response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/start", {}, format="json")
+        self.assertEqual(start_response.status_code, 200, getattr(start_response, "data", start_response.content))
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.list_media_files", return_value=[]):
+            complete_response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/complete", {}, format="json")
+        self.assertEqual(complete_response.status_code, 200, getattr(complete_response, "data", complete_response.content))
+        return connection, InspectionMission.objects.get(pk=mission["id"]), InspectionFlightRecord.objects.get(pk=complete_response.data["data"]["id"])
+
+    def test_refresh_v2_flight_record_media_dry_run_all_completed_should_not_write_media(self):
+        connection, _mission, record = self._completed_pilot2_record(
+            route_name="Pilot2 回填 dry run 航线",
+            gateway_sn="GATEWAY-BACKFILL-DRY-RUN-001",
+        )
+        out = StringIO()
+        local_media = CloudMediaFile.objects.create(
+            workspace_id=connection.workspace_id,
+            device_sn=self.drone.device_sn,
+            cloud_file_id="backfill-dry-run-photo",
+            file_name="backfill-dry-run.jpg",
+            captured_at=record.start_time,
+        )
+
+        with patch(
+            "apps.inspection_v2.management.commands.refresh_v2_flight_record_media.sync_media_for_record",
+            return_value={"synced": 1, "photoCount": 0, "videoCount": 1},
+        ) as sync_media:
+            call_command("refresh_v2_flight_record_media", "--all-completed", "--dry-run", stdout=out)
+
+        sync_media.assert_not_called()
+        local_media.refresh_from_db()
+        self.assertIsNone(local_media.mission_id)
+        self.assertIsNone(local_media.flight_record_id)
+        output = out.getvalue()
+        self.assertIn(f"would refresh flight_record_id={record.id}", output)
+        self.assertIn("processed=1", output)
+        self.assertIn("planned=1", output)
+        self.assertIn("synced=0", output)
+
+    def test_refresh_v2_flight_record_media_mission_id_should_process_only_selected_record(self):
+        _connection, selected_mission, selected_record = self._completed_pilot2_record(
+            route_name="Pilot2 回填指定任务航线",
+            gateway_sn="GATEWAY-BACKFILL-MISSION-001",
+        )
+        self._completed_pilot2_record(
+            route_name="Pilot2 回填其它任务航线",
+            gateway_sn="GATEWAY-BACKFILL-MISSION-002",
+        )
+        out = StringIO()
+
+        with patch(
+            "apps.inspection_v2.management.commands.refresh_v2_flight_record_media.sync_media_for_record",
+            return_value={"synced": 2, "photoCount": 1, "videoCount": 1},
+        ) as sync_media:
+            call_command("refresh_v2_flight_record_media", "--mission-id", str(selected_mission.id), stdout=out)
+
+        sync_media.assert_called_once()
+        self.assertEqual(sync_media.call_args.kwargs["record"].id, selected_record.id)
+        output = out.getvalue()
+        self.assertIn("processed=1", output)
+        self.assertIn("synced=2", output)
+        self.assertIn("photos=1", output)
+        self.assertIn("videos=1", output)
+
+    def test_refresh_v2_flight_record_media_should_continue_after_single_failure_and_return_nonzero(self):
+        _first_connection, _first_mission, first_record = self._completed_pilot2_record(
+            route_name="Pilot2 回填失败航线",
+            gateway_sn="GATEWAY-BACKFILL-FAIL-001",
+        )
+        _second_connection, _second_mission, second_record = self._completed_pilot2_record(
+            route_name="Pilot2 回填成功航线",
+            gateway_sn="GATEWAY-BACKFILL-FAIL-002",
+        )
+        out = StringIO()
+
+        def sync_side_effect(*, record):
+            if record.id == first_record.id:
+                raise DjiGatewayUpstreamError("media list failed", status_code=502)
+            return {"synced": 1, "photoCount": 0, "videoCount": 1}
+
+        with patch(
+            "apps.inspection_v2.management.commands.refresh_v2_flight_record_media.sync_media_for_record",
+            side_effect=sync_side_effect,
+        ) as sync_media:
+            with self.assertRaises(CommandError):
+                call_command("refresh_v2_flight_record_media", "--all-completed", stdout=out)
+
+        self.assertEqual(sync_media.call_count, 2)
+        self.assertEqual({call.kwargs["record"].id for call in sync_media.call_args_list}, {first_record.id, second_record.id})
+        output = out.getvalue()
+        self.assertIn(f"failed flight_record_id={first_record.id}", output)
+        self.assertIn(f"refreshed flight_record_id={second_record.id}", output)
+        self.assertIn("processed=2", output)
+        self.assertIn("synced=1", output)
+        self.assertIn("failures=1", output)
 
     def test_media_file_refresh_url_should_update_download_preview_and_playback(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="媒体 URL 刷新航线")
