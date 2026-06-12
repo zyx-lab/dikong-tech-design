@@ -9,6 +9,8 @@ Build the algorithm platform as a separate repository and independently deployab
 
 The first implementation should use NVIDIA Triton Inference Server as the model-serving runtime and a custom lightweight management layer for the product-specific parts that Triton does not provide: algorithm registration, plugin configuration, pipeline composition, image inference requests, structured detection-result storage, and a minimal management UI.
 
+The final video-stream execution path should use a DeepStream-based stream worker with `Gst-nvinferserver` calling Triton. The image single-frame milestone is a control-plane and result-schema validation step, not the final runtime shape for live video.
+
 The first milestone is intentionally narrow:
 
 - Register model artifacts and Triton deployments.
@@ -46,6 +48,8 @@ This document describes the independent algorithm platform that can later serve 
 8. First milestone pipeline execution is parallel only.
 9. Serial or DAG pipeline shape may be represented as metadata, but the executor will reject unsupported execution modes.
 10. Built-in plugin types are allowed; runtime upload of arbitrary Python code is not allowed in the first milestone.
+11. The final live-stream runtime should be DeepStream + `Gst-nvinferserver` + Triton, not a hand-rolled OpenCV/FFmpeg frame loop.
+12. The first milestone should not start with DeepStream execution because the immediate goal is to validate the platform control plane, algorithm registry, model lifecycle, pipeline composition, and canonical result schema.
 
 ## Source Notes
 
@@ -57,12 +61,18 @@ This document describes the independent algorithm platform that can later serve 
   Source: https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/backend/README.html
 - Triton ensemble models are useful for fixed tensor-level pipelines, but they should not be the first milestone's business pipeline engine.
   Source: https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/user_guide/ensemble_models.html
+- DeepStream's `Gst-nvinferserver` plugin performs inference through Triton, accepts batched video buffers, attaches inference metadata downstream, supports object detection/classification/segmentation-style networks, supports cascaded inference, and can communicate with an independent Triton process through gRPC. This is the right direction for the final live-stream runtime.
+  Source: https://docs.nvidia.com/metropolis/deepstream/dev-guide/text/DS_plugin_gst-nvinferserver.html
+- DeepStream is available through NVIDIA container images, which fits the platform's Docker-first and later Kubernetes-compatible deployment path.
+  Source: https://docs.nvidia.com/metropolis/deepstream/dev-guide/text/DS_docker_containers.html
 - Ultralytics YOLO has licensing implications for closed commercial usage. The first demo should prefer a permissively licensed model path such as YOLOX or MMDetection-derived ONNX where practical.
   Sources: https://www.ultralytics.com/license, https://github.com/Megvii-BaseDetection/YOLOX, https://github.com/open-mmlab/mmdetection
 
 ## Architecture
 
 The first milestone consists of five components.
+
+The final live-stream architecture adds a sixth component, the DeepStream Stream Worker. It is deferred from the first milestone but should be treated as the target runtime for drone video streams.
 
 ### Algorithm API
 
@@ -100,6 +110,23 @@ The Algorithm API maps its `ModelDeployment` records to Triton model names and v
 The executor performs image preprocessing, plugin execution, Triton calls, postprocessing, result normalization, and database writes.
 
 For the first milestone it may run in the same process as the API service. It should still be isolated behind service classes so that live-stream workers can reuse the same pipeline execution logic later.
+
+This executor is not intended to become a custom video-stream engine. It validates algorithm configuration and canonical result conversion on images. Live stream decoding, batching, inference attachment, and frame metadata propagation should move to the DeepStream Stream Worker.
+
+### DeepStream Stream Worker
+
+The DeepStream Stream Worker is the target runtime for live video streams.
+
+Responsibilities:
+
+- receive stream-session commands from the Algorithm API
+- build and run a DeepStream/GStreamer pipeline for each stream or stream group
+- use `Gst-nvinferserver` for Triton-backed inference
+- map platform pipeline definitions to DeepStream primary and secondary inference configuration where feasible
+- extract DeepStream object metadata and normalize it into the platform's `DetectionResult` or future stream-event schema
+- report stream health, errors, and detection events back to the Algorithm API
+
+The worker is not part of the first milestone acceptance criteria. It should be designed in the second milestone after the control plane and result schema are proven.
 
 ### PostgreSQL
 
@@ -171,7 +198,7 @@ Compose services:
 Optional later services:
 
 - `minio` for object storage
-- stream worker for live-stream inference
+- `stream-worker-deepstream` for live-stream inference with DeepStream and `Gst-nvinferserver`
 - Redis or another queue only when asynchronous video or live-stream workloads require it
 
 ## Technology Stack
@@ -193,6 +220,13 @@ Inference:
 - NVIDIA Triton Inference Server
 - ONNX Runtime backend for the first demo model
 - TensorRT backend can be added later
+
+Streaming phase:
+
+- NVIDIA DeepStream
+- GStreamer pipeline configuration
+- `Gst-nvinferserver`
+- Triton gRPC integration from DeepStream where an independent Triton process is preferred
 
 Frontend:
 
@@ -603,17 +637,51 @@ model-repository/
 
 ## Future Live-Stream Extension
 
-The first milestone must not implement live-stream processing, but the design must leave a clean path.
+The first milestone must not implement live-stream processing, but the final platform shape is live-stream processing through DeepStream + `Gst-nvinferserver` + Triton.
+
+This is the main correction to avoid a wrong long-term architecture: the platform should not grow into a custom OpenCV/FFmpeg loop for production streams. That path is acceptable for experiments, but it is the wrong default for a GPU video analytics system.
+
+DeepStream should own:
+
+- stream ingest
+- decode
+- batching
+- GPU memory flow
+- primary inference
+- secondary inference where the pipeline maps cleanly
+- object metadata propagation
+- stream health and pipeline errors
+
+Triton should own:
+
+- model serving
+- model versioning at the inference-server layer
+- ONNX/TensorRT/PyTorch/Python backend execution
+- model readiness and inference RPCs
+
+The custom Algorithm API should own:
+
+- algorithm registry
+- model and deployment records
+- plugin and class-map configuration
+- pipeline definitions
+- stream-session commands
+- structured result and event storage
+- Django-facing REST contracts
+
+The first milestone still starts with image single-frame inference because it proves the platform concepts without mixing in stream transport, codec, GStreamer, batching, latency, and camera/network failure modes. That is a sequencing decision, not a rejection of DeepStream.
 
 Future additions:
 
 - `StreamSource`
 - `StreamSession`
-- stream worker process
+- DeepStream stream worker process
 - frame sampling policy
 - frame references or frame assets
 - frame timestamp fields in detection results
 - event emission to Django or another business system
+- DeepStream pipeline templates derived from platform pipeline definitions
+- mapping rules from `PipelineNode` to DeepStream primary/secondary inference stages
 
 Current fields that intentionally support this future:
 
@@ -622,7 +690,7 @@ Current fields that intentionally support this future:
 - plugin interface based on image/frame processing
 - pipeline executor separated from API route handlers
 
-Do not add RTSP, RTMP, WebRTC, GPU decode, message queues, or SSE in the first milestone.
+Do not add RTSP, RTMP, WebRTC, GPU decode, DeepStream execution, message queues, or SSE in the first milestone.
 
 ## Django Integration Contract
 
@@ -677,8 +745,8 @@ The algorithm platform must not require Django session cookies, Django bearer to
 - experiment tracking
 - model conversion service
 - automatic TensorRT engine build service
-- video-file inference
-- live-stream inference
+- video-file inference in the first milestone
+- live-stream inference in the first milestone
 - complex DAG execution
 - cross-algorithm result fusion
 - runtime upload of arbitrary Python plugin code
