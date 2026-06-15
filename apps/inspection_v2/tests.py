@@ -1850,6 +1850,124 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(complete_response.status_code, 200, getattr(complete_response, "data", complete_response.content))
         return connection, InspectionMission.objects.get(pk=mission["id"]), InspectionFlightRecord.objects.get(pk=complete_response.data["data"]["id"])
 
+    def _delayed_replay_payload_for_record(self, record, *, cloud_file_id: str, captured_at=None):
+        replay_started_at = captured_at or record.start_time + ((record.end_time - record.start_time) / 2)
+        replay_name = replay_started_at.astimezone(dt_timezone.utc).strftime("%Y-%m-%d_%H-%M-%S-%f.mp4")
+        return {
+            "file_id": cloud_file_id,
+            "file_name": replay_name,
+            "file_path": f"/live/replay/{cloud_file_id}_{replay_name}",
+            "object_key": f"live/replay/{cloud_file_id}_{replay_name}",
+            "drone": self.drone.device_sn,
+            "create_time": (
+                record.end_time + timedelta(seconds=30)
+            ).astimezone(timezone.get_current_timezone()).strftime("%Y-%m-%d %H:%M:%S"),
+            "job_id": "",
+        }
+
+    def test_flight_record_list_should_sync_delayed_video_media_for_zero_video_records(self):
+        _first_connection, _first_mission, first_record = self._completed_pilot2_record(
+            route_name="Pilot2 飞行记录列表延迟媒体航线 A",
+            gateway_sn="GATEWAY-RECORD-LIST-DELAYED-001",
+        )
+        _second_connection, _second_mission, second_record = self._completed_pilot2_record(
+            route_name="Pilot2 飞行记录列表延迟媒体航线 B",
+            gateway_sn="GATEWAY-RECORD-LIST-DELAYED-002",
+        )
+        first_record.start_time = timezone.datetime(2026, 6, 15, 6, 0, 0, tzinfo=dt_timezone.utc)
+        first_record.end_time = timezone.datetime(2026, 6, 15, 6, 1, 0, tzinfo=dt_timezone.utc)
+        first_record.save(update_fields=["start_time", "end_time", "updated_at"])
+        second_record.start_time = timezone.datetime(2026, 6, 15, 7, 0, 0, tzinfo=dt_timezone.utc)
+        second_record.end_time = timezone.datetime(2026, 6, 15, 7, 1, 0, tzinfo=dt_timezone.utc)
+        second_record.save(update_fields=["start_time", "end_time", "updated_at"])
+
+        payloads = [
+            self._delayed_replay_payload_for_record(first_record, cloud_file_id="flight-record-list-video-001"),
+            self._delayed_replay_payload_for_record(second_record, cloud_file_id="flight-record-list-video-002"),
+        ]
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.list_media_files",
+            return_value=payloads,
+        ) as list_media_files:
+            response = self.client.get("/api/v2/inspection/flight-records")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        items = {item["id"]: item for item in response.data["data"]["list"]}
+        self.assertEqual(items[first_record.id]["videoCount"], 1)
+        self.assertEqual(items[second_record.id]["videoCount"], 1)
+        first_record.refresh_from_db()
+        second_record.refresh_from_db()
+        self.assertEqual(first_record.video_count, 1)
+        self.assertEqual(second_record.video_count, 1)
+        self.assertEqual(list_media_files.call_count, 2)
+
+    def test_flight_record_detail_should_sync_delayed_video_media_for_zero_video_record(self):
+        _connection, _mission, record = self._completed_pilot2_record(
+            route_name="Pilot2 飞行记录详情延迟媒体航线",
+            gateway_sn="GATEWAY-RECORD-DETAIL-DELAYED-001",
+        )
+        self.assertEqual(record.video_count, 0)
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.list_media_files",
+            return_value=[
+                self._delayed_replay_payload_for_record(record, cloud_file_id="flight-record-detail-video-001")
+            ],
+        ) as list_media_files:
+            response = self.client.get(f"/api/v2/inspection/flight-records/{record.id}")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["videoCount"], 1)
+        record.refresh_from_db()
+        self.assertEqual(record.video_count, 1)
+        list_media_files.assert_called_once()
+
+    def test_flight_record_detail_should_sync_replay_started_just_before_record_start(self):
+        _connection, _mission, record = self._completed_pilot2_record(
+            route_name="Pilot2 飞行记录详情起点容差航线",
+            gateway_sn="GATEWAY-RECORD-DETAIL-START-TOLERANCE-001",
+        )
+        replay_started_at = record.start_time - timedelta(milliseconds=500)
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.list_media_files",
+            return_value=[
+                self._delayed_replay_payload_for_record(
+                    record,
+                    cloud_file_id="flight-record-detail-start-tolerance-video-001",
+                    captured_at=replay_started_at,
+                )
+            ],
+        ) as list_media_files:
+            response = self.client.get(f"/api/v2/inspection/flight-records/{record.id}")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["videoCount"], 1)
+        media = CloudMediaFile.objects.get(cloud_file_id="flight-record-detail-start-tolerance-video-001")
+        self.assertEqual(media.flight_record_id, record.id)
+        self.assertEqual(media.mission_id, record.mission_id)
+        self.assertEqual(media.captured_at, replay_started_at)
+        list_media_files.assert_called_once()
+
+    def test_flight_record_detail_should_return_local_record_when_best_effort_media_sync_fails(self):
+        _connection, _mission, record = self._completed_pilot2_record(
+            route_name="Pilot2 飞行记录详情延迟媒体失败航线",
+            gateway_sn="GATEWAY-RECORD-DETAIL-DELAYED-FAIL-001",
+        )
+        self.assertEqual(record.video_count, 0)
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.list_media_files",
+            side_effect=DjiGatewayUpstreamError("media list failed", status_code=502),
+        ) as list_media_files:
+            response = self.client.get(f"/api/v2/inspection/flight-records/{record.id}")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["videoCount"], 0)
+        record.refresh_from_db()
+        self.assertEqual(record.video_count, 0)
+        list_media_files.assert_called_once()
+
     def test_refresh_v2_flight_record_media_dry_run_all_completed_should_not_write_media(self):
         connection, _mission, record = self._completed_pilot2_record(
             route_name="Pilot2 回填 dry run 航线",
@@ -2152,19 +2270,10 @@ class InspectionV2ApiTests(TestCase):
         )
         self.assertEqual(record.video_count, 0)
 
-        replay_started_at = record.start_time + ((record.end_time - record.start_time) / 2)
-        replay_name = replay_started_at.astimezone(dt_timezone.utc).strftime("%Y-%m-%d_%H-%M-%S-%f.mp4")
-        replay_payload = {
-            "file_id": "delayed-media-query-video-001",
-            "file_name": replay_name,
-            "file_path": f"/live/replay/delayed-media-query-video-001_{replay_name}",
-            "object_key": f"live/replay/delayed-media-query-video-001_{replay_name}",
-            "drone": self.drone.device_sn,
-            "create_time": (
-                record.end_time + timedelta(seconds=30)
-            ).astimezone(timezone.get_current_timezone()).strftime("%Y-%m-%d %H:%M:%S"),
-            "job_id": "",
-        }
+        replay_payload = self._delayed_replay_payload_for_record(
+            record,
+            cloud_file_id="delayed-media-query-video-001",
+        )
         with patch(
             "apps.inspection_v2.services.DjiConnectionGateway.list_media_files",
             return_value=[replay_payload],

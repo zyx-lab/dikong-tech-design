@@ -192,6 +192,19 @@ def _int_query_param(params, name: str):
         raise serializers.ValidationError({name: ["必须是整数"]}) from exc
 
 
+def _best_effort_sync_record_media(record, *, source: str) -> None:
+    if record.video_count > 0:
+        return
+    try:
+        sync_media_for_record(record=record)
+    except DjiGatewayError:
+        logger.warning(
+            "failed to best-effort sync flight record media",
+            extra={"flight_record_id": record.id, "mission_id": record.mission_id, "source": source},
+            exc_info=True,
+        )
+
+
 def _replace_waypoints(route: WaypointRoute, waypoints: list[dict]):
     route.waypoints.all().delete()
     Waypoint.objects.bulk_create(
@@ -1353,8 +1366,11 @@ class FlightRecordListView(InspectionV2APIView):
         status_value = str(request.query_params.get("status") or "").strip()
         if status_value:
             queryset = queryset.filter(status=status_value)
-        serializer = FlightRecordReadSerializer(queryset, many=True)
-        return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
+        records = list(queryset)
+        for record in records:
+            _best_effort_sync_record_media(record, source="flight_record_list")
+        serializer = FlightRecordReadSerializer(records, many=True)
+        return Response({"list": serializer.data, "total": len(records)}, status=status.HTTP_200_OK)
 
 
 class FlightRecordDetailView(InspectionV2APIView):
@@ -1366,6 +1382,7 @@ class FlightRecordDetailView(InspectionV2APIView):
     def get(self, request, id: int):
         context = resolve_v2_context(request)
         record = get_visible_record_or_404(context, id)
+        _best_effort_sync_record_media(record, source="flight_record_detail")
         return Response(FlightRecordReadSerializer(record).data, status=status.HTTP_200_OK)
 
     @extend_schema(
@@ -1470,16 +1487,7 @@ class MediaFileListView(InspectionV2APIView):
         record = queryset.first()
         if record is None:
             return
-        if record.video_count > 0:
-            return
-        try:
-            sync_media_for_record(record=record)
-        except DjiGatewayError:
-            logger.warning(
-                "failed to auto sync flight record media before listing media files",
-                extra={"flight_record_id": record.id, "mission_id": record.mission_id},
-                exc_info=True,
-            )
+        _best_effort_sync_record_media(record, source="media_file_list")
 
 
 class MediaFileDetailView(InspectionV2APIView):

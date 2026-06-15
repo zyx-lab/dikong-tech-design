@@ -56,6 +56,7 @@ LIVE_REPLAY_TIMESTAMP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 DJI_MEDIA_TIMESTAMP_PATTERN = re.compile(r"\bDJI_(?P<timestamp>\d{14})_", re.IGNORECASE)
+SESSION_WINDOW_MEDIA_MATCH_TOLERANCE = timedelta(seconds=1)
 MEDIA_PREVIEW_URL_REFRESH_MARGIN = timedelta(minutes=5)
 _AMZ_DATE_FORMAT = "%Y%m%dT%H%M%SZ"
 
@@ -1405,16 +1406,24 @@ def _refresh_record_media_counts(record: InspectionFlightRecord) -> dict:
     return {"photoCount": photo_count, "videoCount": video_count}
 
 
+def _session_window_media_match_range(record: InspectionFlightRecord) -> tuple[datetime, datetime]:
+    return (
+        record.start_time - SESSION_WINDOW_MEDIA_MATCH_TOLERANCE,
+        record.end_time + SESSION_WINDOW_MEDIA_MATCH_TOLERANCE,
+    )
+
+
 def _bind_session_window_media_for_record(*, record: InspectionFlightRecord, workspace_id: str, device_sn: str) -> int:
     if not workspace_id or not device_sn:
         return 0
+    match_start, match_end = _session_window_media_match_range(record)
     return CloudMediaFile.objects.filter(
         workspace_id=workspace_id,
         device_sn=device_sn,
         dji_job_id="",
         captured_at__isnull=False,
-        captured_at__gte=record.start_time,
-        captured_at__lte=record.end_time,
+        captured_at__gte=match_start,
+        captured_at__lte=match_end,
         mission__isnull=True,
         flight_record__isnull=True,
     ).update(
@@ -1434,6 +1443,7 @@ def _sync_session_window_media_from_dji(
     if not workspace_id or not device_sn:
         return 0
     synced = 0
+    match_start, match_end = _session_window_media_match_range(record)
     for payload in gateway.list_media_files():
         if not isinstance(payload, dict):
             continue
@@ -1445,7 +1455,7 @@ def _sync_session_window_media_from_dji(
         if _media_device_sn(payload) != device_sn:
             continue
         captured_at = _parse_captured_at(payload)
-        if captured_at is None or captured_at < record.start_time or captured_at > record.end_time:
+        if captured_at is None or captured_at < match_start or captured_at > match_end:
             continue
         cloud_file_id = _cloud_media_key(payload)
         if not cloud_file_id:
