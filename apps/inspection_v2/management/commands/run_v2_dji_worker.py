@@ -12,7 +12,12 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
 
 from apps.dji_cloud.gateway import DjiGatewayError
-from apps.inspection_v2.services import apply_cloud_execution_event, apply_device_status_event, apply_osd_telemetry
+from apps.inspection_v2.services import (
+    apply_cloud_execution_event,
+    apply_device_status_event,
+    apply_osd_telemetry,
+    sync_due_flight_record_media,
+)
 from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import DjiConnection, DjiConnectionStatus, MqttHealthStatus
 from apps.resource_v2.mqtt import DEFAULT_MQTT_TOPICS, configured_mqtt_topics, mark_mqtt_health, record_mqtt_message
@@ -28,6 +33,8 @@ class V2DjiWorker:
         self.stop_event = stop_event or threading.Event()
         self.client_id_prefix = f"v2-dji-worker-{uuid4().hex[:10]}"
         self._last_resource_sync_at: dict[int, float] = {}
+        self._last_media_sync_at = 0.0
+        self._media_sync_lock = threading.Lock()
 
     def run_once(self) -> dict[str, int]:
         connections = list(DjiConnection.objects.filter(status=DjiConnectionStatus.ACTIVE).order_by("id"))
@@ -38,10 +45,14 @@ class V2DjiWorker:
                 succeeded += 1
             else:
                 failed += 1
+        media_summary = sync_due_flight_record_media()
         return {
             "connections": len(connections),
             "resourceSyncSucceeded": succeeded,
             "resourceSyncFailed": failed,
+            "mediaSyncProcessed": media_summary["processed"],
+            "mediaSyncSucceeded": media_summary["succeeded"],
+            "mediaSyncFailed": media_summary["failed"],
         }
 
     def run_forever(self, *, reconnect_seconds: int = 5) -> None:
@@ -125,6 +136,7 @@ class V2DjiWorker:
                 )
                 break
             self._sync_connection_resources_if_due(connection)
+            self._sync_due_media_if_due()
         client.disconnect()
 
     def _sync_connection_resources(self, connection: DjiConnection) -> bool:
@@ -144,6 +156,17 @@ class V2DjiWorker:
         last_synced_at = self._last_resource_sync_at.get(connection.id, 0)
         if now - last_synced_at >= interval:
             self._sync_connection_resources(connection)
+
+    def _sync_due_media_if_due(self) -> None:
+        interval = int(getattr(settings, "DJI_V2_MEDIA_SYNC_SECONDS", 30))
+        if interval <= 0:
+            return
+        now = time.monotonic()
+        with self._media_sync_lock:
+            if now - self._last_media_sync_at < interval:
+                return
+            self._last_media_sync_at = now
+        sync_due_flight_record_media()
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):  # pragma: no cover - MQTT callback
         connection = self._connection_from_userdata(userdata)

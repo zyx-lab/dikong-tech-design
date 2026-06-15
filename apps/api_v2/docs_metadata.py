@@ -190,14 +190,14 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
 
 该接口只适用于 `DOCK_AUTO` 且存在 `MissionCloudExecution.djiJobId` 的任务：后端调用 DJI wayline jobs 列表并匹配同一个 job。`PILOT2_MANUAL` 没有 DJI job，调用本接口会返回 409，前端应让用户通过 `complete/cancel/fail` 推进本地状态。
 
-如果 DJI job 仍在 `PENDING/IN_PROGRESS/PAUSED`，后端只刷新 `data.cloudExecution.status/progressPercent/lastEventAt`，任务保持运行中。如果 DJI job 已 `SUCCESS/CANCEL/FAILED`，后端会复用事件闭环：更新任务和飞行会话、生成飞行记录、按 `djiJobId` 同步媒体，并尝试停止直播。
+如果 DJI job 仍在 `PENDING/IN_PROGRESS/PAUSED`，后端只刷新 `data.cloudExecution.status/progressPercent/lastEventAt`，任务保持运行中。如果 DJI job 已 `SUCCESS/CANCEL/FAILED`，后端会复用事件闭环：更新任务和飞行会话、生成飞行记录、执行一次媒体同步、创建后台媒体同步状态，并尝试停止直播。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/missions/{id}/complete"): """
 ### DJI 上游调用
 
-完成任务主要更新本地任务、飞行会话和飞行记录。Dock 模式会按 `djiJobId` 同步媒体；Pilot2 模式没有 `djiJobId`，会拉取 DJI media files 中的无 job 媒体，并结合已回调落库且满足同 workspace、同无人机、拍摄时间落在会话窗口内的媒体绑定到飞行记录。媒体同步和停止直播失败不会阻断完成操作。
+完成任务主要更新本地任务、飞行会话和飞行记录，并创建后台媒体同步状态。Dock 模式会按 `djiJobId` 同步媒体；Pilot2 模式没有 `djiJobId`，会拉取 DJI media files 中的无 job 媒体，并结合已回调落库且满足同 workspace、同无人机、拍摄时间落在会话窗口内的媒体绑定到飞行记录。媒体同步和停止直播失败不会阻断完成操作，后台 worker 会继续按退避节奏补偿同步到截止时间。
 
-前端收到成功后刷新任务、活动飞行、飞行记录和媒体列表；如果媒体暂时没有出现，可再调用飞行记录的 `refresh-media` 接口。
+前端收到成功后刷新任务、活动飞行、飞行记录和媒体列表；普通 GET 查询不触发媒体发现。如果媒体暂时没有出现，可等待后台 worker 或主动调用飞行记录的 `refresh-media` 接口。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/missions/{id}/cancel"): """
 ### DJI 上游调用
@@ -257,7 +257,7 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
     _operation_key("POST", "/api/v2/inspection/flight-records/{id}/refresh-media"): """
 ### DJI 上游调用
 
-该接口会根据飞行记录关联的任务执行信息分流。Dock 模式会调用 DJI media files 列表，按本次任务的 `djiJobId` 过滤照片/视频并写入本地媒体表；Pilot2 模式没有 DJI job，会拉取 DJI media files 中的无 job 媒体，并结合已回调落库媒体，按同 workspace、同无人机和会话时间窗口绑定。响应里的 `synced/photoCount/videoCount` 是本次刷新后的本地统计。
+该接口会根据飞行记录关联的任务执行信息分流，并同步更新该飞行记录的后台媒体同步状态。Dock 模式会调用 DJI media files 列表，按本次任务的 `djiJobId` 过滤照片/视频并写入本地媒体表；Pilot2 模式没有 DJI job，会拉取 DJI media files 中的无 job 媒体，并结合已回调落库媒体，按同 workspace、同无人机和会话时间窗口唯一命中绑定。响应里的 `synced/photoCount/videoCount` 是本次刷新后的本地统计。
 
 如果飞行记录没有 DJI 执行记录，则不会调用 DJI，只重新计算本地媒体数量。该接口不单独调用 DJI playback 或 preview URL；播放、预览、下载地址来自 DJI 媒体列表或回调中已保存的字段。
 """.strip(),

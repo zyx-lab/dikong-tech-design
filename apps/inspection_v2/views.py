@@ -79,7 +79,7 @@ from apps.inspection_v2.services import (
     refresh_cloud_media_file_url,
     safety_abort_mission,
     start_mission,
-    sync_media_for_record,
+    sync_media_for_record_and_update_state,
     update_telemetry_snapshot,
     usable_resource_binding,
     visible_media_queryset,
@@ -190,19 +190,6 @@ def _int_query_param(params, name: str):
         return int(value)
     except (TypeError, ValueError) as exc:
         raise serializers.ValidationError({name: ["必须是整数"]}) from exc
-
-
-def _best_effort_sync_record_media(record, *, source: str) -> None:
-    if record.video_count > 0:
-        return
-    try:
-        sync_media_for_record(record=record)
-    except DjiGatewayError:
-        logger.warning(
-            "failed to best-effort sync flight record media",
-            extra={"flight_record_id": record.id, "mission_id": record.mission_id, "source": source},
-            exc_info=True,
-        )
 
 
 def _replace_waypoints(route: WaypointRoute, waypoints: list[dict]):
@@ -1367,8 +1354,6 @@ class FlightRecordListView(InspectionV2APIView):
         if status_value:
             queryset = queryset.filter(status=status_value)
         records = list(queryset)
-        for record in records:
-            _best_effort_sync_record_media(record, source="flight_record_list")
         serializer = FlightRecordReadSerializer(records, many=True)
         return Response({"list": serializer.data, "total": len(records)}, status=status.HTTP_200_OK)
 
@@ -1382,7 +1367,6 @@ class FlightRecordDetailView(InspectionV2APIView):
     def get(self, request, id: int):
         context = resolve_v2_context(request)
         record = get_visible_record_or_404(context, id)
-        _best_effort_sync_record_media(record, source="flight_record_detail")
         return Response(FlightRecordReadSerializer(record).data, status=status.HTTP_200_OK)
 
     @extend_schema(
@@ -1432,7 +1416,7 @@ class FlightRecordMediaRefreshView(InspectionV2APIView):
             raise StandardForbidden()
         record = get_visible_record_or_404(context, id)
         try:
-            data = sync_media_for_record(record=record)
+            data = sync_media_for_record_and_update_state(record=record)
         except DjiGatewayError as exc:
             return _upstream_error_response(exc)
         log_v2_action(
@@ -1461,7 +1445,6 @@ class MediaFileListView(InspectionV2APIView):
         context = resolve_v2_context(request)
         flight_record_id = _int_query_param(request.query_params, "flightRecordId")
         mission_id = _int_query_param(request.query_params, "missionId")
-        self._sync_filtered_record_media(context, flight_record_id=flight_record_id, mission_id=mission_id)
 
         queryset = visible_media_queryset(context)
         if flight_record_id:
@@ -1475,20 +1458,6 @@ class MediaFileListView(InspectionV2APIView):
             return _upstream_error_response(exc)
         serializer = CloudMediaFileReadSerializer(media_files, many=True)
         return Response({"list": serializer.data, "total": len(media_files)}, status=status.HTTP_200_OK)
-
-    def _sync_filtered_record_media(self, context, *, flight_record_id: int | None, mission_id: int | None) -> None:
-        if not flight_record_id and not mission_id:
-            return
-        queryset = visible_records_queryset(context)
-        if flight_record_id:
-            queryset = queryset.filter(pk=flight_record_id)
-        if mission_id:
-            queryset = queryset.filter(mission_id=mission_id)
-        record = queryset.first()
-        if record is None:
-            return
-        _best_effort_sync_record_media(record, source="media_file_list")
-
 
 class MediaFileDetailView(InspectionV2APIView):
     @extend_schema(

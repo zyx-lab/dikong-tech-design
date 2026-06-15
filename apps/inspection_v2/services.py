@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+import logging
 import re
 from datetime import datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 from urllib.parse import parse_qs, urlsplit
 
+from django.conf import settings
 from django.db.models import Q, QuerySet
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -32,11 +35,13 @@ from apps.inspection_v2.models import (
     CloudMediaFile,
     CloudMediaType,
     CloudExecutionStatus,
+    FlightRecordMediaSyncStatus,
     FlightRecordStatus,
     FlightSession,
     FlightSessionStatus,
     FlightTelemetrySnapshot,
     InspectionFlightRecord,
+    InspectionFlightRecordMediaSyncState,
     InspectionMission,
     LiveStreamStatus,
     MissionCloudExecution,
@@ -49,6 +54,8 @@ from apps.inspection_v2.models import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 LIVE_REPLAY_TIMESTAMP_PATTERN = re.compile(
     r"(?P<date>\d{4}-\d{2}-\d{2})_"
     r"(?P<hour>\d{2})-(?P<minute>\d{2})-(?P<second>\d{2})"
@@ -58,7 +65,43 @@ LIVE_REPLAY_TIMESTAMP_PATTERN = re.compile(
 DJI_MEDIA_TIMESTAMP_PATTERN = re.compile(r"\bDJI_(?P<timestamp>\d{14})_", re.IGNORECASE)
 SESSION_WINDOW_MEDIA_MATCH_TOLERANCE = timedelta(seconds=1)
 MEDIA_PREVIEW_URL_REFRESH_MARGIN = timedelta(minutes=5)
+MEDIA_SYNC_DEADLINE = timedelta(minutes=30)
+MEDIA_SYNC_RETRY_DELAYS = [
+    timedelta(seconds=30),
+    timedelta(minutes=2),
+    timedelta(minutes=5),
+    timedelta(minutes=10),
+    timedelta(minutes=20),
+    timedelta(minutes=30),
+]
 _AMZ_DATE_FORMAT = "%Y%m%dT%H%M%SZ"
+
+
+@dataclass(frozen=True)
+class NormalizedCloudMedia:
+    cloud_file_id: str
+    workspace_id: str
+    device_sn: str
+    dji_job_id: str
+    object_key: str
+    fingerprint: str
+    file_group_id: str
+    media_type: str
+    file_name: str
+    thumbnail_url: str
+    preview_url: str
+    download_url: str
+    playback_url: str
+    file_size: int | None
+    captured_at: datetime | None
+    captured_at_source: str
+    payload: dict
+
+
+@dataclass(frozen=True)
+class ResolvedMediaOwner:
+    mission: InspectionMission | None
+    flight_record: InspectionFlightRecord | None
 
 
 def is_dispatcher(context) -> bool:
@@ -1026,6 +1069,7 @@ def complete_mission(*, mission: InspectionMission, context, request) -> Inspect
             "status": FlightRecordStatus.COMPLETED,
         },
     )
+    schedule_flight_record_media_sync(record, now=now)
     try:
         sync_media_for_record(record=record)
     except DjiGatewayError:
@@ -1163,10 +1207,13 @@ def update_telemetry_snapshot(*, session: FlightSession, payload: dict) -> Fligh
 
 def _parse_media_type(payload: dict) -> str:
     value = str(payload.get("media_type") or payload.get("mediaType") or payload.get("type") or "").strip().lower()
-    name = str(payload.get("file_name") or payload.get("fileName") or payload.get("name") or "").lower()
-    if value in {"photo", "image", "jpg", "jpeg", "0"} or name.endswith((".jpg", ".jpeg", ".png")):
+    names = [
+        str(payload.get(key) or "").strip().lower()
+        for key in ("file_name", "fileName", "name", "object_key", "objectKey", "file_path", "filePath")
+    ]
+    if value in {"photo", "image", "jpg", "jpeg", "0"} or any(name.endswith((".jpg", ".jpeg", ".png")) for name in names):
         return CloudMediaType.PHOTO
-    if value in {"video", "mp4", "1"} or name.endswith((".mp4", ".mov")):
+    if value in {"video", "mp4", "1"} or any(name.endswith((".mp4", ".mov")) for name in names):
         return CloudMediaType.VIDEO
     return CloudMediaType.OTHER
 
@@ -1235,18 +1282,18 @@ def _parse_dji_media_filename_captured_at(payload: dict):
     return timezone.make_aware(parsed, timezone.get_current_timezone())
 
 
-def _parse_captured_at(payload: dict):
+def _parse_captured_at_with_source(payload: dict) -> tuple[datetime | None, str]:
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     explicit_value = payload.get("captured_at") or payload.get("capturedAt")
     explicit_parsed = _coerce_media_datetime(explicit_value)
     if explicit_parsed is not None:
-        return explicit_parsed
+        return explicit_parsed, "captured_at"
     live_replay_started_at = _parse_live_replay_started_at(payload)
     if live_replay_started_at is not None:
-        return live_replay_started_at
+        return live_replay_started_at, "live_replay_filename"
     dji_filename_captured_at = _parse_dji_media_filename_captured_at(payload)
     if dji_filename_captured_at is not None:
-        return dji_filename_captured_at
+        return dji_filename_captured_at, "dji_filename"
     value = (
         payload.get("create_time")
         or payload.get("createTime")
@@ -1255,7 +1302,12 @@ def _parse_captured_at(payload: dict):
         or metadata.get("created_time")
         or metadata.get("createdTime")
     )
-    return _coerce_media_datetime(value)
+    parsed = _coerce_media_datetime(value)
+    return parsed, "create_time" if parsed is not None else ""
+
+
+def _parse_captured_at(payload: dict):
+    return _parse_captured_at_with_source(payload)[0]
 
 
 def _media_identifier(payload: dict) -> str:
@@ -1349,38 +1401,93 @@ def _media_device_sn(payload: dict) -> str:
     return ""
 
 
-def _cloud_media_defaults(
+def normalize_cloud_media_payload(payload: dict, connection: DjiConnection | None = None) -> NormalizedCloudMedia | None:
+    payload = payload if isinstance(payload, dict) else {}
+    cloud_file_id = _media_identifier(payload)
+    if not cloud_file_id:
+        return None
+    captured_at, captured_at_source = _parse_captured_at_with_source(payload)
+    workspace_id = _media_workspace_id(payload) or (connection.workspace_id if connection is not None else "")
+    file_size = payload.get("file_size") or payload.get("fileSize")
+    if file_size not in (None, ""):
+        try:
+            file_size = int(file_size)
+        except (TypeError, ValueError):
+            file_size = None
+    else:
+        file_size = None
+    return NormalizedCloudMedia(
+        cloud_file_id=cloud_file_id,
+        workspace_id=str(workspace_id or "").strip(),
+        device_sn=_media_device_sn(payload),
+        dji_job_id=_media_job_id(payload),
+        object_key=_media_object_key(payload),
+        fingerprint=_media_fingerprint(payload),
+        file_group_id=_media_file_group_id(payload),
+        media_type=_parse_media_type(payload),
+        file_name=_media_string(payload, "file_name", "fileName", "name"),
+        thumbnail_url=_media_string(payload, "thumbnail_url", "thumbnailUrl", "thumb_url", "thumbUrl"),
+        preview_url=_media_string(payload, "preview_url", "previewUrl"),
+        download_url=_media_string(payload, "download_url", "downloadUrl", "file_url", "fileUrl", "url"),
+        playback_url=_media_string(payload, "playback_url", "playbackUrl"),
+        file_size=file_size,
+        captured_at=captured_at,
+        captured_at_source=captured_at_source,
+        payload=payload,
+    )
+
+
+def _normalize_existing_media(media: CloudMediaFile) -> NormalizedCloudMedia:
+    payload = media.metadata if isinstance(media.metadata, dict) else {}
+    return NormalizedCloudMedia(
+        cloud_file_id=media.cloud_file_id,
+        workspace_id=media.workspace_id,
+        device_sn=media.device_sn,
+        dji_job_id=media.dji_job_id,
+        object_key=media.object_key,
+        fingerprint=media.fingerprint,
+        file_group_id=media.file_group_id,
+        media_type=media.media_type,
+        file_name=media.file_name,
+        thumbnail_url=media.thumbnail_url,
+        preview_url=media.preview_url,
+        download_url=media.download_url,
+        playback_url=media.playback_url,
+        file_size=media.file_size,
+        captured_at=media.captured_at,
+        captured_at_source=str(payload.get("captured_at_source") or ""),
+        payload=payload,
+    )
+
+
+def _cloud_media_defaults_from_normalized(
     *,
-    payload: dict,
-    workspace_id: str,
-    dji_job_id: str,
-    device_sn: str,
+    normalized: NormalizedCloudMedia,
     mission: InspectionMission | None,
     flight_record: InspectionFlightRecord | None,
 ) -> dict:
+    metadata = dict(normalized.payload)
+    if normalized.captured_at_source:
+        metadata["captured_at_source"] = normalized.captured_at_source
     return {
-        "workspace_id": workspace_id,
+        "workspace_id": normalized.workspace_id,
         "flight_record": flight_record,
         "mission": mission,
-        "device_sn": device_sn,
-        "dji_job_id": dji_job_id,
-        "object_key": _media_object_key(payload),
-        "fingerprint": _media_fingerprint(payload),
-        "file_group_id": _media_file_group_id(payload),
-        "media_type": _parse_media_type(payload),
-        "file_name": _media_string(payload, "file_name", "fileName", "name"),
-        "thumbnail_url": _media_string(payload, "thumbnail_url", "thumbnailUrl", "thumb_url", "thumbUrl"),
-        "preview_url": _media_string(payload, "preview_url", "previewUrl"),
-        "download_url": _media_string(payload, "download_url", "downloadUrl", "file_url", "fileUrl", "url"),
-        "playback_url": _media_string(payload, "playback_url", "playbackUrl"),
-        "file_size": payload.get("file_size") or payload.get("fileSize"),
-        "captured_at": _parse_captured_at(payload),
-        "metadata": payload,
+        "device_sn": normalized.device_sn,
+        "dji_job_id": normalized.dji_job_id,
+        "object_key": normalized.object_key,
+        "fingerprint": normalized.fingerprint,
+        "file_group_id": normalized.file_group_id,
+        "media_type": normalized.media_type,
+        "file_name": normalized.file_name,
+        "thumbnail_url": normalized.thumbnail_url,
+        "preview_url": normalized.preview_url,
+        "download_url": normalized.download_url,
+        "playback_url": normalized.playback_url,
+        "file_size": normalized.file_size,
+        "captured_at": normalized.captured_at,
+        "metadata": metadata,
     }
-
-
-def _cloud_media_key(payload: dict) -> str:
-    return _media_identifier(payload)
 
 
 def _resource_binding_for_device_sn(device_sn: str) -> ResourceBinding | None:
@@ -1413,11 +1520,202 @@ def _session_window_media_match_range(record: InspectionFlightRecord) -> tuple[d
     )
 
 
+def _candidate_pilot2_media_records(*, workspace_id: str, device_sn: str, captured_at: datetime) -> list[InspectionFlightRecord]:
+    match_start = captured_at - SESSION_WINDOW_MEDIA_MATCH_TOLERANCE
+    match_end = captured_at + SESSION_WINDOW_MEDIA_MATCH_TOLERANCE
+    queryset = (
+        InspectionFlightRecord.objects.select_related(
+            "mission",
+            "mission__cloud_execution",
+            "mission__cloud_execution__dji_connection",
+        )
+        .filter(
+            status=FlightRecordStatus.COMPLETED,
+            mission__cloud_execution__isnull=False,
+            mission__cloud_execution__execution_mode=MissionExecutionMode.PILOT2_MANUAL,
+            mission__cloud_execution__dji_job_id="",
+            start_time__lte=match_end,
+            end_time__gte=match_start,
+        )
+        .filter(
+            Q(mission__cloud_execution__workspace_id=workspace_id)
+            | Q(mission__cloud_execution__dji_connection__workspace_id=workspace_id)
+        )
+        .filter(Q(mission__cloud_execution__drone_sn=device_sn) | Q(drone_device_sn=device_sn))
+        .order_by("start_time", "id")
+    )
+    records = []
+    for record in queryset:
+        window_start, window_end = _session_window_media_match_range(record)
+        if window_start <= captured_at <= window_end:
+            records.append(record)
+    return records
+
+
+def resolve_media_owner(normalized_media: NormalizedCloudMedia) -> ResolvedMediaOwner:
+    if normalized_media.dji_job_id:
+        queryset = MissionCloudExecution.objects.select_related(
+            "mission",
+            "dji_connection",
+        ).filter(dji_job_id=normalized_media.dji_job_id)
+        if normalized_media.workspace_id:
+            queryset = queryset.filter(
+                Q(workspace_id=normalized_media.workspace_id)
+                | Q(dji_connection__workspace_id=normalized_media.workspace_id)
+            )
+        executions = list(queryset[:2])
+        if len(executions) != 1:
+            if len(executions) > 1:
+                logger.warning(
+                    "multiple v2 media owner executions matched dji job",
+                    extra={
+                        "cloud_file_id": normalized_media.cloud_file_id,
+                        "dji_job_id": normalized_media.dji_job_id,
+                        "workspace_id": normalized_media.workspace_id,
+                    },
+                )
+            return ResolvedMediaOwner(mission=None, flight_record=None)
+        execution = executions[0]
+        return ResolvedMediaOwner(
+            mission=execution.mission,
+            flight_record=_flight_record_for_v2_mission(execution.mission),
+        )
+
+    if not normalized_media.workspace_id or not normalized_media.device_sn or normalized_media.captured_at is None:
+        return ResolvedMediaOwner(mission=None, flight_record=None)
+
+    records = _candidate_pilot2_media_records(
+        workspace_id=normalized_media.workspace_id,
+        device_sn=normalized_media.device_sn,
+        captured_at=normalized_media.captured_at,
+    )
+    if len(records) == 1:
+        record = records[0]
+        return ResolvedMediaOwner(mission=record.mission, flight_record=record)
+    if len(records) > 1:
+        logger.warning(
+            "multiple v2 pilot2 media owner records matched session window",
+            extra={
+                "cloud_file_id": normalized_media.cloud_file_id,
+                "captured_at": normalized_media.captured_at.isoformat(),
+                "device_sn": normalized_media.device_sn,
+                "flight_record_ids": [record.id for record in records],
+            },
+        )
+    return ResolvedMediaOwner(mission=None, flight_record=None)
+
+
+def _owner_matches_record(owner: ResolvedMediaOwner, record: InspectionFlightRecord) -> bool:
+    if owner.flight_record is not None:
+        return owner.flight_record.id == record.id
+    return owner.mission is not None and owner.mission.id == record.mission_id
+
+
+def _media_owner_conflicts(
+    media: CloudMediaFile,
+    *,
+    mission: InspectionMission | None,
+    flight_record: InspectionFlightRecord | None,
+) -> bool:
+    if mission is None and flight_record is None:
+        return False
+    if media.flight_record_id is not None:
+        if flight_record is not None and media.flight_record_id == flight_record.id:
+            return False
+        if mission is not None and media.mission_id == mission.id:
+            return False
+        return True
+    if media.mission_id is not None and mission is not None and media.mission_id != mission.id:
+        return True
+    return False
+
+
+def _save_cloud_media_defaults(media: CloudMediaFile, defaults: dict) -> CloudMediaFile:
+    update_fields = []
+    for field, value in defaults.items():
+        if field == "workspace_id":
+            continue
+        if field in {"thumbnail_url", "preview_url", "download_url", "playback_url"} and not value:
+            value = getattr(media, field)
+        if getattr(media, field) != value:
+            setattr(media, field, value)
+            update_fields.append(field)
+    if update_fields:
+        update_fields.append("updated_at")
+        media.save(update_fields=update_fields)
+    return media
+
+
+def _upsert_cloud_media(normalized: NormalizedCloudMedia, owner: ResolvedMediaOwner) -> CloudMediaFile | None:
+    if not normalized.workspace_id:
+        return None
+    defaults = _cloud_media_defaults_from_normalized(
+        normalized=normalized,
+        mission=owner.mission,
+        flight_record=owner.flight_record,
+    )
+    existing = CloudMediaFile.objects.filter(
+        workspace_id=normalized.workspace_id,
+        cloud_file_id=normalized.cloud_file_id,
+    ).first()
+    if existing is None:
+        return CloudMediaFile.objects.create(cloud_file_id=normalized.cloud_file_id, **defaults)
+    if _media_owner_conflicts(existing, mission=owner.mission, flight_record=owner.flight_record):
+        logger.warning(
+            "skip v2 media owner reassignment because media is already bound elsewhere",
+            extra={
+                "cloud_file_id": normalized.cloud_file_id,
+                "workspace_id": normalized.workspace_id,
+                "existing_mission_id": existing.mission_id,
+                "existing_flight_record_id": existing.flight_record_id,
+                "resolved_mission_id": owner.mission.id if owner.mission is not None else None,
+                "resolved_flight_record_id": owner.flight_record.id if owner.flight_record is not None else None,
+            },
+        )
+        return existing
+    if owner.mission is None and owner.flight_record is None:
+        defaults["mission"] = existing.mission
+        defaults["flight_record"] = existing.flight_record
+    return _save_cloud_media_defaults(existing, defaults)
+
+
+def _assign_existing_media_to_owner(
+    media: CloudMediaFile,
+    *,
+    mission: InspectionMission,
+    flight_record: InspectionFlightRecord | None,
+) -> bool:
+    if _media_owner_conflicts(media, mission=mission, flight_record=flight_record):
+        logger.warning(
+            "skip v2 local media owner assignment because media is already bound elsewhere",
+            extra={
+                "cloud_file_id": media.cloud_file_id,
+                "workspace_id": media.workspace_id,
+                "existing_mission_id": media.mission_id,
+                "existing_flight_record_id": media.flight_record_id,
+                "resolved_mission_id": mission.id,
+                "resolved_flight_record_id": flight_record.id if flight_record is not None else None,
+            },
+        )
+        return False
+    changed = False
+    if media.mission_id != mission.id:
+        media.mission = mission
+        changed = True
+    if flight_record is not None and media.flight_record_id != flight_record.id:
+        media.flight_record = flight_record
+        changed = True
+    if changed:
+        media.save(update_fields=["mission", "flight_record", "updated_at"])
+    return changed
+
+
 def _bind_session_window_media_for_record(*, record: InspectionFlightRecord, workspace_id: str, device_sn: str) -> int:
     if not workspace_id or not device_sn:
         return 0
     match_start, match_end = _session_window_media_match_range(record)
-    return CloudMediaFile.objects.filter(
+    synced = 0
+    queryset = CloudMediaFile.objects.filter(
         workspace_id=workspace_id,
         device_sn=device_sn,
         dji_job_id="",
@@ -1426,57 +1724,61 @@ def _bind_session_window_media_for_record(*, record: InspectionFlightRecord, wor
         captured_at__lte=match_end,
         mission__isnull=True,
         flight_record__isnull=True,
-    ).update(
-        mission=record.mission,
-        flight_record=record,
-        updated_at=timezone.now(),
     )
-
-
-def _sync_session_window_media_from_dji(
-    *,
-    gateway: DjiConnectionGateway,
-    record: InspectionFlightRecord,
-    workspace_id: str,
-    device_sn: str,
-) -> int:
-    if not workspace_id or not device_sn:
-        return 0
-    synced = 0
-    match_start, match_end = _session_window_media_match_range(record)
-    for payload in gateway.list_media_files():
-        if not isinstance(payload, dict):
-            continue
-        if _media_job_id(payload):
-            continue
-        payload_workspace_id = _media_workspace_id(payload)
-        if payload_workspace_id and payload_workspace_id != workspace_id:
-            continue
-        if _media_device_sn(payload) != device_sn:
-            continue
-        captured_at = _parse_captured_at(payload)
-        if captured_at is None or captured_at < match_start or captured_at > match_end:
-            continue
-        cloud_file_id = _cloud_media_key(payload)
-        if not cloud_file_id:
-            continue
-        CloudMediaFile.objects.update_or_create(
-            workspace_id=workspace_id,
-            cloud_file_id=cloud_file_id,
-            defaults=_cloud_media_defaults(
-                payload=payload,
-                workspace_id=workspace_id,
-                dji_job_id="",
-                device_sn=device_sn,
-                mission=record.mission,
-                flight_record=record,
-            ),
-        )
-        synced += 1
+    for media in queryset:
+        owner = resolve_media_owner(_normalize_existing_media(media))
+        if _owner_matches_record(owner, record) and _assign_existing_media_to_owner(
+            media,
+            mission=record.mission,
+            flight_record=record,
+        ):
+            synced += 1
     return synced
 
 
-def sync_media_for_record(*, record: InspectionFlightRecord) -> dict:
+def _sync_media_payloads_for_record(
+    *,
+    record: InspectionFlightRecord,
+    connection: DjiConnection,
+    cloud_items: list[dict],
+    workspace_id: str,
+    device_sn: str,
+    dji_job_id: str,
+) -> int:
+    if not workspace_id:
+        return 0
+    synced = 0
+    for payload in cloud_items:
+        if not isinstance(payload, dict):
+            continue
+        normalized = normalize_cloud_media_payload(payload, connection=connection)
+        if normalized is None:
+            continue
+        if normalized.workspace_id and normalized.workspace_id != workspace_id:
+            continue
+
+        owner = resolve_media_owner(normalized)
+        should_store_unassigned = False
+        if normalized.dji_job_id:
+            should_store_for_record = _owner_matches_record(owner, record)
+            should_store_unassigned = owner.mission is None and normalized.dji_job_id == dji_job_id
+        else:
+            should_store_for_record = _owner_matches_record(owner, record)
+            should_store_unassigned = (
+                owner.mission is None
+                and normalized.device_sn == device_sn
+                and normalized.workspace_id == workspace_id
+            )
+        if should_store_for_record:
+            media = _upsert_cloud_media(normalized, owner)
+            if media is not None and media.flight_record_id == record.id:
+                synced += 1
+        elif should_store_unassigned:
+            _upsert_cloud_media(normalized, ResolvedMediaOwner(mission=None, flight_record=None))
+    return synced
+
+
+def sync_media_for_record(*, record: InspectionFlightRecord, cloud_items: list[dict] | None = None) -> dict:
     execution = (
         MissionCloudExecution.objects.select_related("dji_connection")
         .filter(mission=record.mission)
@@ -1502,11 +1804,14 @@ def sync_media_for_record(*, record: InspectionFlightRecord) -> dict:
             device_sn=device_sn,
         )
         try:
-            synced += _sync_session_window_media_from_dji(
-                gateway=DjiConnectionGateway(connection),
+            cloud_items = DjiConnectionGateway(connection).list_media_files() if cloud_items is None else cloud_items
+            synced += _sync_media_payloads_for_record(
                 record=record,
+                connection=connection,
+                cloud_items=cloud_items,
                 workspace_id=workspace_id,
                 device_sn=device_sn,
+                dji_job_id="",
             )
         except DjiGatewayError:
             _refresh_record_media_counts(record)
@@ -1514,38 +1819,244 @@ def sync_media_for_record(*, record: InspectionFlightRecord) -> dict:
         counts = _refresh_record_media_counts(record)
         return {"synced": synced, **counts}
 
-    gateway = DjiConnectionGateway(connection)
-
-    CloudMediaFile.objects.filter(workspace_id=workspace_id, dji_job_id=dji_job_id).update(
-        workspace_id=workspace_id,
-        mission=record.mission,
-        flight_record=record,
-        updated_at=timezone.now(),
-    )
-
-    cloud_items = gateway.list_media_files()
+    for media in CloudMediaFile.objects.filter(workspace_id=workspace_id, dji_job_id=dji_job_id):
+        _assign_existing_media_to_owner(media, mission=record.mission, flight_record=record)
+    cloud_items = DjiConnectionGateway(connection).list_media_files() if cloud_items is None else cloud_items
     synced = 0
-    for payload in cloud_items:
-        if not isinstance(payload, dict) or _media_job_id(payload) != dji_job_id:
-            continue
-        cloud_file_id = _cloud_media_key(payload)
-        if not cloud_file_id:
-            continue
-        CloudMediaFile.objects.update_or_create(
+    try:
+        synced += _sync_media_payloads_for_record(
+            record=record,
+            connection=connection,
+            cloud_items=cloud_items,
             workspace_id=workspace_id,
-            cloud_file_id=cloud_file_id,
-            defaults=_cloud_media_defaults(
-                payload=payload,
-                workspace_id=workspace_id,
-                dji_job_id=dji_job_id,
-                device_sn=_media_device_sn(payload) or execution.drone_sn or record.drone_device_sn,
-                mission=record.mission,
-                flight_record=record,
-            ),
+            device_sn=execution.drone_sn or record.drone_device_sn,
+            dji_job_id=dji_job_id,
         )
-        synced += 1
+    except DjiGatewayError:
+        _refresh_record_media_counts(record)
+        raise
     counts = _refresh_record_media_counts(record)
     return {"synced": synced, **counts}
+
+
+def schedule_flight_record_media_sync(
+    record: InspectionFlightRecord,
+    *,
+    now: datetime | None = None,
+) -> InspectionFlightRecordMediaSyncState:
+    current_time = now or timezone.now()
+    state, _created = InspectionFlightRecordMediaSyncState.objects.update_or_create(
+        flight_record=record,
+        defaults={
+            "status": FlightRecordMediaSyncStatus.PENDING,
+            "next_run_at": current_time,
+            "deadline_at": current_time + MEDIA_SYNC_DEADLINE,
+            "attempt_count": 0,
+            "last_error": "",
+        },
+    )
+    return state
+
+
+def _ensure_flight_record_media_sync_state(record: InspectionFlightRecord) -> InspectionFlightRecordMediaSyncState:
+    try:
+        return record.media_sync_state
+    except InspectionFlightRecordMediaSyncState.DoesNotExist:
+        return schedule_flight_record_media_sync(record)
+
+
+def _next_media_sync_run_at(*, now: datetime, deadline_at: datetime, attempt_count: int) -> datetime:
+    delay_index = min(max(attempt_count - 1, 0), len(MEDIA_SYNC_RETRY_DELAYS) - 1)
+    return min(now + MEDIA_SYNC_RETRY_DELAYS[delay_index], deadline_at)
+
+
+def _mark_media_sync_running(state: InspectionFlightRecordMediaSyncState) -> None:
+    state.status = FlightRecordMediaSyncStatus.RUNNING
+    state.save(update_fields=["status", "updated_at"])
+
+
+def _record_media_sync_success(
+    state: InspectionFlightRecordMediaSyncState,
+    *,
+    result: dict,
+    now: datetime,
+) -> None:
+    state.attempt_count += 1
+    state.last_synced = now
+    state.last_photo_count = int(result.get("photoCount") or 0)
+    state.last_video_count = int(result.get("videoCount") or 0)
+    state.last_error = ""
+    if now >= state.deadline_at:
+        state.status = FlightRecordMediaSyncStatus.COMPLETED
+        state.next_run_at = now
+    else:
+        state.status = FlightRecordMediaSyncStatus.PENDING
+        state.next_run_at = _next_media_sync_run_at(
+            now=now,
+            deadline_at=state.deadline_at,
+            attempt_count=state.attempt_count,
+        )
+    state.save(
+        update_fields=[
+            "status",
+            "next_run_at",
+            "attempt_count",
+            "last_synced",
+            "last_photo_count",
+            "last_video_count",
+            "last_error",
+            "updated_at",
+        ]
+    )
+
+
+def _record_media_sync_failure(
+    state: InspectionFlightRecordMediaSyncState,
+    *,
+    error: Exception,
+    now: datetime,
+) -> None:
+    state.attempt_count += 1
+    state.last_error = str(error)
+    if now >= state.deadline_at:
+        state.status = FlightRecordMediaSyncStatus.FAILED
+        state.next_run_at = now
+    else:
+        state.status = FlightRecordMediaSyncStatus.PENDING
+        state.next_run_at = _next_media_sync_run_at(
+            now=now,
+            deadline_at=state.deadline_at,
+            attempt_count=state.attempt_count,
+        )
+    state.save(update_fields=["status", "next_run_at", "attempt_count", "last_error", "updated_at"])
+
+
+def sync_media_for_record_and_update_state(
+    *,
+    record: InspectionFlightRecord,
+    cloud_items: list[dict] | None = None,
+) -> dict:
+    state = _ensure_flight_record_media_sync_state(record)
+    _mark_media_sync_running(state)
+    now = timezone.now()
+    try:
+        result = sync_media_for_record(record=record, cloud_items=cloud_items)
+    except Exception as exc:
+        _record_media_sync_failure(state, error=exc, now=now)
+        raise
+    _record_media_sync_success(state, result=result, now=now)
+    return result
+
+
+def _execution_for_media_sync_state(state: InspectionFlightRecordMediaSyncState) -> MissionCloudExecution | None:
+    try:
+        return state.flight_record.mission.cloud_execution
+    except MissionCloudExecution.DoesNotExist:
+        return None
+
+
+def _media_sync_group_key(state: InspectionFlightRecordMediaSyncState) -> tuple[int, str] | None:
+    execution = _execution_for_media_sync_state(state)
+    if execution is None:
+        return None
+    if not execution.dji_job_id and execution.execution_mode != MissionExecutionMode.PILOT2_MANUAL:
+        return None
+    return execution.dji_connection_id, execution.workspace_id or execution.dji_connection.workspace_id
+
+
+def _run_due_media_sync_state(
+    state: InspectionFlightRecordMediaSyncState,
+    *,
+    cloud_items: list[dict] | None,
+    now: datetime,
+) -> bool:
+    _mark_media_sync_running(state)
+    try:
+        result = sync_media_for_record(record=state.flight_record, cloud_items=cloud_items)
+    except Exception as exc:
+        logger.warning(
+            "v2 flight record media sync failed",
+            extra={"flight_record_id": state.flight_record_id, "mission_id": state.flight_record.mission_id},
+            exc_info=True,
+        )
+        _record_media_sync_failure(state, error=exc, now=now)
+        return False
+    _record_media_sync_success(state, result=result, now=now)
+    return True
+
+
+def sync_due_flight_record_media(*, batch_size: int | None = None, now: datetime | None = None) -> dict[str, int]:
+    current_time = now or timezone.now()
+    limit = batch_size if batch_size is not None else int(getattr(settings, "DJI_V2_MEDIA_SYNC_BATCH_SIZE", 20))
+    states = list(
+        InspectionFlightRecordMediaSyncState.objects.select_related(
+            "flight_record",
+            "flight_record__mission",
+            "flight_record__mission__cloud_execution",
+            "flight_record__mission__cloud_execution__dji_connection",
+        )
+        .filter(status=FlightRecordMediaSyncStatus.PENDING, next_run_at__lte=current_time)
+        .order_by("next_run_at", "id")[:limit]
+    )
+    processed = len(states)
+    succeeded = 0
+    failed = 0
+
+    standalone_states: list[InspectionFlightRecordMediaSyncState] = []
+    grouped_states: dict[tuple[int, str], list[InspectionFlightRecordMediaSyncState]] = {}
+    for state in states:
+        key = _media_sync_group_key(state)
+        if key is None:
+            standalone_states.append(state)
+        else:
+            grouped_states.setdefault(key, []).append(state)
+
+    for state in standalone_states:
+        if _run_due_media_sync_state(state, cloud_items=None, now=current_time):
+            succeeded += 1
+        else:
+            failed += 1
+
+    for (connection_id, _workspace_id), group_states in grouped_states.items():
+        connection = group_states[0].flight_record.mission.cloud_execution.dji_connection
+        for state in group_states:
+            _mark_media_sync_running(state)
+        try:
+            cloud_items = DjiConnectionGateway(connection).list_media_files()
+        except Exception as exc:
+            for state in group_states:
+                logger.warning(
+                    "v2 grouped flight record media list failed",
+                    extra={
+                        "dji_connection_id": connection_id,
+                        "flight_record_id": state.flight_record_id,
+                        "mission_id": state.flight_record.mission_id,
+                    },
+                    exc_info=True,
+                )
+                _record_media_sync_failure(state, error=exc, now=current_time)
+            failed += len(group_states)
+            continue
+        for state in group_states:
+            try:
+                result = sync_media_for_record(record=state.flight_record, cloud_items=cloud_items)
+            except Exception as exc:
+                logger.warning(
+                    "v2 grouped flight record media sync failed",
+                    extra={"flight_record_id": state.flight_record_id, "mission_id": state.flight_record.mission_id},
+                    exc_info=True,
+                )
+                _record_media_sync_failure(state, error=exc, now=current_time)
+                failed += 1
+                continue
+            _record_media_sync_success(state, result=result, now=current_time)
+            succeeded += 1
+
+    return {
+        "processed": processed,
+        "succeeded": succeeded,
+        "failed": failed,
+    }
 
 
 def _dji_connection_for_media_file(media: CloudMediaFile) -> DjiConnection:
@@ -1655,53 +2166,43 @@ def _flight_record_for_v2_mission(mission: InspectionMission | None) -> Inspecti
 
 def handle_v2_media_upload_callback(payload: dict) -> dict[str, int]:
     payload = payload if isinstance(payload, dict) else {}
-    cloud_file_id = _cloud_media_key(payload)
-    if not cloud_file_id:
+    normalized = normalize_cloud_media_payload(payload)
+    if normalized is None:
         return {"resolved_count": 0, "ignored_count": 1}
 
-    dji_job_id = _media_job_id(payload)
-    execution = None
-    if dji_job_id:
+    if normalized.dji_job_id:
+        owner = resolve_media_owner(normalized)
         execution = (
-            MissionCloudExecution.objects.select_related(
-                "mission",
-                "dji_connection",
-            )
-            .filter(dji_job_id=dji_job_id)
+            MissionCloudExecution.objects.select_related("dji_connection")
+            .filter(mission=owner.mission)
             .first()
+            if owner.mission is not None
+            else None
         )
-
-    device_sn = _media_device_sn(payload) or (execution.drone_sn if execution is not None else "")
-    workspace_id = _media_workspace_id(payload)
-    mission = execution.mission if execution is not None else None
-    flight_record = _flight_record_for_v2_mission(mission)
-
-    if execution is not None:
-        workspace_id = workspace_id or execution.workspace_id or execution.dji_connection.workspace_id
-        device_sn = device_sn or execution.drone_sn
+        if execution is not None:
+            normalized = replace(
+                normalized,
+                workspace_id=normalized.workspace_id or execution.workspace_id or execution.dji_connection.workspace_id,
+                device_sn=normalized.device_sn or execution.drone_sn,
+            )
     else:
+        device_sn = normalized.device_sn
         binding = _resource_binding_for_device_sn(device_sn)
-        if binding is None:
-            return {"resolved_count": 0, "ignored_count": 1}
-        workspace_id = workspace_id or binding.dji_connection.workspace_id
+        if binding is not None:
+            normalized = replace(
+                normalized,
+                workspace_id=normalized.workspace_id or binding.dji_connection.workspace_id,
+            )
+        owner = resolve_media_owner(normalized)
 
-    if not workspace_id:
+    if not normalized.workspace_id:
         return {"resolved_count": 0, "ignored_count": 1}
 
-    CloudMediaFile.objects.update_or_create(
-        workspace_id=workspace_id,
-        cloud_file_id=cloud_file_id,
-        defaults=_cloud_media_defaults(
-            payload=payload,
-            workspace_id=workspace_id,
-            dji_job_id=dji_job_id,
-            device_sn=device_sn,
-            mission=mission,
-            flight_record=flight_record,
-        ),
-    )
-    if flight_record is not None:
-        _refresh_record_media_counts(flight_record)
+    media = _upsert_cloud_media(normalized, owner)
+    if media is None:
+        return {"resolved_count": 0, "ignored_count": 1}
+    if owner.flight_record is not None:
+        _refresh_record_media_counts(owner.flight_record)
     return {"resolved_count": 1, "ignored_count": 0}
 
 
@@ -1758,6 +2259,7 @@ def _session_status_from_cloud(status_value: str) -> str:
 
 
 def _flight_record_from_terminal_execution(*, mission: InspectionMission, session: FlightSession, status_value: str):
+    record_end_time = session.ended_at or timezone.now()
     record, _created = InspectionFlightRecord.objects.get_or_create(
         mission=mission,
         defaults={
@@ -1771,11 +2273,12 @@ def _flight_record_from_terminal_execution(*, mission: InspectionMission, sessio
             "drone_name": mission.drone.name,
             "pilot_name": mission.pilot_account_profile.name,
             "start_time": session.started_at,
-            "end_time": session.ended_at or timezone.now(),
-            "flight_duration": _duration_seconds(session.started_at, session.ended_at or timezone.now()),
+            "end_time": record_end_time,
+            "flight_duration": _duration_seconds(session.started_at, record_end_time),
             "status": _record_status_from_cloud(status_value),
         },
     )
+    schedule_flight_record_media_sync(record, now=record.end_time)
     return record
 
 

@@ -31,6 +31,13 @@ class FlightRecordStatus(models.TextChoices):
     FAILED = "FAILED", "失败"
 
 
+class FlightRecordMediaSyncStatus(models.TextChoices):
+    PENDING = "PENDING", "待同步"
+    RUNNING = "RUNNING", "同步中"
+    COMPLETED = "COMPLETED", "已完成"
+    FAILED = "FAILED", "失败"
+
+
 class CloudMediaType(models.TextChoices):
     PHOTO = "PHOTO", "照片"
     VIDEO = "VIDEO", "视频"
@@ -419,6 +426,32 @@ class InspectionFlightRecord(TimeStampedModel):
         indexes = [
             models.Index(fields=["status"], name="idx_v2_record_status"),
             models.Index(fields=["drone_device_sn", "start_time", "end_time"], name="idx_v2_record_drone_time"),
+        ]
+
+
+class InspectionFlightRecordMediaSyncState(TimeStampedModel):
+    flight_record = models.OneToOneField(
+        InspectionFlightRecord,
+        on_delete=models.CASCADE,
+        related_name="media_sync_state",
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=FlightRecordMediaSyncStatus.choices,
+        default=FlightRecordMediaSyncStatus.PENDING,
+    )
+    next_run_at = models.DateTimeField()
+    deadline_at = models.DateTimeField()
+    attempt_count = models.PositiveIntegerField(default=0)
+    last_synced = models.DateTimeField(null=True, blank=True)
+    last_photo_count = models.PositiveIntegerField(default=0)
+    last_video_count = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "v2_inspection_flight_record_media_sync_states"
+        indexes = [
+            models.Index(fields=["status", "next_run_at"], name="idx_v2_media_sync_due"),
         ]
 
 
