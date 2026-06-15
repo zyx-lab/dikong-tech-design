@@ -63,6 +63,7 @@ from apps.inspection_v2.services import (
     create_assignments,
     editable_routes_queryset,
     ensure_cloud_media_preview_url,
+    ensure_cloud_media_preview_urls,
     ensure_resources_available,
     get_editable_route_or_404,
     get_visible_mission_or_404,
@@ -1446,8 +1447,13 @@ class MediaFileListView(InspectionV2APIView):
         mission_id = _int_query_param(request.query_params, "missionId")
         if mission_id:
             queryset = queryset.filter(mission_id=mission_id)
-        serializer = CloudMediaFileReadSerializer(queryset, many=True)
-        return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
+        media_files = list(queryset)
+        try:
+            media_files = ensure_cloud_media_preview_urls(media_files)
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
+        serializer = CloudMediaFileReadSerializer(media_files, many=True)
+        return Response({"list": serializer.data, "total": len(media_files)}, status=status.HTTP_200_OK)
 
 
 class MediaFileDetailView(InspectionV2APIView):

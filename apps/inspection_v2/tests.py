@@ -859,6 +859,7 @@ class InspectionV2ApiTests(TestCase):
                     "mediaType": "photo",
                     "capturedAt": captured_at,
                     "thumbnailUrl": "https://media.example.test/inspection-thumb.jpg",
+                    "previewUrl": "https://media.example.test/inspection-preview.jpg",
                     "downloadUrl": "https://media.example.test/inspection.jpg",
                 }
             ],
@@ -1990,16 +1991,64 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(media.preview_url, "")
         get_preview_url.assert_called_once_with("media-preview-fails")
 
-    def test_media_file_list_should_not_auto_refresh_preview_url(self):
+    def test_media_file_list_should_auto_refresh_missing_preview_url(self):
         media = self.create_visible_media_file(cloud_file_id="media-list-no-preview")
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_preview_url",
+            return_value="https://media.example.test/list-preview.jpg",
+        ) as get_preview_url:
+            response = self.client.get("/api/v2/inspection/media-files")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        item = next(item for item in response.data["data"]["list"] if item["id"] == media.id)
+        self.assertEqual(item["previewUrl"], "https://media.example.test/list-preview.jpg")
+        media.refresh_from_db()
+        self.assertEqual(media.preview_url, "https://media.example.test/list-preview.jpg")
+        get_preview_url.assert_called_once_with("media-list-no-preview")
+
+    def test_media_file_list_should_not_refresh_valid_preview_url(self):
+        preview_url = self.signed_media_preview_url(issued_at=timezone.now() + timedelta(hours=1))
+        media = self.create_visible_media_file(cloud_file_id="media-list-valid-preview", preview_url=preview_url)
 
         with patch("apps.inspection_v2.services.DjiConnectionGateway.get_media_preview_url") as get_preview_url:
             response = self.client.get("/api/v2/inspection/media-files")
 
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         item = next(item for item in response.data["data"]["list"] if item["id"] == media.id)
-        self.assertEqual(item["previewUrl"], "")
+        self.assertEqual(item["previewUrl"], preview_url)
         get_preview_url.assert_not_called()
+
+    def test_media_file_list_should_refresh_expired_preview_url(self):
+        expired_preview_url = self.signed_media_preview_url(issued_at=timezone.now() - timedelta(hours=7))
+        media = self.create_visible_media_file(cloud_file_id="media-list-expired-preview", preview_url=expired_preview_url)
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_preview_url",
+            return_value="https://media.example.test/list-fresh-preview.jpg",
+        ) as get_preview_url:
+            response = self.client.get("/api/v2/inspection/media-files")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        item = next(item for item in response.data["data"]["list"] if item["id"] == media.id)
+        self.assertEqual(item["previewUrl"], "https://media.example.test/list-fresh-preview.jpg")
+        media.refresh_from_db()
+        self.assertEqual(media.preview_url, "https://media.example.test/list-fresh-preview.jpg")
+        get_preview_url.assert_called_once_with("media-list-expired-preview")
+
+    def test_media_file_list_should_fail_when_preview_refresh_fails(self):
+        self.create_visible_media_file(cloud_file_id="media-list-preview-fails")
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_preview_url",
+            side_effect=DjiGatewayUpstreamError("preview failed", status_code=502, data={"error": "boom"}),
+        ) as get_preview_url:
+            response = self.client.get("/api/v2/inspection/media-files")
+
+        self.assertEqual(response.status_code, 502, getattr(response, "data", response.content))
+        self.assertEqual(response.data["code"], "E0001")
+        self.assertNotIn("list", response.data.get("data") or {})
+        get_preview_url.assert_called_once_with("media-list-preview-fails")
 
     def test_media_file_refresh_url_should_hide_invisible_media(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="媒体 URL 权限航线")

@@ -1585,6 +1585,10 @@ def ensure_cloud_media_preview_url(media: CloudMediaFile) -> CloudMediaFile:
     return refresh_cloud_media_file_url(media=media, url_type="preview")
 
 
+def ensure_cloud_media_preview_urls(media_files: list[CloudMediaFile]) -> list[CloudMediaFile]:
+    return [ensure_cloud_media_preview_url(media) for media in media_files]
+
+
 def _flight_record_for_v2_mission(mission: InspectionMission | None) -> InspectionFlightRecord | None:
     if mission is None:
         return None
