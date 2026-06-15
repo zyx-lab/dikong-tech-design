@@ -145,8 +145,8 @@
 | `GET /api/v2/inspection/flight-records/{id}` | 读取飞行记录详情。 |
 | `PUT /api/v2/inspection/flight-records/{id}` | 更新飞行记录备注。 |
 | `POST /api/v2/inspection/flight-records/{id}/refresh-media` | 按飞行记录关联任务刷新媒体索引。 |
-| `GET /api/v2/inspection/media-files` | 查询云媒体文件；返回项会按需自动补齐 `previewUrl`。 |
-| `GET /api/v2/inspection/media-files/{id}` | 读取云媒体文件详情；按需自动补齐 `previewUrl`。 |
+| `GET /api/v2/inspection/media-files` | 查询云媒体文件；照片返回项会按需自动补齐 `previewUrl`。 |
+| `GET /api/v2/inspection/media-files/{id}` | 读取云媒体文件详情；照片媒体会按需自动补齐 `previewUrl`。 |
 | `POST /api/v2/inspection/media-files/{id}/refresh-url` | 刷新媒体下载、预览或播放 URL。 |
 
 ### 系统菜单和日志
@@ -277,7 +277,7 @@ POST /api/v1/manage/token/refresh
 | `POST /api/v2/inspection/live/update` | 更新 DJI live stream | 常用于调整 `videoQuality` |
 | `POST /api/v2/inspection/live/switch` | 切换 DJI live stream 镜头 | `videoType` 用 `wide/zoom/ir/normal` |
 | `POST /api/v2/inspection/camera/actions` | 抢占 payload authority 后下发 payload commands | 用本地 `droneId/executorId` 和 capacity 中的 `payloadIndex` |
-| `POST /api/v2/inspection/flight-records/{id}/refresh-media` | 查询 DJI media files 列表；Dock 按 `djiJobId` 过滤，Pilot2 按 workspace、无人机和会话时间窗过滤无 job 媒体 | 只刷新媒体索引；预览图 URL 在媒体列表和详情读取时按需补齐 |
+| `POST /api/v2/inspection/flight-records/{id}/refresh-media` | 查询 DJI media files 列表；Dock 按 `djiJobId` 过滤，Pilot2 按 workspace、无人机和会话时间窗过滤无 job 媒体 | 只刷新媒体索引；照片预览 URL 在媒体列表和详情读取时按需补齐，视频播放 URL 走 `playback` |
 | `POST /api/v2/inspection/media-files/{id}/refresh-url` | 按本地媒体文件显式刷新 DJI signed URL | `urlType=download|preview|playback`，用于下载、播放或预览失败重试 |
 
 资源发现对应的 DJI 参考路径：
@@ -412,9 +412,9 @@ GET /api/v1/media/workspaces/{workspace_id}/files/{file_id}/preview-url
 GET /api/v1/media/workspaces/{workspace_id}/files/{file_id}/playback-url
 ```
 
-`POST /api/v2/inspection/flight-records/{id}/refresh-media` 对 Dock 模式会用飞行记录关联任务的 `djiJobId` 过滤媒体列表，并写入本地 `CloudMediaFile`；对 Pilot2 模式会查询 DJI media files 列表中的无 job 媒体，并结合已回调落库媒体，按本地会话窗口绑定。如果要让新拍摄的照片/视频出现，先调用 `refresh-media` 或等待 DJI 回调/worker 写入。`GET /api/v2/inspection/media-files` 会为本次返回的媒体项同步补齐空白或临近过期的 `previewUrl`；若任一返回项无法刷新预览 URL，列表接口会返回错误而不是成功返回空白 `previewUrl`。`GET /api/v2/inspection/media-files/{id}` 会在 `previewUrl` 为空或签名临近过期时 best-effort 刷新预览 URL，刷新失败仍返回媒体详情。
+`POST /api/v2/inspection/flight-records/{id}/refresh-media` 对 Dock 模式会用飞行记录关联任务的 `djiJobId` 过滤媒体列表，并写入本地 `CloudMediaFile`；对 Pilot2 模式会查询 DJI media files 列表中的无 job 媒体，并结合已回调落库媒体，按本地会话窗口绑定。如果要让新拍摄的照片/视频出现，先调用 `refresh-media` 或等待 DJI 回调/worker 写入。`GET /api/v2/inspection/media-files` 会为本次返回的照片媒体同步补齐空白或临近过期的 `previewUrl`；若照片返回项无法刷新预览 URL，列表接口会返回错误而不是成功返回空白 `previewUrl`。视频媒体不会自动请求 DJI preview URL，前端播放视频时使用 `playbackUrl`，为空或过期时调用 `refresh-url` 且传 `urlType=playback`。`GET /api/v2/inspection/media-files/{id}` 会在照片媒体的 `previewUrl` 为空或签名临近过期时 best-effort 刷新预览 URL，刷新失败仍返回媒体详情。
 
-如果媒体已经在本地列表里，前端可以直接使用列表或详情返回的 `previewUrl` 展示预览。下载、播放地址过期，或预览仍不可用需要手动重试时，调用：
+如果照片媒体已经在本地列表里，前端可以直接使用列表或详情返回的 `previewUrl` 展示预览；视频媒体使用 `playbackUrl` 播放。下载、播放地址过期，或照片预览仍不可用需要手动重试时，调用：
 
 ```http
 POST /api/v2/inspection/media-files/{id}/refresh-url

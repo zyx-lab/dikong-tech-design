@@ -1580,6 +1580,8 @@ def refresh_cloud_media_file_url(*, media: CloudMediaFile, url_type: str) -> Clo
 
 
 def ensure_cloud_media_preview_url(media: CloudMediaFile) -> CloudMediaFile:
+    if media.media_type != CloudMediaType.PHOTO:
+        return media
     if not _preview_url_needs_refresh(media.preview_url):
         return media
     return refresh_cloud_media_file_url(media=media, url_type="preview")

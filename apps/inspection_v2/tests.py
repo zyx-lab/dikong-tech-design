@@ -32,6 +32,7 @@ from apps.inspection_v2.models import (
     CameraOperation,
     CameraOperationStatus,
     CloudExecutionStatus,
+    CloudMediaType,
     CloudMediaFile,
     FlightSession,
     InspectionFlightRecord,
@@ -381,7 +382,14 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(response.status_code, 201, getattr(response, "data", response.content))
         return response.data["data"]
 
-    def create_visible_media_file(self, *, cloud_file_id: str, preview_url: str = ""):
+    def create_visible_media_file(
+        self,
+        *,
+        cloud_file_id: str,
+        preview_url: str = "",
+        media_type: str = CloudMediaType.PHOTO,
+        file_name: str | None = None,
+    ):
         route = self.create_route_by_api(self.owner_dispatcher, name=f"媒体预览 {cloud_file_id}")
         mission = self.create_mission_by_api(
             self.owner_dispatcher,
@@ -394,7 +402,8 @@ class InspectionV2ApiTests(TestCase):
             mission_id=mission["id"],
             device_sn=self.drone.device_sn,
             cloud_file_id=cloud_file_id,
-            file_name=f"{cloud_file_id}.jpg",
+            media_type=media_type,
+            file_name=file_name or f"{cloud_file_id}.jpg",
             preview_url=preview_url,
         )
 
@@ -2035,6 +2044,29 @@ class InspectionV2ApiTests(TestCase):
         media.refresh_from_db()
         self.assertEqual(media.preview_url, "https://media.example.test/list-fresh-preview.jpg")
         get_preview_url.assert_called_once_with("media-list-expired-preview")
+
+    def test_media_file_list_should_not_request_preview_for_video_media(self):
+        media = self.create_visible_media_file(
+            cloud_file_id="media-list-video-no-preview",
+            media_type=CloudMediaType.VIDEO,
+            file_name="media-list-video-no-preview.mp4",
+        )
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_preview_url",
+            side_effect=DjiGatewayUpstreamError(
+                "preview failed",
+                status_code=502,
+                data={"code": "E0001", "msg": "The file is not a supported preview image."},
+            ),
+        ) as get_preview_url:
+            response = self.client.get("/api/v2/inspection/media-files")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        item = next(item for item in response.data["data"]["list"] if item["id"] == media.id)
+        self.assertEqual(item["mediaType"], "VIDEO")
+        self.assertEqual(item["previewUrl"], "")
+        get_preview_url.assert_not_called()
 
     def test_media_file_list_should_fail_when_preview_refresh_fails(self):
         self.create_visible_media_file(cloud_file_id="media-list-preview-fails")
