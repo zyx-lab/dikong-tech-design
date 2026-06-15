@@ -14,7 +14,7 @@
 
 - 在 v2 mission `RUNNING -> COMPLETED` 时，创建 `FlightRecord` 后立即刷新该 mission 所属 `dji_platform` 的媒体。
 - v2 flight record detail 查询前，按 `flight_record.dji_platform` 刷新媒体，而不是依赖 v1 默认 workspace。
-- v2 flight record detail 的 `media_files` 查询限定为 `flight_record + dji_platform + dji_index`，不再走 v1 serializer 里的默认 `DjiGateway()` workspace 过滤。
+- v2 flight record detail 的 `media_files` 查询限定为 `flight_record + dji_platform + dji_index`，不再走旧 v1 serializer 的默认 workspace 过滤。
 - 保留 `GET /api/v2/media-files?platform_id=...` 作为手动/列表刷新入口。
 - 将 `FlightRecord.photo_count` 和 `video_count` 都改成由当前绑定的 DJI 媒体自动回算。
 
@@ -66,7 +66,7 @@
 - [ ] 查询条件固定为 `flight_record=obj`、`dji_platform=obj.dji_platform`、`is_deleted=False`、`dji_index__isnull=False`。
 - [ ] 排序沿用现有规则：`-captured_at`, `-id`。
 - [ ] 下载、播放、预览 URL 使用 v2 路由名，确保详情里返回 `/api/v2/media-files/{id}/...` 对应的接口，而不是 v1 URL。
-- [ ] 不再调用 `DjiGateway()` 获取默认 workspace，不再按默认 workspace 过滤 v2 detail 素材。
+- [ ] 不再获取默认 workspace，不再按默认 workspace 过滤 v2 detail 素材。
 
 ### Task 5: 保持 v2 media list 手动刷新入口
 

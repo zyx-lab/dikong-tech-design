@@ -272,8 +272,9 @@ def create_mission_and_sync(request):
             status=MissionStatus.PENDING
         )
 
-        # 2. 调 DJI 创建
-        gateway = DjiGateway()
+        # 2. 通过任务执行端/网关绑定解析 DJI 连接，再调 DJI 创建
+        dji_connection = resolve_dji_connection(request.data["executorId"])
+        gateway = DjiConnectionGateway(dji_connection)
         payload = gateway.create_job(
             name=mission.name,
             file_id=request.data["file_id"],
@@ -308,8 +309,8 @@ def cancel(self, request, *args, **kwargs):
     if not mission.dji_job_id:
         raise ValidationError({"detail": "任务尚未同步到 DJI，无法取消"})
 
-    # 1. 先调 DJI DELETE
-    gateway = DjiGateway()
+    # 1. 通过任务记录的 DJI 连接先调 DJI DELETE
+    gateway = DjiConnectionGateway(mission.dji_connection)
     gateway.delete_job(mission.dji_job_id)
 
     # 2. DJI 成功后再改本地状态
@@ -460,8 +461,9 @@ def cancel(self, request, *args, **kwargs):
    - 对 Django 来说，只存在“当前可用上游无人机资源、航线资源、任务资源、媒体资源”；上游账号结构是 `DjiGateway` 内部实现细节。
 2. 登录入口
    - 由服务端 `DjiGateway` 调用 DJI `POST /api/v1/manage/login` 获取 `access_token`、`workspace_id`、`mqtt_username`、`mqtt_password`、`mqtt_addr`。
-   - 当前最小运行配置为 `DJI_UPSTREAM_BASE_URL`、`DJI_UPSTREAM_USERNAME`、`DJI_UPSTREAM_PASSWORD`，以及可选的 `DJI_UPSTREAM_LOGIN_FLAG`。
-   - 登录凭据只保存在服务端环境变量中，不下发给浏览器或前端应用。
+   - 当前 v2 实现的上云地址和登录凭据来自 `DjiConnection.base_url/username/password/login_flag`，由 `/api/v2/resource/dji-connections` 创建或更新后持久化到数据库。
+   - 当前 v2 没有全局 DJI 上游地址、账号或密码环境变量；调用 DJI 必须解析到具体 `DjiConnection`。
+   - 登录凭据只保存在服务端数据库和运行时内存中，不下发给浏览器或前端应用。
 3. token 与 workspace 托管
    - `DjiGateway` 自动把当前 `workspace_id`、`dji_user_id`、`dji_username`、`dji_user_type`、`access_token`、`mqtt_*`、`expires_at` 回写到 `DjiWorkspaceConfig`。
    - `DjiWorkspaceConfig` 是当前上游会话的唯一持久化落点；所有业务模块调用 DJI 时都只能向 `DjiGateway` 传业务参数，由 `DjiGateway` 统一补齐 `x-auth-token` 和 `workspace_id`。

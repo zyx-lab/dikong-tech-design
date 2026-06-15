@@ -35,16 +35,16 @@
       - GET /api/v2/algorithm-events/stream?mission_id=...，返回 text/event-stream，事件 id 使用 AlgorithmEvent.id。
       - POST /api/v2/algorithm-callback/events 给算法服务回调，使用 HMAC/Token 签名，不走普通用户 Bearer auth。
   - 修正 v2 live 语义：
-      - 现有 v2 V2DroneViewSet 继承了 v1 live action，但 v1 live 使用默认 DjiGateway()，不适合多 DJI 平台。
-      - 实现时抽出平台感知的直播服务，v2 所有直播和算法启动都必须使用 DjiGateway(platform=drone.dji_platform)。
+      - v2 直播不能继承旧 v1 默认 workspace 逻辑。
+      - 实现时抽出连接感知的直播服务，v2 所有直播和算法启动都必须先解析到 `DjiConnection`，再使用 `DjiConnectionGateway(connection)`。
 
   ## Implementation Flow
 
   - mission PENDING -> RUNNING：
       - 校验 mission、drone、route、DJI platform、算法 profile。
       - 如果 mission 没配置算法 profile，走现有 v2 advance 流程。
-      - 如果配置了 profile，先创建 AlgorithmSession(STARTING)，再调用 DjiGateway(platform).get_live_capacity() 解析/校验 video_id。
-      - 调用 DjiGateway(platform).start_live(device_sn, video_id, url_type=1, video_quality=...)，选择返回里的 rtmp_url 或 url 作为算法拉流地址。
+      - 如果配置了 profile，先创建 AlgorithmSession(STARTING)，再解析任务绑定的 `DjiConnection`，调用 `DjiConnectionGateway(connection).get_live_capacity()` 解析/校验 video_id。
+      - 调用 `DjiConnectionGateway(connection).start_live(device_sn, video_id, url_type=1, video_quality=...)`，选择返回里的 rtmp_url 或 url 作为算法拉流地址。
       - 调用算法服务 POST {provider.base_url}/sessions，传 session_id、mission_id、department_id、drone/device_sn、dji_platform_id、stream_url、video_id、profile.code/params、callback_url。
       - 算法服务返回成功后，mission 才更新为 RUNNING，session 更新为 RUNNING。
       - 任一步失败：mission 保持 PENDING，session 标记 ERROR；如果 DJI 直播已启动，调用 stop_live 做补偿；接口返回 400/502。
@@ -65,7 +65,7 @@
 
   - v2 mission 未配置算法 profile 时，advance 行为与当前一致，不启动直播、不调用算法服务。
   - 配置算法 profile 的 mission 启动成功：
-      - 使用 DjiGateway(platform=mission.dji_platform)；
+      - 使用任务绑定的 `DjiConnectionGateway(connection)`；
       - start_live 使用 url_type=1；
       - 算法服务收到 RTMP URL、mission/drone/platform/profile 信息；
       - mission 变 RUNNING，session 变 RUNNING。

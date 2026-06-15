@@ -32,12 +32,63 @@
         background: #fff8e1;
         color: #5d4037;
       }
+
+      #api-v2-docs-login {
+        display: none;
+        gap: 8px;
+        align-items: center;
+        padding: 10px 16px;
+        border-bottom: 1px solid #d9d9d9;
+        background: #f5f7fb;
+        font-size: 14px;
+      }
+
+      #api-v2-docs-login.visible {
+        display: flex;
+        flex-wrap: wrap;
+      }
+
+      #api-v2-docs-login input {
+        min-width: 180px;
+        height: 32px;
+        padding: 0 10px;
+        border: 1px solid #bdbdbd;
+        border-radius: 4px;
+        background: #fff;
+      }
+
+      #api-v2-docs-login button {
+        height: 32px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 4px;
+        background: #1f6feb;
+        color: #fff;
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      #api-v2-docs-login button:disabled {
+        cursor: wait;
+        opacity: 0.65;
+      }
+
+      #api-v2-login-status {
+        min-width: 220px;
+        color: #5f6368;
+      }
     </style>
     {% endblock head %}
   </head>
   <body>
     {% block body %}
     <div id="auth-status-banner" class="warn">正在检测登录状态...</div>
+    <form id="api-v2-docs-login" autocomplete="on">
+      <input name="username" type="text" autocomplete="username" placeholder="用户名">
+      <input name="password" type="password" autocomplete="current-password" placeholder="密码">
+      <button type="submit">登录并填入 Bearer Token</button>
+      <span id="api-v2-login-status"></span>
+    </form>
     <div id="swagger-ui"></div>
     <script src="{{ swagger_ui_bundle }}"></script>
     <script src="{{ swagger_ui_standalone }}"></script>
@@ -51,6 +102,9 @@
     <script>
       (function () {
         var banner = document.getElementById('auth-status-banner');
+        var loginForm = document.getElementById('api-v2-docs-login');
+        var loginStatus = document.getElementById('api-v2-login-status');
+        var loginButton = loginForm.querySelector('button');
         var pathname = window.location.pathname || '';
 
         function setBanner(text, cls) {
@@ -58,8 +112,84 @@
           banner.className = cls;
         }
 
+        function setLoginStatus(text) {
+          loginStatus.textContent = text;
+        }
+
+        function extractAccessToken(payload) {
+          if (!payload || typeof payload !== 'object') {
+            return '';
+          }
+          if (payload.accessToken) {
+            return payload.accessToken;
+          }
+          if (payload.data && payload.data.accessToken) {
+            return payload.data.accessToken;
+          }
+          return '';
+        }
+
+        function authorizeSwagger(token) {
+          if (typeof ui === 'undefined' || !ui.authActions) {
+            throw new Error('Swagger UI 尚未初始化');
+          }
+          ui.authActions.authorize({
+            BearerAuth: {
+              name: 'BearerAuth',
+              schema: {
+                type: 'http',
+                scheme: 'bearer',
+                bearerFormat: 'Opaque access token'
+              },
+              value: token
+            }
+          });
+        }
+
         if (pathname.startsWith('/api/v2/docs/')) {
-          setBanner('当前为 API v2 文档页。需要认证的接口请先调用 /api/v2/iam/session/login，再在 Swagger Authorize 中填写 Bearer Token。', 'warn');
+          loginForm.classList.add('visible');
+          loginForm.addEventListener('submit', function (event) {
+            event.preventDefault();
+            loginButton.disabled = true;
+            setLoginStatus('登录中...');
+
+            fetch('/api/v2/iam/session/login', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+              },
+              body: JSON.stringify({
+                username: loginForm.elements.username.value,
+                password: loginForm.elements.password.value
+              })
+            })
+              .then(function (response) {
+                return response.json().then(function (payload) {
+                  if (!response.ok) {
+                    throw new Error(payload.msg || payload.detail || '登录失败');
+                  }
+                  return payload;
+                });
+              })
+              .then(function (payload) {
+                var token = extractAccessToken(payload);
+                if (!token) {
+                  throw new Error('登录响应缺少 accessToken');
+                }
+                authorizeSwagger(token);
+                setLoginStatus('已填入 Bearer Token，可以直接 Try it out。');
+                setBanner('已登录 API v2 文档调试会话。后续请求会自动携带 Authorization: Bearer <token>。', 'ok');
+              })
+              .catch(function (error) {
+                setLoginStatus(error.message || '登录失败');
+                setBanner('登录失败，请检查用户名、密码和账号状态。', 'warn');
+              })
+              .finally(function () {
+                loginButton.disabled = false;
+              });
+          });
+          setBanner('当前为 API v2 文档页。可用下方用户名密码登录，也可在 Swagger Authorize 中手动填写 Bearer Token。', 'warn');
           return;
         }
 

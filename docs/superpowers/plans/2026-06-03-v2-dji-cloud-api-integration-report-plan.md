@@ -109,13 +109,16 @@ DJI 设备 / DJI 上云 MQTT broker
        x-auth-token: {access_token}
 ```
 
-报告中只允许写环境变量占位：
+报告中不要把 v2 DJI 上游配置写成全局环境变量。当前 v2 正式链路通过 `POST /api/v2/resource/dji-connections` 写入 `DjiConnection.base_url/username/password/login_flag`，后续 HTTP 请求和 `v2-dji-worker` 都从数据库中的对应连接读取配置。
 
-```bash
-export DJI_UPSTREAM_BASE_URL='<dji-api-base-url>'
-export DJI_UPSTREAM_USERNAME='<username>'
-export DJI_UPSTREAM_PASSWORD='<password>'
-export DJI_UPSTREAM_LOGIN_FLAG='1'
+```json
+{
+  "name": "DJI 连接名称",
+  "baseUrl": "<dji-api-base-url>",
+  "username": "<username>",
+  "password": "<password>",
+  "loginFlag": 1
+}
 ```
 
 不要写真实密码。
@@ -538,9 +541,10 @@ web:
   负责 /api/v2/* HTTP API
 
 v2-dji-worker:
-  使用同一份镜像和环境变量
+  使用同一份镜像和数据库连接配置
   command: python manage.py run_v2_dji_worker
   连接同一个数据库
+  查询 ACTIVE 的 DjiConnection
   访问 DJI MQTT broker
 ```
 
@@ -556,16 +560,7 @@ DB_PASSWORD=<db-password>
 DJANGO_ALLOWED_HOSTS=<hosts>
 ```
 
-如果使用全局 legacy DJI gateway，还需要：
-
-```bash
-DJI_UPSTREAM_BASE_URL='<dji-api-base-url>'
-DJI_UPSTREAM_USERNAME='<username>'
-DJI_UPSTREAM_PASSWORD='<password>'
-DJI_UPSTREAM_LOGIN_FLAG='1'
-```
-
-但 v2 多平台主要以 `DjiConnection` 数据库配置为准。
+DJI 上游 API 地址和账号不属于 Docker 启动最低环境变量。v2 没有全局 DJI 上游地址、账号或密码环境变量，以 `DjiConnection` 数据库配置为准。
 
 ## 7. 验收计划章节
 

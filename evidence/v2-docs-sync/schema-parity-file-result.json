@@ -12,10 +12,10 @@
     "paths_only_local": []
   },
   "has_drift": false,
-  "live_component_schema_count": 78,
-  "live_path_count": 62,
-  "live_source": "evidence/v2-docs-sync/live-schema-http.txt",
-  "local_component_schema_count": 78,
-  "local_path_count": 62,
-  "local_source": "evidence/v2-docs-sync/local-schema.json"
+  "live_component_schema_count": 100,
+  "live_path_count": 84,
+  "live_source": "evidence/v2-docs-sync/local-schema.json",
+  "local_component_schema_count": 100,
+  "local_path_count": 84,
+  "local_source": "django:/api/v2/docs/schema/"
 }
