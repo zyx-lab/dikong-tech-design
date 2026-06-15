@@ -261,6 +261,13 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
 
 如果飞行记录没有 DJI 执行记录，则不会调用 DJI，只重新计算本地媒体数量。该接口不单独调用 DJI playback 或 preview URL；播放、预览、下载地址来自 DJI 媒体列表或回调中已保存的字段。
 """.strip(),
+    _operation_key("GET", "/api/v2/inspection/media-files/{id}"): """
+### DJI 上游调用
+
+该接口按本地 `CloudMediaFile.id` 读取媒体详情。返回前会 best-effort 补齐 `previewUrl`：当本地 `previewUrl` 为空，或能从 signed URL 参数判断已过期/临近过期时，后端会调用 DJI preview URL 并写回本地媒体记录。
+
+自动刷新失败不会阻断详情读取；响应仍返回媒体详情，`previewUrl` 保持原值或空字符串。列表接口不会批量刷新每条媒体的预览 URL。
+""".strip(),
     _operation_key("POST", "/api/v2/inspection/media-files/{id}/refresh-url"): """
 ### DJI 上游调用
 
@@ -330,6 +337,10 @@ def _domain_response(method: str, path: str) -> str:
         return "返回 DJI 上游直播能力或操作结果；失败时 `msg` 可作为联调错误提示。"
     if "/camera/" in path:
         return "返回本次相机操作记录 ID、`droneSn/gatewaySn/payloadIndex` 映射字段，以及 `upstream.authority/upstream.command` 两段 DJI 上游结果；拍照和录像媒体文件继续走媒体同步流程。"
+    if "/media-files/" in path and method.upper() == "GET":
+        return "返回媒体详情；`previewUrl` 为空或签名临近过期时会 best-effort 自动刷新，失败时仍返回详情。"
+    if path.endswith("/media-files") and method.upper() == "GET":
+        return "`data.list[]` 返回本地媒体索引；列表接口不会为每条媒体批量刷新 `previewUrl`。"
     if path.endswith("/refresh-url"):
         return "返回更新后的媒体文件详情；按 `urlType` 刷新 `downloadUrl`、`previewUrl` 或 `playbackUrl`。"
     return "成功数据固定放在 `data`；列表接口返回 `list` 和 `total`。"
@@ -400,6 +411,8 @@ def _next_step(method: str, path: str) -> str:
         return "将返回的播放信息展示到监控页；停止时调用 `/live/stop`。"
     if "/camera/actions" in path:
         return "根据 `data.status` 和 `data.upstream.command` 更新当前按钮状态；需要查看新照片或录像时走媒体同步或飞行记录媒体刷新接口。"
+    if "/media-files/" in path and method.upper() == "GET":
+        return "使用 `data.previewUrl` 展示图片预览；如果仍为空或不可访问，可调用 `refresh-url` 做显式重试。"
     if path.endswith("/refresh-url"):
         return "把返回的 URL 写回当前媒体项；如果 URL 仍不可访问，再展示错误并允许用户重试。"
     if method.upper() in {"PUT", "DELETE"}:

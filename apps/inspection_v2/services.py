@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
+from urllib.parse import parse_qs, urlsplit
+
 from django.db.models import Q, QuerySet
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -53,6 +55,8 @@ LIVE_REPLAY_TIMESTAMP_PATTERN = re.compile(
     r"(?:-(?P<microsecond>\d{1,6}))?",
     re.IGNORECASE,
 )
+MEDIA_PREVIEW_URL_REFRESH_MARGIN = timedelta(minutes=5)
+_AMZ_DATE_FORMAT = "%Y%m%dT%H%M%SZ"
 
 
 def is_dispatcher(context) -> bool:
@@ -1533,6 +1537,32 @@ def _dji_connection_for_media_file(media: CloudMediaFile) -> DjiConnection:
     raise StandardConstraintConflict(msg="无法确定媒体文件所属 DJI 连接")
 
 
+def _signed_url_expires_at(url: str) -> datetime | None:
+    query = parse_qs(urlsplit(str(url or "")).query)
+    amz_date = (query.get("X-Amz-Date") or [""])[0]
+    amz_expires = (query.get("X-Amz-Expires") or [""])[0]
+    if not amz_date or not amz_expires:
+        return None
+    try:
+        issued_at = datetime.strptime(amz_date, _AMZ_DATE_FORMAT).replace(tzinfo=dt_timezone.utc)
+        expires_seconds = int(amz_expires)
+    except (TypeError, ValueError):
+        return None
+    return issued_at + timedelta(seconds=expires_seconds)
+
+
+def _preview_url_needs_refresh(url: str, *, now: datetime | None = None) -> bool:
+    if not str(url or "").strip():
+        return True
+    expires_at = _signed_url_expires_at(url)
+    if expires_at is None:
+        return False
+    current_time = now or timezone.now()
+    if timezone.is_naive(current_time):
+        current_time = current_time.replace(tzinfo=dt_timezone.utc)
+    return expires_at <= current_time.astimezone(dt_timezone.utc) + MEDIA_PREVIEW_URL_REFRESH_MARGIN
+
+
 def refresh_cloud_media_file_url(*, media: CloudMediaFile, url_type: str) -> CloudMediaFile:
     connection = _dji_connection_for_media_file(media)
     gateway = DjiConnectionGateway(connection)
@@ -1547,6 +1577,12 @@ def refresh_cloud_media_file_url(*, media: CloudMediaFile, url_type: str) -> Clo
         update_fields = ["download_url", "updated_at"]
     media.save(update_fields=update_fields)
     return media
+
+
+def ensure_cloud_media_preview_url(media: CloudMediaFile) -> CloudMediaFile:
+    if not _preview_url_needs_refresh(media.preview_url):
+        return media
+    return refresh_cloud_media_file_url(media=media, url_type="preview")
 
 
 def _flight_record_for_v2_mission(mission: InspectionMission | None) -> InspectionFlightRecord | None:

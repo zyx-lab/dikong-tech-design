@@ -62,6 +62,7 @@ from apps.inspection_v2.services import (
     build_mission_preflight_check,
     create_assignments,
     editable_routes_queryset,
+    ensure_cloud_media_preview_url,
     ensure_resources_available,
     get_editable_route_or_404,
     get_visible_mission_or_404,
@@ -1460,6 +1461,18 @@ class MediaFileDetailView(InspectionV2APIView):
         media = visible_media_queryset(context).filter(pk=id).first()
         if media is None:
             raise StandardNotFound()
+        try:
+            media = ensure_cloud_media_preview_url(media)
+        except (DjiGatewayError, StandardConstraintConflict):
+            logger.warning(
+                "failed to auto refresh media preview url",
+                extra={
+                    "media_id": media.id,
+                    "cloud_file_id": media.cloud_file_id,
+                    "workspace_id": media.workspace_id,
+                },
+                exc_info=True,
+            )
         return Response(CloudMediaFileReadSerializer(media).data, status=status.HTTP_200_OK)
 
 
