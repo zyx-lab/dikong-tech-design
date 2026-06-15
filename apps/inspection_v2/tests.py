@@ -1787,6 +1787,48 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(media.captured_at, timezone.datetime(2026, 6, 12, 10, 1, 24, 797904, tzinfo=dt_timezone.utc))
         self.assertEqual(complete_response.data["data"]["videoCount"], 1)
 
+    def test_pilot2_refresh_media_should_use_dji_video_filename_time_for_window_match(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="Pilot2 DJI 视频时间航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="GATEWAY-DJI-VIDEO-TIME-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            executor_id=executor.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        started_at = timezone.datetime(2026, 6, 15, 6, 22, 22, 982028, tzinfo=dt_timezone.utc)
+        ended_at = timezone.datetime(2026, 6, 15, 6, 23, 13, 866043, tzinfo=dt_timezone.utc)
+        with patch("apps.inspection_v2.services.timezone.now", return_value=started_at), patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_live_capacity",
+            side_effect=DjiGatewayUpstreamError("live capacity unavailable", status_code=502),
+        ):
+            start_response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/start", {}, format="json")
+        self.assertEqual(start_response.status_code, 200, getattr(start_response, "data", start_response.content))
+
+        video_payload = {
+            "file_id": "pilot2-dji-video-after-end-001",
+            "file_name": "DJI_20260615142251_0003_V.MP4",
+            "object_key": "wayline/DJI_20260615142251_0003_V.MP4",
+            "drone": self.drone.device_sn,
+            "create_time": "2026-06-15 14:23:25",
+            "job_id": "",
+        }
+        with patch("apps.inspection_v2.services.timezone.now", return_value=ended_at), patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.list_media_files",
+            return_value=[video_payload],
+        ) as list_media_files:
+            complete_response = self.client.post(f"/api/v2/inspection/missions/{mission['id']}/complete", {}, format="json")
+
+        self.assertEqual(complete_response.status_code, 200, getattr(complete_response, "data", complete_response.content))
+        list_media_files.assert_called_once()
+        media = CloudMediaFile.objects.get(cloud_file_id="pilot2-dji-video-after-end-001")
+        self.assertEqual(media.mission_id, mission["id"])
+        self.assertEqual(media.flight_record_id, complete_response.data["data"]["id"])
+        self.assertEqual(media.media_type, CloudMediaType.VIDEO)
+        self.assertEqual(media.captured_at, timezone.datetime(2026, 6, 15, 6, 22, 51, tzinfo=dt_timezone.utc))
+        self.assertEqual(complete_response.data["data"]["videoCount"], 1)
+
     def _completed_pilot2_record(self, *, route_name: str, gateway_sn: str):
         route = self.create_route_by_api(self.owner_dispatcher, name=route_name)
         connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn=gateway_sn)
@@ -2102,6 +2144,48 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(media.playback_url, "https://media.example.test/list-playback.m3u8")
         get_preview_url.assert_not_called()
         get_playback_url.assert_called_once_with("media-list-video-no-playback")
+
+    def test_media_file_list_should_sync_delayed_video_media_for_filtered_flight_record(self):
+        _connection, mission, record = self._completed_pilot2_record(
+            route_name="Pilot2 延迟媒体查询航线",
+            gateway_sn="GATEWAY-DELAYED-MEDIA-QUERY-001",
+        )
+        self.assertEqual(record.video_count, 0)
+
+        replay_started_at = record.start_time + ((record.end_time - record.start_time) / 2)
+        replay_name = replay_started_at.astimezone(dt_timezone.utc).strftime("%Y-%m-%d_%H-%M-%S-%f.mp4")
+        replay_payload = {
+            "file_id": "delayed-media-query-video-001",
+            "file_name": replay_name,
+            "file_path": f"/live/replay/delayed-media-query-video-001_{replay_name}",
+            "object_key": f"live/replay/delayed-media-query-video-001_{replay_name}",
+            "drone": self.drone.device_sn,
+            "create_time": (
+                record.end_time + timedelta(seconds=30)
+            ).astimezone(timezone.get_current_timezone()).strftime("%Y-%m-%d %H:%M:%S"),
+            "job_id": "",
+        }
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.list_media_files",
+            return_value=[replay_payload],
+        ) as list_media_files, patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_playback_url",
+            return_value="https://media.example.test/delayed-playback.m3u8",
+        ) as get_playback_url:
+            response = self.client.get(
+                f"/api/v2/inspection/media-files?flightRecordId={record.id}&missionId={mission.id}"
+            )
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["total"], 1)
+        item = response.data["data"]["list"][0]
+        self.assertEqual(item["mediaType"], CloudMediaType.VIDEO)
+        self.assertEqual(item["cloudFileId"], "delayed-media-query-video-001")
+        self.assertEqual(item["playbackUrl"], "https://media.example.test/delayed-playback.m3u8")
+        record.refresh_from_db()
+        self.assertEqual(record.video_count, 1)
+        list_media_files.assert_called_once()
+        get_playback_url.assert_called_once_with("delayed-media-query-video-001")
 
     def test_media_file_detail_should_auto_refresh_missing_playback_url_for_video_media(self):
         media = self.create_visible_media_file(

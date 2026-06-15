@@ -1442,11 +1442,13 @@ class MediaFileListView(InspectionV2APIView):
     )
     def get(self, request):
         context = resolve_v2_context(request)
-        queryset = visible_media_queryset(context)
         flight_record_id = _int_query_param(request.query_params, "flightRecordId")
+        mission_id = _int_query_param(request.query_params, "missionId")
+        self._sync_filtered_record_media(context, flight_record_id=flight_record_id, mission_id=mission_id)
+
+        queryset = visible_media_queryset(context)
         if flight_record_id:
             queryset = queryset.filter(flight_record_id=flight_record_id)
-        mission_id = _int_query_param(request.query_params, "missionId")
         if mission_id:
             queryset = queryset.filter(mission_id=mission_id)
         media_files = list(queryset)
@@ -1456,6 +1458,28 @@ class MediaFileListView(InspectionV2APIView):
             return _upstream_error_response(exc)
         serializer = CloudMediaFileReadSerializer(media_files, many=True)
         return Response({"list": serializer.data, "total": len(media_files)}, status=status.HTTP_200_OK)
+
+    def _sync_filtered_record_media(self, context, *, flight_record_id: int | None, mission_id: int | None) -> None:
+        if not flight_record_id and not mission_id:
+            return
+        queryset = visible_records_queryset(context)
+        if flight_record_id:
+            queryset = queryset.filter(pk=flight_record_id)
+        if mission_id:
+            queryset = queryset.filter(mission_id=mission_id)
+        record = queryset.first()
+        if record is None:
+            return
+        if record.video_count > 0:
+            return
+        try:
+            sync_media_for_record(record=record)
+        except DjiGatewayError:
+            logger.warning(
+                "failed to auto sync flight record media before listing media files",
+                extra={"flight_record_id": record.id, "mission_id": record.mission_id},
+                exc_info=True,
+            )
 
 
 class MediaFileDetailView(InspectionV2APIView):

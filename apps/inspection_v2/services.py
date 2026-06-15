@@ -55,6 +55,7 @@ LIVE_REPLAY_TIMESTAMP_PATTERN = re.compile(
     r"(?:-(?P<microsecond>\d{1,6}))?",
     re.IGNORECASE,
 )
+DJI_MEDIA_TIMESTAMP_PATTERN = re.compile(r"\bDJI_(?P<timestamp>\d{14})_", re.IGNORECASE)
 MEDIA_PREVIEW_URL_REFRESH_MARGIN = timedelta(minutes=5)
 _AMZ_DATE_FORMAT = "%Y%m%dT%H%M%SZ"
 
@@ -1214,6 +1215,25 @@ def _parse_live_replay_started_at(payload: dict):
     return parsed
 
 
+def _parse_dji_media_filename_captured_at(payload: dict):
+    sources = [
+        payload.get("file_name"),
+        payload.get("fileName"),
+        payload.get("name"),
+        payload.get("object_key"),
+        payload.get("objectKey"),
+    ]
+    haystack = " ".join(str(value or "") for value in sources)
+    match = DJI_MEDIA_TIMESTAMP_PATTERN.search(haystack)
+    if match is None:
+        return None
+    try:
+        parsed = datetime.strptime(match.group("timestamp"), "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+    return timezone.make_aware(parsed, timezone.get_current_timezone())
+
+
 def _parse_captured_at(payload: dict):
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     explicit_value = payload.get("captured_at") or payload.get("capturedAt")
@@ -1223,6 +1243,9 @@ def _parse_captured_at(payload: dict):
     live_replay_started_at = _parse_live_replay_started_at(payload)
     if live_replay_started_at is not None:
         return live_replay_started_at
+    dji_filename_captured_at = _parse_dji_media_filename_captured_at(payload)
+    if dji_filename_captured_at is not None:
+        return dji_filename_captured_at
     value = (
         payload.get("create_time")
         or payload.get("createTime")
