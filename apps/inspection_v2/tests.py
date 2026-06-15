@@ -294,6 +294,14 @@ class InspectionV2ApiTests(TestCase):
             f"?X-Amz-Date={amz_date}&X-Amz-Expires={expires}&X-Amz-Signature=test-signature"
         )
 
+    def signed_media_playback_url(self, *, issued_at=None, expires: int = 21600) -> str:
+        issued_at = issued_at or timezone.now()
+        amz_date = issued_at.astimezone(dt_timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        return (
+            "https://media.example.test/playback.m3u8"
+            f"?X-Amz-Date={amz_date}&X-Amz-Expires={expires}&X-Amz-Signature=test-signature"
+        )
+
     @contextmanager
     def route_upload_mock(self, upload_payload: dict | None = None):
         upload_payload = upload_payload or self.next_route_upload_payload()
@@ -387,6 +395,8 @@ class InspectionV2ApiTests(TestCase):
         *,
         cloud_file_id: str,
         preview_url: str = "",
+        playback_url: str = "",
+        thumbnail_url: str = "",
         media_type: str = CloudMediaType.PHOTO,
         file_name: str | None = None,
     ):
@@ -404,7 +414,9 @@ class InspectionV2ApiTests(TestCase):
             cloud_file_id=cloud_file_id,
             media_type=media_type,
             file_name=file_name or f"{cloud_file_id}.jpg",
+            thumbnail_url=thumbnail_url,
             preview_url=preview_url,
+            playback_url=playback_url,
         )
 
     def upload_route_kmz_by_api(self, route_id, connection, *, wayline_type=0):
@@ -2050,6 +2062,7 @@ class InspectionV2ApiTests(TestCase):
             cloud_file_id="media-list-video-no-preview",
             media_type=CloudMediaType.VIDEO,
             file_name="media-list-video-no-preview.mp4",
+            playback_url=self.signed_media_playback_url(issued_at=timezone.now() + timedelta(hours=1)),
         )
 
         with patch(
@@ -2067,6 +2080,141 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(item["mediaType"], "VIDEO")
         self.assertEqual(item["previewUrl"], "")
         get_preview_url.assert_not_called()
+
+    def test_media_file_list_should_auto_refresh_missing_playback_url_for_video_media(self):
+        media = self.create_visible_media_file(
+            cloud_file_id="media-list-video-no-playback",
+            media_type=CloudMediaType.VIDEO,
+            file_name="media-list-video-no-playback.mp4",
+        )
+
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.get_media_preview_url") as get_preview_url, patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_playback_url",
+            return_value="https://media.example.test/list-playback.m3u8",
+        ) as get_playback_url:
+            response = self.client.get("/api/v2/inspection/media-files")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        item = next(item for item in response.data["data"]["list"] if item["id"] == media.id)
+        self.assertEqual(item["mediaType"], "VIDEO")
+        self.assertEqual(item["playbackUrl"], "https://media.example.test/list-playback.m3u8")
+        media.refresh_from_db()
+        self.assertEqual(media.playback_url, "https://media.example.test/list-playback.m3u8")
+        get_preview_url.assert_not_called()
+        get_playback_url.assert_called_once_with("media-list-video-no-playback")
+
+    def test_media_file_detail_should_auto_refresh_missing_playback_url_for_video_media(self):
+        media = self.create_visible_media_file(
+            cloud_file_id="media-detail-video-no-playback",
+            media_type=CloudMediaType.VIDEO,
+            file_name="media-detail-video-no-playback.mp4",
+        )
+
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.get_media_preview_url") as get_preview_url, patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_playback_url",
+            return_value="https://media.example.test/detail-playback.m3u8",
+        ) as get_playback_url:
+            response = self.client.get(f"/api/v2/inspection/media-files/{media.id}")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["mediaType"], "VIDEO")
+        self.assertEqual(response.data["data"]["playbackUrl"], "https://media.example.test/detail-playback.m3u8")
+        media.refresh_from_db()
+        self.assertEqual(media.playback_url, "https://media.example.test/detail-playback.m3u8")
+        get_preview_url.assert_not_called()
+        get_playback_url.assert_called_once_with("media-detail-video-no-playback")
+
+    def test_media_file_list_should_not_refresh_valid_video_playback_url(self):
+        playback_url = self.signed_media_playback_url(issued_at=timezone.now() + timedelta(hours=1))
+        media = self.create_visible_media_file(
+            cloud_file_id="media-list-video-valid-playback",
+            media_type=CloudMediaType.VIDEO,
+            file_name="media-list-video-valid-playback.mp4",
+            playback_url=playback_url,
+        )
+
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.get_media_playback_url") as get_playback_url:
+            response = self.client.get("/api/v2/inspection/media-files")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        item = next(item for item in response.data["data"]["list"] if item["id"] == media.id)
+        self.assertEqual(item["playbackUrl"], playback_url)
+        get_playback_url.assert_not_called()
+
+    def test_media_file_list_should_refresh_expired_video_playback_url(self):
+        expired_playback_url = self.signed_media_playback_url(issued_at=timezone.now() - timedelta(hours=7))
+        media = self.create_visible_media_file(
+            cloud_file_id="media-list-video-expired-playback",
+            media_type=CloudMediaType.VIDEO,
+            file_name="media-list-video-expired-playback.mp4",
+            playback_url=expired_playback_url,
+        )
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_playback_url",
+            return_value="https://media.example.test/list-fresh-playback.m3u8",
+        ) as get_playback_url:
+            response = self.client.get("/api/v2/inspection/media-files")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        item = next(item for item in response.data["data"]["list"] if item["id"] == media.id)
+        self.assertEqual(item["playbackUrl"], "https://media.example.test/list-fresh-playback.m3u8")
+        media.refresh_from_db()
+        self.assertEqual(media.playback_url, "https://media.example.test/list-fresh-playback.m3u8")
+        get_playback_url.assert_called_once_with("media-list-video-expired-playback")
+
+    def test_media_file_list_should_fail_when_video_playback_refresh_fails(self):
+        self.create_visible_media_file(
+            cloud_file_id="media-list-video-playback-fails",
+            media_type=CloudMediaType.VIDEO,
+            file_name="media-list-video-playback-fails.mp4",
+        )
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_playback_url",
+            side_effect=DjiGatewayUpstreamError("playback failed", status_code=502, data={"error": "boom"}),
+        ) as get_playback_url:
+            response = self.client.get("/api/v2/inspection/media-files")
+
+        self.assertEqual(response.status_code, 502, getattr(response, "data", response.content))
+        self.assertEqual(response.data["code"], "E0001")
+        self.assertNotIn("list", response.data.get("data") or {})
+        get_playback_url.assert_called_once_with("media-list-video-playback-fails")
+
+    def test_media_file_detail_should_fail_when_video_playback_refresh_fails(self):
+        media = self.create_visible_media_file(
+            cloud_file_id="media-detail-video-playback-fails",
+            media_type=CloudMediaType.VIDEO,
+            file_name="media-detail-video-playback-fails.mp4",
+        )
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_playback_url",
+            side_effect=DjiGatewayUpstreamError("playback failed", status_code=502, data={"error": "boom"}),
+        ) as get_playback_url:
+            response = self.client.get(f"/api/v2/inspection/media-files/{media.id}")
+
+        self.assertEqual(response.status_code, 502, getattr(response, "data", response.content))
+        self.assertEqual(response.data["code"], "E0001")
+        get_playback_url.assert_called_once_with("media-detail-video-playback-fails")
+
+    def test_media_file_list_and_detail_should_return_existing_thumbnail_url(self):
+        media = self.create_visible_media_file(
+            cloud_file_id="media-video-with-thumbnail",
+            media_type=CloudMediaType.VIDEO,
+            file_name="media-video-with-thumbnail.mp4",
+            playback_url=self.signed_media_playback_url(issued_at=timezone.now() + timedelta(hours=1)),
+            thumbnail_url="https://media.example.test/video-thumb.jpg",
+        )
+
+        list_response = self.client.get("/api/v2/inspection/media-files")
+        self.assertEqual(list_response.status_code, 200, getattr(list_response, "data", list_response.content))
+        item = next(item for item in list_response.data["data"]["list"] if item["id"] == media.id)
+        self.assertEqual(item["thumbnailUrl"], "https://media.example.test/video-thumb.jpg")
+
+        detail_response = self.client.get(f"/api/v2/inspection/media-files/{media.id}")
+        self.assertEqual(detail_response.status_code, 200, getattr(detail_response, "data", detail_response.content))
+        self.assertEqual(detail_response.data["data"]["thumbnailUrl"], "https://media.example.test/video-thumb.jpg")
 
     def test_media_file_list_should_fail_when_preview_refresh_fails(self):
         self.create_visible_media_file(cloud_file_id="media-list-preview-fails")

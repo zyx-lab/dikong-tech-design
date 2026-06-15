@@ -1551,7 +1551,7 @@ def _signed_url_expires_at(url: str) -> datetime | None:
     return issued_at + timedelta(seconds=expires_seconds)
 
 
-def _preview_url_needs_refresh(url: str, *, now: datetime | None = None) -> bool:
+def _signed_url_needs_refresh(url: str, *, now: datetime | None = None) -> bool:
     if not str(url or "").strip():
         return True
     expires_at = _signed_url_expires_at(url)
@@ -1561,6 +1561,14 @@ def _preview_url_needs_refresh(url: str, *, now: datetime | None = None) -> bool
     if timezone.is_naive(current_time):
         current_time = current_time.replace(tzinfo=dt_timezone.utc)
     return expires_at <= current_time.astimezone(dt_timezone.utc) + MEDIA_PREVIEW_URL_REFRESH_MARGIN
+
+
+def _preview_url_needs_refresh(url: str, *, now: datetime | None = None) -> bool:
+    return _signed_url_needs_refresh(url, now=now)
+
+
+def _playback_url_needs_refresh(url: str, *, now: datetime | None = None) -> bool:
+    return _signed_url_needs_refresh(url, now=now)
 
 
 def refresh_cloud_media_file_url(*, media: CloudMediaFile, url_type: str) -> CloudMediaFile:
@@ -1589,6 +1597,18 @@ def ensure_cloud_media_preview_url(media: CloudMediaFile) -> CloudMediaFile:
 
 def ensure_cloud_media_preview_urls(media_files: list[CloudMediaFile]) -> list[CloudMediaFile]:
     return [ensure_cloud_media_preview_url(media) for media in media_files]
+
+
+def ensure_cloud_media_access_url(media: CloudMediaFile) -> CloudMediaFile:
+    if media.media_type == CloudMediaType.PHOTO:
+        return ensure_cloud_media_preview_url(media)
+    if media.media_type == CloudMediaType.VIDEO and _playback_url_needs_refresh(media.playback_url):
+        return refresh_cloud_media_file_url(media=media, url_type="playback")
+    return media
+
+
+def ensure_cloud_media_access_urls(media_files: list[CloudMediaFile]) -> list[CloudMediaFile]:
+    return [ensure_cloud_media_access_url(media) for media in media_files]
 
 
 def _flight_record_for_v2_mission(mission: InspectionMission | None) -> InspectionFlightRecord | None:

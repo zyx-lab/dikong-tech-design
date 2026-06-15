@@ -27,6 +27,7 @@ from apps.iam_v2.services import resolve_v2_context
 from apps.inspection_v2.models import (
     CameraOperation,
     CameraOperationStatus,
+    CloudMediaType,
     InspectionMission,
     MissionStatus,
     Waypoint,
@@ -62,8 +63,9 @@ from apps.inspection_v2.services import (
     build_mission_preflight_check,
     create_assignments,
     editable_routes_queryset,
+    ensure_cloud_media_access_url,
+    ensure_cloud_media_access_urls,
     ensure_cloud_media_preview_url,
-    ensure_cloud_media_preview_urls,
     ensure_resources_available,
     get_editable_route_or_404,
     get_visible_mission_or_404,
@@ -1449,7 +1451,7 @@ class MediaFileListView(InspectionV2APIView):
             queryset = queryset.filter(mission_id=mission_id)
         media_files = list(queryset)
         try:
-            media_files = ensure_cloud_media_preview_urls(media_files)
+            media_files = ensure_cloud_media_access_urls(media_files)
         except DjiGatewayError as exc:
             return _upstream_error_response(exc)
         serializer = CloudMediaFileReadSerializer(media_files, many=True)
@@ -1467,6 +1469,12 @@ class MediaFileDetailView(InspectionV2APIView):
         media = visible_media_queryset(context).filter(pk=id).first()
         if media is None:
             raise StandardNotFound()
+        if media.media_type == CloudMediaType.VIDEO:
+            try:
+                media = ensure_cloud_media_access_url(media)
+            except DjiGatewayError as exc:
+                return _upstream_error_response(exc)
+            return Response(CloudMediaFileReadSerializer(media).data, status=status.HTTP_200_OK)
         try:
             media = ensure_cloud_media_preview_url(media)
         except (DjiGatewayError, StandardConstraintConflict):

@@ -264,9 +264,9 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
     _operation_key("GET", "/api/v2/inspection/media-files/{id}"): """
 ### DJI 上游调用
 
-该接口按本地 `CloudMediaFile.id` 读取媒体详情。照片媒体返回前会 best-effort 补齐 `previewUrl`：当本地 `previewUrl` 为空，或能从 signed URL 参数判断已过期/临近过期时，后端会调用 DJI preview URL 并写回本地媒体记录。视频媒体不会自动调用 DJI preview URL；播放地址使用 `playbackUrl`，为空或过期时调用 `refresh-url` 并传 `urlType=playback`。
+该接口按本地 `CloudMediaFile.id` 读取媒体详情。照片媒体返回前会 best-effort 补齐 `previewUrl`：当本地 `previewUrl` 为空，或能从 signed URL 参数判断已过期/临近过期时，后端会调用 DJI preview URL 并写回本地媒体记录。视频媒体返回前会补齐 `playbackUrl`：当本地 `playbackUrl` 为空，或能从 signed URL 参数判断已过期/临近过期时，后端会调用 DJI playback URL 并写回本地媒体记录。
 
-自动刷新失败不会阻断详情读取；响应仍返回媒体详情，`previewUrl` 保持原值或空字符串。列表接口会同步补齐本次返回照片项的预览 URL；若任一照片返回项刷新失败，列表请求返回错误。
+照片预览自动刷新失败不会阻断详情读取；响应仍返回媒体详情，`previewUrl` 保持原值或空字符串。视频播放地址自动刷新失败会返回错误，不返回空白 `playbackUrl` 的成功详情。列表接口会同步补齐本次返回照片项的预览 URL 和视频项的播放 URL；若任一返回项刷新失败，列表请求返回错误。`thumbnailUrl` 只透传 DJI media files 列表或回调里的缩略图字段，后端不生成视频封面。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/media-files/{id}/refresh-url"): """
 ### DJI 上游调用
@@ -338,9 +338,9 @@ def _domain_response(method: str, path: str) -> str:
     if "/camera/" in path:
         return "返回本次相机操作记录 ID、`droneSn/gatewaySn/payloadIndex` 映射字段，以及 `upstream.authority/upstream.command` 两段 DJI 上游结果；拍照和录像媒体文件继续走媒体同步流程。"
     if "/media-files/" in path and method.upper() == "GET":
-        return "返回媒体详情；照片 `previewUrl` 为空或签名临近过期时会 best-effort 自动刷新，失败时仍返回详情；视频使用 `playbackUrl`。"
+        return "返回媒体详情；照片 `previewUrl` 会按需 best-effort 自动刷新；视频 `playbackUrl` 会按需自动刷新，失败时返回错误。"
     if path.endswith("/media-files") and method.upper() == "GET":
-        return "`data.list[]` 返回本地媒体索引；返回前只为照片同步补齐空白或临近过期的 `previewUrl`，照片刷新失败时本次列表请求返回错误。"
+        return "`data.list[]` 返回本地媒体索引；返回前为照片补齐 `previewUrl`、为视频补齐 `playbackUrl`，刷新失败时本次列表请求返回错误。"
     if path.endswith("/refresh-url"):
         return "返回更新后的媒体文件详情；按 `urlType` 刷新 `downloadUrl`、`previewUrl` 或 `playbackUrl`。"
     return "成功数据固定放在 `data`；列表接口返回 `list` 和 `total`。"
@@ -412,9 +412,9 @@ def _next_step(method: str, path: str) -> str:
     if "/camera/actions" in path:
         return "根据 `data.status` 和 `data.upstream.command` 更新当前按钮状态；需要查看新照片或录像时走媒体同步或飞行记录媒体刷新接口。"
     if path.endswith("/media-files") and method.upper() == "GET":
-        return "照片直接使用列表项的 `previewUrl` 展示预览；视频使用 `playbackUrl`，为空或过期时调用 `refresh-url` 且传 `urlType=playback`。"
+        return "照片直接使用列表项的 `previewUrl` 展示预览；视频直接使用列表项的 `playbackUrl` 播放；`thumbnailUrl` 为空时展示前端默认封面。"
     if "/media-files/" in path and method.upper() == "GET":
-        return "照片使用 `data.previewUrl` 展示预览；如果仍为空或不可访问，可调用 `refresh-url` 做显式重试。视频使用 `data.playbackUrl`。"
+        return "照片使用 `data.previewUrl` 展示预览，视频使用 `data.playbackUrl` 播放；如果 `thumbnailUrl` 为空，前端展示默认封面。"
     if path.endswith("/refresh-url"):
         return "把返回的 URL 写回当前媒体项；如果 URL 仍不可访问，再展示错误并允许用户重试。"
     if method.upper() in {"PUT", "DELETE"}:
