@@ -14,7 +14,7 @@ from django.utils.dateparse import parse_datetime
 
 from apps.access.exceptions import StandardConstraintConflict, StandardForbidden, StandardNotFound
 from apps.access.models import DirectoryStatus
-from apps.dji_cloud.gateway import DjiGatewayError
+from apps.dji_cloud.gateway import DjiGatewayError, DjiGatewayUpstreamError
 from apps.iam_v2.models import FixedRole
 from apps.iam_v2.services import is_platform_super_admin
 from apps.resource_v2.audit import log_v2_action
@@ -75,6 +75,7 @@ MEDIA_SYNC_RETRY_DELAYS = [
     timedelta(minutes=30),
 ]
 _AMZ_DATE_FORMAT = "%Y%m%dT%H%M%SZ"
+PLAYBACK_URL_UNAVAILABLE_MESSAGE = "未获取到媒体播放地址"
 
 
 @dataclass(frozen=True)
@@ -1865,6 +1866,48 @@ def _ensure_flight_record_media_sync_state(record: InspectionFlightRecord) -> In
         return schedule_flight_record_media_sync(record)
 
 
+def _sync_deadline_for_record(record: InspectionFlightRecord) -> datetime:
+    return record.end_time + MEDIA_SYNC_DEADLINE
+
+
+def _record_has_syncable_execution(record: InspectionFlightRecord) -> bool:
+    execution = (
+        MissionCloudExecution.objects.filter(mission_id=record.mission_id)
+        .only("id", "dji_job_id", "execution_mode")
+        .first()
+    )
+    if execution is None:
+        return False
+    return bool(execution.dji_job_id or execution.execution_mode == MissionExecutionMode.PILOT2_MANUAL)
+
+
+def _ensure_detail_read_media_sync_state(
+    record: InspectionFlightRecord,
+    *,
+    now: datetime,
+) -> InspectionFlightRecordMediaSyncState | None:
+    try:
+        return record.media_sync_state
+    except InspectionFlightRecordMediaSyncState.DoesNotExist:
+        pass
+    if not _record_has_syncable_execution(record):
+        return None
+    deadline_at = _sync_deadline_for_record(record)
+    if deadline_at < now:
+        return None
+    state, _created = InspectionFlightRecordMediaSyncState.objects.get_or_create(
+        flight_record=record,
+        defaults={
+            "status": FlightRecordMediaSyncStatus.PENDING,
+            "next_run_at": now,
+            "deadline_at": deadline_at,
+            "attempt_count": 0,
+            "last_error": "",
+        },
+    )
+    return state
+
+
 def _next_media_sync_run_at(*, now: datetime, deadline_at: datetime, attempt_count: int) -> datetime:
     delay_index = min(max(attempt_count - 1, 0), len(MEDIA_SYNC_RETRY_DELAYS) - 1)
     return min(now + MEDIA_SYNC_RETRY_DELAYS[delay_index], deadline_at)
@@ -1873,6 +1916,24 @@ def _next_media_sync_run_at(*, now: datetime, deadline_at: datetime, attempt_cou
 def _mark_media_sync_running(state: InspectionFlightRecordMediaSyncState) -> None:
     state.status = FlightRecordMediaSyncStatus.RUNNING
     state.save(update_fields=["status", "updated_at"])
+
+
+def claim_due_flight_record_media_sync_state(
+    state: InspectionFlightRecordMediaSyncState,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    current_time = now or timezone.now()
+    updated = InspectionFlightRecordMediaSyncState.objects.filter(
+        pk=state.pk,
+        status=FlightRecordMediaSyncStatus.PENDING,
+        next_run_at__lte=current_time,
+    ).update(status=FlightRecordMediaSyncStatus.RUNNING, updated_at=current_time)
+    if not updated:
+        return False
+    state.status = FlightRecordMediaSyncStatus.RUNNING
+    state.updated_at = current_time
+    return True
 
 
 def _record_media_sync_success(
@@ -1948,6 +2009,33 @@ def sync_media_for_record_and_update_state(
     return result
 
 
+def maybe_sync_media_for_record_on_detail_read(record: InspectionFlightRecord) -> bool:
+    current_time = timezone.now()
+    state = _ensure_detail_read_media_sync_state(record, now=current_time)
+    if state is None:
+        return False
+    if not _record_has_syncable_execution(record):
+        return False
+    if state.status != FlightRecordMediaSyncStatus.PENDING:
+        return False
+    if state.next_run_at > current_time or state.deadline_at < current_time:
+        return False
+    if not claim_due_flight_record_media_sync_state(state, now=current_time):
+        return False
+    try:
+        result = sync_media_for_record(record=record)
+    except Exception as exc:
+        logger.warning(
+            "v2 flight record detail media sync failed",
+            extra={"flight_record_id": record.id, "mission_id": record.mission_id},
+            exc_info=True,
+        )
+        _record_media_sync_failure(state, error=exc, now=current_time)
+        return False
+    _record_media_sync_success(state, result=result, now=current_time)
+    return True
+
+
 def _execution_for_media_sync_state(state: InspectionFlightRecordMediaSyncState) -> MissionCloudExecution | None:
     try:
         return state.flight_record.mission.cloud_execution
@@ -1970,7 +2058,8 @@ def _run_due_media_sync_state(
     cloud_items: list[dict] | None,
     now: datetime,
 ) -> bool:
-    _mark_media_sync_running(state)
+    if not claim_due_flight_record_media_sync_state(state, now=now):
+        return False
     try:
         result = sync_media_for_record(record=state.flight_record, cloud_items=cloud_items)
     except Exception as exc:
@@ -2018,13 +2107,18 @@ def sync_due_flight_record_media(*, batch_size: int | None = None, now: datetime
             failed += 1
 
     for (connection_id, _workspace_id), group_states in grouped_states.items():
+        claimed_states = [
+            state
+            for state in group_states
+            if claim_due_flight_record_media_sync_state(state, now=current_time)
+        ]
+        if not claimed_states:
+            continue
         connection = group_states[0].flight_record.mission.cloud_execution.dji_connection
-        for state in group_states:
-            _mark_media_sync_running(state)
         try:
             cloud_items = DjiConnectionGateway(connection).list_media_files()
         except Exception as exc:
-            for state in group_states:
+            for state in claimed_states:
                 logger.warning(
                     "v2 grouped flight record media list failed",
                     extra={
@@ -2035,9 +2129,9 @@ def sync_due_flight_record_media(*, batch_size: int | None = None, now: datetime
                     exc_info=True,
                 )
                 _record_media_sync_failure(state, error=exc, now=current_time)
-            failed += len(group_states)
+            failed += len(claimed_states)
             continue
-        for state in group_states:
+        for state in claimed_states:
             try:
                 result = sync_media_for_record(record=state.flight_record, cloud_items=cloud_items)
             except Exception as exc:
@@ -2131,6 +2225,19 @@ def refresh_cloud_media_file_url(*, media: CloudMediaFile, url_type: str) -> Clo
     return media
 
 
+def _is_playback_url_unavailable_error(exc: Exception) -> bool:
+    return isinstance(exc, DjiGatewayUpstreamError) and str(exc) == PLAYBACK_URL_UNAVAILABLE_MESSAGE
+
+
+def _mark_media_playback_unavailable(media: CloudMediaFile, error: Exception) -> CloudMediaFile:
+    setattr(media, "_playback_status", "UNAVAILABLE")
+    setattr(media, "_playback_error", str(error))
+    if media.playback_url:
+        media.playback_url = ""
+        media.save(update_fields=["playback_url", "updated_at"])
+    return media
+
+
 def ensure_cloud_media_preview_url(media: CloudMediaFile) -> CloudMediaFile:
     if media.media_type != CloudMediaType.PHOTO:
         return media
@@ -2147,7 +2254,12 @@ def ensure_cloud_media_access_url(media: CloudMediaFile) -> CloudMediaFile:
     if media.media_type == CloudMediaType.PHOTO:
         return ensure_cloud_media_preview_url(media)
     if media.media_type == CloudMediaType.VIDEO and _playback_url_needs_refresh(media.playback_url):
-        return refresh_cloud_media_file_url(media=media, url_type="playback")
+        try:
+            return refresh_cloud_media_file_url(media=media, url_type="playback")
+        except DjiGatewayError as exc:
+            if _is_playback_url_unavailable_error(exc):
+                return _mark_media_playback_unavailable(media, exc)
+            raise
     return media
 
 

@@ -2098,7 +2098,7 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(second_record.video_count, 0)
         list_media_files.assert_not_called()
 
-    def test_flight_record_detail_should_not_sync_delayed_video_media_for_zero_video_record(self):
+    def test_flight_record_detail_should_sync_due_delayed_video_media_for_zero_video_record(self):
         _connection, _mission, record = self._completed_pilot2_record(
             route_name="Pilot2 飞行记录详情延迟媒体航线",
             gateway_sn="GATEWAY-RECORD-DETAIL-DELAYED-001",
@@ -2114,12 +2114,22 @@ class InspectionV2ApiTests(TestCase):
             response = self.client.get(f"/api/v2/inspection/flight-records/{record.id}")
 
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
-        self.assertEqual(response.data["data"]["videoCount"], 0)
+        self.assertEqual(response.data["data"]["videoCount"], 1)
+        self.assertEqual(response.data["data"]["mediaSyncStatus"], FlightRecordMediaSyncStatus.PENDING)
+        self.assertIsNotNone(response.data["data"]["mediaSyncLastSyncedAt"])
+        self.assertIsNotNone(response.data["data"]["mediaSyncNextRunAt"])
         record.refresh_from_db()
-        self.assertEqual(record.video_count, 0)
-        list_media_files.assert_not_called()
+        self.assertEqual(record.video_count, 1)
+        self.assertTrue(
+            CloudMediaFile.objects.filter(
+                cloud_file_id="flight-record-detail-video-001",
+                mission_id=record.mission_id,
+                flight_record_id=record.id,
+            ).exists()
+        )
+        list_media_files.assert_called_once()
 
-    def test_flight_record_detail_should_not_sync_additional_delayed_videos_when_record_already_has_video(self):
+    def test_flight_record_detail_should_sync_additional_due_delayed_videos_when_record_already_has_video(self):
         connection, mission, record = self._completed_pilot2_record(
             route_name="Pilot2 飞行记录详情补齐多个延迟视频航线",
             gateway_sn="GATEWAY-RECORD-DETAIL-EXTRA-DELAYED-001",
@@ -2149,22 +2159,22 @@ class InspectionV2ApiTests(TestCase):
             response = self.client.get(f"/api/v2/inspection/flight-records/{record.id}")
 
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
-        self.assertEqual(response.data["data"]["videoCount"], 1)
-        self.assertFalse(
+        self.assertEqual(response.data["data"]["videoCount"], 3)
+        self.assertTrue(
             CloudMediaFile.objects.filter(
                 cloud_file_id="flight-record-detail-extra-live-video-001",
                 mission_id=mission.id,
                 flight_record_id=record.id,
             ).exists()
         )
-        self.assertFalse(
+        self.assertTrue(
             CloudMediaFile.objects.filter(
                 cloud_file_id="flight-record-detail-extra-dji-video-001",
                 mission_id=mission.id,
                 flight_record_id=record.id,
             ).exists()
         )
-        list_media_files.assert_not_called()
+        list_media_files.assert_called_once()
 
     def test_flight_record_list_with_mission_id_should_not_sync_additional_delayed_videos_when_record_already_has_video(self):
         connection, mission, record = self._completed_pilot2_record(
@@ -2256,12 +2266,14 @@ class InspectionV2ApiTests(TestCase):
         self.assertIsNotNone(state.last_synced)
         self.assertEqual(state.last_error, "")
 
-    def test_flight_record_detail_should_return_local_record_without_calling_dji_media_list(self):
+    def test_flight_record_detail_should_return_local_record_when_due_media_sync_fails(self):
         _connection, _mission, record = self._completed_pilot2_record(
             route_name="Pilot2 飞行记录详情延迟媒体失败航线",
             gateway_sn="GATEWAY-RECORD-DETAIL-DELAYED-FAIL-001",
         )
         self.assertEqual(record.video_count, 0)
+        state = InspectionFlightRecordMediaSyncState.objects.get(flight_record=record)
+        self.assertEqual(state.attempt_count, 0)
 
         with patch(
             "apps.inspection_v2.services.DjiConnectionGateway.list_media_files",
@@ -2273,7 +2285,11 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(response.data["data"]["videoCount"], 0)
         record.refresh_from_db()
         self.assertEqual(record.video_count, 0)
-        list_media_files.assert_not_called()
+        state.refresh_from_db()
+        self.assertEqual(state.status, FlightRecordMediaSyncStatus.PENDING)
+        self.assertEqual(state.attempt_count, 1)
+        self.assertIn("media list failed", state.last_error)
+        list_media_files.assert_called_once()
 
     def test_refresh_v2_flight_record_media_dry_run_all_completed_should_not_write_media(self):
         connection, _mission, record = self._completed_pilot2_record(
@@ -2725,6 +2741,27 @@ class InspectionV2ApiTests(TestCase):
         self.assertNotIn("list", response.data.get("data") or {})
         get_playback_url.assert_called_once_with("media-list-video-playback-fails")
 
+    def test_media_file_list_should_mark_video_unavailable_when_playback_url_missing_upstream(self):
+        media = self.create_visible_media_file(
+            cloud_file_id="media-list-video-playback-unavailable",
+            media_type=CloudMediaType.VIDEO,
+            file_name="media-list-video-playback-unavailable.mp4",
+        )
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_playback_url",
+            side_effect=DjiGatewayUpstreamError("未获取到媒体播放地址", status_code=502, data={}),
+        ) as get_playback_url:
+            response = self.client.get("/api/v2/inspection/media-files")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        item = next(item for item in response.data["data"]["list"] if item["id"] == media.id)
+        self.assertEqual(item["mediaType"], "VIDEO")
+        self.assertEqual(item["playbackUrl"], "")
+        self.assertEqual(item["playbackStatus"], "UNAVAILABLE")
+        self.assertEqual(item["playbackError"], "未获取到媒体播放地址")
+        get_playback_url.assert_called_once_with("media-list-video-playback-unavailable")
+
     def test_media_file_detail_should_fail_when_video_playback_refresh_fails(self):
         media = self.create_visible_media_file(
             cloud_file_id="media-detail-video-playback-fails",
@@ -2741,6 +2778,26 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(response.status_code, 502, getattr(response, "data", response.content))
         self.assertEqual(response.data["code"], "E0001")
         get_playback_url.assert_called_once_with("media-detail-video-playback-fails")
+
+    def test_media_file_detail_should_mark_video_unavailable_when_playback_url_missing_upstream(self):
+        media = self.create_visible_media_file(
+            cloud_file_id="media-detail-video-playback-unavailable",
+            media_type=CloudMediaType.VIDEO,
+            file_name="media-detail-video-playback-unavailable.mp4",
+        )
+
+        with patch(
+            "apps.inspection_v2.services.DjiConnectionGateway.get_media_playback_url",
+            side_effect=DjiGatewayUpstreamError("未获取到媒体播放地址", status_code=502, data={}),
+        ) as get_playback_url:
+            response = self.client.get(f"/api/v2/inspection/media-files/{media.id}")
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["mediaType"], "VIDEO")
+        self.assertEqual(response.data["data"]["playbackUrl"], "")
+        self.assertEqual(response.data["data"]["playbackStatus"], "UNAVAILABLE")
+        self.assertEqual(response.data["data"]["playbackError"], "未获取到媒体播放地址")
+        get_playback_url.assert_called_once_with("media-detail-video-playback-unavailable")
 
     def test_media_file_list_and_detail_should_return_existing_thumbnail_url(self):
         media = self.create_visible_media_file(

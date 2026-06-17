@@ -74,6 +74,7 @@ from apps.inspection_v2.services import (
     is_assigned_pilot,
     is_dispatcher,
     require_dispatcher,
+    maybe_sync_media_for_record_on_detail_read,
     route_snapshot,
     refresh_mission_cloud_execution_from_dji,
     refresh_cloud_media_file_url,
@@ -1367,6 +1368,8 @@ class FlightRecordDetailView(InspectionV2APIView):
     def get(self, request, id: int):
         context = resolve_v2_context(request)
         record = get_visible_record_or_404(context, id)
+        maybe_sync_media_for_record_on_detail_read(record)
+        record.refresh_from_db()
         return Response(FlightRecordReadSerializer(record).data, status=status.HTTP_200_OK)
 
     @extend_schema(

@@ -8,9 +8,11 @@ from apps.access.api_base import StrictSerializer
 from apps.access.models import DirectoryStatus
 from apps.inspection_v2.models import (
     CloudMediaFile,
+    CloudMediaType,
     FlightSession,
     FlightTelemetrySnapshot,
     InspectionFlightRecord,
+    InspectionFlightRecordMediaSyncState,
     InspectionMission,
     MissionCloudExecution,
     MissionExecutionMode,
@@ -522,6 +524,9 @@ class FlightRecordReadSerializer(serializers.ModelSerializer):
     photoCount = serializers.IntegerField(source="photo_count", read_only=True)
     videoCount = serializers.IntegerField(source="video_count", read_only=True)
     abnormalReason = serializers.CharField(source="abnormal_reason", read_only=True)
+    mediaSyncStatus = serializers.SerializerMethodField()
+    mediaSyncLastSyncedAt = serializers.DateTimeField(source="media_sync_state.last_synced", allow_null=True, read_only=True)
+    mediaSyncNextRunAt = serializers.DateTimeField(source="media_sync_state.next_run_at", allow_null=True, read_only=True)
 
     class Meta:
         model = InspectionFlightRecord
@@ -544,10 +549,19 @@ class FlightRecordReadSerializer(serializers.ModelSerializer):
             "status",
             "remark",
             "abnormalReason",
+            "mediaSyncStatus",
+            "mediaSyncLastSyncedAt",
+            "mediaSyncNextRunAt",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+
+    def get_mediaSyncStatus(self, obj) -> str:
+        try:
+            return obj.media_sync_state.status
+        except InspectionFlightRecordMediaSyncState.DoesNotExist:
+            return "NONE"
 
 
 class FlightRecordUpdateSerializer(StrictSerializer):
@@ -571,6 +585,8 @@ class CloudMediaFileReadSerializer(serializers.ModelSerializer):
     previewUrl = serializers.CharField(source="preview_url", read_only=True)
     downloadUrl = serializers.CharField(source="download_url", read_only=True)
     playbackUrl = serializers.CharField(source="playback_url", read_only=True)
+    playbackStatus = serializers.SerializerMethodField()
+    playbackError = serializers.SerializerMethodField()
     fileSize = serializers.IntegerField(source="file_size", allow_null=True, read_only=True)
     capturedAt = serializers.DateTimeField(source="captured_at", allow_null=True, read_only=True)
 
@@ -593,11 +609,26 @@ class CloudMediaFileReadSerializer(serializers.ModelSerializer):
             "previewUrl",
             "downloadUrl",
             "playbackUrl",
+            "playbackStatus",
+            "playbackError",
             "fileSize",
             "capturedAt",
             "created_at",
         ]
         read_only_fields = fields
+
+    def get_playbackStatus(self, obj) -> str:
+        if obj.media_type != CloudMediaType.VIDEO:
+            return "NOT_APPLICABLE"
+        playback_status = getattr(obj, "_playback_status", "")
+        if playback_status:
+            return playback_status
+        return "READY" if str(obj.playback_url or "").strip() else "UNAVAILABLE"
+
+    def get_playbackError(self, obj) -> str:
+        if obj.media_type != CloudMediaType.VIDEO:
+            return ""
+        return str(getattr(obj, "_playback_error", "") or "")
 
 
 class CloudMediaFileUrlRefreshSerializer(StrictSerializer):
