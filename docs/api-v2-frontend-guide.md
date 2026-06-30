@@ -20,6 +20,14 @@
    python manage.py bootstrap_v2_system --reset --username <super_username> --password '<strong_password>' --noinput
    ```
 
+   若需要一组前端联调账号，让后端执行：
+
+   ```bash
+   python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu --frontend-password 'FrontTest@123'
+   ```
+
+   默认会按当前 v2 角色体系生成 `jnu_super`、`jnu_admin`、`jnu_dispatcher`、`jnu_pilot`、`jnu_handler`。
+
 2. 调用 `POST /api/v2/iam/session/login`，保存 `accessToken` 和 `refreshToken`。
 3. 所有业务请求带 `Authorization: Bearer <accessToken>`。
 4. 首屏初始化依次调用 `GET /api/v2/iam/me/context`、`GET /api/v2/system/menus/current`、`GET /api/v2/iam/me/profile`。
@@ -200,6 +208,14 @@ v2 权限码由后端注册，格式固定为 `<domain>:<resource>:<action>`，�
 ```bash
 python manage.py bootstrap_v2_system --reset --username <super_username> --password '<strong_password>' --noinput
 ```
+
+前端联调账号使用显式开关生成，不随普通初始化自动创建：
+
+```bash
+python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu --frontend-password 'FrontTest@123'
+```
+
+默认账号：`jnu_super`、`jnu_admin`、`jnu_dispatcher`、`jnu_pilot`、`jnu_handler`。
 
 ## 资源发现与绑定
 

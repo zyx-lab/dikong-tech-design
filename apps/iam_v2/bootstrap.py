@@ -4,6 +4,7 @@ from django.db import transaction
 from apps.access.models import DirectoryStatus, UserStatus
 from apps.iam_v2.models import (
     Department,
+    FixedRole,
     V2AccountQualification,
     V2AccountProfile,
     V2AccountRoleProfile,
@@ -19,6 +20,21 @@ from apps.iam_v2.models import (
 from apps.iam_v2.permissions import MENU_SPECS, PERMISSION_CODES, PERMISSION_SPECS, ROLE_SPECS
 
 User = get_user_model()
+
+FRONTEND_TEST_ACCOUNT_SPECS = (
+    ("super", FixedRole.PLATFORM_SUPER_ADMIN, "前端测试-平台超级管理员", ("platform_super_admin", "biz_admin", "super")),
+    ("admin", FixedRole.DEPARTMENT_ADMIN, "前端测试-部门管理员", ("department_admin", "tenant_admin", "admin")),
+    (
+        "dispatcher",
+        FixedRole.TASK_MONITOR_DISPATCHER,
+        "前端测试-任务监控调度员",
+        ("task_monitor_dispatcher", "dispatcher"),
+    ),
+    ("pilot", FixedRole.PILOT, "前端测试-飞手", ("pilot",)),
+    ("handler", FixedRole.WORK_ORDER_HANDLER, "前端测试-工单处理员", ("work_order_handler", "auditor", "handler")),
+)
+
+FRONTEND_TEST_OBSOLETE_SUFFIXES = ("route",)
 
 
 def sync_registered_permissions(*, disable_stale: bool = False) -> dict:
@@ -205,6 +221,102 @@ def replace_role_direct_permissions(*, role: V2Role, permission_ids: list[int]) 
             permission=permission,
             source=V2RolePermissionGrant.GrantSource.DIRECT,
         )
+
+
+@transaction.atomic
+def sync_frontend_test_accounts(*, username_prefix: str = "jnu", password: str = "FrontTest@123") -> dict:
+    username_prefix = username_prefix.strip()
+    if not username_prefix:
+        raise ValueError("username_prefix cannot be empty")
+    if not password:
+        raise ValueError("password cannot be empty")
+
+    root = Department.objects.filter(parent__isnull=True).order_by("id").first()
+    if root is None:
+        root = Department.objects.create(name="总部")
+
+    created = 0
+    updated = 0
+    renamed = 0
+    deleted_obsolete = 0
+    prepared_usernames = []
+    prepared_user_ids = set()
+    obsolete_usernames = set()
+
+    for suffix, role_code, display_name, legacy_suffixes in FRONTEND_TEST_ACCOUNT_SPECS:
+        username = f"{username_prefix}_{suffix}"
+        candidate_usernames = [username]
+        for legacy_suffix in legacy_suffixes:
+            candidate_usernames.extend(
+                [
+                    f"{username_prefix}_{legacy_suffix}",
+                    f"fe_frontend_lab_{legacy_suffix}",
+                ]
+            )
+        candidate_usernames = list(dict.fromkeys(candidate_usernames))
+        obsolete_usernames.update(candidate_usernames[1:])
+
+        user = None
+        for candidate_username in candidate_usernames:
+            user = User.objects.filter(username=candidate_username).first()
+            if user is not None:
+                break
+        if user is None:
+            user = User(username=username)
+            created += 1
+        elif user.username != username:
+            user.username = username
+            renamed += 1
+        else:
+            updated += 1
+
+        user.status = UserStatus.ACTIVE
+        user.is_active = True
+        user.is_staff = False
+        user.is_superuser = False
+        user.is_platform_admin = False
+        user.set_password(password)
+        user.save()
+
+        profile, _ = V2AccountProfile.objects.update_or_create(
+            user=user,
+            defaults={
+                "department": root,
+                "name": display_name,
+                "phone": f"137{user.id:08d}",
+                "email": "",
+                "status": DirectoryStatus.ACTIVE,
+            },
+        )
+        V2AccountRoleAssignment.objects.update_or_create(
+            account_profile=profile,
+            role_code=role_code,
+            defaults={"assigned_by_user": user},
+        )
+        V2AccountRoleAssignment.objects.filter(account_profile=profile).exclude(role_code=role_code).delete()
+        prepared_usernames.append(username)
+        prepared_user_ids.add(user.id)
+
+    for obsolete_suffix in FRONTEND_TEST_OBSOLETE_SUFFIXES:
+        obsolete_usernames.update(
+            {
+                f"{username_prefix}_{obsolete_suffix}",
+                f"fe_frontend_lab_{obsolete_suffix}",
+            }
+        )
+    deleted_obsolete = (
+        User.objects.filter(username__in=obsolete_usernames)
+        .exclude(id__in=prepared_user_ids)
+        .delete()[0]
+    )
+
+    return {
+        "created": created,
+        "updated": updated,
+        "renamed": renamed,
+        "deleted_obsolete": deleted_obsolete,
+        "usernames": prepared_usernames,
+    }
 
 
 @transaction.atomic

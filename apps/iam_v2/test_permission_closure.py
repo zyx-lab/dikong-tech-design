@@ -281,3 +281,85 @@ class V2PermissionClosureTests(TestCase):
 
         self.assertFalse(User.objects.filter(username="admin").exists())
         self.assertFalse(V2AuditLog.objects.filter(action="bootstrap_v2_system").exists())
+
+    def test_bootstrap_v2_system_frontend_accounts_should_use_jnu_prefix(self):
+        for username in (
+            "jnu_tenant_admin",
+            "jnu_biz_admin",
+            "jnu_dispatcher",
+            "jnu_pilot",
+            "jnu_route",
+            "jnu_auditor",
+            "jnu_platform_super_admin",
+            "jnu_department_admin",
+            "jnu_task_monitor_dispatcher",
+            "jnu_work_order_handler",
+        ):
+            User.objects.create_user(username=username, password="oldpass1234", status=UserStatus.ACTIVE)
+
+        call_command(
+            "bootstrap_v2_system",
+            "--frontend-test-accounts",
+            "--frontend-password",
+            "pass1234",
+            verbosity=0,
+        )
+
+        expected_usernames = {
+            "jnu_super",
+            "jnu_admin",
+            "jnu_dispatcher",
+            "jnu_pilot",
+            "jnu_handler",
+        }
+        self.assertEqual(
+            set(User.objects.filter(username__startswith="jnu_").values_list("username", flat=True)),
+            expected_usernames,
+        )
+        self.assertFalse(
+            User.objects.filter(
+                username__in=[
+                    "jnu_tenant_admin",
+                    "jnu_biz_admin",
+                    "jnu_route",
+                    "jnu_auditor",
+                    "jnu_platform_super_admin",
+                    "jnu_department_admin",
+                    "jnu_task_monitor_dispatcher",
+                    "jnu_work_order_handler",
+                ]
+            ).exists()
+        )
+        self.assertFalse(User.objects.filter(username__startswith="fe_frontend_lab_").exists())
+        self.assertEqual(
+            {
+                username: role_code
+                for username, role_code in V2AccountRoleAssignment.objects.filter(
+                    account_profile__user__username__startswith="jnu_"
+                ).values_list("account_profile__user__username", "role_code")
+            },
+            {
+                "jnu_super": "platform_super_admin",
+                "jnu_admin": "department_admin",
+                "jnu_dispatcher": "task_monitor_dispatcher",
+                "jnu_pilot": "pilot",
+                "jnu_handler": "work_order_handler",
+            },
+        )
+        phones = list(
+            V2AccountProfile.objects.filter(user__username__startswith="jnu_")
+            .order_by("user_id")
+            .values_list("phone", flat=True)
+        )
+        self.assertEqual(len(phones), 5)
+        self.assertEqual(len(set(phones)), 5)
+        self.assertTrue(all(phone.startswith("137") and len(phone) == 11 for phone in phones), phones)
+
+        dispatcher_login = self.client.post(
+            "/api/v2/iam/session/login",
+            {"username": "jnu_dispatcher", "password": "pass1234"},
+            format="json",
+        )
+        self.assertEqual(dispatcher_login.status_code, 200, getattr(dispatcher_login, "data", dispatcher_login.content))
+        self.assertEqual(dispatcher_login.data["data"]["user"]["username"], "jnu_dispatcher")
+        self.assertEqual(dispatcher_login.data["data"]["user"]["roleCodes"], ["task_monitor_dispatcher"])

@@ -14,6 +14,7 @@ export SQLITE_DB_NAME="${SQLITE_DB_NAME:-db.regression.sqlite3}"
 export DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS:-127.0.0.1,localhost,*}"
 export REGRESSION_ROOT_USERNAME="${REGRESSION_ROOT_USERNAME:-root}"
 export REGRESSION_ROOT_PASSWORD="${REGRESSION_ROOT_PASSWORD:-admin123}"
+export FRONTEND_TEST_ACCOUNT_PASSWORD="${FRONTEND_TEST_ACCOUNT_PASSWORD:-FrontTest@123}"
 
 HOST="${DJANGO_RUNSERVER_HOST:-0.0.0.0}"
 PORT="${DJANGO_RUNSERVER_PORT:-8011}"
@@ -27,9 +28,8 @@ if [[ "${START_REGRESSION_SERVER_DRY_RUN:-}" == "1" ]]; then
   exit 0
 fi
 
-#python manage.py migrate
-#python manage.py seed_role_permissions --mode replace
-#python manage.py bootstrap_frontend_test_tenant
+python manage.py migrate
+python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu --frontend-password "$FRONTEND_TEST_ACCOUNT_PASSWORD"
 python manage.py shell -c '
 import os
 from django.contrib.auth import get_user_model

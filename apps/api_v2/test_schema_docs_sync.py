@@ -106,6 +106,9 @@ class ApiV2DocsSyncTests(TestCase):
             "POST /api/v2/iam/session/login",
             "GET /api/v2/system/menus/current",
             "bootstrap_v2_system --reset",
+            "bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu",
+            "jnu_super",
+            "jnu_dispatcher",
             "docs/api-v2-frontend-guide.md",
         ):
             with self.subTest(expected=expected):

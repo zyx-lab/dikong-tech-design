@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8001}"
-USERNAME="${USERNAME:-v2_test_platform_super_admin}"
+USERNAME="${USERNAME:-jnu_super}"
 PASSWORD="${PASSWORD:-FrontTest@123}"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-30}"
 TMP_DIR="${TMP_DIR:-/tmp/dikong_v2_client}"

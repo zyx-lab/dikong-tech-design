@@ -626,8 +626,25 @@ class ApiV2ImplementationBoundaryTests(TestCase):
         script_path = Path(settings.BASE_DIR) / "scripts" / "local_chain_client.sh"
         text = script_path.read_text(encoding="utf-8")
 
+        self.assertIn('USERNAME="${USERNAME:-jnu_super}"', text)
+        self.assertNotIn("v2_test_platform_super_admin", text)
         self.assertIn("/api/v2/iam/session/login", text)
         self.assertNotIn("/api/v1", text)
+
+    def test_regression_server_script_should_seed_jnu_frontend_accounts(self):
+        script_path = Path(settings.BASE_DIR) / "scripts" / "start_regression_server.sh"
+        text = script_path.read_text(encoding="utf-8")
+        command_lines = [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+        self.assertIn("bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu", text)
+        self.assertLess(
+            command_lines.index("python manage.py migrate"),
+            command_lines.index(
+                'python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu --frontend-password "$FRONTEND_TEST_ACCOUNT_PASSWORD"'
+            ),
+        )
+        self.assertNotIn("bootstrap_frontend_test_tenant", text)
+        self.assertNotIn("fe_frontend_lab", text)
 
 
 class ApiV2SessionTests(TestCase):
