@@ -544,7 +544,7 @@ POST /api/v2/inspection/camera/actions
 5. 调用 `GET /api/v2/inspection/live/capacity?droneId=<droneId>`，从 `data.cameras_list[].index` 取 `payloadIndex`，例如 `88-0-0`。
 6. 调用 `POST /api/v2/inspection/camera/actions` 下发具体动作。
 
-基础请求体如下。字段建议使用 camelCase；后端兼容部分 snake_case 别名，但前端不要混用两种写法。
+基础请求体如下。对外请求字段固定使用 camelCase；snake_case 只用于后端调用 DJI 上游协议。
 
 ```json
 {

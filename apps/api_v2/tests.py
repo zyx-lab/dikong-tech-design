@@ -472,7 +472,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             content_type="application/json",
         )
         self.assertIn("videoType", live_switch_body)
-        self.assertIn("video_type", live_switch_body)
+        self.assertNotIn("video_type", live_switch_body)
 
     def test_v2_docs_should_be_available(self):
         response = self.client.get("/api/v2/docs/")

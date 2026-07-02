@@ -61,7 +61,7 @@ CAMERA_ACTION_FRONTEND_DETAILS = """
 
 推荐调用流程：先完成登录、DJI 资源发现和资源绑定；从 `GET /api/v2/resource/drones` 选择本地 `droneId`，从 `GET /api/v2/resource/gateways` 选择本地 `executorId`；再调用 `GET /api/v2/inspection/live/capacity?droneId=<droneId>`，从 `data.cameras_list[].index` 取 `payloadIndex`，例如 `88-0-0`。
 
-前端只调用本接口，不直接调用 DJI 上游。后端会按实现固定执行两步：先调用 DJI payload authority，上游请求体是 `{ "payload_index": payloadIndex }`；成功后再调用 DJI payload commands，上游请求体是 `{ "cmd": action, "data": ... }`。对外字段推荐 camelCase；后端会把 `payloadIndex/cameraMode/cameraType/zoomFactor/resetMode` 转成 DJI 需要的 snake_case。
+前端只调用本接口，不直接调用 DJI 上游。后端会按实现固定执行两步：先调用 DJI payload authority，上游请求体是 `{ "payload_index": payloadIndex }`；成功后再调用 DJI payload commands，上游请求体是 `{ "cmd": action, "data": ... }`。对外字段固定使用 camelCase；后端会把 `payloadIndex/cameraMode/cameraType/zoomFactor/resetMode` 转成 DJI 需要的 snake_case。
 
 字段含义：`droneId` 是本地无人机资源 ID，用于权限、在线状态和响应里的 `droneSn`；`executorId` 是本地执行端/网关资源 ID，会映射成上游路径里的 `{gatewaySn}`；`payloadIndex` 是 DJI payload index；`action` 是 DJI payload command 的 `cmd`。
 

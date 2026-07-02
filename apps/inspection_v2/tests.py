@@ -3356,6 +3356,18 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(live_response.data["data"]["webrtc_url"], "https://live.example.test/webrtc")
         start_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0", url_type=1)
 
+    def test_live_start_should_reject_snake_case_request_fields(self):
+        self.authenticate(self.owner_dispatcher)
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.start_live") as start_live:
+            response = self.client.post(
+                "/api/v2/inspection/live/start",
+                {"droneId": self.drone.id, "video_id": f"{self.drone.device_sn}/88-0-0/normal-0"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+        start_live.assert_not_called()
+
     def test_live_capacity_should_allow_visible_online_drone_without_active_flight(self):
         self.authenticate(self.owner_dispatcher)
         self.assertFalse(FlightSession.objects.filter(drone=self.drone).exists())
@@ -3370,7 +3382,7 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(response.data["data"]["sn"], self.drone.device_sn)
         get_capacity.assert_called_once_with(self.drone.device_sn)
 
-    def test_live_switch_should_accept_video_type_alias_and_proxy_to_dji(self):
+    def test_live_switch_should_proxy_camel_case_video_type_to_dji(self):
         self.authenticate(self.owner_dispatcher)
         video_id = f"{self.drone.device_sn}/88-0-0/wide-0"
 
@@ -3457,12 +3469,17 @@ class InspectionV2ApiTests(TestCase):
         base_payload = {"droneId": self.drone.id, "executorId": executor.id, "payloadIndex": "88-0-0"}
         invalid_payloads = [
             {**base_payload, "action": "camera_unknown"},
+            {"droneId": self.drone.id, "executorId": executor.id, "payload_index": "88-0-0", "action": "camera_photo_take"},
             {**base_payload, "action": "camera_mode_switch"},
+            {**base_payload, "action": "camera_mode_switch", "camera_mode": 1},
             {**base_payload, "action": "camera_mode_switch", "cameraMode": 9},
             {**base_payload, "action": "camera_focal_length_set", "cameraType": "wide", "zoomFactor": 10},
+            {**base_payload, "action": "camera_focal_length_set", "camera_type": "zoom", "zoom_factor": 10},
             {**base_payload, "action": "camera_focal_length_set", "cameraType": "ir", "zoomFactor": 21},
             {**base_payload, "action": "camera_aim", "cameraType": "zoom", "locked": True, "x": 1.2, "y": 0.5},
+            {**base_payload, "action": "camera_aim", "camera_type": "zoom", "locked": True, "x": 0.5, "y": 0.5},
             {**base_payload, "action": "gimbal_reset"},
+            {**base_payload, "action": "gimbal_reset", "reset_mode": 0},
             {"droneId": self.drone.id, "executorId": executor.id, "action": "camera_photo_take"},
         ]
 
@@ -3578,7 +3595,7 @@ class InspectionV2ApiTests(TestCase):
         self.authenticate(no_control_user)
         response = self.client.post(
             "/api/v2/inspection/live/start",
-            {"droneId": self.drone.id, "video_id": f"{self.drone.device_sn}/88-0-0/normal-0"},
+            {"droneId": self.drone.id, "videoId": f"{self.drone.device_sn}/88-0-0/normal-0"},
             format="json",
         )
         self.assertEqual(response.status_code, 403, getattr(response, "data", response.content))
