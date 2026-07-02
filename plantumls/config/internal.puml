@@ -1,0 +1,25 @@
+@startuml config_internal
+title config component - internal implementation
+left to right direction
+skinparam componentStyle rectangle
+
+package "config" {
+  component "settings.py\ninstalled apps, DB,\nDRF, Channels,\nobject storage, DJI env" as settings
+  component "urls.py\nroot HTTP routes,\nadmin, docs, v2,\ninternal DJI, mock DJI" as urls
+  component "api_v2_urlconf.py\nschema-only URLConf" as api_v2_urlconf
+  component "asgi.py\nProtocolTypeRouter\nHTTP + WebSocket" as asgi
+  component "wsgi.py\nDjango WSGI app" as wsgi
+  component "logging_config.py\nJSON logging formatter" as logging_config
+}
+
+settings --> logging_config
+urls --> api_v2_urlconf : Spectacular schema\nuses schema URLConf
+asgi --> settings : DJANGO_SETTINGS_MODULE
+wsgi --> settings : DJANGO_SETTINGS_MODULE
+asgi --> "apps/resource_v2/routing.py" : WebSocket URLRouter
+urls --> "apps/api_v2.urls" : /api/v2/
+urls --> "apps/dji_cloud.urls" : /api/internal/dji/
+urls --> "apps/dji_mock.urls" : /__mock-dji__/
+
+@enduml
+

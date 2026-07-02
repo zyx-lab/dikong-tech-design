@@ -1,0 +1,33 @@
+@startuml config_external
+title config component - external interactions
+left to right direction
+skinparam componentStyle rectangle
+
+component "config" as config
+actor "HTTP client" as http_client
+actor "WebSocket client" as ws_client
+component "Django/DRF runtime" as django
+component "Daphne/ASGI runtime" as daphne
+component "apps/api_v2" as api_v2
+component "apps/resource_v2\nWebSocket routing" as resource
+component "apps/dji_cloud\ninternal callbacks" as dji_cloud
+component "apps/dji_mock\ntest upstream" as dji_mock
+database "PostgreSQL or SQLite" as db
+queue "Redis\nChannels, MQTT health" as redis
+cloud "S3/MinIO" as storage
+component "DJI settings env\nupstream timeout,\ninternal token" as dji_settings
+
+http_client --> config : HTTP routes
+ws_client --> config : /ws/v2/dji/mqtt
+config --> django : settings, URLConf,\nWSGI/ASGI app
+daphne --> config : loads config.asgi.application
+config --> api_v2 : mounts /api/v2/
+config --> resource : mounts WebSocket URLRouter
+config --> dji_cloud : mounts internal callbacks
+config --> dji_mock : mounts mock server route
+config --> db : DATABASES env
+config --> redis : CHANNEL_REDIS_URL,\nDJI_V2_MQTT_REDIS_URL
+config --> storage : object storage env
+config --> dji_settings : reads env settings
+
+@enduml

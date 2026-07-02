@@ -1,0 +1,28 @@
+@startuml access_external
+title access component - external interactions
+left to right direction
+skinparam componentStyle rectangle
+
+component "apps/access" as access
+component "apps/common\nstandard envelope,\npagination" as common
+component "apps/api_v2\nOpenAPI helpers" as api_v2
+component "apps/iam_v2\nlogin, account profile,\nrequest context" as iam
+component "apps/resource_v2\nresource APIs,\nMQTT WS auth" as resource
+component "apps/inspection_v2\ninspection APIs,\nservices, tests" as inspection
+component "apps/system_v2\nsystem APIs" as system
+component "config/settings.py\nmiddleware, auth,\nstorage settings" as settings
+database "Django DB\nusers, auth sessions,\nlogs" as db
+cloud "S3/MinIO\nobject storage" as object_storage
+
+iam --> access : imports User, AuthSession,\nsession_services, exceptions
+resource --> access : imports authentication,\nmodels, exceptions
+inspection --> access : imports API base,\nauth, exceptions, models
+system --> access : imports authentication,\nDirectoryStatus
+access --> common : wraps responses,\nuses pagination
+access --> api_v2 : session views use\nOpenAPI response helpers
+settings --> access : installs middleware,\ncustom user/storage
+access --> db : persists users,\nsessions, timestamps
+access --> object_storage : LoggedS3Storage\nsaves/deletes files
+
+@enduml
+

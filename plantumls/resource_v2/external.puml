@@ -1,0 +1,40 @@
+@startuml resource_v2_external
+title resource_v2 component - external interactions
+left to right direction
+skinparam componentStyle rectangle
+
+component "apps/resource_v2" as resource
+component "apps/access\nauth, sessions,\nexceptions, models" as access
+component "apps/common\nstandard response envelope" as common
+component "apps/api_v2\nOpenAPI helpers,\nroute aggregation" as api_v2
+component "apps/iam_v2\nDepartment, roles,\nrequest context,\ndata scope" as iam
+component "apps/dji_cloud.gateway\nDjiGateway" as dji_gateway
+component "apps/inspection_v2\nmissions use resources;\nworker consumes MQTT;\nservices read telemetry" as inspection
+component "apps/system_v2\noperation logs read\naudit data" as system
+component "config/asgi.py\nWebSocket URLRouter" as asgi
+database "Django DB\nresource, binding,\nMQTT, audit tables" as db
+queue "Redis/Channels\nv2.dji.mqtt group,\nhealth heartbeat" as channels
+queue "DJI MQTT broker\nvia inspection worker" as mqtt_broker
+cloud "DJI Cloud API\nlogin/discovery" as dji_cloud
+actor "frontend/API client" as client
+actor "WebSocket client" as ws_client
+
+client --> resource : /api/v2/resource/*
+ws_client --> asgi : /ws/v2/dji/mqtt?token=...
+asgi --> resource : resource_v2.routing\nDjiMqttConsumer
+api_v2 --> resource : includes resource URLs
+resource --> access : Bearer auth,\nsessions, errors
+resource --> common : response envelope
+resource --> iam : visibility,\ndepartment ownership,\nshare permissions
+resource --> dji_gateway : wraps DjiGateway\nfor login/discovery
+dji_gateway --> dji_cloud : HTTP upstream
+inspection --> resource : imports models,\nservices, gateway,\nMQTT helpers
+inspection --> mqtt_broker : worker connects/subscribes
+mqtt_broker --> inspection : MQTT payloads
+inspection --> resource : record_mqtt_message,\nupsert telemetry
+resource --> channels : broadcast envelopes,\nread/write Redis health
+resource --> db : resource state,\nlatest messages,\naudit logs
+system --> resource : reads V2AuditLog,\nAuditLogReadSerializer
+
+@enduml
+

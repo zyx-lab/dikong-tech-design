@@ -1,0 +1,29 @@
+@startuml dji_cloud_external
+title dji_cloud component - external interactions
+left to right direction
+skinparam componentStyle rectangle
+
+component "apps/dji_cloud" as dji_cloud
+component "config/urls.py\n/api/internal/dji/" as config_urls
+component "apps/resource_v2.gateway\nDjiConnectionGateway" as resource_gateway
+component "apps/inspection_v2.services\nmission, live, media,\ncloud execution" as inspection_services
+component "apps/inspection_v2.views\nroute upload, live,\ncamera, media APIs" as inspection_views
+component "apps/inspection_v2 worker\nrun_v2_dji_worker" as worker
+component "apps/access.external_call_logging" as call_logging
+database "Django DB\nexternal call logs" as db
+cloud "DJI Cloud API\nHTTP upstream" as dji_upstream
+actor "DJI Cloud callback caller" as callback_caller
+
+config_urls --> dji_cloud : mounts internal callbacks
+resource_gateway --> dji_cloud : wraps DjiGateway\nfor connection login and discovery
+inspection_services --> dji_cloud : live, wayline, job,\nmedia gateway calls
+inspection_views --> dji_cloud : direct gateway operations\nfor route/media/live flows
+worker --> dji_cloud : resource sync,\nmedia sync gateway calls
+dji_cloud --> call_logging : records upstream calls
+call_logging --> db : persist log rows
+dji_cloud --> dji_upstream : authenticated HTTP API calls
+callback_caller --> dji_cloud : media upload callbacks\nwith internal token
+dji_cloud --> inspection_services : handle_v2_media_upload_callback
+
+@enduml
+

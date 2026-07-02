@@ -1,0 +1,38 @@
+@startuml resource_v2_internal
+title resource_v2 component - internal implementation
+left to right direction
+skinparam componentStyle rectangle
+
+package "apps/resource_v2" {
+  component "models.py\nDjiConnection,\nMqttConnectionHealth,\nDrone/Dock/Gateway/Payload,\nTelemetrySnapshot,\nMqttLatestMessage,\nResourceBinding,\nSharePermission,\nV2AuditLog" as models
+  component "gateway.py\nDjiConnectionGateway\nsession sync and discovery" as gateway
+  component "services.py\nresource lookup,\nconnection management,\nvisibility,\nshare permissions,\nbinding history" as services
+  component "serializers.py\nconnection, resource,\nMQTT, binding,\nshare, audit serializers" as serializers
+  component "views.py\nResource V2 REST APIs" as views
+  component "audit.py\nlog_v2_action" as audit
+  component "mqtt.py\ntopics, envelopes,\nhealth Redis cache,\nlatest messages,\nOSD telemetry upsert" as mqtt
+  component "consumers.py\nDjiMqttConsumer\nWS auth and filters" as consumers
+  component "routing.py\n/ws/v2/dji/mqtt" as routing
+  component "urls.py\nresource REST routes" as urls
+}
+
+gateway --> models
+services --> models
+services --> audit
+services --> gateway : DjiConnectionGateway.discover
+services --> serializers : upsert_resource_from_payload
+serializers --> models
+serializers --> services
+serializers --> mqtt : read_redis_health
+views --> models
+views --> serializers
+views --> services
+views --> audit
+urls --> views
+mqtt --> models
+consumers --> mqtt : MQTT_BROADCAST_GROUP
+consumers --> models
+consumers --> services : visible bindings,\neffective permissions
+routing --> consumers
+
+@enduml

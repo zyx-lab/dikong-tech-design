@@ -1,0 +1,29 @@
+@startuml iam_v2_external
+title iam_v2 component - external interactions
+left to right direction
+skinparam componentStyle rectangle
+
+component "apps/iam_v2" as iam
+component "apps/access\nUser, AuthSession,\nAPI base, exceptions" as access
+component "apps/common\nstandard response envelope" as common
+component "apps/api_v2\nroute aggregation,\nOpenAPI responses" as api_v2
+component "apps/resource_v2\nresource visibility,\nsharing, audit" as resource
+component "apps/inspection_v2\nmission visibility,\nroles, departments" as inspection
+component "apps/system_v2\nmenu tree and log APIs" as system
+component "config\ninstalled apps, /api/v2/iam" as config
+database "Django DB\nIAM tables, users,\nrole grants, menus" as db
+actor "frontend/API client" as client
+
+client --> iam : login and IAM CRUD APIs
+config --> iam : app loading and URL include
+api_v2 --> iam : includes iam URLs
+iam --> access : authenticates users,\ncreates sessions,\nuses API base/errors
+iam --> common : response envelope
+iam --> db : IAM models and grants
+resource --> iam : imports Department,\nroles, request context,\ndata scopes
+inspection --> iam : imports Department,\nrole/profile models,\npermission context
+system --> iam : reads menus,\npermissions, roles;\nuses context services
+iam --> resource : writes V2 audit log\nthrough resource audit helper
+
+@enduml
+

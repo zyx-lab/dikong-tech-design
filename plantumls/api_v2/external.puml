@@ -1,0 +1,29 @@
+@startuml api_v2_external
+title api_v2 component - external interactions
+left to right direction
+skinparam componentStyle rectangle
+
+component "apps/api_v2" as api_v2
+component "config/urls.py\nschema/docs/API mount" as root_urls
+component "config/api_v2_urlconf.py\nschema-only URLConf" as api_v2_urlconf
+component "drf-spectacular\nOpenAPI generator" as spectacular
+component "apps/common\nstandard response payloads" as common
+component "apps/iam_v2" as iam
+component "apps/resource_v2" as resource
+component "apps/inspection_v2" as inspection
+component "apps/system_v2" as system
+component "Object storage settings\nS3/MinIO env" as object_settings
+
+root_urls --> api_v2 : includes /api/v2/
+root_urls --> spectacular : schema and Swagger views
+spectacular --> api_v2 : postprocessing hooks,\nshared serializers
+api_v2_urlconf --> api_v2 : schema route tree
+api_v2 --> common : standard envelope hook\nuses response shape
+api_v2 --> iam : include iam URLs
+api_v2 --> resource : include resource URLs
+api_v2 --> inspection : include inspection URLs
+api_v2 --> system : include system URLs
+api_v2 --> object_settings : Django system checks\napi_v2.E001-E006
+
+@enduml
+
