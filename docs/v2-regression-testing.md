@@ -26,7 +26,7 @@ This runs:
 - `apps.inspection_v2.test_route_cover_base64`
 - `apps.inspection_v2.test_route_cover_object_storage`
 
-Use this for normal changes under `apps/api_v2`, `apps/iam_v2`, `apps/resource_v2`, `apps/inspection_v2`, and the v2 resource-permission design docs.
+Use this for normal changes under `apps/api_v2`, `apps/iam_v2`, `apps/resource_v2`, and `apps/inspection_v2`.
 
 ## Boundary Smoke Gate
 
@@ -34,12 +34,9 @@ Use this for normal changes under `apps/api_v2`, `apps/iam_v2`, `apps/resource_v
 scripts/test_v2_regression.sh boundary
 ```
 
-This runs the default v2 gate plus a small legacy boundary smoke suite:
+This runs the default v2 gate plus the preserved DJI upstream mock smoke suite:
 
-- business API response envelope smoke tests
-- DJI v2 platform model tests
 - mock DJI upstream contract tests
-- selected internal DJI sync endpoint contract tests
 
 Use this when v2 work touches shared response handling, DJI gateway behavior, schema/routing boundaries, or models reused by v1 and v2.
 
@@ -50,6 +47,7 @@ The default v2 gate is the deterministic local check for docs/code synchronizati
 Use the live parity command only as an explicit network check:
 
 ```bash
+mkdir -p evidence/v2-docs-sync
 DB_ENGINE=sqlite .venv/bin/python scripts/compare_v2_docs_schema.py \
   --live-url http://110.42.32.122:8001/api/v2/docs/schema/ \
   --local-django \
@@ -62,6 +60,7 @@ The diff output groups drift into `info_diff`, `paths_only_live`, `paths_only_lo
 For HTTP evidence, use `curl -sS -i` so headers are captured without progress output corrupting JSON bodies:
 
 ```bash
+mkdir -p evidence/v2-docs-sync
 curl -sS -i http://110.42.32.122:8001/api/v2/docs/ > evidence/v2-docs-sync/http-docs-page.txt
 curl -sS -i http://110.42.32.122:8001/api/v2/docs/schema/ > evidence/v2-docs-sync/http-docs-schema.txt
 ```
@@ -69,21 +68,6 @@ curl -sS -i http://110.42.32.122:8001/api/v2/docs/schema/ > evidence/v2-docs-syn
 No credentials are required for the schema parity command. Do not commit cookies, bearer tokens, refresh tokens, passwords, or DB credentials in docs-sync evidence. If `curl -i` captures `Set-Cookie`, redact the value before keeping the artifact.
 
 If a local change alters the generated v2 schema, live no-drift is not a valid final claim until the live server at `110.42.32.122:8001` is redeployed or restarted with the changed code. Otherwise record the live parity state as deployment-blocked.
-
-## Wider Legacy Gate
-
-```bash
-scripts/test_v2_regression.sh legacy
-```
-
-This keeps the previous broader regression command available without making it the default v2 development loop:
-
-- `apps.api_v1.tests`
-- `apps.dji_bff.tests`
-- `apps.dji_bff.test_v2_platform_models`
-- `apps.dji_mock.tests`
-
-Run this before handoff if the change edits shared v1/DJI code directly. A full `manage.py test` remains a release-level check, not the default v2 iteration command.
 
 ## Useful Options
 

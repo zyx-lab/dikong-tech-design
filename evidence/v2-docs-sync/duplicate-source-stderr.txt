@@ -1,8 +1,0 @@
-usage: compare_v2_docs_schema.py [-h] [--live-url LIVE_URL]
-                                 [--live-file LIVE_FILE] [--local-django]
-                                 [--local-url LOCAL_URL]
-                                 [--local-file LOCAL_FILE]
-                                 [--write-local WRITE_LOCAL]
-                                 [--output-json OUTPUT_JSON]
-                                 [--timeout TIMEOUT]
-compare_v2_docs_schema.py: error: provide exactly one live source: --live-url or --live-file

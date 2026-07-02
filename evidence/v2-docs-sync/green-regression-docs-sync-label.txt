@@ -1,3 +1,0 @@
-scripts/test_v2_regression.sh:62:      apps.api_v2.test_schema_docs_sync
-scripts/test_v2_regression.sh:71:      apps.api_v2.test_schema_docs_sync
-docs/v2-regression-testing.md:18:- `apps.api_v2.test_schema_docs_sync`

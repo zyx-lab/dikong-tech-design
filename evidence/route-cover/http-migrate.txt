@@ -1,4 +1,0 @@
-Operations to perform:
-  Apply all migrations: access, admin, auth, contenttypes, dji_bff, drone, drone_assignment, flight_record, iam_v2, inspection_v2, media_file, mission, resource_v2, route, sessions, waypoint, workforce_v2
-Running migrations:
-  Applying inspection_v2.0009_waypointroute_cover_image... OK

@@ -1,9 +1,0 @@
-SystemCheckError: System check identified some issues:
-
-ERRORS:
-?: (api_v2.E002) Object storage access key is required.
-?: (api_v2.E003) Object storage secret key is required.
-?: (api_v2.E004) Object storage bucket name is required.
-?: (api_v2.E005) MinIO object storage endpoint URL is required.
-
-System check identified 4 issues (0 silenced).
