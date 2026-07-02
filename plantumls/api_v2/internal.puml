@@ -10,8 +10,6 @@ package "apps/api_v2" {
   component "openapi.py\nshared schema serializers,\nlist_data_serializer" as openapi
   component "openapi_hooks.py\nstandard envelope hook,\nfrontend doc enrichment" as hooks
   component "docs_metadata.py\nfrontend guide text,\noperation summaries,\nexamples" as docs
-  component "serializers.py\naggregation placeholder" as serializers
-  component "views.py\naggregation placeholder" as views
 }
 
 apps --> checks
