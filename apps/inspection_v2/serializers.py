@@ -12,7 +12,6 @@ from apps.inspection_v2.models import (
     FlightSession,
     FlightTelemetrySnapshot,
     InspectionFlightRecord,
-    InspectionFlightRecordMediaSyncState,
     InspectionMission,
     MissionCloudExecution,
     MissionExecutionMode,
@@ -106,12 +105,7 @@ class RouteDeleteResponseSerializer(serializers.Serializer):
     deleted = serializers.BooleanField()
 
 
-class RouteBaseWriteSerializer(StrictSerializer):
-    name = serializers.CharField(max_length=128)
-    status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
-    coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
-    remark = serializers.CharField(required=False, allow_blank=True)
-
+class RouteCoverImageInputMixin:
     def to_internal_value(self, data):
         if isinstance(data, dict):
             has_empty_cover = "coverImage" in data and (data.get("coverImage") == "" or data.get("coverImage") is None)
@@ -124,6 +118,13 @@ class RouteBaseWriteSerializer(StrictSerializer):
 
     def validate_coverImage(self, value):
         return validate_route_cover_upload(value)
+
+
+class RouteBaseWriteSerializer(RouteCoverImageInputMixin, StrictSerializer):
+    name = serializers.CharField(max_length=128)
+    status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
+    coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
+    remark = serializers.CharField(required=False, allow_blank=True)
 
 
 def validate_route_kmz_upload(value):
@@ -151,42 +152,16 @@ class RouteCreateSerializer(RouteBaseWriteSerializer):
         return validate_route_kmz_upload(value)
 
 
-class RouteMetadataUpdateSerializer(StrictSerializer):
+class RouteMetadataUpdateSerializer(RouteCoverImageInputMixin, StrictSerializer):
     name = serializers.CharField(max_length=128, required=False)
     status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
     coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
     remark = serializers.CharField(required=False, allow_blank=True)
 
-    def to_internal_value(self, data):
-        if isinstance(data, dict) and ("coverImage" in data and (data.get("coverImage") == "" or data.get("coverImage") is None)):
-            data = {key: data.get(key) for key in data.keys()}
-            data.pop("coverImage", None)
-        return super().to_internal_value(data)
 
-    def validate_coverImage(self, value):
-        return validate_route_cover_upload(value)
-
-
-class RouteKmzUpdateSerializer(StrictSerializer):
-    name = serializers.CharField(max_length=128, required=False)
-    status = serializers.ChoiceField(choices=DirectoryStatus.choices, required=False)
-    coverImage = RouteCoverImageField(required=False, allow_empty_file=False, write_only=True)
-    remark = serializers.CharField(required=False, allow_blank=True)
+class RouteKmzUpdateSerializer(RouteMetadataUpdateSerializer):
     djiConnectionId = serializers.IntegerField(min_value=1)
     kmzFile = serializers.FileField()
-
-    def to_internal_value(self, data):
-        if isinstance(data, dict):
-            has_empty_cover = "coverImage" in data and (data.get("coverImage") == "" or data.get("coverImage") is None)
-        else:
-            has_empty_cover = False
-        if isinstance(data, dict) and has_empty_cover:
-            data = {key: data.get(key) for key in data.keys()}
-            data.pop("coverImage", None)
-        return super().to_internal_value(data)
-
-    def validate_coverImage(self, value):
-        return validate_route_cover_upload(value)
 
     def validate_kmzFile(self, value):
         return validate_route_kmz_upload(value)
@@ -285,14 +260,24 @@ class InspectionPilotAccountSummarySerializer(serializers.Serializer):
     department = DepartmentReadSerializer()
 
 
+def _pilot_account_summary(account) -> dict:
+    return {
+        "accountProfileId": account.id,
+        "userId": account.user_id,
+        "username": account.username,
+        "name": account.name,
+        "department": DepartmentReadSerializer(account.department).data,
+    }
+
+
 class MissionReadSerializer(serializers.ModelSerializer):
     creatorDepartmentId = serializers.IntegerField(source="creator_department_id", read_only=True)
     primaryResourceOwnerDepartmentId = serializers.IntegerField(source="primary_resource_owner_department_id", read_only=True)
     routeId = serializers.IntegerField(source="route_id", read_only=True)
-    routeName = serializers.CharField(source="route.name", read_only=True)
+    routeName = serializers.CharField(source="route_name", read_only=True)
     droneId = serializers.IntegerField(source="drone_id", read_only=True)
-    droneDeviceSn = serializers.CharField(source="drone.device_sn", read_only=True)
-    droneName = serializers.CharField(source="drone.name", read_only=True)
+    droneDeviceSn = serializers.CharField(source="drone_sn", read_only=True)
+    droneName = serializers.CharField(source="drone_name", read_only=True)
     dockId = serializers.IntegerField(source="dock_id", allow_null=True, read_only=True)
     executorId = serializers.IntegerField(source="executor_id", allow_null=True, read_only=True)
     payloadId = serializers.IntegerField(source="payload_id", allow_null=True, read_only=True)
@@ -341,14 +326,7 @@ class MissionReadSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(InspectionPilotAccountSummarySerializer)
     def get_pilot(self, obj) -> dict:
-        account = obj.pilot_account_profile
-        return {
-            "accountProfileId": account.id,
-            "userId": account.user_id,
-            "username": account.user.username,
-            "name": account.name,
-            "department": DepartmentReadSerializer(account.department).data,
-        }
+        return _pilot_account_summary(obj.pilot_account)
 
 
 class MissionWriteSerializer(StrictSerializer):
@@ -431,11 +409,11 @@ class TelemetrySnapshotReadSerializer(serializers.ModelSerializer):
 
 class ActiveFlightReadSerializer(serializers.ModelSerializer):
     missionId = serializers.IntegerField(source="mission_id", read_only=True)
-    missionName = serializers.CharField(source="mission.name", read_only=True)
-    routeName = serializers.CharField(source="mission.route.name", read_only=True)
+    missionName = serializers.CharField(source="mission_name", read_only=True)
+    routeName = serializers.CharField(source="route_name", read_only=True)
     droneId = serializers.IntegerField(source="drone_id", read_only=True)
-    droneDeviceSn = serializers.CharField(source="drone.device_sn", read_only=True)
-    droneName = serializers.CharField(source="drone.name", read_only=True)
+    droneDeviceSn = serializers.CharField(source="drone_sn", read_only=True)
+    droneName = serializers.CharField(source="drone_name", read_only=True)
     dockId = serializers.IntegerField(source="dock_id", allow_null=True, read_only=True)
     payloadId = serializers.IntegerField(source="payload_id", allow_null=True, read_only=True)
     pilot = serializers.SerializerMethodField()
@@ -469,20 +447,10 @@ class ActiveFlightReadSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(InspectionPilotAccountSummarySerializer)
     def get_pilot(self, obj) -> dict:
-        account = obj.mission.pilot_account_profile
-        return {
-            "accountProfileId": account.id,
-            "userId": account.user_id,
-            "username": account.user.username,
-            "name": account.name,
-            "department": DepartmentReadSerializer(account.department).data,
-        }
+        return _pilot_account_summary(obj.pilot_account)
 
     def _cloud_execution(self, obj):
-        try:
-            return obj.mission.cloud_execution
-        except MissionCloudExecution.DoesNotExist:
-            return None
+        return obj.cloud_execution
 
     def get_liveStatus(self, obj) -> str:
         execution = self._cloud_execution(obj)
@@ -524,9 +492,9 @@ class FlightRecordReadSerializer(serializers.ModelSerializer):
     photoCount = serializers.IntegerField(source="photo_count", read_only=True)
     videoCount = serializers.IntegerField(source="video_count", read_only=True)
     abnormalReason = serializers.CharField(source="abnormal_reason", read_only=True)
-    mediaSyncStatus = serializers.SerializerMethodField()
-    mediaSyncLastSyncedAt = serializers.DateTimeField(source="media_sync_state.last_synced", allow_null=True, read_only=True)
-    mediaSyncNextRunAt = serializers.DateTimeField(source="media_sync_state.next_run_at", allow_null=True, read_only=True)
+    mediaSyncStatus = serializers.CharField(source="media_sync_status", read_only=True)
+    mediaSyncLastSyncedAt = serializers.DateTimeField(source="media_sync_last_synced_at", allow_null=True, read_only=True)
+    mediaSyncNextRunAt = serializers.DateTimeField(source="media_sync_next_run_at", allow_null=True, read_only=True)
 
     class Meta:
         model = InspectionFlightRecord
@@ -556,13 +524,6 @@ class FlightRecordReadSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = fields
-
-    def get_mediaSyncStatus(self, obj) -> str:
-        try:
-            return obj.media_sync_state.status
-        except InspectionFlightRecordMediaSyncState.DoesNotExist:
-            return "NONE"
-
 
 class FlightRecordUpdateSerializer(StrictSerializer):
     remark = serializers.CharField(required=False, allow_blank=True)

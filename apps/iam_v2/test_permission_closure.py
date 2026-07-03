@@ -15,7 +15,7 @@ from apps.iam_v2.models import (
     V2RoleMenuGrant,
     V2RolePermissionGrant,
 )
-from apps.resource_v2.models import V2AuditLog
+from apps.audit_v2.models import V2AuditLog
 
 User = get_user_model()
 

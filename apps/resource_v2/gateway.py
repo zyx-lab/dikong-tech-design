@@ -1,6 +1,6 @@
 from django.utils import timezone
 
-from apps.dji_cloud.gateway import DjiGateway, DjiGatewayUpstreamError
+from apps.dji_cloud.gateway import DjiGateway, DjiGatewayError, DjiGatewayUpstreamError
 from apps.resource_v2.models import DjiConnection, DjiConnectionStatus, ResourceType
 
 
@@ -158,3 +158,7 @@ class DjiConnectionGateway(DjiGateway):
             "gateways": gateways,
             "payloads": self._payloads_from_devices([*drones, *docks]),
         }
+
+
+def dji_connection_gateway(connection: DjiConnection) -> DjiConnectionGateway:
+    return DjiConnectionGateway(connection)

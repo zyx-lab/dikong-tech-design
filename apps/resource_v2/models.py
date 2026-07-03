@@ -253,6 +253,22 @@ class ResourceBinding(TimeStampedModel):
     def __str__(self):
         return f"{self.resource_type}:{self.resource_object_id}:{self.status}"
 
+    @property
+    def dji_workspace_id(self) -> str:
+        return self.dji_connection.workspace_id
+
+    @property
+    def dji_connection_name(self) -> str:
+        return self.dji_connection.name
+
+    @property
+    def owner_department_name(self) -> str:
+        return self.owner_department.name
+
+    @property
+    def owner_department_path(self) -> str:
+        return self.owner_department.path
+
 
 class ResourceBindingHistory(models.Model):
     action_type = models.CharField(max_length=16, choices=BindingActionType.choices)
@@ -318,45 +334,3 @@ class ResourceSharePermission(TimeStampedModel):
     def save(self, *args, **kwargs):
         self.full_clean()
         return super().save(*args, **kwargs)
-
-
-class V2AuditLog(models.Model):
-    action = models.CharField(max_length=128)
-    actor_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="v2_audit_logs",
-    )
-    actor_department = models.ForeignKey(
-        Department,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="actor_v2_audit_logs",
-    )
-    resource_owner_department = models.ForeignKey(
-        Department,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="resource_owner_v2_audit_logs",
-    )
-    resource_type = models.CharField(max_length=16, blank=True)
-    resource_object_id = models.CharField(max_length=64, blank=True)
-    target_type = models.CharField(max_length=128)
-    target_id = models.CharField(max_length=64, blank=True)
-    before_data = models.JSONField(null=True, blank=True)
-    after_data = models.JSONField(null=True, blank=True)
-    ip = models.GenericIPAddressField(null=True, blank=True)
-    request_id = models.CharField(max_length=64, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "v2_audit_logs"
-        ordering = ["-created_at", "-id"]
-        indexes = [
-            models.Index(fields=["actor_department", "created_at"], name="idx_v2_audit_actor_dept"),
-            models.Index(fields=["resource_type", "resource_object_id"], name="idx_v2_audit_resource"),
-        ]

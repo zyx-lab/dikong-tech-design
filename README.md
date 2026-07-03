@@ -21,7 +21,7 @@
 - `apps.inspection_v2`：航线、巡检任务、飞行会话、遥测快照、直播、相机动作、飞行记录、云媒体文件。
 - `apps.system_v2`：系统菜单、操作日志、登录日志、文件日志。
 - `apps.api_v2`：v2 聚合路由、OpenAPI 文档和边界测试。
-- `apps.dji_cloud`：DJI 上游 HTTP gateway 和内部 callback。
+- `apps.dji_cloud`：DJI 上游 HTTP gateway；内部媒体 callback 由 `apps.inspection_v2` 承接。
 - `apps.dji_mock`：本地 DJI 上游协议 mock。
 
 ## 已移除模块

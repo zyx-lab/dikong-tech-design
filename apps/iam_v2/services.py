@@ -73,6 +73,22 @@ class V2RequestContext:
     data_scopes: tuple[str, ...]
     is_super_admin: bool = False
 
+    @property
+    def user_id(self) -> int:
+        return self.user.id
+
+    @property
+    def username(self) -> str:
+        return self.user.username
+
+    @property
+    def department_id(self) -> int:
+        return self.department.id
+
+    @property
+    def department_path(self) -> str:
+        return self.department.path
+
 
 def _active_authenticated_user(request):
     user = getattr(request, "user", None)
@@ -216,6 +232,16 @@ def require_request_v2_permission(request, permission_code: str) -> V2RequestCon
     return context
 
 
+def department_tree_filter(context: V2RequestContext, department_field: str) -> Q:
+    return Q(**{f"{department_field}__path__startswith": context.department_path})
+
+
+def department_in_context_scope(context: V2RequestContext, department) -> bool:
+    if is_platform_super_admin(context):
+        return True
+    return str(getattr(department, "path", "") or "").startswith(context.department_path)
+
+
 def _field_id_lookup(field_path: str) -> str:
     return f"{field_path}__id" if "__" in field_path else f"{field_path}_id"
 
@@ -233,11 +259,11 @@ def apply_data_scope(
 
     filters = Q()
     if V2Role.DataScope.DEPT_AND_CHILDREN in scopes:
-        filters |= Q(**{f"{department_field}__path__startswith": context.department.path})
+        filters |= department_tree_filter(context, department_field)
     if V2Role.DataScope.DEPT_ONLY in scopes:
-        filters |= Q(**{_field_id_lookup(department_field): context.department.id})
+        filters |= Q(**{_field_id_lookup(department_field): context.department_id})
     if V2Role.DataScope.SELF in scopes and self_user_field:
-        filters |= Q(**{_field_id_lookup(self_user_field): context.user.id})
+        filters |= Q(**{_field_id_lookup(self_user_field): context.user_id})
     if V2Role.DataScope.CUSTOM_DEPARTMENTS in scopes:
         role_ids = V2Role.objects.filter(
             code__in=context.role_codes,

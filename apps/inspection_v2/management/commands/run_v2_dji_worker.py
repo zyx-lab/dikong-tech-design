@@ -11,14 +11,13 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
 
-from apps.dji_cloud.gateway import DjiGatewayError
 from apps.inspection_v2.services import (
     apply_cloud_execution_event,
     apply_device_status_event,
     apply_osd_telemetry,
     sync_due_flight_record_media,
 )
-from apps.resource_v2.gateway import DjiConnectionGateway
+from apps.resource_v2.gateway import DjiConnectionGateway, DjiGatewayError, dji_connection_gateway
 from apps.resource_v2.models import DjiConnection, DjiConnectionStatus, MqttHealthStatus
 from apps.resource_v2.mqtt import DEFAULT_MQTT_TOPICS, configured_mqtt_topics, mark_mqtt_health, record_mqtt_message
 from apps.resource_v2.services import sync_connection_resources_from_upstream
@@ -78,7 +77,7 @@ class V2DjiWorker:
                 status=MqttHealthStatus.CONNECTING,
                 worker_id=f"{self.client_id_prefix}-{connection.id}",
             )
-            config = DjiConnectionGateway(connection).get_workspace_config()
+            config = dji_connection_gateway(connection).get_workspace_config()
             mark_mqtt_health(
                 connection=connection,
                 status=MqttHealthStatus.CONNECTING,

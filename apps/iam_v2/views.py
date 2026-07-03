@@ -6,11 +6,18 @@ from rest_framework import serializers, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 
+from apps.access.api_base import EmptySerializer
 from apps.access.exceptions import StandardForbidden
 from apps.access.authentication import BearerAuthSessionAuthentication
-from apps.api_v2.openapi import V2MeContextSerializer, list_data_serializer
+from apps.api_contracts.openapi import V2MeContextSerializer, list_data_serializer
 from apps.access.models import DirectoryStatus, UserStatus
-from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
+from apps.common.api_response import (
+    BusinessApiResponseMixin,
+    StandardCode,
+    standard_duplicate_response,
+    standard_error_payload,
+    standard_not_found_response,
+)
 from apps.iam_v2.models import (
     Department,
     PLATFORM_ROLE_CODES,
@@ -62,19 +69,17 @@ from apps.iam_v2.account_profile_services import (
 )
 from apps.iam_v2.services import (
     apply_data_scope,
+    department_in_context_scope,
+    department_tree_filter,
     is_department_admin,
     is_platform_super_admin,
     require_platform_super_admin,
     require_v2_permission,
     resolve_v2_context,
 )
-from apps.resource_v2.audit import log_v2_action
+from apps.audit_v2.services import log_v2_action
 
 User = get_user_model()
-
-
-class EmptySchemaSerializer(serializers.Serializer):
-    pass
 
 
 class ResetPasswordSerializer(serializers.Serializer):
@@ -82,21 +87,11 @@ class ResetPasswordSerializer(serializers.Serializer):
 
 
 def _duplicate_response(exc):
-    return Response(
-        standard_error_payload(StandardCode.DUPLICATE, "资源已存在", {"detail": str(exc)}),
-        status=status.HTTP_409_CONFLICT,
-    )
+    return standard_duplicate_response({"detail": str(exc)})
 
 
-def _duplicate_payload_response(data):
-    return Response(
-        standard_error_payload(StandardCode.DUPLICATE, "资源已存在", data),
-        status=status.HTTP_409_CONFLICT,
-    )
-
-
-def _not_found_response():
-    return Response(standard_error_payload(StandardCode.NOT_FOUND, "资源不存在", None), status=status.HTTP_404_NOT_FOUND)
+_duplicate_payload_response = standard_duplicate_response
+_not_found_response = standard_not_found_response
 
 
 def _account_queryset():
@@ -158,7 +153,7 @@ def _ordered_role_codes(role_codes):
 
 
 def _replace_account_roles(*, account: V2AccountProfile, role_codes: list[str], actor):
-    previous_role_codes = set(account.role_assignments.values_list("role_code", flat=True))
+    previous_role_codes = set(account.role_codes)
     next_role_codes = set(_ordered_role_codes(role_codes))
     V2AccountRoleAssignment.objects.filter(account_profile=account).delete()
     for role_code in _ordered_role_codes(role_codes):
@@ -241,7 +236,7 @@ def _require_department_operator_roles_only(role_codes):
 def _existing_role_codes(account, allowed_role_codes):
     return [
         role_code
-        for role_code in account.role_assignments.values_list("role_code", flat=True)
+        for role_code in account.role_codes
         if role_code in allowed_role_codes
     ]
 
@@ -252,7 +247,7 @@ def _super_role_codes() -> list[str]:
 
 
 def _is_super_admin_account(account: V2AccountProfile) -> bool:
-    return account.role_assignments.filter(role_code__in=_super_role_codes()).exists()
+    return account.has_any_role(_super_role_codes())
 
 
 def _ensure_not_last_active_super_account(account: V2AccountProfile) -> None:
@@ -270,7 +265,7 @@ def _ensure_not_last_active_super_account(account: V2AccountProfile) -> None:
 
 class V2IamAPIView(BusinessApiResponseMixin, GenericAPIView):
     authentication_classes = [BearerAuthSessionAuthentication]
-    serializer_class = EmptySchemaSerializer
+    serializer_class = EmptySerializer
 
 
 DEPARTMENT_LIST_RESPONSE = list_data_serializer("V2DepartmentListData", DepartmentReadSerializer)
@@ -294,8 +289,8 @@ class MeContextView(V2IamAPIView):
         return Response(
             {
                 "user": {
-                    "id": context.user.id,
-                    "username": context.user.username,
+                    "id": context.user_id,
+                    "username": context.username,
                 },
                 "department": DepartmentReadSerializer(context.department).data,
                 "roles": context.role_codes,
@@ -320,7 +315,7 @@ class DepartmentListCreateView(V2IamAPIView):
             queryset = Department.objects.select_related("parent").order_by("path", "id")
         else:
             queryset = Department.objects.select_related("parent").filter(
-                path__startswith=context.department.path,
+                department_tree_filter(context, "self"),
             ).order_by("path", "id")
         serializer = DepartmentReadSerializer(queryset, many=True)
         return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
@@ -405,7 +400,7 @@ class DepartmentEnableView(V2IamAPIView):
         require_v2_permission(context, "iam:department:enable")
         department = Department.objects.filter(pk=id).first()
         if department is None:
-            return Response(standard_error_payload(StandardCode.NOT_FOUND, "资源不存在", None), status=status.HTTP_404_NOT_FOUND)
+            return _not_found_response()
         before_data = DepartmentReadSerializer(department).data
         department.status = DirectoryStatus.ACTIVE
         department.save(update_fields=["status", "updated_at"])
@@ -434,7 +429,7 @@ class DepartmentDisableView(V2IamAPIView):
         require_v2_permission(context, "iam:department:disable")
         department = Department.objects.filter(pk=id).first()
         if department is None:
-            return Response(standard_error_payload(StandardCode.NOT_FOUND, "资源不存在", None), status=status.HTTP_404_NOT_FOUND)
+            return _not_found_response()
         before_data = DepartmentReadSerializer(department).data
         department.status = DirectoryStatus.DISABLED
         department.save(update_fields=["status", "updated_at"])
@@ -1293,7 +1288,7 @@ class AccountListCreateView(V2IamAPIView):
         serializer = AccountCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         department = _validate_active_department(serializer.validated_data["departmentId"])
-        if not is_platform_super_admin(context) and not department.path.startswith(context.department.path):
+        if not department_in_context_scope(context, department):
             raise StandardForbidden()
 
         role_codes = serializer.validated_data["roleCodes"]
@@ -1358,7 +1353,7 @@ class AccountDetailView(V2IamAPIView):
         serializer = AccountUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         department = _validate_active_department(serializer.validated_data["departmentId"])
-        if not is_platform_super_admin(context) and not department.path.startswith(context.department.path):
+        if not department_in_context_scope(context, department):
             raise StandardForbidden()
         username = serializer.validated_data["username"]
         if User.objects.exclude(pk=account.user_id).filter(username=username).exists():
@@ -1536,8 +1531,7 @@ class AccountResetPasswordView(V2IamAPIView):
         serializer = ResetPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         before_data = AccountReadSerializer(account).data
-        account.user.set_password(serializer.validated_data["password"])
-        account.user.save(update_fields=["password", "updated_at"])
+        account.set_password(serializer.validated_data["password"])
         after_data = AccountReadSerializer(account).data
         _log_account_action(
             request=request,
@@ -1582,7 +1576,7 @@ class AccountRolesView(V2IamAPIView):
             _require_department_operator_roles_only(requested_role_codes)
             protected_role_codes = [
                 role_code
-                for role_code in account.role_assignments.values_list("role_code", flat=True)
+                for role_code in account.role_codes
                 if not V2Role.objects.filter(
                     code=role_code,
                     assignable_by_department_admin=True,

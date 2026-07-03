@@ -29,7 +29,6 @@ urlpatterns = [
     path("gateways/<int:id>", views.GatewayResourceDetailView.as_view(), name="v2-resource-gateway-detail"),
     path("payloads", views.PayloadResourceListView.as_view(), name="v2-resource-payloads"),
     path("payloads/<int:id>", views.PayloadResourceDetailView.as_view(), name="v2-resource-payload-detail"),
-    path("summary", views.ResourceSummaryView.as_view(), name="v2-resource-summary"),
     path("bindings", views.BindingListCreateView.as_view(), name="v2-resource-bindings"),
     path("bindings/<int:id>", views.BindingDetailView.as_view(), name="v2-resource-binding-detail"),
     path("share-groups", views.ShareGroupListCreateView.as_view(), name="v2-resource-share-groups"),
@@ -54,5 +53,4 @@ urlpatterns = [
         views.ShareGroupResourceDetailView.as_view(),
         name="v2-resource-share-group-resource-detail",
     ),
-    path("audit-logs", views.AuditLogListView.as_view(), name="v2-resource-audit-logs"),
 ]

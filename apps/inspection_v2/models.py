@@ -109,6 +109,19 @@ class WaypointRoute(TimeStampedModel):
     def __str__(self):
         return f"{self.owner_department_id}:{self.name}"
 
+    @property
+    def cover_image_name(self) -> str:
+        return self.cover_image.name
+
+    def delete_cover_image_by_name(self, cover_name: str) -> None:
+        self.cover_image.storage.delete(cover_name)
+
+    def clear_waypoints(self) -> None:
+        self.waypoints.all().delete()
+
+    def ordered_waypoints(self):
+        return self.waypoints.order_by("sequence")
+
 
 def route_cover_image_url(route: WaypointRoute) -> str:
     if not route.cover_image:
@@ -214,6 +227,57 @@ class InspectionMission(TimeStampedModel):
             return MissionExecutionMode.PILOT2_MANUAL
         return ""
 
+    @property
+    def pilot_user_id(self):
+        return self.pilot_account_profile.user_id
+
+    @property
+    def pilot_account(self):
+        return self.pilot_account_profile
+
+    @property
+    def route_name(self) -> str:
+        return self.route.name
+
+    @property
+    def pilot_name(self) -> str:
+        return self.pilot_account_profile.name
+
+    @property
+    def drone_sn(self) -> str:
+        return self.drone.device_sn
+
+    @property
+    def drone_name(self) -> str:
+        return self.drone.name
+
+    @property
+    def drone_online(self) -> bool:
+        return self.drone.online_status
+
+    @property
+    def dock_sn(self) -> str:
+        return self.dock.device_sn if self.dock_id and self.dock is not None else ""
+
+    @property
+    def dock_online(self) -> bool:
+        return bool(self.dock_id and self.dock is not None and self.dock.online_status)
+
+    @property
+    def executor_sn(self) -> str:
+        return self.executor.device_sn if self.executor_id and self.executor is not None else ""
+
+    @property
+    def executor_online(self) -> bool:
+        return bool(self.executor_id and self.executor is not None and self.executor.online_status)
+
+    @property
+    def execution_device_sn(self) -> str:
+        return self.dock_sn if self.execution_mode == MissionExecutionMode.DOCK_AUTO else self.executor_sn
+
+    def clear_resource_assignments(self) -> None:
+        self.resource_assignments.all().delete()
+
 
 class MissionResourceAssignment(TimeStampedModel):
     mission = models.ForeignKey(InspectionMission, on_delete=models.CASCADE, related_name="resource_assignments")
@@ -289,6 +353,33 @@ class FlightSession(TimeStampedModel):
             ),
         ]
 
+    @property
+    def mission_name(self) -> str:
+        return self.mission.name
+
+    @property
+    def route_name(self) -> str:
+        return self.mission.route_name
+
+    @property
+    def drone_sn(self) -> str:
+        return self.drone.device_sn
+
+    @property
+    def drone_name(self) -> str:
+        return self.drone.name
+
+    @property
+    def pilot_account(self):
+        return self.mission.pilot_account_profile
+
+    @property
+    def cloud_execution(self):
+        try:
+            return self.mission.cloud_execution
+        except MissionCloudExecution.DoesNotExist:
+            return None
+
 
 class FlightTelemetrySnapshot(TimeStampedModel):
     session = models.OneToOneField(FlightSession, on_delete=models.CASCADE, related_name="telemetry_snapshot")
@@ -362,6 +453,10 @@ class MissionCloudExecution(TimeStampedModel):
             ),
         ]
 
+    @property
+    def effective_workspace_id(self) -> str:
+        return self.workspace_id or self.dji_connection.workspace_id
+
 
 class CameraOperation(TimeStampedModel):
     action = models.CharField(max_length=64)
@@ -428,6 +523,34 @@ class InspectionFlightRecord(TimeStampedModel):
             models.Index(fields=["drone_device_sn", "start_time", "end_time"], name="idx_v2_record_drone_time"),
         ]
 
+    @property
+    def media_sync_status(self) -> str:
+        try:
+            return self.media_sync_state.status
+        except InspectionFlightRecordMediaSyncState.DoesNotExist:
+            return "NONE"
+
+    @property
+    def media_sync_last_synced_at(self):
+        try:
+            return self.media_sync_state.last_synced
+        except InspectionFlightRecordMediaSyncState.DoesNotExist:
+            return None
+
+    @property
+    def media_sync_next_run_at(self):
+        try:
+            return self.media_sync_state.next_run_at
+        except InspectionFlightRecordMediaSyncState.DoesNotExist:
+            return None
+
+    def refresh_media_counts(self) -> tuple[int, int]:
+        media_types = list(self.media_files.values_list("media_type", flat=True))
+        self.photo_count = sum(1 for media_type in media_types if media_type == CloudMediaType.PHOTO)
+        self.video_count = sum(1 for media_type in media_types if media_type == CloudMediaType.VIDEO)
+        self.save(update_fields=["photo_count", "video_count", "updated_at"])
+        return self.photo_count, self.video_count
+
 
 class InspectionFlightRecordMediaSyncState(TimeStampedModel):
     flight_record = models.OneToOneField(
@@ -453,6 +576,10 @@ class InspectionFlightRecordMediaSyncState(TimeStampedModel):
         indexes = [
             models.Index(fields=["status", "next_run_at"], name="idx_v2_media_sync_due"),
         ]
+
+    @property
+    def mission_id(self) -> int:
+        return self.flight_record.mission_id
 
 
 class CloudMediaFile(TimeStampedModel):

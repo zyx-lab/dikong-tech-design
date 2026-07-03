@@ -18,12 +18,12 @@ from apps.access.authentication import BearerAuthSessionAuthentication
 from apps.access.api_base import EmptySerializer
 from apps.access.exceptions import StandardConstraintConflict, StandardForbidden, StandardNotFound
 from apps.access.models import DirectoryStatus
-from apps.api_v2.openapi import V2MediaRefreshSerializer, generic_object_response, list_data_serializer
-from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
-from apps.dji_cloud.gateway import DjiGatewayError
-from apps.iam_v2.account_profile_services import account_has_effective_qualification, require_active_account_role_profile
+from apps.api_contracts.openapi import V2MediaRefreshSerializer, generic_object_response, list_data_serializer
+from apps.audit_v2.services import log_v2_action
+from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_duplicate_response, standard_error_payload
+from apps.iam_v2.account_profile_services import account_has_effective_qualification, account_has_role, require_active_account_role_profile
 from apps.iam_v2.models import FixedRole, V2AccountProfile
-from apps.iam_v2.services import resolve_v2_context
+from apps.iam_v2.services import department_in_context_scope, resolve_v2_context
 from apps.inspection_v2.models import (
     CameraOperation,
     CameraOperationStatus,
@@ -90,8 +90,7 @@ from apps.inspection_v2.services import (
     visible_routes_queryset,
     visible_sessions_queryset,
 )
-from apps.resource_v2.audit import log_v2_action
-from apps.resource_v2.gateway import DjiConnectionGateway
+from apps.resource_v2.gateway import DjiConnectionGateway, DjiGatewayError, dji_connection_gateway
 from apps.resource_v2.models import ResourceType
 from apps.resource_v2.models import DjiConnection
 from apps.resource_v2.services import effective_permissions_for_binding, get_resource
@@ -150,8 +149,7 @@ ROUTE_MULTIPART_UPDATE_REQUEST = OpenApiRequest(
 EMPTY_OBJECT_REQUEST = OpenApiRequest(request={"type": "object", "properties": {}})
 
 
-def _duplicate_response(errors=None):
-    return Response(standard_error_payload(StandardCode.DUPLICATE, "资源已存在", errors), status=status.HTTP_409_CONFLICT)
+_duplicate_response = standard_duplicate_response
 
 
 def _upstream_error_response(exc: DjiGatewayError):
@@ -194,7 +192,7 @@ def _int_query_param(params, name: str):
 
 
 def _replace_waypoints(route: WaypointRoute, waypoints: list[dict]):
-    route.waypoints.all().delete()
+    route.clear_waypoints()
     Waypoint.objects.bulk_create(
         [
             Waypoint(
@@ -213,10 +211,10 @@ def _replace_waypoints(route: WaypointRoute, waypoints: list[dict]):
 
 
 def _delete_replaced_route_cover(route: WaypointRoute, old_cover_name: str) -> None:
-    if not old_cover_name or old_cover_name == route.cover_image.name:
+    if not old_cover_name or old_cover_name == route.cover_image_name:
         return
     try:
-        route.cover_image.storage.delete(old_cover_name)
+        route.delete_cover_image_by_name(old_cover_name)
     except Exception:  # noqa: BLE001 - storage backends expose inconsistent deletion errors.
         logger.warning("failed to delete replaced route cover", extra={"route_id": route.id, "cover_name": old_cover_name}, exc_info=True)
 
@@ -225,7 +223,7 @@ def _delete_route_cover_best_effort(route: WaypointRoute, cover_name: str) -> No
     if not cover_name:
         return
     try:
-        route.cover_image.storage.delete(cover_name)
+        route.delete_cover_image_by_name(cover_name)
     except Exception:  # noqa: BLE001 - storage cleanup must not make a committed delete fail.
         logger.warning("failed to delete route cover", extra={"route_id": route.id, "cover_name": cover_name}, exc_info=True)
 
@@ -338,7 +336,7 @@ def _download_url_needs_refresh(cloud_file: WaypointRouteCloudFile) -> bool:
 
 
 def _refresh_route_cloud_file_download_url(cloud_file: WaypointRouteCloudFile) -> WaypointRouteCloudFile:
-    gateway = DjiConnectionGateway(cloud_file.dji_connection)
+    gateway = dji_connection_gateway(cloud_file.dji_connection)
     download_url, expires_at = _resolve_dji_download_url(
         gateway=gateway,
         connection=cloud_file.dji_connection,
@@ -360,7 +358,7 @@ def _refresh_route_cloud_file_download_url_if_needed(route: WaypointRoute) -> No
 
 
 def _upload_route_to_dji(*, route: WaypointRoute, connection: DjiConnection, kmz_file) -> dict:
-    gateway = DjiConnectionGateway(connection)
+    gateway = dji_connection_gateway(connection)
     upload_name = _safe_dji_upload_name(route_id=route.id)
     upload_file = _clone_kmz_for_dji_upload(kmz_file, upload_name=upload_name)
     upload_payload = gateway.upload_route(route_name=upload_name, file_obj=upload_file)
@@ -405,7 +403,7 @@ def _delete_dji_route_best_effort(*, connection: DjiConnection | None, dji_file_
     if connection is None or not dji_file_id:
         return
     try:
-        DjiConnectionGateway(connection).delete_route(dji_file_id)
+        dji_connection_gateway(connection).delete_route(dji_file_id)
     except Exception:  # noqa: BLE001 - upstream cleanup must not make a committed write fail.
         logger.warning("failed to delete replaced DJI route file", extra={"dji_file_id": dji_file_id}, exc_info=True)
 
@@ -531,7 +529,7 @@ class RouteDetailView(InspectionV2APIView):
             _reject_execution_fields_without_kmz(request.data)
             serializer = RouteMetadataUpdateSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
-            old_cover_name = route.cover_image.name
+            old_cover_name = route.cover_image_name
             update_fields = ["updated_at"]
             if "name" in serializer.validated_data:
                 route.name = serializer.validated_data["name"]
@@ -568,7 +566,7 @@ class RouteDetailView(InspectionV2APIView):
         serializer.is_valid(raise_exception=True)
         parsed_kmz = parse_route_kmz(serializer.validated_data["kmzFile"])
         connection = _dji_connection_for_route(route, serializer.validated_data["djiConnectionId"])
-        old_cover_name = route.cover_image.name
+        old_cover_name = route.cover_image_name
         try:
             old_cloud_file = route.cloud_file
             old_connection = old_cloud_file.dji_connection
@@ -648,7 +646,7 @@ class RouteDetailView(InspectionV2APIView):
         route = get_editable_route_or_404(context, id)
         _ensure_route_without_missions(route)
         before_data = RouteReadSerializer(route).data
-        cover_name = route.cover_image.name
+        cover_name = route.cover_image_name
         try:
             cloud_file = route.cloud_file
             dji_connection = cloud_file.dji_connection
@@ -692,9 +690,9 @@ def _validated_mission_inputs(context, data):
     )
     if pilot_account is None:
         raise StandardNotFound()
-    if not context.is_super_admin and not pilot_account.department.path.startswith(context.department.path):
+    if not department_in_context_scope(context, pilot_account.department):
         raise StandardForbidden()
-    if not pilot_account.role_assignments.filter(role_code=FixedRole.PILOT).exists():
+    if not account_has_role(pilot_account, FixedRole.PILOT):
         raise StandardConstraintConflict(msg="飞手账号未分配 pilot 角色")
     require_active_account_role_profile(pilot_account, FixedRole.PILOT)
     if not account_has_effective_qualification(pilot_account, FixedRole.PILOT):
@@ -835,7 +833,7 @@ class MissionDetailView(InspectionV2APIView):
         context = resolve_v2_context(request)
         require_dispatcher(context)
         mission = get_visible_mission_or_404(context, id)
-        if mission.creator_department_id != context.department.id:
+        if mission.creator_department_id != context.department_id:
             raise StandardForbidden()
         if mission.status != MissionStatus.PENDING:
             raise StandardConstraintConflict(msg="只有待执行任务可以编辑")
@@ -870,7 +868,7 @@ class MissionDetailView(InspectionV2APIView):
                 "updated_at",
             ]
         )
-        mission.resource_assignments.all().delete()
+        mission.clear_resource_assignments()
         create_assignments(mission, bindings)
         data = MissionReadSerializer(mission).data
         log_v2_action(
@@ -897,7 +895,7 @@ class MissionDetailView(InspectionV2APIView):
         context = resolve_v2_context(request)
         require_dispatcher(context)
         mission = get_visible_mission_or_404(context, id)
-        if mission.creator_department_id != context.department.id:
+        if mission.creator_department_id != context.department_id:
             raise StandardForbidden()
         if mission.status != MissionStatus.PENDING:
             raise StandardConstraintConflict(msg="只有待执行任务可以删除")
@@ -1178,7 +1176,7 @@ class LiveCapacityView(InspectionV2APIView):
         drone = get_resource(ResourceType.DRONE, drone_id)
         _ensure_online(drone, "无人机不在线")
         try:
-            data = DjiConnectionGateway(binding.dji_connection).get_live_capacity(drone.device_sn)
+            data = dji_connection_gateway(binding.dji_connection).get_live_capacity(drone.device_sn)
         except DjiGatewayError as exc:
             return _upstream_error_response(exc)
         return Response(data, status=status.HTTP_200_OK)
@@ -1202,7 +1200,7 @@ class LiveActionView(InspectionV2APIView):
         drone = get_resource(ResourceType.DRONE, drone_id)
         _ensure_online(drone, "无人机不在线")
         try:
-            gateway = DjiConnectionGateway(binding.dji_connection)
+            gateway = dji_connection_gateway(binding.dji_connection)
             data = getattr(gateway, self.gateway_method)(drone.device_sn, **_live_payload(serializer.validated_data))
         except DjiGatewayError as exc:
             return _upstream_error_response(exc)
@@ -1281,7 +1279,7 @@ class CameraActionView(InspectionV2APIView):
                 "command": {"gateway_sn": executor.device_sn, "cmd": action, "data": command_data},
             },
         )
-        gateway = DjiConnectionGateway(drone_binding.dji_connection)
+        gateway = dji_connection_gateway(drone_binding.dji_connection)
         authority_payload = None
         command_payload = None
         try:

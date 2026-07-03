@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus
+from apps.audit_v2.models import V2AuditLog
 from apps.dji_cloud.gateway import GatewayResponse
 from apps.iam_v2.models import (
     Department,
@@ -32,7 +33,6 @@ from apps.resource_v2.models import (
     ResourceBindingHistory,
     ResourceSharePermission,
     ResourceType,
-    V2AuditLog,
 )
 from apps.resource_v2.serializers import upsert_resource_from_payload
 

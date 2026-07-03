@@ -17,7 +17,6 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus
-from apps.dji_cloud.gateway import DjiGatewayUpstreamError
 from apps.iam_v2.models import (
     Department,
     FixedRole,
@@ -61,6 +60,7 @@ from apps.resource_v2.models import (
     ResourceSharePermission,
     ResourceType,
 )
+from apps.resource_v2.gateway import DjiGatewayUpstreamError
 User = get_user_model()
 
 

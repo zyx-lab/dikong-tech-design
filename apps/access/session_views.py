@@ -6,7 +6,7 @@ from drf_spectacular.utils import OpenApiResponse, extend_schema
 from apps.access.api_base import IamAPIView, ensure_empty_body
 from apps.access.session_serializers import RefreshRequestSerializer, SessionTokenSerializer
 from apps.access.session_services import refresh_auth_session, revoke_current_session
-from apps.api_v2.openapi import standard_empty_response
+from apps.api_contracts.openapi import standard_empty_response
 
 
 class EmptyResponseSerializer(serializers.Serializer):

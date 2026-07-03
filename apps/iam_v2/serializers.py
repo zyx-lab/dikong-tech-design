@@ -437,7 +437,7 @@ class V2RoleDataScopeSerializer(StrictSerializer):
 
 class V2MenuPermissionBindingReadSerializer(serializers.ModelSerializer):
     permissionId = serializers.IntegerField(source="permission_id", read_only=True)
-    permissionCode = serializers.CharField(source="permission.code", read_only=True)
+    permissionCode = serializers.CharField(source="permission_code", read_only=True)
 
     class Meta:
         model = V2MenuPermissionBinding
@@ -475,7 +475,7 @@ class V2MenuReadSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_permissionCodes(self, instance):
-        return list(instance.permission_bindings.select_related("permission").values_list("permission__code", flat=True))
+        return instance.permission_codes
 
     @extend_schema_field(serializers.ListField(child=serializers.DictField()))
     def get_children(self, instance):

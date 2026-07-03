@@ -1,40 +1,31 @@
 from django.db import IntegrityError, transaction
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import serializers, status
-from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 
-from apps.access.authentication import BearerAuthSessionAuthentication
 from apps.access.models import DirectoryStatus
-from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
+from apps.api_contracts.openapi import list_data_serializer
+from apps.audit_v2.models import V2AuditLog
+from apps.audit_v2.serializers import AuditLogReadSerializer
+from apps.audit_v2.services import log_v2_action
+from apps.common.api_response import standard_duplicate_response, standard_not_found_response
 from apps.iam_v2.models import V2Menu, V2MenuPermissionBinding, V2Permission, V2Role, V2RoleMenuGrant
 from apps.iam_v2.serializers import V2MenuReadSerializer, V2MenuWriteSerializer
-from apps.iam_v2.services import apply_data_scope, is_platform_super_admin, require_v2_permission, resolve_v2_context
-from apps.resource_v2.models import V2AuditLog
-from apps.resource_v2.serializers import AuditLogReadSerializer
-from apps.resource_v2.audit import log_v2_action
-from apps.api_v2.openapi import list_data_serializer
-
-
-class EmptySchemaSerializer(serializers.Serializer):
-    pass
-
-
-class SystemV2APIView(BusinessApiResponseMixin, GenericAPIView):
-    authentication_classes = [BearerAuthSessionAuthentication]
-    serializer_class = EmptySchemaSerializer
+from apps.iam_v2.services import (
+    apply_data_scope,
+    is_platform_super_admin,
+    require_v2_permission,
+    resolve_v2_context,
+)
+from apps.system_v2.base import SystemV2APIView
 
 
 MENU_LIST_RESPONSE = list_data_serializer("V2SystemMenuListData", V2MenuReadSerializer)
 OPERATION_LOG_LIST_RESPONSE = list_data_serializer("V2SystemOperationLogListData", AuditLogReadSerializer)
 
 
-def _not_found_response():
-    return Response(standard_error_payload(StandardCode.NOT_FOUND, "资源不存在", None), status=status.HTTP_404_NOT_FOUND)
-
-
-def _duplicate_response(errors=None):
-    return Response(standard_error_payload(StandardCode.DUPLICATE, "资源已存在", errors), status=status.HTTP_409_CONFLICT)
+_not_found_response = standard_not_found_response
+_duplicate_response = standard_duplicate_response
 
 
 def _active_menus():
@@ -42,8 +33,7 @@ def _active_menus():
 
 
 def _menu_permission_codes(menu: V2Menu) -> set[str]:
-    bindings = list(menu.permission_bindings.all())
-    return {binding.permission.code for binding in bindings if binding.permission.status == DirectoryStatus.ACTIVE}
+    return menu.active_permission_codes
 
 
 def _granted_menu_ids(context) -> set[int]:

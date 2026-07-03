@@ -16,6 +16,8 @@ from typing import Any
 
 from django.conf import settings
 
+from apps.common.request import resolve_client_ip
+
 
 current_request_id: ContextVar[str | None] = ContextVar("current_request_id", default=None)
 current_sync_run_id: ContextVar[str | None] = ContextVar("current_sync_run_id", default=None)
@@ -229,17 +231,6 @@ def log_json(logger: logging.Logger, level: int, event: str, **payload: Any) -> 
     )
 
 
-def _resolve_client_ip(request) -> str | None:
-    if request is None:
-        return None
-
-    meta = getattr(request, "META", {}) or {}
-    forwarded_for = meta.get("HTTP_X_FORWARDED_FOR", "")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return meta.get("REMOTE_ADDR")
-
-
 def _request_headers(request) -> dict[str, Any]:
     headers = getattr(request, "headers", None)
     if headers is None:
@@ -275,7 +266,7 @@ def build_request_context(request) -> dict[str, Any]:
         "tenant_id": getattr(tenant, "id", None),
         "user_id": getattr(user, "id", None),
         "username": getattr(user, "username", None),
-        "remote_addr": _resolve_client_ip(request),
+        "remote_addr": resolve_client_ip(request),
         "user_agent": meta.get("HTTP_USER_AGENT", ""),
     }
 

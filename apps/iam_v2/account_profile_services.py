@@ -13,8 +13,12 @@ def active_profile_type_or_error(profile_type: str) -> V2ProfileType:
     return profile_type_obj
 
 
+def account_has_role(account: V2AccountProfile, role_code: str) -> bool:
+    return account.has_any_role([role_code])
+
+
 def require_account_role_for_profile_type(account: V2AccountProfile, profile_type: str) -> None:
-    if not account.role_assignments.filter(role_code=profile_type).exists():
+    if not account_has_role(account, profile_type):
         raise serializers.ValidationError({"profileType": ["账号未分配该档案类型绑定的角色"]})
 
 
@@ -32,6 +36,10 @@ def require_active_account_role_profile(account: V2AccountProfile, profile_type:
     if profile is None:
         raise serializers.ValidationError({"profileType": ["账号缺少该类型有效档案"]})
     return profile
+
+
+def active_role_profiles_queryset(account: V2AccountProfile) -> QuerySet:
+    return account.role_profiles.select_related("account_profile", "account_profile__user").filter(deleted_at__isnull=True)
 
 
 def active_qualifications_queryset(account: V2AccountProfile, profile_type: str | None = None) -> QuerySet:

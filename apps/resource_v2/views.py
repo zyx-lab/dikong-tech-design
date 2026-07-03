@@ -5,15 +5,22 @@ from rest_framework import serializers, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 
+from apps.access.api_base import EmptySerializer
 from apps.access.authentication import BearerAuthSessionAuthentication
 from apps.access.exceptions import StandardForbidden
 from apps.access.models import DirectoryStatus
-from apps.api_v2.openapi import (
+from apps.api_contracts.openapi import (
     V2DjiConnectionDiscoverSerializer,
-    V2ResourceSummarySerializer,
     list_data_serializer,
 )
-from apps.common.api_response import BusinessApiResponseMixin, StandardCode, standard_error_payload
+from apps.audit_v2.services import log_v2_action
+from apps.common.api_response import (
+    BusinessApiResponseMixin,
+    StandardCode,
+    standard_duplicate_response,
+    standard_error_payload,
+    standard_not_found_response,
+)
 from apps.iam_v2.models import Department
 from apps.iam_v2.models import ResourceShareGroup, ResourceShareGroupTargetDepartment
 from apps.iam_v2.services import (
@@ -22,7 +29,6 @@ from apps.iam_v2.services import (
     require_v2_operation_permission,
     resolve_v2_context,
 )
-from apps.resource_v2.audit import log_v2_action
 from apps.resource_v2.models import (
     BindingStatus,
     DjiConnection,
@@ -31,10 +37,8 @@ from apps.resource_v2.models import (
     ResourceBinding,
     ResourceSharePermission,
     ResourceType,
-    V2AuditLog,
 )
 from apps.resource_v2.serializers import (
-    AuditLogReadSerializer,
     BindingCreateSerializer,
     BindingReadSerializer,
     DjiConnectionCredentialReadSerializer,
@@ -66,13 +70,9 @@ from apps.resource_v2.services import (
 )
 
 
-class EmptySchemaSerializer(serializers.Serializer):
-    pass
-
-
 class V2ResourceAPIView(BusinessApiResponseMixin, GenericAPIView):
     authentication_classes = [BearerAuthSessionAuthentication]
-    serializer_class = EmptySchemaSerializer
+    serializer_class = EmptySerializer
 
 
 DJI_CONNECTION_LIST_RESPONSE = list_data_serializer("V2DjiConnectionListData", DjiConnectionReadSerializer)
@@ -80,15 +80,10 @@ RESOURCE_LIST_RESPONSE = list_data_serializer("V2ResourceListData", ResourceRead
 MQTT_HEALTH_LIST_RESPONSE = list_data_serializer("V2MqttHealthListData", MqttConnectionHealthReadSerializer)
 MQTT_LATEST_MESSAGE_LIST_RESPONSE = list_data_serializer("V2MqttLatestMessageListData", MqttLatestMessageReadSerializer)
 SHARE_GROUP_LIST_RESPONSE = list_data_serializer("V2ShareGroupListData", ShareGroupReadSerializer)
-AUDIT_LOG_LIST_RESPONSE = list_data_serializer("V2AuditLogListData", AuditLogReadSerializer)
 
 
-def _not_found_response():
-    return Response(standard_error_payload(StandardCode.NOT_FOUND, "资源不存在", None), status=status.HTTP_404_NOT_FOUND)
-
-
-def _duplicate_response(errors=None):
-    return Response(standard_error_payload(StandardCode.DUPLICATE, "资源已存在", errors), status=status.HTTP_409_CONFLICT)
+_not_found_response = standard_not_found_response
+_duplicate_response = standard_duplicate_response
 
 
 def _discovered_resource_base(resource, *, resource_type: str, connection_id: int) -> dict:
@@ -132,7 +127,7 @@ def _share_group_or_404(id: int):
 def _require_share_group_manager(context, group: ResourceShareGroup):
     if is_platform_super_admin(context):
         return
-    if is_department_admin(context) and group.owner_department_id == context.department.id:
+    if is_department_admin(context) and group.owner_department_id == context.department_id:
         return
     raise StandardForbidden()
 
@@ -140,7 +135,7 @@ def _require_share_group_manager(context, group: ResourceShareGroup):
 def _share_group_owner_department(context, owner_department_id: int | None):
     if owner_department_id in (None, ""):
         return context.department
-    if not is_platform_super_admin(context) and owner_department_id != context.department.id:
+    if not is_platform_super_admin(context) and owner_department_id != context.department_id:
         raise StandardForbidden()
     department = Department.objects.filter(pk=owner_department_id, status=DirectoryStatus.ACTIVE).first()
     if department is None:
@@ -182,7 +177,7 @@ class DjiConnectionListCreateView(V2ResourceAPIView):
         owner_department = context.department
         owner_department_id = serializer.validated_data.get("ownerDepartmentId")
         if owner_department_id:
-            if not is_platform_super_admin(context) and owner_department_id != context.department.id:
+            if not is_platform_super_admin(context) and owner_department_id != context.department_id:
                 raise StandardForbidden()
             owner_department = Department.objects.filter(pk=owner_department_id, status=DirectoryStatus.ACTIVE).first()
             if owner_department is None:
@@ -320,7 +315,6 @@ class DjiConnectionDiscoverView(V2ResourceAPIView):
             "payloads": [_discovered_payload(item, connection_id=connection.id) for item in discovered["payloads"]],
         }
         return Response(data, status=status.HTTP_200_OK)
-
 
 class DjiConnectionMqttHealthView(V2ResourceAPIView):
     @extend_schema(
@@ -513,74 +507,6 @@ class PayloadResourceDetailView(ResourceDetailView):
     )
     def get(self, request, id: int):
         return super().get(request, id=id)
-
-
-class ResourceSummaryView(V2ResourceAPIView):
-    @extend_schema(
-        operation_id="v2_resource_summary",
-        summary="查询资源总览",
-        responses={200: OpenApiResponse(response=V2ResourceSummarySerializer, description="查询成功。")},
-    )
-    def get(self, request):
-        context = resolve_v2_context(request)
-        require_v2_operation_permission(context, "view")
-        from apps.inspection_v2.models import FlightSession, FlightSessionStatus
-        from apps.iam_v2.models import FixedRole, V2AccountRoleProfile
-
-        summary = {}
-        department_rows = {}
-
-        def department_row(department):
-            if department.id not in department_rows:
-                department_rows[department.id] = {
-                    "departmentId": department.id,
-                    "departmentName": department.name,
-                    "departmentPath": department.path,
-                    "drones": 0,
-                    "docks": 0,
-                    "gateways": 0,
-                    "payloads": 0,
-                    "pilots": 0,
-                }
-            return department_rows[department.id]
-
-        for resource_type in (ResourceType.DRONE, ResourceType.DOCK, ResourceType.GATEWAY, ResourceType.PAYLOAD):
-            queryset = visible_bindings_queryset(context, resource_type=resource_type)
-            items = [serialize_resource_binding(binding, context=context) for binding in queryset]
-            visible_ids = [item["id"] for item in items]
-            if resource_type == ResourceType.DRONE:
-                occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, drone_id__in=visible_ids).count()
-            elif resource_type == ResourceType.DOCK:
-                occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, dock_id__in=visible_ids).count()
-            elif resource_type == ResourceType.GATEWAY:
-                occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, executor_id__in=visible_ids).count()
-            else:
-                occupied = FlightSession.objects.filter(status=FlightSessionStatus.RUNNING, payload_id__in=visible_ids).count()
-            summary[f"{resource_type}s"] = {
-                "total": len(items),
-                "online": sum(1 for item in items if item.get("onlineStatus")),
-                "available": max(0, len(items) - occupied),
-                "occupied": occupied,
-            }
-            for binding in queryset:
-                row = department_row(binding.owner_department)
-                row[f"{resource_type}s"] += 1
-
-        pilot_queryset = V2AccountRoleProfile.objects.select_related("account_profile__department").filter(
-            profile_type=FixedRole.PILOT,
-            deleted_at__isnull=True,
-        )
-        if not context.is_super_admin:
-            pilot_queryset = pilot_queryset.filter(account_profile__department__path__startswith=context.department.path)
-        summary["pilots"] = {
-            "total": pilot_queryset.count(),
-            "active": pilot_queryset.filter(status=DirectoryStatus.ACTIVE).count(),
-            "disabled": pilot_queryset.filter(status=DirectoryStatus.DISABLED).count(),
-        }
-        for pilot in pilot_queryset:
-            department_row(pilot.account_profile.department)["pilots"] += 1
-        summary["departments"] = sorted(department_rows.values(), key=lambda item: (item["departmentPath"], item["departmentId"]))
-        return Response(summary, status=status.HTTP_200_OK)
 
 
 class BindingListCreateView(V2ResourceAPIView):
@@ -970,37 +896,3 @@ class ShareGroupResourceDetailView(V2ResourceAPIView):
             before_data=data,
         )
         return Response(data, status=status.HTTP_200_OK)
-
-
-class AuditLogListView(V2ResourceAPIView):
-    @extend_schema(
-        operation_id="v2_resource_audit_logs_list",
-        summary="查询 v2 资源审计日志",
-        parameters=[
-            OpenApiParameter("resourceType", str, OpenApiParameter.QUERY, required=False, description="按资源类型过滤。"),
-            OpenApiParameter(
-                "resourceObjectId",
-                str,
-                OpenApiParameter.QUERY,
-                required=False,
-                description="按资源对象 ID 过滤。",
-            ),
-        ],
-        responses={200: OpenApiResponse(response=AUDIT_LOG_LIST_RESPONSE, description="查询成功。")},
-    )
-    def get(self, request):
-        context = resolve_v2_context(request)
-        if not (is_platform_super_admin(context) or is_department_admin(context)):
-            raise StandardForbidden()
-        queryset = V2AuditLog.objects.select_related("actor_department", "resource_owner_department")
-        if not is_platform_super_admin(context):
-            queryset = queryset.filter(actor_department=context.department)
-        resource_type = request.query_params.get("resourceType")
-        resource_id = request.query_params.get("resourceObjectId")
-        if resource_type:
-            queryset = queryset.filter(resource_type=resource_type)
-        if resource_id:
-            queryset = queryset.filter(resource_object_id=str(resource_id))
-        queryset = queryset.order_by("-created_at", "-id")
-        serializer = AuditLogReadSerializer(queryset, many=True)
-        return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)

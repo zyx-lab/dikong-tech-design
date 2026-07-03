@@ -1,11 +1,5 @@
-from apps.resource_v2.models import V2AuditLog
-
-
-def _client_ip(request):
-    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "") if request is not None else ""
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR") if request is not None else None
+from apps.audit_v2.models import V2AuditLog
+from apps.common.request import resolve_client_ip
 
 
 def log_v2_action(
@@ -32,6 +26,6 @@ def log_v2_action(
         target_id=str(target_id or ""),
         before_data=before_data,
         after_data=after_data,
-        ip=_client_ip(request),
+        ip=resolve_client_ip(request),
         request_id=getattr(request, "request_id", "") if request is not None else "",
     )

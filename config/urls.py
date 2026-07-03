@@ -34,6 +34,6 @@ urlpatterns = [
         name="api-v2-docs",
     ),
     path("api/v2/", include("apps.api_v2.urls")),
-    path("api/internal/dji/", include("apps.dji_cloud.urls")),
+    path("api/internal/dji/", include("apps.inspection_v2.dji_urls")),
     path("__mock-dji__/", include("apps.dji_mock.urls")),
 ]

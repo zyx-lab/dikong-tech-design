@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "channels",
     "apps.access",
+    "apps.audit_v2",
     "apps.iam_v2",
     "apps.resource_v2",
     "apps.inspection_v2",

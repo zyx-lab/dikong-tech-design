@@ -1,3 +1,5 @@
+import ast
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -21,7 +23,7 @@ from apps.iam_v2.models import (
     V2AccountRoleProfile,
     V2AccountRoleAssignment,
 )
-from apps.resource_v2.models import V2AuditLog
+from apps.audit_v2.models import V2AuditLog
 
 User = get_user_model()
 
@@ -505,7 +507,9 @@ class ApiV2ImplementationBoundaryTests(TestCase):
         source_roots = [
             project_root / "config",
             project_root / "apps" / "access",
+            project_root / "apps" / "api_contracts",
             project_root / "apps" / "api_v2",
+            project_root / "apps" / "audit_v2",
             project_root / "apps" / "iam_v2",
             project_root / "apps" / "resource_v2",
             project_root / "apps" / "inspection_v2",
@@ -533,6 +537,391 @@ class ApiV2ImplementationBoundaryTests(TestCase):
                 for forbidden in forbidden_imports:
                     if forbidden in text:
                         offenders.append(f"{path.relative_to(project_root)} imports {forbidden}")
+
+        self.assertEqual(offenders, [])
+
+    def test_v2_component_imports_should_follow_one_way_layers(self):
+        project_root = Path(settings.BASE_DIR)
+        components = {
+            "access",
+            "api_contracts",
+            "api_v2",
+            "audit_v2",
+            "common",
+            "dji_cloud",
+            "dji_mock",
+            "iam_v2",
+            "inspection_v2",
+            "resource_v2",
+            "system_v2",
+        }
+        allowed = {
+            "common": set(),
+            "api_contracts": {"common"},
+            "audit_v2": {"common"},
+            "access": {"api_contracts", "audit_v2", "common"},
+            "dji_cloud": {"access", "api_contracts", "audit_v2", "common"},
+            "iam_v2": {"access", "api_contracts", "audit_v2", "common"},
+            "resource_v2": {"access", "api_contracts", "audit_v2", "common", "dji_cloud", "iam_v2"},
+            "inspection_v2": {
+                "access",
+                "api_contracts",
+                "audit_v2",
+                "common",
+                "dji_cloud",
+                "iam_v2",
+                "resource_v2",
+            },
+            "system_v2": {
+                "access",
+                "api_contracts",
+                "audit_v2",
+                "common",
+                "dji_cloud",
+                "iam_v2",
+                "inspection_v2",
+                "resource_v2",
+            },
+            "api_v2": {
+                "access",
+                "api_contracts",
+                "audit_v2",
+                "common",
+                "dji_cloud",
+                "dji_mock",
+                "iam_v2",
+                "inspection_v2",
+                "resource_v2",
+                "system_v2",
+            },
+            "dji_mock": {"common"},
+        }
+        offenders = []
+
+        def source_component(path):
+            parts = path.relative_to(project_root).parts
+            return parts[1] if len(parts) >= 2 and parts[0] == "apps" else None
+
+        def target_component(module):
+            if not module or not module.startswith("apps."):
+                return None
+            parts = module.split(".")
+            return parts[1] if len(parts) > 1 and parts[1] in components else None
+
+        for source_root in (project_root / "apps").iterdir():
+            if not source_root.is_dir() or source_root.name not in components:
+                continue
+            for path in source_root.rglob("*.py"):
+                if "migrations" in path.parts or path.name == "tests.py" or path.name.startswith("test_"):
+                    continue
+                source = source_component(path)
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    modules = []
+                    if isinstance(node, ast.ImportFrom):
+                        modules = [node.module]
+                    elif isinstance(node, ast.Import):
+                        modules = [alias.name for alias in node.names]
+                    for module in modules:
+                        target = target_component(module)
+                        if target and target != source and target not in allowed[source]:
+                            offenders.append(f"{path.relative_to(project_root)}:{node.lineno} imports {module}")
+
+        self.assertEqual(offenders, [])
+
+    def test_v2_should_not_keep_wrong_owner_compatibility_modules(self):
+        project_root = Path(settings.BASE_DIR)
+        wrong_owner_paths = [
+            project_root / "apps" / "api_v2" / "openapi.py",
+            project_root / "apps" / "resource_v2" / "audit.py",
+        ]
+
+        existing = [str(path.relative_to(project_root)) for path in wrong_owner_paths if path.exists()]
+
+        self.assertEqual(existing, [])
+
+    def test_system_views_should_not_own_resource_summary_dependencies(self):
+        project_root = Path(settings.BASE_DIR)
+        path = project_root / "apps" / "system_v2" / "views.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        forbidden_prefixes = ("apps.resource_v2", "apps.inspection_v2")
+        offenders = []
+
+        for node in ast.walk(tree):
+            modules = []
+            if isinstance(node, ast.ImportFrom):
+                modules = [node.module]
+            elif isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            for module in modules:
+                if module and module.startswith(forbidden_prefixes):
+                    offenders.append(f"{path.relative_to(project_root)}:{node.lineno} imports {module}")
+
+        self.assertEqual(offenders, [])
+
+    def test_resource_component_should_not_own_audit_log_read_api(self):
+        project_root = Path(settings.BASE_DIR)
+        scanned_paths = [
+            project_root / "apps" / "resource_v2" / "serializers.py",
+            project_root / "apps" / "resource_v2" / "urls.py",
+            project_root / "apps" / "resource_v2" / "views.py",
+        ]
+        forbidden_fragments = ("V2AuditLog", "AuditLogReadSerializer", "AuditLogListView")
+        offenders = []
+
+        for path in scanned_paths:
+            text = path.read_text(encoding="utf-8")
+            for fragment in forbidden_fragments:
+                if fragment in text:
+                    offenders.append(f"{path.relative_to(project_root)} contains {fragment}")
+
+        self.assertEqual(offenders, [])
+
+    def test_dji_upstream_gateway_should_only_be_used_behind_resource_adapter(self):
+        project_root = Path(settings.BASE_DIR)
+        allowed_path = project_root / "apps" / "resource_v2" / "gateway.py"
+        offenders = []
+
+        for path in (project_root / "apps").rglob("*.py"):
+            if "migrations" in path.parts or path.name == "tests.py" or path.name.startswith("test_"):
+                continue
+            if path == allowed_path or path.parts[-2:] == ("dji_cloud", "gateway.py"):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                modules = []
+                if isinstance(node, ast.ImportFrom):
+                    modules = [node.module]
+                elif isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                for module in modules:
+                    if module == "apps.dji_cloud.gateway":
+                        offenders.append(f"{path.relative_to(project_root)}:{node.lineno} imports {module}")
+
+        self.assertEqual(offenders, [])
+
+    def test_dji_connection_gateway_should_only_be_constructed_by_adapter_factory(self):
+        project_root = Path(settings.BASE_DIR)
+        allowed_path = project_root / "apps" / "resource_v2" / "gateway.py"
+        offenders = []
+
+        for path in (project_root / "apps").rglob("*.py"):
+            if "migrations" in path.parts or path.name == "tests.py" or path.name.startswith("test_"):
+                continue
+            if path == allowed_path:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "DjiConnectionGateway":
+                    offenders.append(f"{path.relative_to(project_root)}:{node.lineno} constructs DjiConnectionGateway")
+
+        self.assertEqual(offenders, [])
+
+    def test_external_implementation_imports_should_stay_at_adapter_seams(self):
+        project_root = Path(settings.BASE_DIR)
+        allowed_by_module = {
+            "urllib.request": {"apps/dji_cloud/gateway.py"},
+            "storages.backends.s3": {"apps/access/storage_backends.py"},
+            "redis": {"apps/resource_v2/mqtt.py"},
+            "channels.layers": {"apps/resource_v2/mqtt.py"},
+            "channels.db": {"apps/resource_v2/consumers.py"},
+            "channels.generic.websocket": {"apps/resource_v2/consumers.py"},
+            "paho.mqtt.client": {"apps/inspection_v2/management/commands/run_v2_dji_worker.py"},
+        }
+        offenders = []
+
+        for path in (project_root / "apps").rglob("*.py"):
+            if "migrations" in path.parts or path.name == "tests.py" or path.name.startswith("test_"):
+                continue
+            relative = str(path.relative_to(project_root))
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                modules = []
+                if isinstance(node, ast.ImportFrom):
+                    modules = [node.module]
+                elif isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                for module in modules:
+                    for external_module, allowed_paths in allowed_by_module.items():
+                        if module and (module == external_module or module.startswith(f"{external_module}.")):
+                            if relative not in allowed_paths:
+                                offenders.append(f"{relative}:{node.lineno} imports {module}")
+
+        self.assertEqual(offenders, [])
+
+    def test_v2_views_should_reuse_shared_empty_serializer_and_standard_error_helpers(self):
+        project_root = Path(settings.BASE_DIR)
+        scanned_paths = [
+            project_root / "apps" / "iam_v2" / "views.py",
+            project_root / "apps" / "inspection_v2" / "views.py",
+            project_root / "apps" / "resource_v2" / "views.py",
+            project_root / "apps" / "system_v2" / "base.py",
+            project_root / "apps" / "system_v2" / "views.py",
+        ]
+        forbidden_fragments = (
+            "class EmptySchemaSerializer",
+            'standard_error_payload(StandardCode.NOT_FOUND, "资源不存在"',
+            'standard_error_payload(StandardCode.DUPLICATE, "资源已存在"',
+        )
+        offenders = []
+
+        for path in scanned_paths:
+            text = path.read_text(encoding="utf-8")
+            for fragment in forbidden_fragments:
+                if fragment in text:
+                    offenders.append(f"{path.relative_to(project_root)} contains {fragment}")
+
+        self.assertEqual(offenders, [])
+
+    def test_osd_telemetry_parsers_should_have_one_owner(self):
+        project_root = Path(settings.BASE_DIR)
+        mqtt_path = project_root / "apps" / "resource_v2" / "mqtt.py"
+        inspection_services_path = project_root / "apps" / "inspection_v2" / "services.py"
+        mqtt_text = mqtt_path.read_text(encoding="utf-8")
+        inspection_services_text = inspection_services_path.read_text(encoding="utf-8")
+
+        self.assertIn("def osd_reported_at", mqtt_text)
+        self.assertIn("def osd_battery_percent", mqtt_text)
+        self.assertNotIn("def _osd_reported_at", inspection_services_text)
+        self.assertNotIn("def _osd_battery_percent", inspection_services_text)
+
+    def test_client_ip_resolution_should_have_one_owner(self):
+        project_root = Path(settings.BASE_DIR)
+        owner_path = project_root / "apps" / "common" / "request.py"
+        scanned_paths = [
+            project_root / "apps" / "access" / "authentication.py",
+            project_root / "apps" / "access" / "request_logging.py",
+            project_root / "apps" / "access" / "session_services.py",
+            project_root / "apps" / "audit_v2" / "services.py",
+        ]
+
+        self.assertIn("def resolve_client_ip", owner_path.read_text(encoding="utf-8"))
+        for path in scanned_paths:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("def _resolve_client_ip", text, str(path.relative_to(project_root)))
+            self.assertNotIn("def _client_ip", text, str(path.relative_to(project_root)))
+
+    def test_json_body_loading_should_have_one_owner(self):
+        project_root = Path(settings.BASE_DIR)
+        owner_path = project_root / "apps" / "common" / "request.py"
+        scanned_paths = [
+            project_root / "apps" / "inspection_v2" / "dji_callbacks.py",
+            project_root / "apps" / "dji_mock" / "views.py",
+        ]
+
+        self.assertIn("def load_json_body", owner_path.read_text(encoding="utf-8"))
+        for path in scanned_paths:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("def _load_json", text, str(path.relative_to(project_root)))
+
+    def test_route_cover_image_input_normalization_should_have_one_owner(self):
+        project_root = Path(settings.BASE_DIR)
+        path = project_root / "apps" / "inspection_v2" / "serializers.py"
+        text = path.read_text(encoding="utf-8")
+
+        self.assertIn("class RouteCoverImageInputMixin", text)
+        self.assertEqual(text.count("def to_internal_value(self, data):"), 1)
+
+    def test_prod_python_should_not_keep_exact_duplicate_functions_or_classes(self):
+        project_root = Path(settings.BASE_DIR)
+        blocks_by_hash = {}
+
+        for path in (project_root / "apps").rglob("*.py"):
+            if "migrations" in path.parts or path.name == "tests.py" or path.name.startswith("test_"):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue
+                line_count = getattr(node, "end_lineno", node.lineno) - node.lineno + 1
+                if line_count < 4:
+                    continue
+                digest = hashlib.sha1(ast.dump(node, include_attributes=False).encode("utf-8")).hexdigest()
+                blocks_by_hash.setdefault(digest, []).append(
+                    f"{path.relative_to(project_root)}:{node.lineno} {type(node).__name__} {node.name}"
+                )
+
+        offenders = [locations for locations in blocks_by_hash.values() if len(locations) > 1]
+
+        self.assertEqual(offenders, [])
+
+    def test_lod_relationship_traversal_knowledge_should_stay_at_owner_helpers(self):
+        project_root = Path(settings.BASE_DIR)
+        allowed_by_fragment = {
+            ".account_profile.department": {"apps/iam_v2/models.py"},
+            "pilot_account_profile.user_id": {"apps/inspection_v2/models.py"},
+            "flight_record.mission.cloud_execution": {"apps/inspection_v2/services.py"},
+            "mission.route.cloud_file": {"apps/inspection_v2/services.py"},
+        }
+        forbidden_fragments = (
+            "context.department.id",
+            "context.department.path",
+            "context.user.id",
+            "context.user.username",
+            "pilot_account.role_assignments.filter",
+            "account.user.set_password",
+            "account.user.save",
+            "account.role_assignments.values_list",
+            "account.role_assignments.filter",
+            "profile.role_profiles.select_related",
+            "state.flight_record.mission_id",
+            "route.cover_image.name",
+            "route.cover_image.storage",
+            "route.waypoints.all",
+            "route.waypoints.order_by",
+            "mission.resource_assignments.all",
+            "record.media_files.values_list",
+            "mission.drone.device_sn",
+            "mission.drone.online_status",
+            "mission.drone.name",
+            "mission.dock.device_sn",
+            "mission.dock.online_status",
+            "mission.executor.device_sn",
+            "mission.executor.online_status",
+            "mission.route.name",
+            "mission.pilot_account_profile.name",
+            "account.user.username",
+            'source="route.name"',
+            'source="drone.device_sn"',
+            'source="drone.name"',
+            'source="mission.name"',
+            'source="mission.route.name"',
+            "binding.dji_connection.workspace_id",
+            "binding.dji_connection.name",
+            "binding.owner_department.name",
+            "binding.owner_department.path",
+            "binding.permission.code",
+            "binding.permission.status",
+            'source="permission.code"',
+            "obj.media_sync_state.status",
+            'source="media_sync_state.last_synced"',
+            'source="media_sync_state.next_run_at"',
+            "execution.workspace_id or execution.dji_connection.workspace_id",
+        )
+        max_occurrences = {
+            "flight_record.mission.cloud_execution": 1,
+            "mission.route.cloud_file": 1,
+        }
+        offenders = []
+        occurrence_count = {fragment: 0 for fragment in allowed_by_fragment}
+
+        for path in (project_root / "apps").rglob("*.py"):
+            if "migrations" in path.parts or path.name == "tests.py" or path.name.startswith("test_"):
+                continue
+            relative = str(path.relative_to(project_root))
+            text = path.read_text(encoding="utf-8")
+            for fragment, allowed_paths in allowed_by_fragment.items():
+                count = text.count(fragment)
+                occurrence_count[fragment] += count
+                if count and relative not in allowed_paths:
+                    offenders.append(f"{relative} contains {fragment}")
+            for fragment in forbidden_fragments:
+                if fragment in text:
+                    offenders.append(f"{relative} contains {fragment}")
+
+        for fragment, max_count in max_occurrences.items():
+            if occurrence_count[fragment] > max_count:
+                offenders.append(f"{fragment} appears {occurrence_count[fragment]} times")
 
         self.assertEqual(offenders, [])
 

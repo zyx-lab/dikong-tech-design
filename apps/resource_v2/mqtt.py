@@ -208,7 +208,7 @@ def record_mqtt_message(*, connection: DjiConnection, topic: str, payload: dict,
     return envelope
 
 
-def _osd_reported_at(payload: dict):
+def osd_reported_at(payload: dict):
     timestamp = payload.get("timestamp")
     if isinstance(timestamp, (int, float)):
         seconds = timestamp / 1000 if timestamp > 10_000_000_000 else timestamp
@@ -216,7 +216,7 @@ def _osd_reported_at(payload: dict):
     return timezone.now()
 
 
-def _osd_battery_percent(data: dict):
+def osd_battery_percent(data: dict):
     battery = data.get("battery")
     if isinstance(battery, dict):
         value = battery.get("capacity_percent") or battery.get("percent") or battery.get("battery_percent")
@@ -259,8 +259,8 @@ def upsert_drone_telemetry_from_osd(
             "altitude": _decimal_or_none(data.get("altitude", data.get("height"))),
             "speed": _decimal_or_none(data.get("speed", data.get("horizontal_speed"))),
             "heading": _decimal_or_none(data.get("heading", data.get("attitude_head"))),
-            "battery_percent": _osd_battery_percent(data),
-            "reported_at": _osd_reported_at(payload),
+            "battery_percent": osd_battery_percent(data),
+            "reported_at": osd_reported_at(payload),
             "raw_payload": payload,
         },
     )

@@ -237,6 +237,14 @@ def attach_standard_envelope(payload: Any, status_code: int) -> dict[str, Any]:
     return build_standard_response(payload, status_code)
 
 
+def standard_not_found_response(data: Any = None, *, msg: str = "资源不存在") -> Response:
+    return Response(standard_error_payload(StandardCode.NOT_FOUND, msg, data), status=status.HTTP_404_NOT_FOUND)
+
+
+def standard_duplicate_response(data: Any = None, *, msg: str = "资源已存在") -> Response:
+    return Response(standard_error_payload(StandardCode.DUPLICATE, msg, data), status=status.HTTP_409_CONFLICT)
+
+
 class BusinessApiResponseMixin:
     """为业务 API 输出统一 code/msg/data 响应结构。"""
 

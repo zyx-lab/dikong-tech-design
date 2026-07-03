@@ -184,6 +184,14 @@ class V2Menu(TimeStampedModel):
     def __str__(self):
         return f"{self.code}:{self.name}"
 
+    @property
+    def permission_codes(self) -> list[str]:
+        return [binding.permission_code for binding in self.permission_bindings.all()]
+
+    @property
+    def active_permission_codes(self) -> set[str]:
+        return {binding.permission_code for binding in self.permission_bindings.all() if binding.permission_is_active}
+
 
 class V2MenuPermissionBinding(TimeStampedModel):
     menu = models.ForeignKey(V2Menu, on_delete=models.CASCADE, related_name="permission_bindings")
@@ -195,6 +203,14 @@ class V2MenuPermissionBinding(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(fields=["menu", "permission"], name="uniq_v2_menu_permission"),
         ]
+
+    @property
+    def permission_code(self) -> str:
+        return self.permission.code
+
+    @property
+    def permission_is_active(self) -> bool:
+        return self.permission.status == DirectoryStatus.ACTIVE
 
 
 class V2RoleMenuGrant(TimeStampedModel):
@@ -288,6 +304,21 @@ class V2AccountProfile(TimeStampedModel):
     def __str__(self):
         return f"{self.user_id}:{self.department_id}"
 
+    @property
+    def username(self) -> str:
+        return self.user.username
+
+    @property
+    def role_codes(self) -> list[str]:
+        return list(self.role_assignments.values_list("role_code", flat=True))
+
+    def has_any_role(self, role_codes: list[str]) -> bool:
+        return self.role_assignments.filter(role_code__in=role_codes).exists()
+
+    def set_password(self, raw_password: str) -> None:
+        self.user.set_password(raw_password)
+        self.user.save(update_fields=["password", "updated_at"])
+
 
 class V2AccountRoleAssignment(TimeStampedModel):
     account_profile = models.ForeignKey(V2AccountProfile, on_delete=models.CASCADE, related_name="role_assignments")
@@ -338,6 +369,12 @@ class V2ProfileType(TimeStampedModel):
         return f"{self.code}:{self.name}"
 
 
+def _soft_delete_profile_record(record) -> None:
+    record.deleted_at = timezone.now()
+    record.status = DirectoryStatus.DISABLED
+    record.save(update_fields=["deleted_at", "status", "updated_at"])
+
+
 class V2AccountRoleProfile(TimeStampedModel):
     account_profile = models.ForeignKey(V2AccountProfile, on_delete=models.CASCADE, related_name="role_profiles")
     profile_type = models.CharField(max_length=64)
@@ -358,9 +395,11 @@ class V2AccountRoleProfile(TimeStampedModel):
         ]
 
     def soft_delete(self):
-        self.deleted_at = timezone.now()
-        self.status = DirectoryStatus.DISABLED
-        self.save(update_fields=["deleted_at", "status", "updated_at"])
+        _soft_delete_profile_record(self)
+
+    @property
+    def department(self):
+        return self.account_profile.department
 
     def __str__(self):
         return f"{self.account_profile_id}:{self.profile_type}"
@@ -411,9 +450,7 @@ class V2AccountQualification(TimeStampedModel):
         return True
 
     def soft_delete(self):
-        self.deleted_at = timezone.now()
-        self.status = DirectoryStatus.DISABLED
-        self.save(update_fields=["deleted_at", "status", "updated_at"])
+        _soft_delete_profile_record(self)
 
     def __str__(self):
         return f"{self.account_profile_id}:{self.profile_type}:{self.qualification_type}:{self.certificate_no}"

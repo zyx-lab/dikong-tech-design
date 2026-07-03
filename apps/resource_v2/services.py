@@ -8,11 +8,13 @@ from apps.access.models import DirectoryStatus
 from apps.iam_v2.models import FixedRole
 from apps.iam_v2.services import (
     PERMISSION_ORDER,
+    department_in_context_scope,
+    department_tree_filter,
     is_department_admin,
     is_platform_super_admin,
     role_permissions,
 )
-from apps.resource_v2.audit import log_v2_action
+from apps.audit_v2.services import log_v2_action
 from apps.resource_v2.models import (
     BindingActionType,
     BindingStatus,
@@ -74,7 +76,7 @@ def dji_connection_snapshot(connection: DjiConnection) -> dict:
 def can_manage_connection(context, connection: DjiConnection) -> bool:
     if is_platform_super_admin(context):
         return True
-    return is_department_admin(context) and connection.owner_department_id == context.department.id
+    return is_department_admin(context) and connection.owner_department_id == context.department_id
 
 
 def require_manage_connection(context, connection: DjiConnection):
@@ -85,14 +87,14 @@ def require_manage_connection(context, connection: DjiConnection):
 def require_bind_connection(context, connection: DjiConnection):
     if is_platform_super_admin(context):
         return
-    if not (is_department_admin(context) and connection.owner_department_id == context.department.id):
+    if not (is_department_admin(context) and connection.owner_department_id == context.department_id):
         raise StandardForbidden()
 
 
 def can_unbind(context, binding: ResourceBinding) -> bool:
     if is_platform_super_admin(context):
         return True
-    return is_department_admin(context) and binding.owner_department_id == context.department.id
+    return is_department_admin(context) and binding.owner_department_id == context.department_id
 
 
 def require_unbind(context, binding: ResourceBinding):
@@ -119,7 +121,7 @@ def visible_bindings_queryset(context, *, resource_type: str) -> QuerySet:
             resource_type=resource_type,
         ).values("resource_object_id"),
     )
-    hierarchy_filter = Q(owner_department__path__startswith=context.department.path)
+    hierarchy_filter = department_tree_filter(context, "owner_department")
     return queryset.filter(hierarchy_filter | shared_resource_filter).distinct()
 
 
@@ -146,9 +148,9 @@ def effective_permissions_for_binding(context, binding: ResourceBinding) -> list
         return role_permissions([FixedRole.PLATFORM_SUPER_ADMIN])
 
     base_permissions = set(role_permissions(context.role_codes))
-    hierarchy_visible = binding.owner_department.path.startswith(context.department.path)
+    hierarchy_visible = department_in_context_scope(context, binding.owner_department)
     if hierarchy_visible:
-        if binding.owner_department_id != context.department.id:
+        if binding.owner_department_id != context.department_id:
             base_permissions.discard("bind")
             base_permissions.discard("unbind")
         return [permission for permission in PERMISSION_ORDER if permission in base_permissions]
@@ -158,10 +160,10 @@ def effective_permissions_for_binding(context, binding: ResourceBinding) -> list
 
 
 def sync_connection_resources_from_upstream(connection: DjiConnection) -> dict:
-    from apps.resource_v2.gateway import DjiConnectionGateway
+    from apps.resource_v2.gateway import dji_connection_gateway
     from apps.resource_v2.serializers import upsert_resource_from_payload
 
-    discovered = DjiConnectionGateway(connection).discover()
+    discovered = dji_connection_gateway(connection).discover()
     resources = {"drones": [], "docks": [], "gateways": [], "payloads": []}
     for payload in discovered.get("drones", []):
         if isinstance(payload, dict):

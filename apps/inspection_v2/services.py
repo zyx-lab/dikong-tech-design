@@ -14,11 +14,10 @@ from django.utils.dateparse import parse_datetime
 
 from apps.access.exceptions import StandardConstraintConflict, StandardForbidden, StandardNotFound
 from apps.access.models import DirectoryStatus
-from apps.dji_cloud.gateway import DjiGatewayError, DjiGatewayUpstreamError
 from apps.iam_v2.models import FixedRole
-from apps.iam_v2.services import is_platform_super_admin
-from apps.resource_v2.audit import log_v2_action
-from apps.resource_v2.gateway import DjiConnectionGateway
+from apps.iam_v2.services import department_in_context_scope, department_tree_filter, is_platform_super_admin
+from apps.audit_v2.services import log_v2_action
+from apps.resource_v2.gateway import DjiConnectionGateway, DjiGatewayError, DjiGatewayUpstreamError, dji_connection_gateway
 from apps.resource_v2.models import (
     BindingStatus,
     DjiConnection,
@@ -29,7 +28,7 @@ from apps.resource_v2.models import (
     ResourceSharePermission,
     ResourceType,
 )
-from apps.resource_v2.mqtt import upsert_drone_telemetry_from_osd
+from apps.resource_v2.mqtt import osd_battery_percent, osd_reported_at, upsert_drone_telemetry_from_osd
 from apps.resource_v2.services import get_resource, visible_bindings_queryset
 from apps.inspection_v2.models import (
     CloudMediaFile,
@@ -114,7 +113,7 @@ def is_department_admin(context) -> bool:
 
 
 def is_assigned_pilot(context, mission: InspectionMission) -> bool:
-    return FixedRole.PILOT in context.role_codes and mission.pilot_account_profile.user_id == context.user.id
+    return FixedRole.PILOT in context.role_codes and mission.pilot_user_id == context.user_id
 
 
 def is_plain_pilot(context) -> bool:
@@ -146,7 +145,7 @@ def require_inspection_viewer(context) -> None:
 
 
 def _department_tree_q(field: str, context) -> Q:
-    return Q(**{f"{field}__path__startswith": context.department.path})
+    return department_tree_filter(context, field)
 
 
 def _shared_resource_permissions(context):
@@ -321,12 +320,18 @@ def _active_binding(resource_type: str, resource_id: int) -> ResourceBinding:
     return binding
 
 
-def _route_cloud_file_for_mission(mission: InspectionMission) -> WaypointRouteCloudFile:
+def _optional_route_cloud_file_for_mission(mission: InspectionMission) -> WaypointRouteCloudFile | None:
     try:
         return mission.route.cloud_file
-    except WaypointRouteCloudFile.DoesNotExist as exc:
-        raise StandardConstraintConflict(msg="任务航线尚未同步到当前 DJI 连接，请重新上传/更新航线") from exc
+    except WaypointRouteCloudFile.DoesNotExist:
+        return None
 
+
+def _route_cloud_file_for_mission(mission: InspectionMission) -> WaypointRouteCloudFile:
+    route_cloud_file = _optional_route_cloud_file_for_mission(mission)
+    if route_cloud_file is None:
+        raise StandardConstraintConflict(msg="任务航线尚未同步到当前 DJI 连接，请重新上传/更新航线")
+    return route_cloud_file
 
 def _execution_binding_for_mission(mission: InspectionMission, execution_mode: str) -> ResourceBinding:
     if execution_mode == MissionExecutionMode.DOCK_AUTO:
@@ -365,8 +370,7 @@ def _shared_can_use(context, binding: ResourceBinding) -> bool:
 
 def usable_resource_binding(context, resource_type: str, resource_id: int) -> ResourceBinding:
     binding = _active_binding(resource_type, resource_id)
-    hierarchy_visible = binding.owner_department.path.startswith(context.department.path)
-    if is_platform_super_admin(context) or hierarchy_visible or _shared_can_use(context, binding):
+    if department_in_context_scope(context, binding.owner_department) or _shared_can_use(context, binding):
         return binding
     raise StandardForbidden()
 
@@ -416,7 +420,7 @@ def route_snapshot(route: WaypointRoute) -> dict:
                 "heading": str(waypoint.heading) if waypoint.heading is not None else None,
                 "hoverSeconds": waypoint.hover_seconds,
             }
-            for waypoint in route.waypoints.order_by("sequence")
+            for waypoint in route.ordered_waypoints()
         ],
     }
 
@@ -471,7 +475,7 @@ def _stop_live_for_execution(execution: MissionCloudExecution | None) -> bool:
     execution.live_status = LiveStreamStatus.STOPPING
     execution.save(update_fields=["live_status", "updated_at"])
     try:
-        DjiConnectionGateway(execution.dji_connection).stop_live(execution.drone_sn, video_id=execution.live_video_id)
+        dji_connection_gateway(execution.dji_connection).stop_live(execution.drone_sn, video_id=execution.live_video_id)
     except DjiGatewayError as exc:
         execution.live_status = LiveStreamStatus.FAILED
         execution.live_error_message = str(exc)
@@ -633,9 +637,8 @@ def build_mission_preflight_check(*, mission: InspectionMission, context) -> dic
     else:
         checks.append(_preflight_fail("EXECUTION_RESOURCE_PRESENT", "执行资源", "任务必须绑定 dockId 或 executorId"))
 
-    try:
-        route_cloud_file = mission.route.cloud_file
-    except WaypointRouteCloudFile.DoesNotExist:
+    route_cloud_file = _optional_route_cloud_file_for_mission(mission)
+    if route_cloud_file is None:
         checks.append(_preflight_fail("ROUTE_DJI_FILE_PRESENT", "DJI 航线文件", "任务航线尚未同步到当前 DJI 连接，请重新上传/更新航线"))
     else:
         route_dji_file_id = route_cloud_file.dji_file_id
@@ -655,7 +658,7 @@ def build_mission_preflight_check(*, mission: InspectionMission, context) -> dic
         checks.append(_preflight_fail("DRONE_BINDING_ACTIVE", "无人机绑定", "无人机没有 active 资源绑定"))
     else:
         dji_connection_id = dji_connection_id or drone_binding.dji_connection_id
-        workspace_id = workspace_id or drone_binding.dji_connection.workspace_id
+        workspace_id = workspace_id or drone_binding.dji_workspace_id
         checks.append(
             _preflight_pass(
                 "DRONE_BINDING_ACTIVE",
@@ -724,13 +727,13 @@ def build_mission_preflight_check(*, mission: InspectionMission, context) -> dic
     else:
         checks.append(_preflight_skipped("SAME_DJI_CONNECTION", "DJI 连接一致性", "缺少航线、无人机或执行资源绑定，跳过连接一致性检查"))
 
-    if mission.drone.online_status:
+    if mission.drone_online:
         checks.append(_preflight_pass("DRONE_ONLINE", "无人机在线状态", "无人机在线"))
     else:
         checks.append(_preflight_fail("DRONE_ONLINE", "无人机在线状态", "无人机不在线"))
 
     if mission.dock_id and mission.dock is not None:
-        if mission.dock.online_status:
+        if mission.dock_online:
             checks.append(_preflight_pass("DOCK_ONLINE", "机场在线状态", "机场在线"))
         else:
             checks.append(_preflight_fail("DOCK_ONLINE", "机场在线状态", "机场不在线"))
@@ -738,7 +741,7 @@ def build_mission_preflight_check(*, mission: InspectionMission, context) -> dic
         checks.append(_preflight_skipped("DOCK_ONLINE", "机场在线状态", "非机场自动模式，跳过机场在线检查"))
 
     if mission.executor_id and mission.executor is not None:
-        if mission.executor.online_status:
+        if mission.executor_online:
             checks.append(_preflight_pass("EXECUTOR_ONLINE", "执行端在线状态", "执行端/遥控器在线"))
         else:
             checks.append(_preflight_fail("EXECUTOR_ONLINE", "执行端在线状态", "执行端/遥控器不在线"))
@@ -756,8 +759,8 @@ def build_mission_preflight_check(*, mission: InspectionMission, context) -> dic
         checks.append(_preflight_skipped("LIVE_CAPACITY_AVAILABLE", "DJI 直播能力", "本地前置条件未通过，跳过 DJI live capacity 检查"))
     else:
         try:
-            capacity = DjiConnectionGateway(drone_binding.dji_connection).get_live_capacity(mission.drone.device_sn)
-            selected_live_video_id = _select_live_video_id(capacity, device_sn=mission.drone.device_sn)
+            capacity = dji_connection_gateway(drone_binding.dji_connection).get_live_capacity(mission.drone_sn)
+            selected_live_video_id = _select_live_video_id(capacity, device_sn=mission.drone_sn)
         except DjiGatewayError as exc:
             detail = {
                 "upstreamStatus": getattr(exc, "status_code", 502),
@@ -794,9 +797,9 @@ def build_mission_preflight_check(*, mission: InspectionMission, context) -> dic
             "executionMode": execution_mode,
             "routeId": mission.route_id,
             "droneId": mission.drone_id,
-            "droneSn": mission.drone.device_sn,
+            "droneSn": mission.drone_sn,
             "executorId": mission.executor_id,
-            "executorSn": mission.executor.device_sn if mission.executor_id and mission.executor is not None else "",
+            "executorSn": mission.executor_sn,
             "dockId": mission.dock_id,
             "payloadId": mission.payload_id,
             "djiConnectionId": dji_connection_id,
@@ -827,7 +830,7 @@ def can_safety_abort(context, mission: InspectionMission) -> bool:
     if not (is_department_admin(context) or is_dispatcher(context)):
         return False
     return mission.resource_assignments.filter(
-        owner_department__path__startswith=context.department.path,
+        department_tree_filter(context, "owner_department"),
     ).exists()
 
 
@@ -849,19 +852,19 @@ def _live_request(video_id: str) -> dict:
 
 
 def _start_live_required(*, gateway: DjiConnectionGateway, mission: InspectionMission) -> tuple[str, dict, dict]:
-    capacity = gateway.get_live_capacity(mission.drone.device_sn)
-    live_video_id = _select_live_video_id(capacity, device_sn=mission.drone.device_sn)
+    capacity = gateway.get_live_capacity(mission.drone_sn)
+    live_video_id = _select_live_video_id(capacity, device_sn=mission.drone_sn)
     if not live_video_id:
         raise StandardConstraintConflict(msg="设备缺少可直播视频能力")
     live_request = _live_request(live_video_id)
-    live_response_payload = gateway.start_live(mission.drone.device_sn, **live_request)
+    live_response_payload = gateway.start_live(mission.drone_sn, **live_request)
     return live_video_id, live_request, live_response_payload
 
 
 def _start_live_best_effort(*, gateway: DjiConnectionGateway, mission: InspectionMission) -> dict:
     try:
-        capacity = gateway.get_live_capacity(mission.drone.device_sn)
-        live_video_id = _select_live_video_id(capacity, device_sn=mission.drone.device_sn)
+        capacity = gateway.get_live_capacity(mission.drone_sn)
+        live_video_id = _select_live_video_id(capacity, device_sn=mission.drone_sn)
         if not live_video_id:
             return {
                 "status": LiveStreamStatus.FAILED,
@@ -871,7 +874,7 @@ def _start_live_best_effort(*, gateway: DjiConnectionGateway, mission: Inspectio
                 "error": "设备缺少可直播视频能力",
             }
         live_request = _live_request(live_video_id)
-        live_response_payload = gateway.start_live(mission.drone.device_sn, **live_request)
+        live_response_payload = gateway.start_live(mission.drone_sn, **live_request)
     except DjiGatewayError as exc:
         return {
             "status": LiveStreamStatus.FAILED,
@@ -904,12 +907,12 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
         execution_binding=execution_binding,
         execution_label=execution_label,
     )
-    if not mission.drone.online_status:
+    if not mission.drone_online:
         raise StandardConstraintConflict(msg="无人机不在线")
     if execution_mode == MissionExecutionMode.DOCK_AUTO:
-        if mission.dock is None or not mission.dock.online_status:
+        if not mission.dock_online:
             raise StandardConstraintConflict(msg="机场不在线")
-    elif mission.executor is None or not mission.executor.online_status:
+    elif not mission.executor_online:
         raise StandardConstraintConflict(msg="执行端不在线")
     ensure_resources_available(
         drone_id=mission.drone_id,
@@ -919,7 +922,7 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
         exclude_mission_id=mission.id,
     )
     now = timezone.now()
-    gateway = DjiConnectionGateway(drone_binding.dji_connection)
+    gateway = dji_connection_gateway(drone_binding.dji_connection)
 
     dji_job_id = ""
     response_payload = {}
@@ -927,7 +930,7 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
         request_payload = {
             "mission_name": mission.name,
             "file_id": route_cloud_file.dji_file_id,
-            "dock_sn": mission.dock.device_sn,
+            "dock_sn": mission.dock_sn,
             "wayline_type": int(route_cloud_file.wayline_type),
             "task_type": 0,
             "rth_altitude": DjiConnectionGateway.DEFAULT_RTH_ALTITUDE,
@@ -938,7 +941,7 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
             response_payload = gateway.create_dock_flight_task(
                 mission_name=mission.name,
                 file_id=route_cloud_file.dji_file_id,
-                dock_sn=mission.dock.device_sn,
+                dock_sn=mission.dock_sn,
                 wayline_type=route_cloud_file.wayline_type,
                 task_type=request_payload["task_type"],
                 rth_altitude=request_payload["rth_altitude"],
@@ -946,14 +949,14 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
             )
         except Exception:
             try:
-                gateway.stop_live(mission.drone.device_sn, video_id=live_video_id)
+                gateway.stop_live(mission.drone_sn, video_id=live_video_id)
             except DjiGatewayError:
                 pass
             raise
         dji_job_id = str(response_payload.get("dji_job_id") or response_payload.get("job_id") or "").strip()
         if not dji_job_id:
             try:
-                gateway.stop_live(mission.drone.device_sn, video_id=live_video_id)
+                gateway.stop_live(mission.drone_sn, video_id=live_video_id)
             except DjiGatewayError:
                 pass
             raise StandardConstraintConflict(msg="DJI 创建任务后未返回 job_id")
@@ -969,7 +972,7 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
         request_payload = {
             "mission_name": mission.name,
             "file_id": route_cloud_file.dji_file_id,
-            "executor_sn": mission.executor.device_sn,
+            "executor_sn": mission.executor_sn,
             "execution_mode": MissionExecutionMode.PILOT2_MANUAL,
             "wayline_type": int(route_cloud_file.wayline_type),
         }
@@ -987,7 +990,7 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
         started_at=now,
         started_by_user=context.user,
     )
-    executor_sn = mission.dock.device_sn if execution_mode == MissionExecutionMode.DOCK_AUTO else mission.executor.device_sn
+    executor_sn = mission.execution_device_sn
     MissionCloudExecution.objects.update_or_create(
         mission=mission,
         defaults={
@@ -998,7 +1001,7 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
             "execution_mode": execution_mode,
             "dji_job_id": dji_job_id,
             "executor_sn": executor_sn,
-            "drone_sn": mission.drone.device_sn,
+            "drone_sn": mission.drone_sn,
             "status": CloudExecutionStatus.RUNNING,
             "started_at": now,
             "live_status": live_status,
@@ -1060,10 +1063,10 @@ def complete_mission(*, mission: InspectionMission, context, request) -> Inspect
             "creator_department": mission.creator_department,
             "primary_resource_owner_department": mission.primary_resource_owner_department,
             "mission_name": mission.name,
-            "route_name": mission.route.name,
-            "drone_device_sn": mission.drone.device_sn,
-            "drone_name": mission.drone.name,
-            "pilot_name": mission.pilot_account_profile.name,
+            "route_name": mission.route_name,
+            "drone_device_sn": mission.drone_sn,
+            "drone_name": mission.drone_name,
+            "pilot_name": mission.pilot_name,
             "start_time": session.started_at,
             "end_time": now,
             "flight_duration": _duration_seconds(session.started_at, now),
@@ -1118,7 +1121,7 @@ def close_mission(
         and execution.execution_mode == MissionExecutionMode.DOCK_AUTO
         and execution.dji_job_id
     ):
-        DjiConnectionGateway(execution.dji_connection).cancel_mission(execution.dji_job_id)
+        dji_connection_gateway(execution.dji_connection).cancel_mission(execution.dji_job_id)
     now = timezone.now()
     session = getattr(mission, "flight_session", None)
     if session and session.status == FlightSessionStatus.RUNNING:
@@ -1505,12 +1508,7 @@ def _resource_binding_for_device_sn(device_sn: str) -> ResourceBinding | None:
 
 
 def _refresh_record_media_counts(record: InspectionFlightRecord) -> dict:
-    counts = list(record.media_files.values_list("media_type", flat=True))
-    photo_count = sum(1 for item in counts if item == CloudMediaType.PHOTO)
-    video_count = sum(1 for item in counts if item == CloudMediaType.VIDEO)
-    record.photo_count = photo_count
-    record.video_count = video_count
-    record.save(update_fields=["photo_count", "video_count", "updated_at"])
+    photo_count, video_count = record.refresh_media_counts()
     return {"photoCount": photo_count, "videoCount": video_count}
 
 
@@ -1805,7 +1803,7 @@ def sync_media_for_record(*, record: InspectionFlightRecord, cloud_items: list[d
             device_sn=device_sn,
         )
         try:
-            cloud_items = DjiConnectionGateway(connection).list_media_files() if cloud_items is None else cloud_items
+            cloud_items = dji_connection_gateway(connection).list_media_files() if cloud_items is None else cloud_items
             synced += _sync_media_payloads_for_record(
                 record=record,
                 connection=connection,
@@ -1822,7 +1820,7 @@ def sync_media_for_record(*, record: InspectionFlightRecord, cloud_items: list[d
 
     for media in CloudMediaFile.objects.filter(workspace_id=workspace_id, dji_job_id=dji_job_id):
         _assign_existing_media_to_owner(media, mission=record.mission, flight_record=record)
-    cloud_items = DjiConnectionGateway(connection).list_media_files() if cloud_items is None else cloud_items
+    cloud_items = dji_connection_gateway(connection).list_media_files() if cloud_items is None else cloud_items
     synced = 0
     try:
         synced += _sync_media_payloads_for_record(
@@ -2049,7 +2047,11 @@ def _media_sync_group_key(state: InspectionFlightRecordMediaSyncState) -> tuple[
         return None
     if not execution.dji_job_id and execution.execution_mode != MissionExecutionMode.PILOT2_MANUAL:
         return None
-    return execution.dji_connection_id, execution.workspace_id or execution.dji_connection.workspace_id
+    return execution.dji_connection_id, execution.effective_workspace_id
+
+
+def _media_sync_connection(state: InspectionFlightRecordMediaSyncState) -> DjiConnection:
+    return _execution_for_media_sync_state(state).dji_connection
 
 
 def _run_due_media_sync_state(
@@ -2065,7 +2067,7 @@ def _run_due_media_sync_state(
     except Exception as exc:
         logger.warning(
             "v2 flight record media sync failed",
-            extra={"flight_record_id": state.flight_record_id, "mission_id": state.flight_record.mission_id},
+        extra={"flight_record_id": state.flight_record_id, "mission_id": state.mission_id},
             exc_info=True,
         )
         _record_media_sync_failure(state, error=exc, now=now)
@@ -2114,9 +2116,9 @@ def sync_due_flight_record_media(*, batch_size: int | None = None, now: datetime
         ]
         if not claimed_states:
             continue
-        connection = group_states[0].flight_record.mission.cloud_execution.dji_connection
+        connection = _media_sync_connection(group_states[0])
         try:
-            cloud_items = DjiConnectionGateway(connection).list_media_files()
+            cloud_items = dji_connection_gateway(connection).list_media_files()
         except Exception as exc:
             for state in claimed_states:
                 logger.warning(
@@ -2124,7 +2126,7 @@ def sync_due_flight_record_media(*, batch_size: int | None = None, now: datetime
                     extra={
                         "dji_connection_id": connection_id,
                         "flight_record_id": state.flight_record_id,
-                        "mission_id": state.flight_record.mission_id,
+                    "mission_id": state.mission_id,
                     },
                     exc_info=True,
                 )
@@ -2137,7 +2139,7 @@ def sync_due_flight_record_media(*, batch_size: int | None = None, now: datetime
             except Exception as exc:
                 logger.warning(
                     "v2 grouped flight record media sync failed",
-                    extra={"flight_record_id": state.flight_record_id, "mission_id": state.flight_record.mission_id},
+                        extra={"flight_record_id": state.flight_record_id, "mission_id": state.mission_id},
                     exc_info=True,
                 )
                 _record_media_sync_failure(state, error=exc, now=current_time)
@@ -2211,7 +2213,7 @@ def _playback_url_needs_refresh(url: str, *, now: datetime | None = None) -> boo
 
 def refresh_cloud_media_file_url(*, media: CloudMediaFile, url_type: str) -> CloudMediaFile:
     connection = _dji_connection_for_media_file(media)
-    gateway = DjiConnectionGateway(connection)
+    gateway = dji_connection_gateway(connection)
     if url_type == "preview":
         media.preview_url = str(gateway.get_media_preview_url(media.cloud_file_id) or "")
         update_fields = ["preview_url", "updated_at"]
@@ -2294,7 +2296,7 @@ def handle_v2_media_upload_callback(payload: dict) -> dict[str, int]:
         if execution is not None:
             normalized = replace(
                 normalized,
-                workspace_id=normalized.workspace_id or execution.workspace_id or execution.dji_connection.workspace_id,
+                workspace_id=normalized.workspace_id or execution.effective_workspace_id,
                 device_sn=normalized.device_sn or execution.drone_sn,
             )
     else:
@@ -2303,7 +2305,7 @@ def handle_v2_media_upload_callback(payload: dict) -> dict[str, int]:
         if binding is not None:
             normalized = replace(
                 normalized,
-                workspace_id=normalized.workspace_id or binding.dji_connection.workspace_id,
+                workspace_id=normalized.workspace_id or binding.dji_workspace_id,
             )
         owner = resolve_media_owner(normalized)
 
@@ -2380,10 +2382,10 @@ def _flight_record_from_terminal_execution(*, mission: InspectionMission, sessio
             "creator_department": mission.creator_department,
             "primary_resource_owner_department": mission.primary_resource_owner_department,
             "mission_name": mission.name,
-            "route_name": mission.route.name,
-            "drone_device_sn": mission.drone.device_sn,
-            "drone_name": mission.drone.name,
-            "pilot_name": mission.pilot_account_profile.name,
+            "route_name": mission.route_name,
+            "drone_device_sn": mission.drone_sn,
+            "drone_name": mission.drone_name,
+            "pilot_name": mission.pilot_name,
             "start_time": session.started_at,
             "end_time": record_end_time,
             "flight_duration": _duration_seconds(session.started_at, record_end_time),
@@ -2534,7 +2536,7 @@ def refresh_mission_cloud_execution_from_dji(*, mission: InspectionMission, cont
     if execution is None or not execution.dji_job_id:
         raise StandardConstraintConflict(msg="任务缺少 DJI 云端执行记录")
 
-    jobs = DjiConnectionGateway(execution.dji_connection).list_jobs()
+    jobs = dji_connection_gateway(execution.dji_connection).list_jobs()
     matched_job = next((job for job in jobs if isinstance(job, dict) and _dji_job_id(job) == execution.dji_job_id), None)
     if matched_job is None:
         raise StandardConstraintConflict(msg="DJI jobs 列表中未找到当前任务")
@@ -2561,28 +2563,6 @@ def refresh_mission_cloud_execution_from_dji(*, mission: InspectionMission, cont
 
     mission.refresh_from_db()
     return mission
-
-
-def _osd_reported_at(payload: dict):
-    timestamp = payload.get("timestamp")
-    if isinstance(timestamp, (int, float)):
-        seconds = timestamp / 1000 if timestamp > 10_000_000_000 else timestamp
-        return timezone.datetime.fromtimestamp(seconds, tz=dt_timezone.utc)
-    return timezone.now()
-
-
-def _osd_battery_percent(data: dict):
-    battery = data.get("battery")
-    if isinstance(battery, dict):
-        value = battery.get("capacity_percent") or battery.get("percent") or battery.get("battery_percent")
-    else:
-        value = data.get("battery_percent") or data.get("capacity_percent")
-    if isinstance(value, bool):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _status_online_value(payload: dict):
@@ -2643,8 +2623,8 @@ def apply_osd_telemetry(*, device_sn: str, payload: dict | None = None, dji_conn
                 "altitude": data.get("altitude", data.get("height")),
                 "speed": data.get("speed", data.get("horizontal_speed")),
                 "heading": data.get("heading", data.get("attitude_head")),
-                "batteryPercent": _osd_battery_percent(data),
-                "reportedAt": _osd_reported_at(payload),
+                "batteryPercent": osd_battery_percent(data),
+                "reportedAt": osd_reported_at(payload),
                 "raw": payload,
             },
         )

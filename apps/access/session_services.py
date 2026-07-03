@@ -14,6 +14,7 @@ from apps.access.models import (
     User,
     UserStatus,
 )
+from apps.common.request import resolve_client_ip
 
 ACCESS_TOKEN_TTL_SECONDS = 2 * 60 * 60
 REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -63,8 +64,8 @@ def create_auth_session(*, user: User, request) -> dict:
         refresh_token_hash=sha256_text(refresh_token),
         access_token_expires_at=now + timedelta(seconds=ACCESS_TOKEN_TTL_SECONDS),
         refresh_token_expires_at=now + timedelta(seconds=REFRESH_TOKEN_TTL_SECONDS),
-        created_ip=_resolve_client_ip(request),
-        last_used_ip=_resolve_client_ip(request),
+        created_ip=resolve_client_ip(request),
+        last_used_ip=resolve_client_ip(request),
         user_agent=(request.META.get("HTTP_USER_AGENT", "") or "")[:255],
         last_used_at=now,
     )
@@ -109,7 +110,7 @@ def refresh_auth_session(*, refresh_token: str, request) -> dict:
     session.refresh_token_expires_at = now + timedelta(seconds=REFRESH_TOKEN_TTL_SECONDS)
     session.last_refreshed_at = now
     session.last_used_at = now
-    session.last_used_ip = _resolve_client_ip(request)
+    session.last_used_ip = resolve_client_ip(request)
     session.save(
         update_fields=[
             "access_token_hash",
@@ -128,10 +129,3 @@ def refresh_auth_session(*, refresh_token: str, request) -> dict:
 def revoke_current_session(session: AuthSession) -> None:
     session.revoked_at = timezone.now()
     session.save(update_fields=["revoked_at", "updated_at"])
-
-
-def _resolve_client_ip(request):
-    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR")

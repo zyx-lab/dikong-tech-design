@@ -18,7 +18,6 @@ from apps.resource_v2.models import (
     ResourceSharePermission,
     ResourceType,
     SHARE_PERMISSION_CHOICES,
-    V2AuditLog,
 )
 from apps.resource_v2.mqtt import read_redis_health
 from apps.resource_v2.services import effective_permissions_for_binding, normalize_base_url
@@ -280,32 +279,6 @@ class BindingReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class AuditLogReadSerializer(serializers.ModelSerializer):
-    actorDepartmentId = serializers.IntegerField(source="actor_department_id", allow_null=True, read_only=True)
-    resourceOwnerDepartmentId = serializers.IntegerField(source="resource_owner_department_id", allow_null=True, read_only=True)
-    resourceType = serializers.CharField(source="resource_type", read_only=True)
-    resourceObjectId = serializers.CharField(source="resource_object_id", read_only=True)
-    targetType = serializers.CharField(source="target_type", read_only=True)
-    targetId = serializers.CharField(source="target_id", read_only=True)
-
-    class Meta:
-        model = V2AuditLog
-        fields = [
-            "id",
-            "action",
-            "actorDepartmentId",
-            "resourceOwnerDepartmentId",
-            "resourceType",
-            "resourceObjectId",
-            "targetType",
-            "targetId",
-            "before_data",
-            "after_data",
-            "created_at",
-        ]
-        read_only_fields = fields
-
-
 class ShareGroupCreateSerializer(StrictSerializer):
     ownerDepartmentId = serializers.IntegerField(required=False, min_value=1)
     name = serializers.CharField(max_length=128)
@@ -404,7 +377,7 @@ def serialize_resource_binding(binding: ResourceBinding, *, context):
         "resourceType": binding.resource_type,
         "bindingId": binding.id,
         "djiConnectionId": binding.dji_connection_id,
-        "djiConnectionName": binding.dji_connection.name,
+        "djiConnectionName": binding.dji_connection_name,
         "deviceSn": resource.device_sn,
         "name": resource.name,
         "model": resource.model,
@@ -412,8 +385,8 @@ def serialize_resource_binding(binding: ResourceBinding, *, context):
         "lastSeenAt": resource.last_seen_at,
         "ownerDepartment": {
             "id": binding.owner_department_id,
-            "name": binding.owner_department.name,
-            "path": binding.owner_department.path,
+            "name": binding.owner_department_name,
+            "path": binding.owner_department_path,
         },
         "effectivePermissions": effective_permissions_for_binding(context, binding),
     }

@@ -5,6 +5,7 @@ from rest_framework.authentication import BaseAuthentication, get_authorization_
 from rest_framework.exceptions import AuthenticationFailed
 
 from apps.access.models import AuthSession, UserStatus
+from apps.common.request import resolve_client_ip
 
 
 def sha256_text(value: str) -> str:
@@ -51,17 +52,10 @@ class BearerAuthSessionAuthentication(BaseAuthentication):
             raise AuthenticationFailed("Token invalid or expired")
 
         session.last_used_at = now
-        session.last_used_ip = _resolve_client_ip(request)
+        session.last_used_ip = resolve_client_ip(request)
         session.save(update_fields=["last_used_at", "last_used_ip", "updated_at"])
         return user, session
 
     def authenticate_header(self, request):
         del request
         return self.keyword
-
-
-def _resolve_client_ip(request):
-    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR")

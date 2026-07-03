@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 from functools import wraps
 
 from django.conf import settings
 from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from apps.common.request import load_json_body
 from apps.dji_mock.state import mock_dji_state
 
 
@@ -43,16 +43,6 @@ def _require_token(request):
     if actual != expected:
         return _error("A0401", "mock dji token missing or invalid", status=401)
     return None
-
-
-def _load_json(request) -> dict:
-    if not request.body:
-        return {}
-    try:
-        payload = json.loads(request.body.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
 
 
 def _query_int(request, key: str, *, default: int):
@@ -169,7 +159,7 @@ def _live_not_found():
 def live_start(request):
     if request.method != "POST":
         raise Http404
-    payload = _load_json(request)
+    payload = load_json_body(request)
     result = mock_dji_state.start_live(payload)
     if result is None:
         return _live_not_found()
@@ -181,7 +171,7 @@ def live_start(request):
 def live_stop(request):
     if request.method != "POST":
         raise Http404
-    payload = _load_json(request)
+    payload = load_json_body(request)
     result = mock_dji_state.stop_live(payload)
     if result is None:
         return _live_not_found()
@@ -193,7 +183,7 @@ def live_stop(request):
 def live_update(request):
     if request.method != "POST":
         raise Http404
-    payload = _load_json(request)
+    payload = load_json_body(request)
     result = mock_dji_state.update_live(payload)
     if result is None:
         return _live_not_found()
@@ -205,7 +195,7 @@ def live_update(request):
 def live_switch(request):
     if request.method != "POST":
         raise Http404
-    payload = _load_json(request)
+    payload = load_json_body(request)
     result = mock_dji_state.switch_live(payload)
     if result is None:
         return _live_not_found()
@@ -217,7 +207,7 @@ def live_switch(request):
 def payload_authority(request, gateway_sn: str):
     if request.method != "POST":
         raise Http404
-    payload = _load_json(request)
+    payload = load_json_body(request)
     payload_index = str(payload.get("payload_index") or "").strip()
     if not payload_index:
         return _error("B0001", "payload_index is required", status=400, data={"payload_index": ["该字段是必填项。"]})
@@ -233,7 +223,7 @@ def payload_authority(request, gateway_sn: str):
 def payload_commands(request, gateway_sn: str):
     if request.method != "POST":
         raise Http404
-    payload = _load_json(request)
+    payload = load_json_body(request)
     cmd = str(payload.get("cmd") or "").strip()
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     payload_index = str(data.get("payload_index") or "").strip()
@@ -320,7 +310,7 @@ def create_job(request, workspace_id: str):
         raise Http404
     if workspace_id != mock_dji_state.current_workspace_payload()["workspace_id"]:
         return _error("C0404", "workspace not found", status=404)
-    payload = _load_json(request)
+    payload = load_json_body(request)
     if not str(payload.get("fileId") or payload.get("file_id") or "").strip():
         return _error("B0001", "file_id is required", status=400, data={"file_id": ["该字段是必填项。"]})
     if not str(payload.get("dockSn") or payload.get("dock_sn") or "").strip():

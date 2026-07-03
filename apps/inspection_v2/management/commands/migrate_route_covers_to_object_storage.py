@@ -25,7 +25,7 @@ class Command(BaseCommand):
 
         queryset = WaypointRoute.objects.exclude(cover_image="").order_by("id")
         for route in queryset.iterator():
-            cover_name = str(route.cover_image.name or "").strip()
+            cover_name = str(route.cover_image_name or "").strip()
             if not cover_name:
                 continue
 

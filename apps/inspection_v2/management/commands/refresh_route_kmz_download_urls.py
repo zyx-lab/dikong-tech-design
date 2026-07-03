@@ -1,6 +1,5 @@
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.dji_cloud.gateway import DjiGatewayError
 from apps.inspection_v2.models import WaypointRouteCloudFile
 from apps.inspection_v2.views import (
     _absolute_dji_url,
@@ -8,7 +7,7 @@ from apps.inspection_v2.views import (
     _is_absolute_http_url,
     _parse_download_url_expires_at,
 )
-from apps.resource_v2.gateway import DjiConnectionGateway
+from apps.resource_v2.gateway import DjiConnectionGateway, DjiGatewayError, dji_connection_gateway
 
 
 class Command(BaseCommand):
@@ -41,7 +40,7 @@ class Command(BaseCommand):
                 continue
 
             try:
-                gateway = DjiConnectionGateway(cloud_file.dji_connection)
+                gateway = dji_connection_gateway(cloud_file.dji_connection)
                 download_url = _absolute_dji_url(
                     cloud_file.dji_connection,
                     str(gateway.get_route_download_url(cloud_file.dji_file_id) or ""),
