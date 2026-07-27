@@ -1,0 +1,38 @@
+@startuml api_v2_request_review_sequence
+title Authenticated API v2 request review sequence
+actor "Frontend client" as Client
+participant "config/urls.py" as Urls
+participant "BearerAuthSessionAuthentication" as Auth
+participant "V2 API view" as View
+participant "Serializer" as Serializer
+participant "Domain service" as Service
+database "Django DB" as DB
+participant "log_v2_action" as Audit
+participant "BusinessApiResponseMixin" as Envelope
+
+Client -> Urls : request /api/v2/{module}/{resource}
+Urls -> Auth : authenticate Authorization: Bearer
+
+alt token is missing or invalid
+  Auth --> Client : 401 standard error
+else session is valid
+  Auth -> View : request.user + context
+  View -> Serializer : validate request payload/query
+
+  alt validation fails
+    Serializer --> View : field errors
+    View -> Envelope : wrap validation response
+    Envelope --> Client : 400 standard payload
+  else input is valid
+    View -> Service : execute use case
+    Service -> DB : read/write canonical state
+    Service -> Audit : record business action
+    Audit -> DB : append audit log
+    Service --> View : result DTO/model
+    View -> Serializer : serialize response
+    View -> Envelope : wrap success response
+    Envelope --> Client : 2xx standard payload
+  end
+end
+
+@enduml

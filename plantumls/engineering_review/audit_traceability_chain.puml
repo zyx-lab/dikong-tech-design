@@ -1,0 +1,66 @@
+@startuml audit_traceability_chain
+title Review and audit traceability chain
+left to right direction
+skinparam componentStyle rectangle
+
+rectangle "Accepted knowledge" {
+  component "Requirement / user scenario" as Req
+  component "API contract\nOpenAPI metadata" as Contract
+  component "Domain model\nv2_* models and constraints" as Model
+}
+
+rectangle "Mutable review state" {
+  component "PR review notes" as Review
+  component "Risk register\nopen questions" as Risk
+  component "Release checklist" as Release
+}
+
+rectangle "Implementation evidence" {
+  component "Views / serializers" as Views
+  component "Services" as Services
+  component "Gateway adapters" as Gateways
+  database "DB migrations" as Migrations
+}
+
+rectangle "Validation evidence" {
+  component "Unit/API tests" as Tests
+  component "Schema/docs sync checks" as SchemaChecks
+  component "Regression scripts" as Regression
+  component "Manual verification notes" as Manual
+}
+
+rectangle "Operational evidence" {
+  database "Operation logs" as OperationLogs
+  database "Login logs" as LoginLogs
+  database "File logs" as FileLogs
+  component "MQTT health/latest message" as MqttEvidence
+}
+
+Req --> Contract : externally visible behavior
+Req --> Model : domain rule or invariant
+Contract --> Views : route, payload,\nresponse shape
+Model --> Services : state changes,\npermissions, invariants
+Services --> Gateways : upstream side effects
+Services --> Migrations : persistent state
+
+Tests --> Req : scenario coverage
+Tests --> Services : behavior evidence
+SchemaChecks --> Contract : docs stay synchronized
+Regression --> Gateways : upstream/proxy behavior
+Manual --> Review : reviewer observations
+
+Services --> OperationLogs : log_v2_action
+Views --> LoginLogs : authentication events
+Services --> FileLogs : runtime diagnostics
+Gateways --> MqttEvidence : connection and device evidence
+
+Review --> Risk : unresolved design or test gaps
+Risk --> Release : accepted residual risk
+Release --> Req : release decision is traceable
+
+note bottom of Req
+  Keep accepted facts separate from
+  mutable review notes and risks.
+end note
+
+@enduml

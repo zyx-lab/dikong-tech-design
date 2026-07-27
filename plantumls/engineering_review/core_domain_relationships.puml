@@ -1,0 +1,137 @@
+@startuml core_domain_relationships
+title API v2 core domain relationships
+skinparam classAttributeIconSize 0
+left to right direction
+
+class Department
+class V2AccountProfile {
+  user_id
+  department_id
+}
+class DjiConnection {
+  owner_department_id
+  base_url
+  workspace_id
+  access_token
+}
+class ResourceBinding {
+  resource_type
+  resource_object_id
+  owner_department_id
+  status
+}
+class ResourceShareGroup
+class ResourceSharePermission {
+  resource_type
+  resource_object_id
+  permissions
+}
+class DroneResource {
+  device_sn
+  online_status
+}
+class DockResource {
+  device_sn
+  online_status
+}
+class GatewayResource {
+  device_sn
+  online_status
+}
+class PayloadResource {
+  payload_sn
+  online_status
+}
+class WaypointRoute {
+  owner_department_id
+  name
+  status
+}
+class Waypoint {
+  sequence
+  latitude
+  longitude
+  altitude
+}
+class WaypointRouteCloudFile {
+  dji_connection_id
+  workspace_id
+  dji_file_id
+}
+class InspectionMission {
+  status
+  execution_mode
+  scheduled_at
+}
+class MissionResourceAssignment {
+  resource_type
+  resource_object_id
+}
+class FlightSession {
+  status
+  started_at
+  ended_at
+}
+class MissionCloudExecution {
+  dji_job_id
+  execution_mode
+  status
+  live_status
+}
+class InspectionFlightRecord {
+  flight_no
+  status
+  photo_count
+  video_count
+}
+class InspectionFlightRecordMediaSyncState {
+  status
+  next_run_at
+  deadline_at
+  attempt_count
+}
+class CloudMediaFile {
+  workspace_id
+  cloud_file_id
+  dji_job_id
+  media_type
+}
+
+Department "1" -- "0..*" V2AccountProfile : owns profiles
+Department "1" -- "0..*" DjiConnection : owns connections
+Department "1" -- "0..*" ResourceBinding : owns bindings
+Department "1" -- "0..*" WaypointRoute : owns routes
+
+DjiConnection "1" -- "0..*" ResourceBinding : source connection
+DjiConnection "1" -- "0..*" WaypointRouteCloudFile : uploaded files
+DjiConnection "1" -- "0..*" MissionCloudExecution : task execution
+
+ResourceBinding ..> DroneResource : resource_type=drone
+ResourceBinding ..> DockResource : resource_type=dock
+ResourceBinding ..> GatewayResource : resource_type=gateway
+ResourceBinding ..> PayloadResource : resource_type=payload
+
+ResourceShareGroup "1" -- "0..*" ResourceSharePermission : grants
+ResourceSharePermission ..> ResourceBinding : shares bound resource
+
+WaypointRoute "1" *-- "0..*" Waypoint : ordered waypoints
+WaypointRoute "1" -- "0..1" WaypointRouteCloudFile : DJI cloud copy
+WaypointRoute "1" -- "0..*" InspectionMission : planned by
+
+InspectionMission "1" *-- "1..*" MissionResourceAssignment : assigned resources
+InspectionMission "1" -- "0..1" FlightSession : active run
+InspectionMission "1" -- "0..1" MissionCloudExecution : upstream task
+InspectionMission "1" -- "0..1" InspectionFlightRecord : final record
+V2AccountProfile "1" -- "0..*" InspectionMission : pilot
+
+FlightSession "1" -- "0..1" InspectionFlightRecord : produces
+InspectionFlightRecord "1" -- "0..1" InspectionFlightRecordMediaSyncState : media sync
+InspectionFlightRecord "1" -- "0..*" CloudMediaFile : binds media
+InspectionMission "1" -- "0..*" CloudMediaFile : early callback bind
+
+note right of FlightSession
+  Running sessions are unique per
+  drone, dock, executor, and payload.
+end note
+
+@enduml

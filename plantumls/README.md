@@ -22,3 +22,8 @@ Component scope used for this pass:
 - `resource_v2`
 - `system_v2`
 
+Cross-cutting review aids:
+
+- `engineering_review`: stakeholder context, runtime architecture, core domain
+  relationships, request sequence, DJI mission sequence, mission lifecycle,
+  review activity, and audit traceability diagrams.

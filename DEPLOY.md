@@ -2,8 +2,6 @@
 
 本文档说明如何在本机用 Docker Compose 启动低空平台后端服务。当前本地部署会启动 PostgreSQL、Redis、MinIO、Django ASGI 应用和 v2 DJI MQTT worker。
 
-如果你想让 Django 运行在宿主机 Python 环境，而只把 PostgreSQL 放进 Docker，请看 [宿主机 Django 切换到 Docker PostgreSQL 操作手册](docs/host-django-postgres-migration.md)。下面默认使用全容器方式。
-
 ## 需要准备
 
 - Docker Desktop 或 Docker Engine

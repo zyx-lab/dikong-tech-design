@@ -1,0 +1,40 @@
+@startuml review_activity_flow
+title Lightweight engineering review activity flow
+
+start
+:Identify change type;
+:State requirement or scenario;
+:Name affected boundary\nAPI, domain service, data, upstream, docs;
+
+if (Behavior already specified?) then (yes)
+else (no)
+  :Add smallest validation check\nunit, API, schema, regression, or manual script;
+endif
+
+repeat
+  :Make smallest correct change;
+  :Run local validation;
+  if (Validation failed?) then (yes)
+    :Fix failing behavior;
+  endif
+repeat while (Validation failed?) is (yes) not (no)
+
+:Inspect design impact\ncoupling, ownership, errors, data state;
+
+if (Risk is external, irreversible,\nsecurity, reliability, or safety related?) then (yes)
+  fork
+    :Trace requirement to code and tests;
+  fork again
+    :Record residual risks and rollback/recovery;
+  fork again
+    :Check logs, metrics, and audit evidence;
+  end fork
+else (no)
+  :Keep review note lightweight;
+endif
+
+:Update canonical docs only if behavior changed;
+:Summarize requirement fit,\ndesign impact, validation,\nand residual risk;
+stop
+
+@enduml

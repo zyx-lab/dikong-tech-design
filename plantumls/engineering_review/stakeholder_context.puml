@@ -1,0 +1,42 @@
+@startuml stakeholder_context
+title API v2 stakeholder and system context
+left to right direction
+skinparam componentStyle rectangle
+
+actor "Platform admin" as PlatformAdmin
+actor "Department admin" as DepartmentAdmin
+actor "Dispatcher" as Dispatcher
+actor "Pilot" as Pilot
+actor "Operator / auditor" as Auditor
+
+rectangle "Low-altitude platform API v2" as System {
+  component "IAM v2\nusers, departments,\nroles, permissions" as IAM
+  component "Resource v2\nDJI connections,\ndevices, bindings,\nsharing" as Resource
+  component "Inspection v2\nroutes, missions,\nflight sessions,\ntelemetry, media" as Inspection
+  component "System v2\nmenus, operation logs,\nlogin logs, file logs" as SystemV2
+  component "API v2 docs\nOpenAPI and Swagger" as Docs
+}
+
+cloud "DJI cloud upstream" as DJI
+database "Django database\nv2_* tables" as DB
+node "Object storage\nlocal / S3 / MinIO" as Storage
+component "DJI upstream mock\nlocal regression only" as Mock
+
+PlatformAdmin --> IAM : manage platform scope
+PlatformAdmin --> Resource : manage all connections
+DepartmentAdmin --> Resource : manage department resources
+DepartmentAdmin --> IAM : manage department users
+Dispatcher --> Inspection : create and dispatch missions
+Pilot --> Inspection : execute assigned missions
+Auditor --> SystemV2 : inspect logs and evidence
+
+System --> DB : read / write accepted state
+Inspection --> Storage : route covers,\nKMZ files, media URLs
+Resource --> DJI : discover resources,\nlogin, MQTT credentials
+Inspection --> DJI : upload wayline,\nstart task, live,\ncamera, media query
+DJI --> Inspection : internal media callbacks,\nstatus events
+Mock ..> Resource : local upstream replacement
+Mock ..> Inspection : local upstream replacement
+Docs --> System : schema contract for frontend
+
+@enduml

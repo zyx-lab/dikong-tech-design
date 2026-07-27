@@ -1,0 +1,45 @@
+@startuml mission_lifecycle_state
+title Inspection mission lifecycle audit view
+
+[*] --> Pending : create mission
+
+state Pending {
+  entry / snapshot route and assigned resources
+  do / wait for dispatcher or pilot action
+}
+
+Pending --> Running : start [preflight passes] / create FlightSession
+Pending --> Failed : start [preflight blocks or upstream failure] / record failure_reason
+Pending --> Canceled : cancel [not started] / record cancel_reason
+
+state Running {
+  entry / set started_at
+  do / collect telemetry, live state, and DJI status events
+  exit / set finished_at or canceled_at
+}
+
+Running --> Completed : complete or DJI completed / create InspectionFlightRecord
+Running --> Failed : DJI failed or service error / close session
+Running --> Canceled : safety_abort or DJI canceled / close session
+
+Completed --> MediaSyncPending : schedule media sync [syncable execution]
+Completed --> [*] : no media sync needed
+Failed --> [*]
+Canceled --> [*]
+
+state MediaSyncPending as "Media sync pending" {
+  entry / set next_run_at and deadline_at
+}
+MediaSyncPending --> MediaSyncRunning : worker claims due state
+MediaSyncRunning --> MediaSyncDone : sync succeeds / refresh counts
+MediaSyncRunning --> MediaSyncPending : sync fails [before deadline] / backoff retry
+MediaSyncRunning --> MediaSyncFailed : sync fails [deadline reached]
+MediaSyncDone --> [*]
+MediaSyncFailed --> [*]
+
+note right of Running
+  Audit check: every terminal transition
+  should preserve operator/upstream cause.
+end note
+
+@enduml

@@ -110,6 +110,6 @@ export DB_ENGINE=sqlite
 export DJANGO_TEST_FAST_PASSWORD_HASHERS=1
 python manage.py check
 python manage.py makemigrations --check --dry-run
-python -m compileall -q apps config scripts tools
+python -m compileall -q apps config scripts
 scripts/test_v2_regression.sh fast
 ```

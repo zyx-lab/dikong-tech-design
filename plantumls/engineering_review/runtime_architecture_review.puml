@@ -1,0 +1,62 @@
+@startuml runtime_architecture_review
+title API v2 runtime architecture review view
+left to right direction
+skinparam componentStyle rectangle
+
+actor "Frontend client" as Frontend
+actor "DJI callback sender" as DjiCallback
+
+rectangle "HTTP trust boundary" {
+  component "Django URL routing\nconfig/urls.py" as Urls
+  component "Bearer auth\napps/access" as Auth
+  component "Business response envelope\napps/common" as Common
+  component "API v2 route aggregator\napps/api_v2" as ApiV2
+}
+
+rectangle "Business modules" {
+  component "IAM v2" as IAM
+  component "Resource v2" as Resource
+  component "Inspection v2" as Inspection
+  component "System v2" as SystemV2
+  component "Audit v2 service" as Audit
+}
+
+rectangle "Integration boundary" {
+  component "DJI gateway\napps/dji_cloud/gateway.py" as DjiGateway
+  component "DJI worker\nrun_v2_dji_worker.py" as Worker
+  component "DJI mock\napps/dji_mock" as DjiMock
+}
+
+database "Primary DB\nv2 tables + auth tables" as DB
+node "Object storage\nroute cover + KMZ" as Storage
+cloud "DJI cloud" as DJI
+
+Frontend --> Urls : /api/v2/*
+Urls --> Auth : authenticate session
+Auth --> ApiV2 : authenticated request
+ApiV2 --> IAM : iam URLs
+ApiV2 --> Resource : resource URLs
+ApiV2 --> Inspection : inspection URLs
+ApiV2 --> SystemV2 : system URLs
+
+IAM --> DB : users, roles,\ndepartments
+Resource --> DB : connections,\nresources, bindings
+Inspection --> DB : routes, missions,\nsessions, media
+SystemV2 --> DB : logs
+Audit --> DB : operation log entries
+
+Resource --> Audit : log resource changes
+Inspection --> Audit : log mission actions
+Resource --> DjiGateway : discover / credential calls
+Inspection --> DjiGateway : wayline, task,\nlive, camera, media
+DjiGateway --> DJI : upstream HTTP
+Worker --> DJI : MQTT subscribe
+Worker --> Resource : device telemetry
+Worker --> Inspection : mission status,\nmedia sync
+DjiCallback --> Inspection : /api/internal/dji/callbacks/*
+Inspection --> Storage : save / read objects
+DjiMock ..> DjiGateway : local regression target
+
+Common ..> ApiV2 : standard payload shape
+
+@enduml

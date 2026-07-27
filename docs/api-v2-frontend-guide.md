@@ -459,7 +459,7 @@ POST /api/v2/inspection/media-files/{id}/refresh-url
 7. 通过 `GET /api/v2/iam/accounts?roleCode=pilot&profileType=pilot&qualified=true` 选择候选飞手账号，并在 `POST /api/v2/inspection/missions` 中提交 `pilotAccountProfileId`。
 8. `POST /api/v2/inspection/missions/{id}/preflight-check` 做启动前检查。
 9. `POST /api/v2/inspection/missions/{id}/start` 启动任务。
-10. `GET /api/v2/inspection/active-flights` 和 `GET /api/v2/inspection/telemetry/snapshots` 展示飞行过程；Dock 自动模式需要手动拉 DJI job 状态时调用 `cloud-execution/refresh`，Pilot2 手动模式不调用该接口。
+10. `GET /api/v2/inspection/active-flights` 展示飞行过程；`POST /api/v2/inspection/telemetry/snapshots` 是遥测上报接口。Dock 自动模式需要手动拉 DJI job 状态时调用 `cloud-execution/refresh`，Pilot2 手动模式不调用该接口。
 11. `POST /api/v2/inspection/missions/{id}/complete`、`cancel`、`fail` 或 `abort` 结束任务。
 
 创建 Pilot2 手动执行任务的最小请求体示例：
