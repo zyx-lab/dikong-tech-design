@@ -14,10 +14,10 @@
 
 ## 10 分钟接入流程
 
-1. 确认后端已经创建 v2 平台超管账号。本地联调没有固定内置业务账号；需要重置账号时让后端执行：
+1. 确认后端已经创建 v2 平台业务管理员账号。本地联调没有固定内置业务账号；需要重置账号时让后端执行：
 
    ```bash
-   python manage.py bootstrap_v2_system --reset --username <super_username> --password '<strong_password>' --noinput
+   python manage.py bootstrap_v2_system --reset --username <platform_admin_username> --password '<strong_password>' --noinput
    ```
 
    若需要一组前端联调账号，让后端执行：
@@ -201,12 +201,12 @@ v2 权限码由后端注册，格式固定为 `<domain>:<resource>:<action>`，�
 - `MENU`：角色被授予该菜单，并且用户拥有菜单绑定权限中的任意一个。
 - `BUTTON`：角色被授予该按钮，并且用户拥有按钮绑定的权限码。
 
-`GET /api/v2/iam/roles` 返回全局角色目录。部门管理员只能给本部门及下级账号分配 `assignableByDepartmentAdmin=true` 且数据范围不是 `ALL` 的角色；`platform_super_admin` 是内置系统角色，不应作为普通业务角色分配。
+`GET /api/v2/iam/roles` 返回全局角色目录。部门管理员只能给本部门及下级账号分配 `assignableByDepartmentAdmin=true` 且数据范围不是 `ALL` 的角色；`platform_super_admin` 是内置系统角色，只给平台业务管理员使用。
 
 初始化 v2 系统使用管理命令，不提供前端 setup API，也不内置固定种子账号：
 
 ```bash
-python manage.py bootstrap_v2_system --reset --username <super_username> --password '<strong_password>' --noinput
+python manage.py bootstrap_v2_system --reset --username <platform_admin_username> --password '<strong_password>' --noinput
 ```
 
 前端联调账号使用显式开关生成，不随普通初始化自动创建：

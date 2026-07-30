@@ -1,4 +1,4 @@
-# 开发者 Onboarding 手册
+# 开发者手册
 
 本文面向第一次参与低空平台 API v2 开发的后端工程师。完成后，你应该能够在本地启动服务、理解一次请求经过的主要边界、完成小改动并通过项目验证门禁。
 
@@ -63,11 +63,11 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 
 ### 2.2 完整集成环境
 
-完整环境的启动、初始化、日志和重置命令统一维护在 [本地部署说明](../DEPLOY.md)。最小启动命令是：
+完整环境的启动、初始化、日志和重置命令统一维护在 [部署说明](../DEPLOY.md)。最小启动命令是：
 
 ```bash
-OBJECT_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000 \
-docker compose up -d --build db redis minio minio-init web v2-dji-worker
+make env
+make up
 ```
 
 不要在需要 MQTT 或任务状态联调时只启动 `web`。不要随意执行 `docker compose down -v`，它会删除本地 PostgreSQL 和 MinIO 数据卷。

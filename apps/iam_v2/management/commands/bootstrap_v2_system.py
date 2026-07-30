@@ -11,12 +11,12 @@ from apps.iam_v2.bootstrap import (
 
 
 class Command(BaseCommand):
-    help = "初始化 v2 根部门、权限点、角色、菜单和首个超管账号"
+    help = "初始化 v2 根部门、权限点、角色、菜单和首个平台业务管理员账号"
 
     def add_arguments(self, parser):
         parser.add_argument("--reset", action="store_true", help="清空 v2 IAM 初始化数据后重建")
-        parser.add_argument("--username", default="", help="首个 v2 超管用户名；--reset 时必填")
-        parser.add_argument("--password", default="", help="首个 v2 超管密码；--reset 时必填")
+        parser.add_argument("--username", default="", help="首个 v2 平台业务管理员用户名；--reset 时必填")
+        parser.add_argument("--password", default="", help="首个 v2 平台业务管理员密码；--reset 时必填")
         parser.add_argument("--frontend-test-accounts", action="store_true", help="同步前端联调账号，默认用户名为 jnu_*")
         parser.add_argument("--frontend-prefix", default="jnu", help="前端联调账号名前缀")
         parser.add_argument("--frontend-password", default="FrontTest@123", help="前端联调账号统一密码")
@@ -33,8 +33,10 @@ class Command(BaseCommand):
             result = reset_v2_system(username=username, password=password)
             self.stdout.write(
                 self.style.SUCCESS(
-                    "v2 system reset complete: "
-                    f"root_department_id={result['root_department_id']} user_id={result['user_id']}"
+                    "v2 platform initialized: "
+                    f"root_department_id={result['root_department_id']} "
+                    f"platform_admin_user_id={result['user_id']} "
+                    f"username={username}"
                 )
             )
             if frontend_test_accounts:

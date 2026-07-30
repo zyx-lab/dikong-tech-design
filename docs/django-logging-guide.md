@@ -93,7 +93,6 @@ jq -c 'select(.event=="request_finished" and .request_id=="req-123")' logs/app.l
 - `response.body`
 - `context.user_id`
 - `context.username`
-- `context.tenant_code`
 
 ### 3. 查异常堆栈
 
@@ -162,7 +161,7 @@ jq -c 'select(.service=="object_storage")' logs/app.log logs/error.log
 
 - 路由没挂上
 - 请求参数不对
-- 权限 / 租户上下文不对
+- 权限 / 部门数据范围不对
 - 本地业务代码抛错
 
 ### 2. 上游超时或不可达
@@ -216,7 +215,7 @@ jq -c 'select(.service=="object_storage")' logs/app.log logs/error.log
 3. 如果返回 5xx，再查 `error.log` 里的 `request_exception`
 4. 再查同一个 `request_id` 下的 `external_call_started` / `external_call_finished` / `external_call_failed`
 5. 如果看到 `external_call_retry`，再看第一次失败和第二次成功/失败的差别
-6. 如果是 `capacity` 里找不到设备，再确认上游是否真的返回了设备、设备状态是否在线、是否被租户或 workspace 过滤
+6. 如果是 `capacity` 里找不到设备，再确认上游是否真的返回了设备、设备状态是否在线、是否被 DJI workspace 或本系统部门绑定过滤
 
 ## 看日志时要注意什么
 
@@ -255,7 +254,7 @@ tail -f logs/error.log
 ## 发现问题后看什么
 
 - 如果是业务参数问题，重点看 `request_finished` 里的 `request.body` 和 `response.body`
-- 如果是权限问题，重点看 `context.user_id`、`context.username`、`context.tenant_code`
+- 如果是权限问题，重点看 `context.user_id`、`context.username`、账号角色、部门和资源绑定关系
 - 如果是上云或外部调用问题，重点看 `external_call_failed`、`external_call_finished`、`service`、`operation`、`duration_ms`、`attempt`
 - 如果是 404 / 502 / timeout，一般先看 `error.log`，再回 `app.log` 复盘整条链路
 
