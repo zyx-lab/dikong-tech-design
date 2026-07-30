@@ -1,83 +1,111 @@
-# 启动说明
+# 启动配置填写说明
 
-本文档只说明如何把低空平台启动起来。本地调试和正式部署都先使用 Onboarding 生成 `.env`，实际服务统一使用 PostgreSQL、Redis、MinIO、Django ASGI 应用和 `v2-dji-worker`。
+这份文档只讲一件事：**从零把低空平台跑起来时，`.env` 应该怎么填，填完按什么顺序启动。**
 
-备份、恢复、更新、回滚、日志排障和停服命令放在启动后的运维页面：`http://127.0.0.1:8000/operations/`。
+当前 Docker Compose 会启动 PostgreSQL、Redis、MinIO、Django ASGI 应用和 `v2-dji-worker`。DJI 上云账号不写在 `.env`，由平台用户登录系统后创建 DJI 连接。
 
-## 需要准备
+## 1. 先创建 `.env`
 
-- Docker Desktop 或 Docker Engine
-- Docker Compose v2，也就是 `docker compose` 命令
-- 可用端口：
-  - `8080`：Onboarding 启动向导，只绑定 `127.0.0.1`
-  - `8000`：Django API / Swagger / WebSocket
-  - `9000`：MinIO S3 API
-  - `9001`：MinIO Console
-
-先确认 Docker 可用：
+在项目根目录创建 `.env`：
 
 ```bash
-docker --version
-docker compose version
+touch .env
+chmod 600 .env
 ```
 
-## 1. 启动 Onboarding
+`.env` 不要提交到 Git。Docker Compose 会自动读取这个文件。
 
-在项目根目录执行：
+## 2. 本地调试怎么填
 
-```bash
-docker compose up -d --build onboarding
-```
-
-本机打开：
-
-```text
-http://127.0.0.1:8080/onboarding/
-```
-
-如果在远程服务器上部署，通过 SSH 隧道访问，不要把 8080 暴露到公网：
-
-```bash
-ssh -L 8080:127.0.0.1:8080 <deploy-user>@<server>
-```
-
-## 2. 保存启动配置
-
-在 Onboarding 里按页面逐项填写：
-
-1. 选择场景：`本地调试` 或 `正式部署`
-2. PostgreSQL：数据库名、用户、密码
-3. Django：`SECRET_KEY`、允许访问的主机名
-4. MinIO：Access Key、Secret Key、bucket、浏览器访问地址
-5. DJI：不配置上游账号；平台用户登录后在系统内创建 DJI 连接
-
-常用默认写法：
+先用下面这份跑通系统：
 
 ```dotenv
 DB_ENGINE=postgres
+DB_NAME=dikong
+DB_USER=dikong_app
+DB_PASSWORD=dikong-local-postgres
 
-# 本地调试
+DJANGO_SECRET_KEY=dev-dikong-secret-key-change-me-32chars
 DJANGO_DEBUG=true
 DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
-OBJECT_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000
 
-# 正式部署
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=minioadmin123
+OBJECT_STORAGE_BUCKET_NAME=dikong-route-covers
+OBJECT_STORAGE_ENDPOINT_URL=http://<your-machine-ip>:9000
+
+DJI_INTERNAL_API_TOKEN=
+```
+
+本地如果只是先看 Swagger，可以临时用 `http://127.0.0.1:9000`。如果要上传文件或让前端打开文件链接，`OBJECT_STORAGE_ENDPOINT_URL` 必须是 **Django 容器和浏览器都能访问到** 的 MinIO 地址，通常填部署机器的局域网 IP：
+
+```dotenv
+OBJECT_STORAGE_ENDPOINT_URL=http://192.168.1.20:9000
+```
+
+## 3. 正式部署怎么填
+
+正式环境用强随机值，不要沿用本地默认密码：
+
+```dotenv
+DB_ENGINE=postgres
+DB_NAME=dikong
+DB_USER=dikong_app
+DB_PASSWORD=<strong-postgres-password>
+
+DJANGO_SECRET_KEY=<long-random-django-secret>
 DJANGO_DEBUG=false
 DJANGO_ALLOWED_HOSTS=api.example.com
+
+MINIO_ROOT_USER=dikong-storage
+MINIO_ROOT_PASSWORD=<strong-minio-password>
+OBJECT_STORAGE_BUCKET_NAME=dikong-route-covers
 OBJECT_STORAGE_ENDPOINT_URL=https://files.example.com
+
+DJI_INTERNAL_API_TOKEN=
 ```
 
-保存后向导会在项目根目录写入权限为 `600` 的 `.env`。普通 `web` 服务不能修改 `.env`。
-
-## 3. 启动系统
-
-保存配置后停止向导：
+生成随机值可以用：
 
 ```bash
-docker compose stop onboarding
+openssl rand -hex 32
 ```
 
-按顺序启动基础设施和应用：
+正式环境填写规则：
+
+- `DJANGO_DEBUG` 固定填 `false`
+- `DJANGO_ALLOWED_HOSTS` 只填域名或 IP，不要写 `http://`，不要写路径
+- `OBJECT_STORAGE_ENDPOINT_URL` 填用户浏览器能访问的对象存储根地址
+- `DB_PASSWORD`、`DJANGO_SECRET_KEY`、`MINIO_ROOT_PASSWORD` 必须换成强随机值
+- `DJI_INTERNAL_API_TOKEN` 默认留空，只有 DJI 上云侧要主动推送媒体上传结果时才填
+
+## 4. 每个变量是什么意思
+
+| 变量 | 怎么填 | 说明 |
+| --- | --- | --- |
+| `DB_ENGINE` | 固定 `postgres` | 本项目启动环境统一使用 PostgreSQL |
+| `DB_NAME` | 常用 `dikong` | PostgreSQL 数据库名 |
+| `DB_USER` | 常用 `dikong_app` | PostgreSQL 用户名 |
+| `DB_PASSWORD` | 本地可用示例值，正式用强密码 | PostgreSQL 密码 |
+| `DJANGO_SECRET_KEY` | 随机长字符串 | Django 签名密钥，正式环境必须保密 |
+| `DJANGO_DEBUG` | 本地 `true`，正式 `false` | 是否开启调试模式 |
+| `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` 或 `api.example.com` | 允许访问 API 的主机名，多个用英文逗号分隔 |
+| `MINIO_ROOT_USER` | 本地 `minioadmin`，正式自定义 | MinIO 管理员 Access Key |
+| `MINIO_ROOT_PASSWORD` | 本地 `minioadmin123`，正式用强密码 | MinIO 管理员 Secret Key |
+| `OBJECT_STORAGE_BUCKET_NAME` | 常用 `dikong-route-covers` | MinIO bucket 名 |
+| `OBJECT_STORAGE_ENDPOINT_URL` | 本地 MinIO 地址或正式文件域名 | API 返回文件 URL 时使用 |
+| `DJI_INTERNAL_API_TOKEN` | 可留空 | 可选媒体 Webhook 鉴权，不是 DJI 上游账号 |
+
+不用在 `.env` 里填这些：
+
+- `DB_HOST`：Compose 里已经给 `web` 固定为 `db`
+- `DB_PORT`：Compose 里已经固定为 `5432`
+- Redis 地址：Compose 里已经固定为 `redis://redis:6379/0`
+- DJI 上云 `baseUrl / username / password / loginFlag`：登录系统后创建 DJI 连接
+
+## 5. 启动系统
+
+填好 `.env` 后，在项目根目录执行：
 
 ```bash
 docker compose up -d db redis minio minio-init
@@ -85,16 +113,26 @@ docker compose up -d --build web v2-dji-worker
 docker compose ps
 ```
 
-正常情况下应该看到：
+正常状态：
 
-- `db`、`redis`、`minio` 为 healthy
-- `web` 为 Up
-- `v2-dji-worker` 为 Up
-- `minio-init` 已退出且成功完成
+- `db`、`redis`、`minio` 是 healthy
+- `web` 是 Up
+- `v2-dji-worker` 是 Up
+- `minio-init` 成功退出
 
-## 4. 创建首个账号
+如果你已经用旧 `.env` 启动过本地数据库，再改 `DB_NAME`、`DB_USER`、`DB_PASSWORD` 不会自动重建旧数据卷。本地想重来可以执行：
 
-全新数据库第一次启动后，创建平台管理员：
+```bash
+docker compose down -v
+docker compose up -d db redis minio minio-init
+docker compose up -d --build web v2-dji-worker
+```
+
+正式环境不要执行 `docker compose down -v`，它会删除 PostgreSQL 和 MinIO 数据卷。
+
+## 6. 创建首个账号
+
+全新数据库第一次启动后创建平台管理员：
 
 ```bash
 read -s ADMIN_PASSWORD
@@ -109,9 +147,11 @@ unset ADMIN_PASSWORD
 docker compose exec web python manage.py createsuperuser
 ```
 
-## 5. 最小验证
+平台业务账号和 Django Admin 是两套入口。普通业务配置优先用平台账号。
 
-本地调试默认验证：
+## 7. 最小验证
+
+本地调试：
 
 ```bash
 curl -fsS http://127.0.0.1:8000/api/v2/docs/schema/ > /dev/null
@@ -121,26 +161,29 @@ docker compose exec -T web python manage.py run_v2_dji_worker --once
 
 访问地址：
 
-- API 根服务：`http://127.0.0.1:8000`
-- API v2 Swagger：`http://127.0.0.1:8000/api/v2/docs/`
-- API v2 OpenAPI Schema：`http://127.0.0.1:8000/api/v2/docs/schema/`
+- API：`http://127.0.0.1:8000`
+- Swagger：`http://127.0.0.1:8000/api/v2/docs/`
 - MinIO Console：`http://127.0.0.1:9001`
-- MinIO S3 API：`http://127.0.0.1:9000`
 - 运维页面：`http://127.0.0.1:8000/operations/`
 
-正式部署时，把上面的 `127.0.0.1` 换成 Onboarding 中填写的实际访问域名。
+正式部署时，把 `127.0.0.1` 换成你在 `.env` 中配置的实际域名或 IP。
 
-## DJI 连接
+## 8. DJI 连接怎么配
 
-DJI 上云地址、账号、密码和 `loginFlag` 由平台用户登录系统后创建，保存到 PostgreSQL 的 `DjiConnection` 记录中，不写入 `.env`。
+`.env` 里不填 DJI 上云账号。
 
-创建后，资源发现、航线上传、任务、直播、相机控制和 `v2-dji-worker` 都读取这条连接配置。
+系统启动后，用平台管理员登录，再创建 DJI 连接，填写：
 
-如果 DJI 上云侧需要主动推送媒体上传结果，可以在 Onboarding 中填写可选媒体 Webhook Token，然后让上云侧请求：
-
-```http
-POST http://<django-host>:8000/api/internal/dji/callbacks/media-upload
-X-DJI-Internal-Token: <shared-callback-token>
+```json
+{
+  "name": "正式 DJI 上云",
+  "baseUrl": "https://dji-upstream.example.com",
+  "username": "<upstream-user>",
+  "password": "<upstream-password>",
+  "loginFlag": 1
+}
 ```
 
-不配置该 token 时，媒体 Webhook 会被拒绝，这是正常的可选状态。任务完成同步、前端手动刷新和历史回填命令仍可用于媒体同步。
+这条记录保存到 PostgreSQL。资源发现、航线上传、任务、直播、相机控制和 `v2-dji-worker` 都从这条记录读取 DJI 上游配置。
+
+`DJI_INTERNAL_API_TOKEN` 只用于可选媒体 Webhook。如果上云侧不主动推送媒体上传结果，就留空。

@@ -5,7 +5,7 @@
 ## 当前入口
 
 - API v2：`/api/v2/*`
-- 启动 Onboarding：`/onboarding/`
+- 可选启动向导：`/onboarding/`
 - 运维页面：`/operations/`
 - OpenAPI JSON：`/api/v2/docs/schema/`
 - Swagger UI：`/api/v2/docs/`
@@ -45,17 +45,9 @@
 
 ## 本地运行
 
-本地 Docker 调试也从启动向导开始：
+先按 [启动配置填写说明](DEPLOY.md) 创建项目根目录 `.env`，然后启动服务：
 
 ```bash
-docker compose up -d --build onboarding
-open http://127.0.0.1:8080/onboarding/
-```
-
-按向导保存 `.env` 后启动系统：
-
-```bash
-docker compose stop onboarding
 docker compose up -d db redis minio minio-init
 docker compose up -d --build web v2-dji-worker
 ```
@@ -68,18 +60,7 @@ docker compose exec web python manage.py bootstrap_v2_system
 
 ## 对象存储
 
-航线封面和 KMZ 文件通过 Django storage 保存。默认使用本地文件系统；配置 `OBJECT_STORAGE_BACKEND=s3` 或 `OBJECT_STORAGE_BACKEND=minio` 后可切换到对象存储。
-
-常用变量：
-
-```bash
-export OBJECT_STORAGE_BACKEND=minio
-export OBJECT_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000
-export OBJECT_STORAGE_BUCKET_NAME=dikong-route-covers
-export OBJECT_STORAGE_ACCESS_KEY_ID=minioadmin
-export OBJECT_STORAGE_SECRET_ACCESS_KEY=minioadmin
-export OBJECT_STORAGE_REGION_NAME=us-east-1
-```
+航线封面和 KMZ 文件通过 Django storage 保存。Docker Compose 启动时使用 MinIO；`.env` 填写方式以 [DEPLOY.md](DEPLOY.md) 为准。
 
 相关维护命令：
 
