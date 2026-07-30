@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>生产部署 Onboarding | 低空平台</title>
+  <style>
+    :root { color-scheme: light; --ink:#17211b; --muted:#66716a; --line:#d9dfda; --paper:#f6f8f5; --white:#fff; --green:#176b45; --green-soft:#e8f3ec; --amber:#b65f17; --code:#15221b; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+    button,a { font:inherit; }
+    a { color:var(--green); text-underline-offset:3px; }
+    .shell { display:grid; grid-template-columns:240px minmax(0,920px); gap:48px; width:min(1240px,calc(100% - 48px)); margin:0 auto; }
+    aside { position:sticky; top:0; height:100vh; padding:32px 0; border-right:1px solid var(--line); }
+    .brand { display:flex; align-items:center; gap:10px; font-weight:760; font-size:16px; }
+    .mark { display:grid; place-items:center; width:32px; height:32px; border-radius:7px; background:var(--green); color:white; }
+    .eyebrow { margin:34px 0 8px; color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; }
+    nav a { display:block; padding:8px 12px; margin-left:-12px; color:var(--muted); text-decoration:none; border-left:2px solid transparent; }
+    nav a:hover { color:var(--ink); border-color:var(--green); }
+    .aside-note { position:absolute; bottom:32px; padding-right:28px; color:var(--muted); font-size:12px; }
+    main { padding:56px 0 80px; }
+    .kicker { color:var(--green); font-weight:700; }
+    h1 { max-width:720px; margin:10px 0 14px; font-size:clamp(34px,5vw,58px); line-height:1.08; letter-spacing:0; }
+    .lead { max-width:680px; margin:0 0 36px; color:var(--muted); font-size:17px; }
+    .summary { display:grid; grid-template-columns:repeat(4,1fr); border:1px solid var(--line); background:var(--white); }
+    .summary div { padding:18px; border-right:1px solid var(--line); }
+    .summary div:last-child { border:0; }
+    .summary b { display:block; color:var(--green); font-size:12px; }
+    .summary span { display:block; margin-top:4px; font-weight:700; }
+    section { padding-top:58px; scroll-margin-top:16px; }
+    h2 { margin:0 0 8px; font-size:25px; letter-spacing:0; }
+    .section-note { margin:0 0 22px; color:var(--muted); }
+    .mode-grid,.service-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .mode { padding:22px; border:1px solid var(--line); background:var(--white); }
+    .mode.recommended { border-top:3px solid var(--green); }
+    .tag { display:inline-block; margin-bottom:12px; padding:2px 7px; border-radius:4px; background:var(--green-soft); color:var(--green); font-size:11px; font-weight:700; }
+    .mode h3,.service h3 { margin:0 0 5px; font-size:17px; }
+    .mode p,.service p { margin:0; color:var(--muted); }
+    .step { display:grid; grid-template-columns:72px 1fr; padding:26px 0; border-top:1px solid var(--line); }
+    .step-no { color:var(--green); font:700 13px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .step h3 { margin:0 0 6px; font-size:18px; }
+    .step p { margin:0 0 14px; color:var(--muted); }
+    .code { position:relative; overflow:auto; margin-top:10px; padding:16px 54px 16px 18px; border-radius:6px; background:var(--code); color:#e5eee8; font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre; }
+    .copy { position:absolute; top:9px; right:9px; width:32px; height:32px; border:1px solid #425249; border-radius:5px; background:#203029; color:#dce7df; cursor:pointer; }
+    .copy:hover { background:#2d4136; }
+    .service { padding:18px; border-left:3px solid var(--line); background:var(--white); }
+    .service.required { border-color:var(--green); }
+    .service.conditional { border-color:var(--amber); }
+    .service small { display:block; margin-top:10px; color:var(--muted); }
+    .checklist { border-top:1px solid var(--line); }
+    .check { display:flex; align-items:flex-start; gap:12px; padding:15px 0; border-bottom:1px solid var(--line); cursor:pointer; }
+    .check input { width:18px; height:18px; margin-top:2px; accent-color:var(--green); }
+    .check span { font-weight:650; }
+    .check small { display:block; color:var(--muted); font-weight:400; }
+    .footer-links { display:flex; gap:24px; margin-top:28px; }
+    @media (max-width:800px) { .shell { display:block; width:min(100% - 32px,680px); } aside { position:static; height:auto; padding:20px 0; border:0; border-bottom:1px solid var(--line); } nav,.aside-note,.eyebrow { display:none; } main { padding-top:38px; } .summary { grid-template-columns:1fr 1fr; } .summary div:nth-child(2) { border-right:0; } .summary div:nth-child(-n+2) { border-bottom:1px solid var(--line); } .mode-grid,.service-grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside>
+    <div class="brand"><span class="mark">DK</span>低空平台 API</div>
+    <div class="eyebrow">Onboarding 路线</div>
+    <nav>
+      <a href="#prepare">1. 部署前检查</a><a href="#config">2. 生产配置</a>
+      <a href="#services">3. 按顺序启动</a><a href="#verify">4. 上线验收</a>
+    </nav>
+    <p class="aside-note">本页用于第一次接手。详细规则仍以仓库文档为准。</p>
+  </aside>
+  <main>
+    <span class="kicker">PRODUCTION ONBOARDING</span>
+    <h1>接手低空平台，按生产顺序完成部署。</h1>
+    <p class="lead">正式环境统一使用 PostgreSQL。先确认域名、端口和持久化目录，再配置密钥，依次启动基础设施与应用，最后完成账号和业务链路验收。</p>
+    <div class="summary"><div><b>01</b><span>部署前检查</span></div><div><b>02</b><span>生产配置</span></div><div><b>03</b><span>按顺序启动</span></div><div><b>04</b><span>上线验收</span></div></div>
+
+    <section id="prepare">
+      <h2>部署前检查</h2><p class="section-note">以下条件没有确认前，不要启动应用容器。</p>
+      <div class="mode-grid">
+        <article class="mode recommended"><span class="tag">运行环境</span><h3>主机与入口</h3><p>Docker Compose v2 可用；域名已解析；8000、9000、9001 按网络策略开放，公网入口由 HTTPS 反向代理承接。</p></article>
+        <article class="mode"><span class="tag">持久化</span><h3>数据与备份</h3><p>PostgreSQL 和 MinIO 数据卷位于持久磁盘；上线前明确备份、恢复和保留周期。</p></article>
+      </div>
+    </section>
+
+    <section id="config">
+      <h2>生产配置</h2><p class="section-note">在项目根目录创建仅部署主机可读的 <code>.env</code>。示例值必须全部替换，禁止提交仓库。</p>
+      <div class="step"><div class="step-no">01</div><div><h3>Django 与 PostgreSQL</h3><p>数据库容器和应用读取同一组账号配置。</p><div class="code">DB_ENGINE=postgres
+DB_NAME=dikong
+DB_USER=dikong_app
+DB_PASSWORD=&lt;strong-database-password&gt;
+DJANGO_SECRET_KEY=&lt;long-random-secret&gt;
+DJANGO_DEBUG=false
+DJANGO_ALLOWED_HOSTS=api.example.com<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">02</div><div><h3>MinIO 与内部回调</h3><p>对象存储 endpoint 必须是用户浏览器可访问的 HTTPS 地址。</p><div class="code">MINIO_ROOT_USER=&lt;storage-access-key&gt;
+MINIO_ROOT_PASSWORD=&lt;strong-storage-secret&gt;
+OBJECT_STORAGE_BUCKET_NAME=dikong-route-covers
+OBJECT_STORAGE_ENDPOINT_URL=https://files.example.com
+DJI_INTERNAL_API_TOKEN=&lt;shared-callback-token&gt;<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">03</div><div><h3>检查最终配置</h3><p>确认 Compose 展开结果中没有示例密码、开发密钥或错误域名。</p><div class="code">docker compose config<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+    </section>
+
+    <section id="services">
+      <h2>按顺序启动</h2><p class="section-note">正式环境六个服务都要部署；先让基础设施健康，再启动应用。</p>
+      <div class="service-grid">
+        <article class="service required"><h3>1. db · PostgreSQL 16</h3><p>业务数据、账号、权限和任务状态的唯一持久化数据库。</p><small>等待 healthy</small></article>
+        <article class="service required"><h3>2. redis</h3><p>Channels、WebSocket 广播和 DJI worker 协作。</p><small>等待 healthy</small></article>
+        <article class="service required"><h3>3. minio + minio-init</h3><p>对象存储常驻；初始化任务创建 bucket 后正常退出。</p><small>等待 healthy / completed</small></article>
+        <article class="service required"><h3>4. web + v2-dji-worker</h3><p>ASGI API 与 DJI MQTT 后台处理必须同时常驻。</p><small>保持 Up</small></article>
+      </div>
+      <div class="step"><div class="step-no">01</div><div><h3>启动基础设施</h3><div class="code">docker compose up -d db redis minio minio-init
+docker compose ps<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">02</div><div><h3>构建并启动应用</h3><p><code>web</code> 启动时自动执行迁移、权限目录同步和对象存储迁移。</p><div class="code">docker compose up -d --build web v2-dji-worker
+docker compose ps<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+    </section>
+
+    <section id="verify">
+      <h2>上线验收</h2><p class="section-note">先验证基础设施与迁移，再创建首个管理员，最后接入 DJI。</p>
+      <div class="step"><div class="step-no">01</div><div><h3>检查状态与迁移</h3><div class="code">docker compose ps
+docker compose exec -T web python manage.py showmigrations --plan
+docker compose exec -T web python manage.py check --deploy<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">02</div><div><h3>创建首个平台管理员</h3><p>仅限全新数据库首次部署。命令会重建 v2 初始化数据，已有业务数据时禁止使用 <code>--reset</code>。</p><div class="code">read -s ADMIN_PASSWORD
+docker compose exec web python manage.py bootstrap_v2_system --reset \
+  --username &lt;platform-admin&gt; --password "$ADMIN_PASSWORD" --noinput
+unset ADMIN_PASSWORD<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">03</div><div><h3>验证公开入口与后台任务</h3><div class="code">curl -fsS https://api.example.com/api/v2/docs/schema/ &gt; /dev/null
+curl -fsS https://files.example.com/minio/health/live &gt; /dev/null
+docker compose exec -T web python manage.py run_v2_dji_worker --once<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+
+      <div class="checklist">
+        <label class="check"><input type="checkbox"><span>全部常驻服务为 Up<small>db、redis、minio 同时为 healthy</small></span></label>
+        <label class="check"><input type="checkbox"><span>迁移完成且生产检查通过<small>确认没有未应用迁移和关键安全告警</small></span></label>
+        <label class="check"><input type="checkbox"><span>HTTPS 登录和文件访问正常<small>确认 Allowed Hosts、证书、Bearer 登录和对象存储域名</small></span></label>
+        <label class="check"><input type="checkbox"><span>备份与回滚已演练<small>至少验证 PostgreSQL 恢复和上一镜像版本回退</small></span></label>
+      </div>
+      <div class="footer-links"><a href="/api/v2/docs/">打开 Swagger</a><a href="/admin/">打开 Admin</a><a href="/api/v2/docs/schema/">查看 OpenAPI Schema</a></div>
+    </section>
+  </main>
+</div>
+<script>
+  document.querySelectorAll('.copy').forEach(button => button.addEventListener('click', async () => {
+    const command = button.parentElement.childNodes[0].textContent.trim();
+    await navigator.clipboard.writeText(command);
+    button.textContent = '✓';
+    setTimeout(() => button.textContent = '⧉', 1200);
+  }));
+</script>
+</body>
+</html>

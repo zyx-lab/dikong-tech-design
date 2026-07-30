@@ -5,6 +5,7 @@
 ## 当前入口
 
 - API v2：`/api/v2/*`
+- 生产部署 Onboarding：`/onboarding/`
 - OpenAPI JSON：`/api/v2/docs/schema/`
 - Swagger UI：`/api/v2/docs/`
 - DJI internal callback：`/api/internal/dji/callbacks/media-upload`
@@ -12,6 +13,8 @@
 - DJI upstream mock：`/__mock-dji__/api/v1/*`
 
 `/__mock-dji__/api/v1/*` 以及 `apps.dji_cloud.gateway` 中的 `/api/v1/manage/*`、`/api/v1/wayline/*`、`/api/v1/media/*` 是 DJI 云平台自身的上游协议路径，不是本系统对外业务 v1 API。
+
+新成员从 [开发者 Onboarding 手册](docs/onboarding.md) 开始。
 
 ## 保留模块
 
