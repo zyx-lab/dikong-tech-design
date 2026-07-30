@@ -5,8 +5,6 @@
 ## 当前入口
 
 - API v2：`/api/v2/*`
-- 可选启动向导：`/onboarding/`
-- 运维页面：`/operations/`
 - OpenAPI JSON：`/api/v2/docs/schema/`
 - Swagger UI：`/api/v2/docs/`
 - DJI internal callback：`/api/internal/dji/callbacks/media-upload`
@@ -14,8 +12,6 @@
 - DJI upstream mock：`/__mock-dji__/api/v1/*`
 
 `/__mock-dji__/api/v1/*` 以及 `apps.dji_cloud.gateway` 中的 `/api/v1/manage/*`、`/api/v1/wayline/*`、`/api/v1/media/*` 是 DJI 云平台自身的上游协议路径，不是本系统对外业务 v1 API。
-
-新成员从 [开发者 Onboarding 手册](docs/onboarding.md) 开始。
 
 ## 保留模块
 
@@ -45,7 +41,14 @@
 
 ## 本地运行
 
-先按 [启动配置填写说明](DEPLOY.md) 创建项目根目录 `.env`，然后启动服务：
+先复制默认配置，再按 [启动配置填写说明](DEPLOY.md) 修改项目根目录 `.env`：
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+然后启动服务：
 
 ```bash
 docker compose up -d db redis minio minio-init

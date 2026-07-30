@@ -5,8 +5,6 @@ from pathlib import Path
 from config.logging_config import build_logging_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-ONBOARDING_ENV_PATH = Path(os.getenv("ONBOARDING_ENV_PATH", str(BASE_DIR / ".env")))
-ONBOARDING_CONFIG_WRITABLE = os.getenv("ONBOARDING_CONFIG_WRITABLE", "false").lower() == "true"
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"

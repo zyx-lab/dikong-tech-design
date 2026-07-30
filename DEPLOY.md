@@ -4,20 +4,20 @@
 
 当前 Docker Compose 会启动 PostgreSQL、Redis、MinIO、Django ASGI 应用和 `v2-dji-worker`。DJI 上云账号不写在 `.env`，由平台用户登录系统后创建 DJI 连接。
 
-## 1. 先创建 `.env`
+## 1. 先复制 `.env.example`
 
-在项目根目录创建 `.env`：
+在项目根目录执行：
 
 ```bash
-touch .env
+cp .env.example .env
 chmod 600 .env
 ```
 
-`.env` 不要提交到 Git。Docker Compose 会自动读取这个文件。
+`.env.example` 是默认模板，可以提交；`.env` 是本机真实配置，不要提交。Docker Compose 会自动读取 `.env`。
 
 ## 2. 本地调试怎么填
 
-先用下面这份跑通系统：
+`.env.example` 已经填了本地调试默认值。刚复制出来时内容等价于：
 
 ```dotenv
 DB_ENGINE=postgres
@@ -37,7 +37,7 @@ OBJECT_STORAGE_ENDPOINT_URL=http://<your-machine-ip>:9000
 DJI_INTERNAL_API_TOKEN=
 ```
 
-本地如果只是先看 Swagger，可以临时用 `http://127.0.0.1:9000`。如果要上传文件或让前端打开文件链接，`OBJECT_STORAGE_ENDPOINT_URL` 必须是 **Django 容器和浏览器都能访问到** 的 MinIO 地址，通常填部署机器的局域网 IP：
+本地如果只是先看 Swagger，可以直接用默认的 `http://127.0.0.1:9000`。如果要上传文件或让另一台机器上的前端打开文件链接，`OBJECT_STORAGE_ENDPOINT_URL` 必须改成浏览器能访问到的 MinIO 地址，例如：
 
 ```dotenv
 OBJECT_STORAGE_ENDPOINT_URL=http://192.168.1.20:9000
@@ -164,7 +164,6 @@ docker compose exec -T web python manage.py run_v2_dji_worker --once
 - API：`http://127.0.0.1:8000`
 - Swagger：`http://127.0.0.1:8000/api/v2/docs/`
 - MinIO Console：`http://127.0.0.1:9001`
-- 运维页面：`http://127.0.0.1:8000/operations/`
 
 正式部署时，把 `127.0.0.1` 换成你在 `.env` 中配置的实际域名或 IP。
 
