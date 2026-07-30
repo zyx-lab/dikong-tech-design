@@ -58,6 +58,7 @@ class ObjectStorageSettingsTests(SimpleTestCase):
                 "OBJECT_STORAGE_SECRET_ACCESS_KEY": "minioadmin123",
                 "OBJECT_STORAGE_BUCKET_NAME": "dikong-route-covers",
                 "OBJECT_STORAGE_ENDPOINT_URL": "https://minio.example.test",
+                "OBJECT_STORAGE_PUBLIC_ENDPOINT_URL": "https://files.example.test",
                 "AWS_S3_ADDRESSING_STYLE": "path",
                 "DB_ENGINE": "sqlite",
             }
@@ -72,7 +73,8 @@ class ObjectStorageSettingsTests(SimpleTestCase):
                     "from django.conf import settings; "
                     "assert settings.STORAGES['default']['BACKEND'] == 'apps.access.storage_backends.LoggedS3Storage'; "
                     "assert settings.AWS_S3_ADDRESSING_STYLE == 'path'; "
-                    "assert settings.AWS_QUERYSTRING_EXPIRE == 3600"
+                    "assert settings.AWS_QUERYSTRING_EXPIRE == 3600; "
+                    "assert settings.OBJECT_STORAGE_PUBLIC_ENDPOINT_URL == 'https://files.example.test'"
                 ),
             ],
             check=False,

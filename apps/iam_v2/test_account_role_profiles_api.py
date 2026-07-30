@@ -4,7 +4,15 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus, UserStatus
-from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountRoleAssignment, V2Role
+from apps.iam_v2.models import (
+    Department,
+    FixedRole,
+    V2AccountProfile,
+    V2AccountQualification,
+    V2AccountRoleAssignment,
+    V2AccountRoleProfile,
+    V2Role,
+)
 
 User = get_user_model()
 
@@ -89,6 +97,61 @@ class IamV2AccountRoleProfilesApiTests(TestCase):
             format="json",
         )
         self.assertEqual(qualification_response.status_code, 201, getattr(qualification_response, "data", qualification_response.content))
+
+    def test_deleted_account_role_profile_should_release_profile_type_key(self):
+        self.client.force_authenticate(self.department_admin)
+        create_response = self.client.post(
+            f"/api/v2/iam/accounts/{self.pilot_account.id}/profiles",
+            self.profile_payload(),
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, 201, getattr(create_response, "data", create_response.content))
+
+        delete_response = self.client.delete(f"/api/v2/iam/accounts/{self.pilot_account.id}/profiles/{FixedRole.PILOT}")
+        self.assertEqual(delete_response.status_code, 200, getattr(delete_response, "data", delete_response.content))
+
+        recreate_response = self.client.post(
+            f"/api/v2/iam/accounts/{self.pilot_account.id}/profiles",
+            self.profile_payload(),
+            format="json",
+        )
+
+        self.assertEqual(recreate_response.status_code, 201, getattr(recreate_response, "data", recreate_response.content))
+        self.assertEqual(
+            V2AccountRoleProfile.objects.filter(
+                account_profile=self.pilot_account,
+                profile_type=FixedRole.PILOT,
+                deleted_at__isnull=True,
+            ).count(),
+            1,
+        )
+
+    def test_deleted_account_qualification_should_release_certificate_key(self):
+        self.client.force_authenticate(self.department_admin)
+        self.create_pilot_profile_and_qualification(account_id=self.pilot_account.id, certificate_no="CERT-RECREATE-001")
+        qualification = V2AccountQualification.objects.get(
+            account_profile=self.pilot_account,
+            certificate_no="CERT-RECREATE-001",
+        )
+
+        delete_response = self.client.delete(f"/api/v2/iam/accounts/{self.pilot_account.id}/qualifications/{qualification.id}")
+        self.assertEqual(delete_response.status_code, 200, getattr(delete_response, "data", delete_response.content))
+
+        recreate_response = self.client.post(
+            f"/api/v2/iam/accounts/{self.pilot_account.id}/qualifications",
+            self.qualification_payload(certificate_no="CERT-RECREATE-001"),
+            format="json",
+        )
+
+        self.assertEqual(recreate_response.status_code, 201, getattr(recreate_response, "data", recreate_response.content))
+        self.assertEqual(
+            V2AccountQualification.objects.filter(
+                account_profile=self.pilot_account,
+                certificate_no="CERT-RECREATE-001",
+                deleted_at__isnull=True,
+            ).count(),
+            1,
+        )
 
     def test_profile_types_should_expose_builtin_readonly_types_and_allow_custom_role_types(self):
         self.client.force_authenticate(self.super_user)

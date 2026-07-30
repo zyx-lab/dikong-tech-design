@@ -82,6 +82,34 @@ class ResourceV2MqttWebSocketTests(TransactionTestCase):
     def test_websocket_should_authenticate_subscribe_and_stream_realtime_messages_only(self):
         async_to_sync(self._run_subscribe_realtime_only)(self.access_token())
 
+    def test_websocket_should_not_receive_mqtt_messages_before_subscribe(self):
+        async_to_sync(self._run_no_push_before_subscribe)(self.access_token())
+
+    async def _run_no_push_before_subscribe(self, token: str):
+        communicator = WebsocketCommunicator(application, f"/ws/v2/dji/mqtt?token={token}")
+        connected, _subprotocol = await communicator.connect()
+        self.assertTrue(connected)
+
+        await get_channel_layer().group_send(
+            MQTT_BROADCAST_GROUP,
+            {
+                "type": "mqtt.message",
+                "message": {
+                    "type": "mqtt.message",
+                    "connectionId": self.connection.id,
+                    "topic": "thing/product/DRONE-WS-001/osd",
+                    "topicKind": "osd",
+                    "deviceSn": self.drone.device_sn,
+                    "receivedAt": timezone.now().isoformat(),
+                    "sequence": 99,
+                    "rawPayload": {"data": {"latitude": 31.99}},
+                },
+            },
+        )
+
+        self.assertTrue(await communicator.receive_nothing(timeout=0.1, interval=0.01))
+        await communicator.disconnect()
+
     async def _run_subscribe_realtime_only(self, token: str):
         communicator = WebsocketCommunicator(application, f"/ws/v2/dji/mqtt?token={token}")
         connected, _subprotocol = await communicator.connect()

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.conf import settings
 from storages.backends.s3 import S3Storage
+from storages.utils import clean_name
 
 from apps.access.external_call_logging import (
     log_external_call_failed,
@@ -36,6 +38,37 @@ class LoggedS3Storage(S3Storage):
         if content is not None:
             payload["content"] = redact_payload(content)
         return payload
+
+    def _rewrite_public_endpoint_url(self, url: str) -> str:
+        public_endpoint = str(getattr(settings, "OBJECT_STORAGE_PUBLIC_ENDPOINT_URL", "") or "").rstrip("/")
+        internal_endpoint = str(getattr(self, "endpoint_url", "") or "").rstrip("/")
+        if not public_endpoint or not internal_endpoint:
+            return url
+        if url == internal_endpoint:
+            return public_endpoint
+        if url.startswith(f"{internal_endpoint}/"):
+            return f"{public_endpoint}{url[len(internal_endpoint):]}"
+        return url
+
+    def _public_presigned_url(self, name, parameters=None, expire=None, http_method=None) -> str | None:
+        public_endpoint = str(getattr(settings, "OBJECT_STORAGE_PUBLIC_ENDPOINT_URL", "") or "").rstrip("/")
+        if not public_endpoint or self.custom_domain or not self.querystring_auth:
+            return None
+        normalized_name = self._normalize_name(clean_name(name))
+        params = (parameters or {}).copy()
+        params["Bucket"] = self.bucket_name
+        params["Key"] = normalized_name
+        if expire is None:
+            expire = self.querystring_expire
+        client = self._create_session().client(
+            "s3",
+            region_name=self.region_name,
+            use_ssl=self.use_ssl,
+            endpoint_url=public_endpoint,
+            config=self.client_config,
+            verify=self.verify,
+        )
+        return client.generate_presigned_url("get_object", Params=params, ExpiresIn=expire, HttpMethod=http_method)
 
     def _save(self, name, content):
         call = log_external_call_started(
@@ -106,9 +139,12 @@ class LoggedS3Storage(S3Storage):
             attempt=1,
         )
         try:
-            result = super().url(name, parameters=parameters, expire=expire, http_method=http_method)
+            result = self._public_presigned_url(name, parameters=parameters, expire=expire, http_method=http_method)
+            if result is None:
+                result = super().url(name, parameters=parameters, expire=expire, http_method=http_method)
         except Exception as exc:
             log_external_call_failed(call, error=exc, attempt=1)
             raise
+        result = self._rewrite_public_endpoint_url(result)
         log_external_call_finished(call, response={"url": result}, attempt=1)
         return result

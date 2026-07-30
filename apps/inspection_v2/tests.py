@@ -35,21 +35,24 @@ from apps.inspection_v2.models import (
     CloudMediaFile,
     FlightRecordMediaSyncStatus,
     FlightSession,
+    FlightSessionStatus,
     InspectionFlightRecord,
     InspectionFlightRecordMediaSyncState,
     InspectionMission,
     LiveStreamStatus,
     MissionCloudExecution,
+    MissionExecutionMode,
     MissionResourceAssignment,
     MissionStatus,
     WaypointRoute,
     WaypointRouteCloudFile,
 )
-from apps.inspection_v2.services import apply_cloud_execution_event, apply_osd_telemetry
+from apps.inspection_v2.services import _coerce_media_datetime, apply_cloud_execution_event, apply_osd_telemetry
 from apps.inspection_v2.management.commands.run_v2_dji_worker import V2DjiWorker
 from apps.resource_v2.models import (
     BindingStatus,
     DjiConnection,
+    DjiConnectionStatus,
     DockResource,
     DroneTelemetrySnapshot,
     DroneResource,
@@ -464,6 +467,65 @@ class InspectionV2ApiTests(TestCase):
             response = self.client.post(f"/api/v2/inspection/missions/{mission_id}/start", {}, format="json")
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         return response
+
+    def create_cloud_execution_record(self, *, connection, dji_job_id: str, suffix: str):
+        drone = DroneResource.objects.create(
+            device_sn=f"DRONE-{suffix}",
+            name=f"无人机 {suffix}",
+            model="M30",
+            online_status=True,
+        )
+        dock = DockResource.objects.create(
+            device_sn=f"DOCK-{suffix}",
+            name=f"机场 {suffix}",
+            model="Dock 2",
+            online_status=True,
+        )
+        route = WaypointRoute.objects.create(
+            owner_department=self.owner_department,
+            name=f"连接匹配航线 {suffix}",
+            created_by_user=self.owner_dispatcher,
+        )
+        route_cloud_file = WaypointRouteCloudFile.objects.create(
+            route=route,
+            dji_connection=connection,
+            workspace_id=connection.workspace_id or f"workspace-{suffix.lower()}",
+            dji_file_id=f"wayline-{suffix.lower()}",
+            uploaded_by_user=self.owner_dispatcher,
+            uploaded_at=timezone.now(),
+        )
+        mission = InspectionMission.objects.create(
+            creator_department=self.owner_department,
+            primary_resource_owner_department=self.owner_department,
+            route=route,
+            name=f"连接匹配任务 {suffix}",
+            status=MissionStatus.PENDING,
+            drone=drone,
+            dock=dock,
+            pilot_account_profile=self.owner_pilot,
+            created_by_user=self.owner_dispatcher,
+        )
+        session = FlightSession.objects.create(
+            mission=mission,
+            status=FlightSessionStatus.RUNNING,
+            drone=drone,
+            dock=dock,
+            started_at=timezone.now(),
+            started_by_user=self.owner_dispatcher,
+        )
+        return MissionCloudExecution.objects.create(
+            mission=mission,
+            session=session,
+            dji_connection=connection,
+            route_cloud_file=route_cloud_file,
+            workspace_id=connection.workspace_id or route_cloud_file.workspace_id,
+            execution_mode=MissionExecutionMode.DOCK_AUTO,
+            dji_job_id=dji_job_id,
+            executor_sn=dock.device_sn,
+            drone_sn=drone.device_sn,
+            status=CloudExecutionStatus.STARTING,
+            started_at=timezone.now(),
+        )
 
     def test_route_create_should_upload_kmz_and_return_dji_file(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="合并创建航线")
@@ -1493,6 +1555,47 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(execution.progress_percent, 100)
         self.assertEqual(execution.live_status, LiveStreamStatus.STOPPED)
         stop_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0")
+
+    def test_media_datetime_should_accept_numeric_epoch_timestamp(self):
+        captured_at = _coerce_media_datetime(1_719_907_200_000)
+
+        self.assertEqual(captured_at, timezone.datetime.fromtimestamp(1_719_907_200, tz=dt_timezone.utc))
+
+    def test_cloud_execution_event_should_match_job_id_with_connection(self):
+        first_connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        second_connection = DjiConnection.objects.create(
+            owner_department=self.owner_department,
+            name="second dji connection",
+            base_url="https://dji-second.example.test",
+            username="admin",
+            password="secret",
+            workspace_id="workspace-second",
+            access_token="token",
+            created_by_user=self.owner_admin,
+        )
+        first_execution = self.create_cloud_execution_record(
+            connection=first_connection,
+            dji_job_id="shared-dji-job",
+            suffix="FIRST",
+        )
+        second_execution = self.create_cloud_execution_record(
+            connection=second_connection,
+            dji_job_id="shared-dji-job",
+            suffix="SECOND",
+        )
+
+        result = apply_cloud_execution_event(
+            dji_connection=second_connection,
+            dji_job_id="shared-dji-job",
+            status="running",
+            payload={"data": {"progress": 42}},
+        )
+
+        self.assertEqual(result["missionId"], second_execution.mission_id)
+        first_execution.refresh_from_db()
+        second_execution.refresh_from_db()
+        self.assertEqual(first_execution.progress_percent, 0)
+        self.assertEqual(second_execution.progress_percent, 42)
 
     def test_cloud_execution_refresh_should_update_running_job_without_finishing_record(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="刷新执行中航线")
@@ -3057,6 +3160,20 @@ class InspectionV2ApiTests(TestCase):
             payload={"method": "flighttask_progress", "data": {"job_id": "job-worker-001", "status": "ok", "progress": 100}},
         )
 
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        with patch("apps.inspection_v2.management.commands.run_v2_dji_worker.apply_cloud_execution_event") as progress_handler:
+            worker.handle_message(
+                "thing/product/DRONE-WORKER-001/events",
+                {"data": {"job_id": "job-worker-002", "status": "running"}},
+                connection=connection,
+            )
+        progress_handler.assert_called_once_with(
+            dji_connection=connection,
+            dji_job_id="job-worker-002",
+            status="running",
+            payload={"data": {"job_id": "job-worker-002", "status": "running"}},
+        )
+
         with patch("apps.inspection_v2.management.commands.run_v2_dji_worker.apply_device_status_event") as status_handler:
             worker.handle_message(
                 "sys/product/DRONE-WORKER-001/status",
@@ -3181,6 +3298,93 @@ class InspectionV2ApiTests(TestCase):
         health = MqttConnectionHealth.objects.get(dji_connection=connection)
         self.assertEqual(health.status, "ERROR")
         self.assertIn("MQTT loop returned", health.last_error)
+
+    def test_v2_dji_worker_forever_should_discover_new_active_connections(self):
+        first_connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        worker = V2DjiWorker()
+        started_connection_ids = []
+        second_connection_ids = []
+
+        class FakeThread:
+            def __init__(self, target, args, daemon):
+                del target, daemon
+                self.connection = args[0]
+
+            def start(self):
+                started_connection_ids.append(self.connection.id)
+
+            def is_alive(self):
+                return True
+
+        def wait(_timeout):
+            if not second_connection_ids:
+                second_connection = DjiConnection.objects.create(
+                    owner_department=self.owner_department,
+                    name="late active dji connection",
+                    base_url="https://late-dji.example.test",
+                    username="admin",
+                    password="secret",
+                    created_by_user=self.owner_admin,
+                )
+                second_connection_ids.append(second_connection.id)
+            else:
+                worker.stop_event.set()
+            return False
+
+        with patch("apps.inspection_v2.management.commands.run_v2_dji_worker.threading.Thread", FakeThread), patch.object(
+            worker.stop_event,
+            "wait",
+            side_effect=wait,
+        ):
+            worker.run_forever(reconnect_seconds=0)
+
+        self.assertEqual(started_connection_ids, [first_connection.id, second_connection_ids[0]])
+
+    def test_v2_dji_worker_connection_thread_should_exit_when_connection_is_disabled(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        worker = V2DjiWorker()
+        mqtt_config = SimpleNamespace(
+            mqtt_addr="tcp://broker.example.test:1883",
+            mqtt_username="mqtt-user",
+            mqtt_password="mqtt-pass",
+        )
+        loop_calls = []
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                self.on_connect = None
+                self.userdata = None
+                self.disconnected = False
+
+            def user_data_set(self, userdata):
+                self.userdata = userdata
+
+            def username_pw_set(self, username, password):
+                pass
+
+            def connect(self, host, port, keepalive):
+                self.on_connect(self, self.userdata, None, 0, None)
+
+            def subscribe(self, topic):
+                pass
+
+            def loop(self, timeout=1.0):
+                loop_calls.append(timeout)
+                DjiConnection.objects.filter(pk=connection.id).update(status=DjiConnectionStatus.DISABLED)
+                if len(loop_calls) > 1:
+                    worker.stop_event.set()
+                return 0
+
+            def disconnect(self):
+                self.disconnected = True
+
+        with patch(
+            "apps.inspection_v2.management.commands.run_v2_dji_worker.DjiConnectionGateway.get_workspace_config",
+            return_value=mqtt_config,
+        ), patch("paho.mqtt.client.Client", FakeClient):
+            worker._run_connection(connection)
+
+        self.assertEqual(len(loop_calls), 1)
 
     def test_v2_dji_worker_command_should_support_once_mode(self):
         with patch(

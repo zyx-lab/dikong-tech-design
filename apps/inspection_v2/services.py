@@ -1226,7 +1226,7 @@ def _coerce_media_datetime(value):
     if value in (None, ""):
         return None
     if isinstance(value, (int, float)):
-        return timezone.datetime.fromtimestamp(value / 1000 if value > 10_000_000_000 else value, tz=timezone.utc)
+        return timezone.datetime.fromtimestamp(value / 1000 if value > 10_000_000_000 else value, tz=dt_timezone.utc)
     if isinstance(value, str):
         parsed = parse_datetime(value)
         if parsed is None:
@@ -2396,21 +2396,27 @@ def _flight_record_from_terminal_execution(*, mission: InspectionMission, sessio
     return record
 
 
-def apply_cloud_execution_event(*, dji_job_id: str, status: str, payload: dict | None = None) -> dict:
+def apply_cloud_execution_event(
+    *,
+    dji_job_id: str,
+    status: str,
+    payload: dict | None = None,
+    dji_connection: DjiConnection | None = None,
+) -> dict:
     payload = payload if isinstance(payload, dict) else {}
-    execution = (
-        MissionCloudExecution.objects.select_related(
-            "mission",
-            "mission__creator_department",
-            "mission__primary_resource_owner_department",
-            "mission__route",
-            "mission__drone",
-            "mission__pilot_account_profile",
-            "session",
-        )
-        .filter(dji_job_id=dji_job_id)
-        .first()
+    executions = MissionCloudExecution.objects.select_related(
+        "dji_connection",
+        "mission",
+        "mission__creator_department",
+        "mission__primary_resource_owner_department",
+        "mission__route",
+        "mission__drone",
+        "mission__pilot_account_profile",
+        "session",
     )
+    if dji_connection is not None:
+        executions = executions.filter(dji_connection=dji_connection)
+    execution = executions.filter(dji_job_id=dji_job_id).first()
     if execution is None:
         return {"updated": 0, "ignored": 1}
 
@@ -2544,6 +2550,7 @@ def refresh_mission_cloud_execution_from_dji(*, mission: InspectionMission, cont
     cloud_status = _cloud_status_from_dji_job_status(_dji_job_status(matched_job))
     if cloud_status in {CloudExecutionStatus.COMPLETED, CloudExecutionStatus.CANCELED, CloudExecutionStatus.FAILED}:
         apply_cloud_execution_event(
+            dji_connection=execution.dji_connection,
             dji_job_id=execution.dji_job_id,
             status=_event_status_for_cloud_status(cloud_status),
             payload=matched_job,

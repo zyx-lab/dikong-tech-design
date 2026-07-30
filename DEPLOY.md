@@ -49,7 +49,8 @@ DJANGO_SECRET_KEY=<long-random-django-secret>
 DJANGO_DEBUG=false
 DJANGO_ALLOWED_HOSTS=api.example.com
 MINIO_ROOT_PASSWORD=<strong-minio-password>
-OBJECT_STORAGE_ENDPOINT_URL=https://files.example.com
+OBJECT_STORAGE_ENDPOINT_URL=http://minio:9000
+OBJECT_STORAGE_PUBLIC_ENDPOINT_URL=https://files.example.com
 ```
 
 随机值可以这样生成：
@@ -75,7 +76,8 @@ openssl rand -hex 32
 | `MINIO_API_PORT` | `9000` | 宿主机 9000 被占用时改 |
 | `MINIO_CONSOLE_PORT` | `9001` | 宿主机 9001 被占用时改 |
 | `OBJECT_STORAGE_BUCKET_NAME` | `dikong-route-covers` | 需要换 bucket 名时改 |
-| `OBJECT_STORAGE_ENDPOINT_URL` | `http://127.0.0.1:9000` | 填浏览器能访问的对象存储根地址 |
+| `OBJECT_STORAGE_ENDPOINT_URL` | `http://minio:9000` | web/worker 容器访问 MinIO 的内部地址；Compose 场景通常不改 |
+| `OBJECT_STORAGE_PUBLIC_ENDPOINT_URL` | `http://127.0.0.1:9000` | 浏览器访问 MinIO 的公开地址；正式环境填文件域名 |
 | `DJI_INTERNAL_API_TOKEN` | 空 | 只有启用 DJI 媒体内部回调鉴权时才填 |
 
 不要在 `.env` 里填这些：
@@ -202,4 +204,8 @@ Redis 用于 Django Channels WebSocket 跨进程广播，以及 `v2-dji-worker` 
 
 **MinIO 地址怎么填？**
 
-`OBJECT_STORAGE_ENDPOINT_URL` 必须是浏览器能访问的对象存储根地址。本机调试可以用 `http://127.0.0.1:9000`；前端在另一台机器上访问时，要改成宿主机 IP 或正式文件域名。
+`OBJECT_STORAGE_ENDPOINT_URL` 填容器内部地址，Compose 默认 `http://minio:9000`。
+
+`OBJECT_STORAGE_PUBLIC_ENDPOINT_URL` 填浏览器能访问的地址。本机调试默认 `http://127.0.0.1:9000`；如果 `.env` 改了 `MINIO_API_PORT=9100`，这里也改成 `http://127.0.0.1:9100`；正式环境填文件域名。
+
+旧版 `.env` 如果只有 `OBJECT_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000`，改成上面这两个变量；否则 web 容器会把 `127.0.0.1` 当成自己，连不到 MinIO。

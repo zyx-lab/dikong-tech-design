@@ -388,7 +388,11 @@ class V2AccountRoleProfile(TimeStampedModel):
         db_table = "v2_account_role_profiles"
         ordering = ["account_profile_id", "profile_type"]
         constraints = [
-            models.UniqueConstraint(fields=["account_profile", "profile_type"], name="uniq_v2_account_role_profile"),
+            models.UniqueConstraint(
+                fields=["account_profile", "profile_type"],
+                condition=Q(deleted_at__isnull=True),
+                name="uniq_v2_account_role_profile",
+            ),
         ]
         indexes = [
             models.Index(fields=["profile_type", "status", "deleted_at"], name="idx_v2_role_profile_type"),
@@ -422,6 +426,7 @@ class V2AccountQualification(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["account_profile", "profile_type", "qualification_type", "certificate_no"],
+                condition=Q(deleted_at__isnull=True),
                 name="uniq_v2_account_qualification",
             ),
         ]

@@ -168,6 +168,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "access.User"
 
 OBJECT_STORAGE_BACKEND = os.getenv("OBJECT_STORAGE_BACKEND", "filesystem").lower()
+OBJECT_STORAGE_PUBLIC_ENDPOINT_URL = os.getenv("OBJECT_STORAGE_PUBLIC_ENDPOINT_URL", "").strip()
 STORAGES = {
     "staticfiles": {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",

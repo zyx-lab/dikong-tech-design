@@ -26,6 +26,7 @@ class DjiMqttConsumer(AsyncJsonWebsocketConsumer):
         self.device_sns: set[str] = set()
         self.topic_kinds: set[str] = set()
         self.topics: set[str] = set()
+        self.subscribed = False
         await self.channel_layer.group_add(MQTT_BROADCAST_GROUP, self.channel_name)
         await self.accept()
 
@@ -48,6 +49,7 @@ class DjiMqttConsumer(AsyncJsonWebsocketConsumer):
         self.device_sns = set(subscription["deviceSns"])
         self.topic_kinds = set(subscription["topicKinds"])
         self.topics = set(subscription["topics"])
+        self.subscribed = True
         await self.send_json(
             {
                 "type": "subscription.accepted",
@@ -66,6 +68,8 @@ class DjiMqttConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(message)
 
     def _matches(self, message: dict) -> bool:
+        if not getattr(self, "subscribed", False):
+            return False
         if self.device_sns and message.get("deviceSn") not in self.device_sns:
             return False
         if self.topic_kinds and message.get("topicKind") not in self.topic_kinds:

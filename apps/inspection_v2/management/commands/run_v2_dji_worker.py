@@ -55,16 +55,19 @@ class V2DjiWorker:
         }
 
     def run_forever(self, *, reconnect_seconds: int = 5) -> None:
+        threads_by_connection_id: dict[int, threading.Thread] = {}
         while not self.stop_event.is_set():
             connections = list(DjiConnection.objects.filter(status=DjiConnectionStatus.ACTIVE).order_by("id"))
-            threads = [
-                threading.Thread(target=self._run_connection, args=(connection,), daemon=True)
-                for connection in connections
-            ]
-            for thread in threads:
+            for connection in connections:
+                thread = threads_by_connection_id.get(connection.id)
+                if thread is not None and thread.is_alive():
+                    continue
+                thread = threading.Thread(target=self._run_connection, args=(connection,), daemon=True)
                 thread.start()
-            while any(thread.is_alive() for thread in threads) and not self.stop_event.is_set():
-                self.stop_event.wait(1)
+                threads_by_connection_id[connection.id] = thread
+            for connection_id, thread in list(threads_by_connection_id.items()):
+                if not thread.is_alive():
+                    threads_by_connection_id.pop(connection_id, None)
             close_old_connections()
             self.stop_event.wait(reconnect_seconds)
 
@@ -72,6 +75,8 @@ class V2DjiWorker:
         import paho.mqtt.client as mqtt
 
         try:
+            if not self._connection_is_active(connection.id):
+                return
             mark_mqtt_health(
                 connection=connection,
                 status=MqttHealthStatus.CONNECTING,
@@ -116,6 +121,8 @@ class V2DjiWorker:
             )
             return
         while not self.stop_event.is_set():
+            if not self._connection_is_active(connection.id):
+                break
             try:
                 result_code = client.loop(timeout=1.0)
             except Exception as exc:
@@ -216,8 +223,15 @@ class V2DjiWorker:
             job_id = self._job_id_from_payload(payload)
             event_status = self._status_from_payload(payload)
             if job_id and event_status:
+                event_kwargs = {
+                    "dji_job_id": job_id,
+                    "status": event_status,
+                    "payload": payload,
+                }
+                if connection is not None:
+                    event_kwargs["dji_connection"] = connection
                 return self._with_message(
-                    apply_cloud_execution_event(dji_job_id=job_id, status=event_status, payload=payload),
+                    apply_cloud_execution_event(**event_kwargs),
                     message,
                 )
         return self._with_message({"updated": 0}, message)
@@ -238,6 +252,11 @@ class V2DjiWorker:
         if not connection_id:
             return None
         return DjiConnection.objects.filter(pk=connection_id).first()
+
+    @staticmethod
+    def _connection_is_active(connection_id: int) -> bool:
+        close_old_connections()
+        return DjiConnection.objects.filter(pk=connection_id, status=DjiConnectionStatus.ACTIVE).exists()
 
     @staticmethod
     def _device_sn_from_topic(topic: str) -> str:
