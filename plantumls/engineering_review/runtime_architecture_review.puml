@@ -1,62 +1,87 @@
 @startuml runtime_architecture_review
-title API v2 runtime architecture review view
+title API v2 deployment and runtime system view
 left to right direction
 skinparam componentStyle rectangle
 
+actor "Operator" as Operator
 actor "Frontend client" as Frontend
 actor "DJI callback sender" as DjiCallback
-
-rectangle "HTTP trust boundary" {
-  component "Django URL routing\nconfig/urls.py" as Urls
-  component "Bearer auth\napps/access" as Auth
-  component "Business response envelope\napps/common" as Common
-  component "API v2 route aggregator\napps/api_v2" as ApiV2
-}
-
-rectangle "Business modules" {
-  component "IAM v2" as IAM
-  component "Resource v2" as Resource
-  component "Inspection v2" as Inspection
-  component "System v2" as SystemV2
-  component "Audit v2 service" as Audit
-}
-
-rectangle "Integration boundary" {
-  component "DJI gateway\napps/dji_cloud/gateway.py" as DjiGateway
-  component "DJI worker\nrun_v2_dji_worker.py" as Worker
-  component "DJI mock\napps/dji_mock" as DjiMock
-}
-
-database "Primary DB\nv2 tables + auth tables" as DB
-node "Object storage\nroute cover + KMZ" as Storage
 cloud "DJI cloud" as DJI
 
-Frontend --> Urls : /api/v2/*
-Urls --> Auth : authenticate session
-Auth --> ApiV2 : authenticated request
-ApiV2 --> IAM : iam URLs
-ApiV2 --> Resource : resource URLs
-ApiV2 --> Inspection : inspection URLs
-ApiV2 --> SystemV2 : system URLs
+artifact ".env\ninfrastructure only" as Env
+component "Makefile\nmake env / up / verify / first-admin / urls" as Makefile
 
-IAM --> DB : users, roles,\ndepartments
-Resource --> DB : connections,\nresources, bindings
-Inspection --> DB : routes, missions,\nsessions, media
-SystemV2 --> DB : logs
-Audit --> DB : operation log entries
+node "Docker Compose instance\nsingle-tenant v2" as Compose {
+  database "PostgreSQL\nprimary business + auth data" as DB
+  queue "Redis\nChannels layer + MQTT heartbeat" as Redis
+  node "MinIO\nobject storage" as Storage
+  component "minio-init\ncreate bucket once, then exit" as MinioInit
+  component "web\nDjango ASGI\n/api/v2 /admin /ws" as Web
+  component "v2-dji-worker\nrun_v2_dji_worker" as Worker
+}
 
-Resource --> Audit : log resource changes
-Inspection --> Audit : log mission actions
-Resource --> DjiGateway : discover / credential calls
+rectangle "web business modules" {
+  component "access\nauth sessions" as Access
+  component "api_v2\nroute aggregator + OpenAPI" as ApiV2
+  component "iam_v2\ndepartments, roles, menus" as IAM
+  component "resource_v2\nDJI connections, resources, bindings" as Resource
+  component "inspection_v2\nroutes, missions, media" as Inspection
+  component "system_v2\nmenus + logs" as SystemV2
+  component "audit_v2\noperation audit" as Audit
+  component "dji_cloud gateway\nupstream HTTP client" as DjiGateway
+  component "dji_mock\nlocal upstream mock" as DjiMock
+}
+
+Operator --> Makefile : deployment commands
+Makefile --> Env : create/read
+Makefile --> Compose : up / ps / logs
+Makefile --> Web : first-admin / sync-catalog
+
+Env --> Web : Django, DB, MinIO config
+Env --> DB : database/user/password
+Env --> Storage : access key, bucket, endpoint
+
+Frontend --> Web : HTTP /api/v2/*\nWebSocket /ws/v2/dji/mqtt
+DjiCallback --> Web : /api/internal/dji/callbacks/*
+
+Web --> ApiV2 : route request
+ApiV2 --> Access : Bearer auth/session
+ApiV2 --> IAM : IAM APIs
+ApiV2 --> Resource : resource APIs
+ApiV2 --> Inspection : inspection APIs
+ApiV2 --> SystemV2 : system APIs
+
+Access --> DB : users + auth_sessions
+IAM --> DB : one root department,\nroles, permissions, profiles
+Resource --> DB : DJI connections,\nresources, bindings
+Inspection --> DB : routes, missions,\nrecords, media
+SystemV2 --> DB : login/log views
+Audit --> DB : operation logs
+
+Resource --> Audit : resource changes
+Inspection --> Audit : mission actions
+Resource --> DjiGateway : discover + credential calls
 Inspection --> DjiGateway : wayline, task,\nlive, camera, media
 DjiGateway --> DJI : upstream HTTP
-Worker --> DJI : MQTT subscribe
-Worker --> Resource : device telemetry
-Worker --> Inspection : mission status,\nmedia sync
-DjiCallback --> Inspection : /api/internal/dji/callbacks/*
-Inspection --> Storage : save / read objects
 DjiMock ..> DjiGateway : local regression target
 
-Common ..> ApiV2 : standard payload shape
+Web --> Redis : Channels receive,\nread worker heartbeat
+Worker --> Redis : publish MQTT envelope,\nwrite heartbeat TTL
+Worker --> DB : latest MQTT,\ntelemetry, sync state
+Worker --> DJI : HTTP sync + MQTT subscribe
+
+Web --> Storage : signed object URLs
+Inspection --> Storage : save/read objects
+MinioInit --> Storage : ensure bucket
+
+note right of Env
+No tenant or DJI upstream account lives here.
+Create departments, accounts, and DJI connections after login.
+end note
+
+note bottom of Compose
+Long-running: db, redis, minio, web, v2-dji-worker.
+minio-init is a one-shot bucket initializer.
+end note
 
 @enduml
