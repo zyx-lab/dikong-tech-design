@@ -9,7 +9,6 @@ Use them by question:
 - `runtime_architecture_review.puml`: review service boundaries, trust boundaries, sync/async paths, and shared stores.
 - `core_domain_relationships.puml`: understand core v2 domain ownership, route, mission, resource, execution, record, and media relationships.
 - `api_v2_request_review_sequence.puml`: review a normal authenticated API request and audit/logging evidence path.
-- `dji_mission_execution_sequence.puml`: review dock/Pilot2 mission dispatch, upstream callbacks, telemetry, completion, and media binding.
 - `redis_role.puml`: see Redis's two responsibilities only.
 - `redis_worker_collaboration_sequence.puml`: see how Redis and `v2-dji-worker` cooperate.
 - `dji_worker_loop.puml`: see the worker run loop only.
