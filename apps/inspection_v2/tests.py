@@ -59,6 +59,7 @@ from apps.resource_v2.models import (
     GatewayResource,
     MqttConnectionHealth,
     MqttLatestMessage,
+    PayloadResource,
     ResourceBinding,
     ResourceSharePermission,
     ResourceType,
@@ -200,6 +201,18 @@ class InspectionV2ApiTests(TestCase):
             bound_by_user=actor,
         )
         return dock
+
+    def bind_payload(self, department, actor, payload_sn, *, connection):
+        payload = PayloadResource.objects.create(payload_sn=payload_sn, name=f"{payload_sn} 负载", model="H20T", online_status=True)
+        ResourceBinding.objects.create(
+            resource_type=ResourceType.PAYLOAD,
+            resource_object_id=payload.id,
+            owner_department=department,
+            dji_connection=connection,
+            status=BindingStatus.ACTIVE,
+            bound_by_user=actor,
+        )
+        return payload
 
     def route_payload(self, name="一号航线"):
         return {
@@ -365,7 +378,7 @@ class InspectionV2ApiTests(TestCase):
             },
         )
 
-    def create_mission_by_api(self, user, *, route_id, drone_id, pilot_id, dock_id=None, executor_id=None, name="一号任务"):
+    def create_mission_by_api(self, user, *, route_id, drone_id, pilot_id, dock_id=None, executor_id=None, payload_id=None, name="一号任务"):
         self.authenticate(user)
         payload = {
             "name": name,
@@ -387,6 +400,8 @@ class InspectionV2ApiTests(TestCase):
             payload["dockId"] = dock_id
         if executor_id is not None:
             payload["executorId"] = executor_id
+        if payload_id is not None:
+            payload["payloadId"] = payload_id
         response = self.client.post(
             "/api/v2/inspection/missions",
             payload,
@@ -1346,6 +1361,74 @@ class InspectionV2ApiTests(TestCase):
         self.assertIn("dockId", str(missing_response.data))
         self.assertIn("executorId", str(missing_response.data))
         self.assertIn("二选一", str(both_response.data))
+
+    def test_mission_create_should_reject_payload_from_different_dji_connection(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="负载连接不一致航线")
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        dock = self.bind_dock(self.owner_department, self.owner_admin, "DOCK-PAYLOAD-MISMATCH-001", connection=connection)
+        other_connection = DjiConnection.objects.create(
+            owner_department=self.owner_department,
+            name="payload mismatch connection",
+            base_url="https://payload-mismatch.example.test",
+            username="admin",
+            password="secret",
+            created_by_user=self.owner_admin,
+        )
+        payload = self.bind_payload(self.owner_department, self.owner_admin, "PAYLOAD-MISMATCH-001", connection=other_connection)
+        self.authenticate(self.owner_dispatcher)
+
+        response = self.client.post(
+            "/api/v2/inspection/missions",
+            {
+                "name": "负载连接不一致任务",
+                "routeId": route["id"],
+                "droneId": self.drone.id,
+                "dockId": dock.id,
+                "pilotAccountProfileId": self.owner_pilot.id,
+                "payloadId": payload.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409, getattr(response, "data", response.content))
+        self.assertIn("负载必须与无人机属于同一个 DJI 连接", str(response.data))
+
+    def test_mission_preflight_and_start_should_reject_payload_from_different_dji_connection(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="负载启动连接不一致航线")
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        dock = self.bind_dock(self.owner_department, self.owner_admin, "DOCK-PAYLOAD-START-001", connection=connection)
+        other_connection = DjiConnection.objects.create(
+            owner_department=self.owner_department,
+            name="payload start mismatch connection",
+            base_url="https://payload-start-mismatch.example.test",
+            username="admin",
+            password="secret",
+            created_by_user=self.owner_admin,
+        )
+        payload = self.bind_payload(self.owner_department, self.owner_admin, "PAYLOAD-START-MISMATCH-001", connection=other_connection)
+        mission_payload = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            dock_id=dock.id,
+            pilot_id=self.owner_pilot.id,
+        )
+        InspectionMission.objects.filter(pk=mission_payload["id"]).update(payload_id=payload.id)
+
+        preflight_response = self.client.post(f"/api/v2/inspection/missions/{mission_payload['id']}/preflight-check", {}, format="json")
+
+        self.assertEqual(preflight_response.status_code, 200, getattr(preflight_response, "data", preflight_response.content))
+        self.assertFalse(preflight_response.data["data"]["canStart"])
+        checks = {item["code"]: item for item in preflight_response.data["data"]["checks"]}
+        self.assertEqual(checks["SAME_DJI_CONNECTION"]["status"], "FAIL")
+        self.assertEqual(checks["SAME_DJI_CONNECTION"]["detail"]["payloadDjiConnectionId"], other_connection.id)
+
+        with patch("apps.inspection_v2.services.DjiConnectionGateway.start_live") as start_live:
+            start_response = self.client.post(f"/api/v2/inspection/missions/{mission_payload['id']}/start", {}, format="json")
+
+        self.assertEqual(start_response.status_code, 409, getattr(start_response, "data", start_response.content))
+        self.assertIn("负载必须与无人机属于同一个 DJI 连接", str(start_response.data))
+        start_live.assert_not_called()
 
     def test_mission_preflight_check_should_report_offline_resources_without_calling_dji(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="预检离线航线")

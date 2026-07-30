@@ -1098,6 +1098,36 @@ class ApiV2SessionTests(TestCase):
         self.assertEqual(revoked_context_response.status_code, 401)
         self.assertEqual(revoked_context_response.data["code"], "A0401")
 
+    def test_v2_session_login_should_ignore_stale_bearer_header(self):
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer stale-access-token")
+
+        login_response = self.client.post(
+            "/api/v2/iam/session/login",
+            {"username": "v2_session_user", "password": "pass1234"},
+            format="json",
+        )
+
+        self.assertEqual(login_response.status_code, 200, getattr(login_response, "data", login_response.content))
+        self.assertEqual(login_response.data["data"]["user"]["username"], "v2_session_user")
+
+    def test_v2_session_refresh_should_ignore_stale_bearer_header(self):
+        login_response = self.client.post(
+            "/api/v2/iam/session/login",
+            {"username": "v2_session_user", "password": "pass1234"},
+            format="json",
+        )
+        self.assertEqual(login_response.status_code, 200, getattr(login_response, "data", login_response.content))
+
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer stale-access-token")
+        refresh_response = self.client.post(
+            "/api/v2/iam/session/refresh",
+            {"refreshToken": login_response.data["data"]["refreshToken"]},
+            format="json",
+        )
+
+        self.assertEqual(refresh_response.status_code, 200, getattr(refresh_response, "data", refresh_response.content))
+        self.assertNotEqual(refresh_response.data["data"]["accessToken"], login_response.data["data"]["accessToken"])
+
 
 class IamV2ApiTests(TestCase):
     def setUp(self):
@@ -1273,6 +1303,20 @@ class IamV2ApiTests(TestCase):
         )
         self.assertEqual(enable_log.before_data["status"], DirectoryStatus.DISABLED)
         self.assertEqual(enable_log.after_data["status"], DirectoryStatus.ACTIVE)
+
+    def test_audited_action_should_truncate_long_client_request_id(self):
+        request_id = "r" * 100
+
+        create_response = self.client.post(
+            "/api/v2/iam/departments",
+            {"name": "长请求 ID 审计部门", "parentId": self.root.id},
+            format="json",
+            HTTP_X_REQUEST_ID=request_id,
+        )
+
+        self.assertEqual(create_response.status_code, 201, getattr(create_response, "data", create_response.content))
+        audit_log = V2AuditLog.objects.get(action="create_department", target_type="v2_department")
+        self.assertEqual(audit_log.request_id, request_id[:64])
 
     def test_rejected_department_management_should_not_write_audit_logs(self):
         child = Department.objects.create(name="待拒绝部门", parent=self.root)

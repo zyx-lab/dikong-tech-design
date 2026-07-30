@@ -14,6 +14,7 @@ class EmptyResponseSerializer(serializers.Serializer):
 
 
 class SessionRefreshView(IamAPIView):
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     @extend_schema(

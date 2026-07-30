@@ -669,6 +669,8 @@ class RoleDetailView(V2IamAPIView):
             raise serializers.ValidationError({"id": ["内置系统角色不可通过接口更新"]})
         serializer = V2RoleWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if serializer.validated_data["code"] != role.code:
+            raise serializers.ValidationError({"code": ["角色编码不可通过详情接口修改"]})
         if V2Role.objects.exclude(pk=role.pk).filter(code=serializer.validated_data["code"]).exists():
             return _duplicate_payload_response({"code": ["角色编码已存在"]})
         before_data = V2RoleReadSerializer(role).data
@@ -706,6 +708,16 @@ class RoleDetailView(V2IamAPIView):
             return _not_found_response()
         if role.is_system or role.is_super_admin:
             raise serializers.ValidationError({"id": ["内置角色和超管角色不可删除"]})
+        if V2AccountRoleAssignment.objects.filter(role_code=role.code).exists():
+            return Response(
+                standard_error_payload(StandardCode.CONSTRAINT_CONFLICT, "角色已分配给账号，不能删除", {"code": [role.code]}),
+                status=status.HTTP_409_CONFLICT,
+            )
+        if V2ProfileType.objects.filter(role_code=role.code).exists():
+            return Response(
+                standard_error_payload(StandardCode.CONSTRAINT_CONFLICT, "角色已绑定档案类型，不能删除", {"code": [role.code]}),
+                status=status.HTTP_409_CONFLICT,
+            )
         data = V2RoleReadSerializer(role).data
         role.delete()
         log_v2_action(

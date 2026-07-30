@@ -44,6 +44,7 @@ def _authenticate_v2_user(*, username: str, password: str) -> V2RequestContext:
 
 
 class SessionLoginView(IamAPIView):
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     @extend_schema(

@@ -2,6 +2,12 @@ from apps.audit_v2.models import V2AuditLog
 from apps.common.request import resolve_client_ip
 
 
+def _request_id_for_audit(request) -> str:
+    if request is None:
+        return ""
+    return str(getattr(request, "request_id", "") or "")[:64]
+
+
 def log_v2_action(
     *,
     request,
@@ -27,5 +33,5 @@ def log_v2_action(
         before_data=before_data,
         after_data=after_data,
         ip=resolve_client_ip(request),
-        request_id=getattr(request, "request_id", "") if request is not None else "",
+        request_id=_request_id_for_audit(request),
     )

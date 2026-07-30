@@ -110,6 +110,47 @@ class V2PermissionClosureTests(TestCase):
         self.assertEqual(menu_response.status_code, 200, getattr(menu_response, "data", menu_response.content))
         self.assertEqual(menu_response.data["data"]["list"][0]["name"], "用户管理")
 
+    def test_custom_role_code_should_stay_immutable_when_assigned(self):
+        _user, account = create_v2_account(
+            username="assigned_custom_role_user",
+            department=self.flight,
+            role_codes=[self.viewer_role.code],
+        )
+        self.client.force_authenticate(self.super_user)
+
+        response = self.client.put(
+            f"/api/v2/iam/roles/{self.viewer_role.id}",
+            {
+                "code": "account_viewer_renamed",
+                "name": "账号查看员改名",
+                "status": DirectoryStatus.ACTIVE,
+                "assignableByDepartmentAdmin": True,
+                "dataScope": V2Role.DataScope.DEPT_AND_CHILDREN,
+                "sort": 50,
+                "remark": "",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+        self.viewer_role.refresh_from_db()
+        self.assertEqual(self.viewer_role.code, "account_viewer")
+        self.assertTrue(V2AccountRoleAssignment.objects.filter(account_profile=account, role_code="account_viewer").exists())
+
+    def test_custom_role_delete_should_reject_in_use_assignments(self):
+        _user, account = create_v2_account(
+            username="delete_custom_role_user",
+            department=self.flight,
+            role_codes=[self.viewer_role.code],
+        )
+        self.client.force_authenticate(self.super_user)
+
+        response = self.client.delete(f"/api/v2/iam/roles/{self.viewer_role.id}")
+
+        self.assertEqual(response.status_code, 409, getattr(response, "data", response.content))
+        self.assertTrue(V2Role.objects.filter(pk=self.viewer_role.id).exists())
+        self.assertTrue(V2AccountRoleAssignment.objects.filter(account_profile=account, role_code=self.viewer_role.code).exists())
+
     def test_current_menu_should_hide_button_without_bound_permission_and_api_should_403(self):
         menu = V2Menu.objects.create(
             name="用户管理",

@@ -725,7 +725,10 @@ def _validated_mission_inputs(context, data):
         bindings.append(executor_binding)
         executor = get_resource(ResourceType.GATEWAY, executor_id)
     if payload_id:
-        bindings.append(usable_resource_binding(context, ResourceType.PAYLOAD, payload_id))
+        payload_binding = usable_resource_binding(context, ResourceType.PAYLOAD, payload_id)
+        if payload_binding.dji_connection_id != drone_binding.dji_connection_id:
+            raise StandardConstraintConflict(msg="负载必须与无人机属于同一个 DJI 连接")
+        bindings.append(payload_binding)
         payload = get_resource(ResourceType.PAYLOAD, payload_id)
     ensure_resources_available(
         drone_id=drone.id,

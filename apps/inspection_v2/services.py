@@ -351,11 +351,14 @@ def _ensure_same_dji_connection_for_mission(
     drone_binding: ResourceBinding,
     execution_binding: ResourceBinding,
     execution_label: str,
+    payload_binding: ResourceBinding | None = None,
 ) -> None:
     if route_cloud_file.dji_connection_id != drone_binding.dji_connection_id:
         raise StandardConstraintConflict(msg="任务航线尚未同步到当前 DJI 连接，请重新上传/更新航线")
     if execution_binding.dji_connection_id != drone_binding.dji_connection_id:
         raise StandardConstraintConflict(msg=f"{execution_label}必须与无人机属于同一个 DJI 连接")
+    if payload_binding is not None and payload_binding.dji_connection_id != drone_binding.dji_connection_id:
+        raise StandardConstraintConflict(msg="负载必须与无人机属于同一个 DJI 连接")
 
 
 def _shared_can_use(context, binding: ResourceBinding) -> bool:
@@ -604,6 +607,7 @@ def build_mission_preflight_check(*, mission: InspectionMission, context) -> dic
     drone_binding = None
     executor_binding = None
     dock_binding = None
+    payload_binding = None
     execution_binding = None
     execution_mode = ""
     execution_label = "执行资源"
@@ -703,10 +707,32 @@ def build_mission_preflight_check(*, mission: InspectionMission, context) -> dic
     if not mission.dock_id:
         checks.append(_preflight_skipped("DOCK_BINDING_ACTIVE", "机场绑定", "非机场自动模式，跳过机场绑定检查"))
 
-    if route_cloud_file is not None and drone_binding is not None and execution_binding is not None:
+    if mission.payload_id:
+        payload_binding = _preflight_active_binding(ResourceType.PAYLOAD, mission.payload_id)
+        if payload_binding is None:
+            checks.append(_preflight_fail("PAYLOAD_BINDING_ACTIVE", "负载绑定", "负载没有 active 资源绑定"))
+        else:
+            checks.append(
+                _preflight_pass(
+                    "PAYLOAD_BINDING_ACTIVE",
+                    "负载绑定",
+                    "负载资源绑定有效",
+                    {"djiConnectionId": payload_binding.dji_connection_id},
+                )
+            )
+    else:
+        checks.append(_preflight_skipped("PAYLOAD_BINDING_ACTIVE", "负载绑定", "任务未绑定负载，跳过负载绑定检查"))
+
+    connection_inputs_ready = route_cloud_file is not None and drone_binding is not None and execution_binding is not None
+    if mission.payload_id and payload_binding is None:
+        connection_inputs_ready = False
+    if connection_inputs_ready:
         connection_ids = {route_cloud_file.dji_connection_id, drone_binding.dji_connection_id, execution_binding.dji_connection_id}
+        if payload_binding is not None:
+            connection_ids.add(payload_binding.dji_connection_id)
         if len(connection_ids) == 1:
-            checks.append(_preflight_pass("SAME_DJI_CONNECTION", "DJI 连接一致性", f"航线、无人机和{execution_label}属于同一个 DJI 连接"))
+            payload_text = "、负载" if payload_binding is not None else ""
+            checks.append(_preflight_pass("SAME_DJI_CONNECTION", "DJI 连接一致性", f"航线、无人机、{execution_label}{payload_text}属于同一个 DJI 连接"))
         else:
             detail = {
                 "routeDjiConnectionId": route_cloud_file.dji_connection_id,
@@ -716,16 +742,18 @@ def build_mission_preflight_check(*, mission: InspectionMission, context) -> dic
                 detail["dockDjiConnectionId"] = execution_binding.dji_connection_id
             else:
                 detail["executorDjiConnectionId"] = execution_binding.dji_connection_id
+            if payload_binding is not None:
+                detail["payloadDjiConnectionId"] = payload_binding.dji_connection_id
             checks.append(
                 _preflight_fail(
                     "SAME_DJI_CONNECTION",
                     "DJI 连接一致性",
-                    f"航线、无人机和{execution_label}必须属于同一个 DJI 连接",
+                    f"航线、无人机、{execution_label}{'和负载' if payload_binding is not None else ''}必须属于同一个 DJI 连接",
                     detail,
                 )
             )
     else:
-        checks.append(_preflight_skipped("SAME_DJI_CONNECTION", "DJI 连接一致性", "缺少航线、无人机或执行资源绑定，跳过连接一致性检查"))
+        checks.append(_preflight_skipped("SAME_DJI_CONNECTION", "DJI 连接一致性", "缺少航线、无人机、执行资源或负载绑定，跳过连接一致性检查"))
 
     if mission.drone_online:
         checks.append(_preflight_pass("DRONE_ONLINE", "无人机在线状态", "无人机在线"))
@@ -900,12 +928,14 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
     route_cloud_file = _route_cloud_file_for_mission(mission)
     drone_binding = _active_binding(ResourceType.DRONE, mission.drone_id)
     execution_binding = _execution_binding_for_mission(mission, execution_mode)
+    payload_binding = _active_binding(ResourceType.PAYLOAD, mission.payload_id) if mission.payload_id else None
     execution_label = "机场" if execution_mode == MissionExecutionMode.DOCK_AUTO else "执行端"
     _ensure_same_dji_connection_for_mission(
         route_cloud_file=route_cloud_file,
         drone_binding=drone_binding,
         execution_binding=execution_binding,
         execution_label=execution_label,
+        payload_binding=payload_binding,
     )
     if not mission.drone_online:
         raise StandardConstraintConflict(msg="无人机不在线")
