@@ -1,0 +1,42 @@
+@startuml redis_worker_collaboration_sequence
+title Redis 和 v2-dji-worker 怎么配合
+autonumber
+
+actor "Frontend" as Frontend
+participant "web WebSocket\nDjiMqttConsumer" as WS
+queue "Redis Channels\n组: v2.dji.mqtt" as Channels
+database "Redis 心跳 key\nv2:dji:mqtt:health:<connection_id>" as Heartbeat
+participant "web 健康 API\n/mqtt-health" as HealthApi
+participant "v2-dji-worker" as Worker
+
+== 实时消息 ==
+
+Frontend -> WS : 连接 /ws/v2/dji/mqtt?token=...
+WS -> Channels : group_add(v2.dji.mqtt)
+
+Worker -> Worker : 收到 DJI MQTT 消息
+Worker -> Channels : group_send(mqtt.message)
+Channels -> WS : 推送给组内 WebSocket
+WS -> WS : 按账号可见设备和 topic 过滤
+WS -> Frontend : 发送实时 JSON
+
+== worker 心跳 ==
+
+Worker -> Heartbeat : SETEX(status, heartbeatAt, TTL)
+Frontend -> HealthApi : GET /api/v2/resource/dji-connections/mqtt-health
+HealthApi -> Heartbeat : GET redisState
+Heartbeat --> HealthApi : 当前心跳；过期则为空
+HealthApi --> Frontend : 返回健康状态 + redisState
+
+note over Channels,Heartbeat
+Redis 只负责临时协作：
+1. 把 worker 消息转给 web WebSocket
+2. 保存短 TTL 心跳
+end note
+
+note over Worker
+业务数据仍由 worker 写 PostgreSQL。
+Redis 不是业务主存储。
+end note
+
+@enduml
