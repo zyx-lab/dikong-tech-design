@@ -1,4 +1,16 @@
 services:
+  onboarding:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      DB_ENGINE: postgres
+      DJANGO_SETTINGS_MODULE: config.settings
+      ONBOARDING_CONFIG_WRITABLE: "true"
+    volumes:
+      - .:/app
+    command: python manage.py runserver 0.0.0.0:8080
+
   db:
     image: postgres:16-alpine
     volumes:

@@ -20,7 +20,25 @@ docker compose version
 
 ## 启动方式
 
-在项目根目录执行：
+首次部署先启动只监听本机回环地址的配置向导：
+
+```bash
+docker compose up -d --build onboarding
+```
+
+如果从其他机器操作，通过 SSH 隧道访问，不要把 8080 暴露到公网：
+
+```bash
+ssh -L 8080:127.0.0.1:8080 <deploy-user>@<server>
+```
+
+打开 `http://127.0.0.1:8080/onboarding/`，填写 PostgreSQL、Django、MinIO、域名等部署配置并保存。DJI 上云连接由平台用户在系统内创建，不在 `.env` 写上游账号。向导会在项目根目录生成权限为 `600` 的 `.env`。完成后停止向导：
+
+```bash
+docker compose stop onboarding
+```
+
+然后在项目根目录执行：
 
 ```bash
 cd dikong-tech-design
@@ -202,9 +220,6 @@ docker compose exec web python manage.py createsuperuser
 启动服务：
 
 ```bash
-export DJI_INTERNAL_API_TOKEN='<shared-callback-token>'
-
-OBJECT_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000 \
 docker compose up -d --build db redis minio minio-init web v2-dji-worker
 ```
 
@@ -223,14 +238,14 @@ Content-Type: application/json
 }
 ```
 
-如果要让 DJI 媒体上传结果主动回调本系统，还需要在 DJI 上云侧配置回调地址，并让上云侧请求头 `X-DJI-Internal-Token` 使用同一个 `DJI_INTERNAL_API_TOKEN`：
+如果要让 DJI 媒体上传结果主动回调本系统，需要先在 onboarding 里设置 `DJI_INTERNAL_API_TOKEN`，再在 DJI 上云侧配置回调地址，并让上云侧请求头 `X-DJI-Internal-Token` 使用同一个 token：
 
 ```http
 POST http://<django-host>:8000/api/internal/dji/callbacks/media-upload
 X-DJI-Internal-Token: <shared-callback-token>
 ```
 
-没有设置 `DJI_INTERNAL_API_TOKEN` 时，Django 会拒绝内部回调。回调不是唯一媒体同步机制：任务完成时会自动同步媒体，前端仍可通过 `POST /api/v2/inspection/flight-records/{id}/refresh-media` 主动刷新飞行记录媒体，历史飞行记录可通过 `python manage.py refresh_v2_flight_record_media --all-completed` 一次性回填。
+没有设置 `DJI_INTERNAL_API_TOKEN` 时，Django 会拒绝内部回调；这是正常的可选状态。回调不是唯一媒体同步机制：任务完成时会自动同步媒体，前端仍可通过 `POST /api/v2/inspection/flight-records/{id}/refresh-media` 主动刷新飞行记录媒体，历史飞行记录可通过 `python manage.py refresh_v2_flight_record_media --all-completed` 一次性回填。
 
 如果只做普通 API 本地验证，可以不创建 DJI 连接。此时涉及真实 DJI 上游的接口会因为没有可用 `DjiConnection`、未发现/未绑定资源或上游调用失败而返回业务错误。
 

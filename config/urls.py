@@ -1,9 +1,9 @@
 from django.contrib import admin
 from django.urls import include, path
-from django.views.generic import TemplateView
 from drf_spectacular.views import SpectacularJSONAPIView, SpectacularSwaggerView
 
 from apps.api_v2.docs_metadata import API_V2_FRONTEND_GUIDE_DESCRIPTION
+from config.onboarding import OnboardingView
 
 admin.site.site_header = "低空平台权限中心"
 admin.site.site_title = "权限后台"
@@ -20,7 +20,7 @@ API_V2_SPECTACULAR_SETTINGS = {
 }
 
 urlpatterns = [
-    path("onboarding/", TemplateView.as_view(template_name="onboarding.html"), name="onboarding"),
+    path("onboarding/", OnboardingView.as_view(), name="onboarding"),
     path("admin/", admin.site.urls),
     path(
         "api/v2/docs/schema/",

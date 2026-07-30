@@ -53,7 +53,24 @@
     .check span { font-weight:650; }
     .check small { display:block; color:var(--muted); font-weight:400; }
     .footer-links { display:flex; gap:24px; margin-top:28px; }
-    @media (max-width:800px) { .shell { display:block; width:min(100% - 32px,680px); } aside { position:static; height:auto; padding:20px 0; border:0; border-bottom:1px solid var(--line); } nav,.aside-note,.eyebrow { display:none; } main { padding-top:38px; } .summary { grid-template-columns:1fr 1fr; } .summary div:nth-child(2) { border-right:0; } .summary div:nth-child(-n+2) { border-bottom:1px solid var(--line); } .mode-grid,.service-grid { grid-template-columns:1fr; } }
+    .notice { margin:18px 0; padding:14px 16px; border-left:3px solid var(--amber); background:#fff7ed; color:#734016; }
+    .success { margin:18px 0; padding:16px; border-left:3px solid var(--green); background:var(--green-soft); color:#115536; font-weight:700; }
+    .config-form { padding:22px; border:1px solid var(--line); background:var(--white); }
+    .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .field { min-width:0; }
+    .field.wide { grid-column:1 / -1; }
+    .field label { display:block; margin-bottom:6px; font-weight:700; }
+    .field input { width:100%; height:42px; padding:8px 10px; border:1px solid #bfc8c1; border-radius:5px; background:white; color:var(--ink); }
+    .field input:focus { outline:2px solid #93b9a3; border-color:var(--green); }
+    .field small { display:block; margin-top:5px; color:var(--muted); }
+    .field .error { color:#a2352a; }
+    .form-actions { display:flex; align-items:center; gap:12px; margin-top:20px; }
+    .primary { min-height:42px; padding:9px 16px; border:0; border-radius:5px; background:var(--green); color:white; font-weight:700; cursor:pointer; }
+    .secondary { min-height:42px; padding:9px 16px; border:1px solid var(--line); border-radius:5px; background:white; color:var(--ink); cursor:pointer; }
+    table { width:100%; border-collapse:collapse; background:var(--white); }
+    th,td { padding:12px 14px; border:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { background:#eef2ee; font-size:12px; }
+    @media (max-width:800px) { .shell { display:block; width:min(100% - 32px,680px); } aside { position:static; height:auto; padding:20px 0; border:0; border-bottom:1px solid var(--line); } nav,.aside-note,.eyebrow { display:none; } main { padding-top:38px; } .summary { grid-template-columns:1fr 1fr; } .summary div:nth-child(2) { border-right:0; } .summary div:nth-child(-n+2) { border-bottom:1px solid var(--line); } .mode-grid,.service-grid,.form-grid { grid-template-columns:1fr; } .field.wide { grid-column:auto; } }
   </style>
 </head>
 <body>
@@ -62,8 +79,11 @@
     <div class="brand"><span class="mark">DK</span>低空平台 API</div>
     <div class="eyebrow">Onboarding 路线</div>
     <nav>
-      <a href="#prepare">1. 部署前检查</a><a href="#config">2. 生产配置</a>
-      <a href="#services">3. 按顺序启动</a><a href="#verify">4. 上线验收</a>
+      <a href="#prepare">1. 安装与检查</a><a href="#config">2. 生产配置</a>
+      <a href="#proxy">3. HTTPS 入口</a><a href="#services">4. 按顺序启动</a>
+      <a href="#accounts">5. 创建账户</a><a href="#dji">6. 接入 DJI</a>
+      <a href="#verify">7. 上线验收</a><a href="#backup">8. 备份与恢复</a>
+      <a href="#operations">9. 日常运维</a>
     </nav>
     <p class="aside-note">本页用于第一次接手。详细规则仍以仓库文档为准。</p>
   </aside>
@@ -71,18 +91,44 @@
     <span class="kicker">PRODUCTION ONBOARDING</span>
     <h1>接手低空平台，按生产顺序完成部署。</h1>
     <p class="lead">正式环境统一使用 PostgreSQL。先确认域名、端口和持久化目录，再配置密钥，依次启动基础设施与应用，最后完成账号和业务链路验收。</p>
-    <div class="summary"><div><b>01</b><span>部署前检查</span></div><div><b>02</b><span>生产配置</span></div><div><b>03</b><span>按顺序启动</span></div><div><b>04</b><span>上线验收</span></div></div>
+    <div class="summary"><div><b>01</b><span>准备服务器</span></div><div><b>02</b><span>配置并启动</span></div><div><b>03</b><span>账户与接入</span></div><div><b>04</b><span>验收与运维</span></div></div>
 
     <section id="prepare">
-      <h2>部署前检查</h2><p class="section-note">以下条件没有确认前，不要启动应用容器。</p>
+      <h2>安装与拉取代码</h2><p class="section-note">以下条件没有确认前，不要启动应用容器。</p>
       <div class="mode-grid">
         <article class="mode recommended"><span class="tag">运行环境</span><h3>主机与入口</h3><p>Docker Compose v2 可用；域名已解析；8000、9000、9001 按网络策略开放，公网入口由 HTTPS 反向代理承接。</p></article>
         <article class="mode"><span class="tag">持久化</span><h3>数据与备份</h3><p>PostgreSQL 和 MinIO 数据卷位于持久磁盘；上线前明确备份、恢复和保留周期。</p></article>
       </div>
+      <div class="step"><div class="step-no">01</div><div><h3>确认 Docker 与端口</h3><div class="code">docker --version
+docker compose version
+ss -lntp | grep -E ':8000|:9000|:9001' || true<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div><p>8000 为 API，9000 为对象存储 API，9001 为 MinIO Console。正式环境由防火墙和反向代理限制访问。</p></div></div>
+      <div class="step"><div class="step-no">02</div><div><h3>拉取指定发布版本</h3><div class="code">git clone git@github.com:zyx-lab/dikong-tech-design.git
+cd dikong-tech-design
+git fetch --all --tags
+git checkout &lt;release-tag-or-commit&gt;<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div><p>生产环境使用明确的 tag 或 commit，不直接跟随浮动分支。</p></div></div>
+      <div class="step"><div class="step-no">03</div><div><h3>启动配置向导</h3><div class="code">docker compose up -d --build onboarding
+ssh -L 8080:127.0.0.1:8080 &lt;deploy-user&gt;@&lt;server&gt;<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div><p>通过 SSH 隧道访问 <a href="http://127.0.0.1:8080/onboarding/">http://127.0.0.1:8080/onboarding/</a>。配置写入完成后执行 <code>docker compose stop onboarding</code>。</p></div></div>
     </section>
 
     <section id="config">
-      <h2>生产配置</h2><p class="section-note">在项目根目录创建仅部署主机可读的 <code>.env</code>。示例值必须全部替换，禁止提交仓库。</p>
+      <h2>生产配置</h2><p class="section-note">在本地 Onboarding 服务填写并保存，系统会原子写入权限为 600 的 <code>.env</code>。生产 Web 服务不能修改该文件。</p>
+      {% if config_saved %}<div class="success">生产配置已保存。现在停止 Onboarding 服务，并按下方顺序启动正式服务。</div>{% endif %}
+      <form method="post" class="config-form" autocomplete="off">
+        {% csrf_token %}
+        <div class="form-grid">
+          <div class="field"><label for="DB_NAME">PostgreSQL 数据库名</label><input id="DB_NAME" name="DB_NAME" value="{{ config_values.DB_NAME|default:'dikong' }}" required><small class="error">{{ config_errors.DB_NAME }}</small></div>
+          <div class="field"><label for="DB_USER">PostgreSQL 用户</label><input id="DB_USER" name="DB_USER" value="{{ config_values.DB_USER|default:'dikong_app' }}" required><small class="error">{{ config_errors.DB_USER }}</small></div>
+          <div class="field wide"><label for="DB_PASSWORD">PostgreSQL 密码</label><input id="DB_PASSWORD" name="DB_PASSWORD" type="password" minlength="12" required><small class="error">{{ config_errors.DB_PASSWORD }}</small></div>
+          <div class="field wide"><label for="DJANGO_SECRET_KEY">Django Secret Key</label><input id="DJANGO_SECRET_KEY" name="DJANGO_SECRET_KEY" type="password" minlength="32" required><small class="error">{{ config_errors.DJANGO_SECRET_KEY }}</small></div>
+          <div class="field wide"><label for="DJANGO_ALLOWED_HOSTS">API 域名</label><input id="DJANGO_ALLOWED_HOSTS" name="DJANGO_ALLOWED_HOSTS" value="{{ config_values.DJANGO_ALLOWED_HOSTS|default:'' }}" placeholder="api.example.com" required><small>多个域名使用英文逗号分隔，不要填写协议或路径。</small><small class="error">{{ config_errors.DJANGO_ALLOWED_HOSTS }}</small></div>
+          <div class="field"><label for="MINIO_ROOT_USER">MinIO Access Key</label><input id="MINIO_ROOT_USER" name="MINIO_ROOT_USER" value="{{ config_values.MINIO_ROOT_USER|default:'dikong-storage' }}" required><small class="error">{{ config_errors.MINIO_ROOT_USER }}</small></div>
+          <div class="field"><label for="MINIO_ROOT_PASSWORD">MinIO Secret Key</label><input id="MINIO_ROOT_PASSWORD" name="MINIO_ROOT_PASSWORD" type="password" minlength="12" required><small class="error">{{ config_errors.MINIO_ROOT_PASSWORD }}</small></div>
+          <div class="field"><label for="OBJECT_STORAGE_BUCKET_NAME">Bucket</label><input id="OBJECT_STORAGE_BUCKET_NAME" name="OBJECT_STORAGE_BUCKET_NAME" value="{{ config_values.OBJECT_STORAGE_BUCKET_NAME|default:'dikong-route-covers' }}" required><small class="error">{{ config_errors.OBJECT_STORAGE_BUCKET_NAME }}</small></div>
+          <div class="field"><label for="OBJECT_STORAGE_ENDPOINT_URL">对象存储公网地址</label><input id="OBJECT_STORAGE_ENDPOINT_URL" name="OBJECT_STORAGE_ENDPOINT_URL" type="url" value="{{ config_values.OBJECT_STORAGE_ENDPOINT_URL|default:'' }}" placeholder="https://files.example.com" required><small class="error">{{ config_errors.OBJECT_STORAGE_ENDPOINT_URL }}</small></div>
+          <div class="field wide"><label for="DJI_INTERNAL_API_TOKEN">可选媒体 Webhook Token</label><input id="DJI_INTERNAL_API_TOKEN" name="DJI_INTERNAL_API_TOKEN" type="password" minlength="24"><small>不是 DJI 上游账号。仅当上云侧要主动推送媒体上传结果时填写。</small><small class="error">{{ config_errors.DJI_INTERNAL_API_TOKEN }}</small></div>
+        </div>
+        <div class="form-actions"><button class="primary" type="submit">保存生产配置</button><button class="secondary" type="button" id="generate-secrets">生成全部密钥</button></div>
+      </form>
       <div class="step"><div class="step-no">01</div><div><h3>Django 与 PostgreSQL</h3><p>数据库容器和应用读取同一组账号配置。</p><div class="code">DB_ENGINE=postgres
 DB_NAME=dikong
 DB_USER=dikong_app
@@ -90,12 +136,28 @@ DB_PASSWORD=&lt;strong-database-password&gt;
 DJANGO_SECRET_KEY=&lt;long-random-secret&gt;
 DJANGO_DEBUG=false
 DJANGO_ALLOWED_HOSTS=api.example.com<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
-      <div class="step"><div class="step-no">02</div><div><h3>MinIO 与内部回调</h3><p>对象存储 endpoint 必须是用户浏览器可访问的 HTTPS 地址。</p><div class="code">MINIO_ROOT_USER=&lt;storage-access-key&gt;
+      <div class="step"><div class="step-no">02</div><div><h3>MinIO 与可选媒体 Webhook</h3><p>对象存储 endpoint 必须是用户浏览器可访问的 HTTPS 地址；媒体 Webhook Token 可留空。</p><div class="code">MINIO_ROOT_USER=&lt;storage-access-key&gt;
 MINIO_ROOT_PASSWORD=&lt;strong-storage-secret&gt;
 OBJECT_STORAGE_BUCKET_NAME=dikong-route-covers
 OBJECT_STORAGE_ENDPOINT_URL=https://files.example.com
-DJI_INTERNAL_API_TOKEN=&lt;shared-callback-token&gt;<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+DJI_INTERNAL_API_TOKEN=<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
       <div class="step"><div class="step-no">03</div><div><h3>检查最终配置</h3><p>确认 Compose 展开结果中没有示例密码、开发密钥或错误域名。</p><div class="code">docker compose config<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+    </section>
+
+    <section id="proxy">
+      <h2>HTTPS 反向代理</h2><p class="section-note">示例使用 Caddy。它会自动申请证书，并原生代理 WebSocket。</p>
+      <div class="step"><div class="step-no">01</div><div><h3>配置 API 与对象存储域名</h3><div class="code"># /etc/caddy/Caddyfile
+api.example.com {
+  reverse_proxy 127.0.0.1:8000
+}
+
+files.example.com {
+  reverse_proxy 127.0.0.1:9000
+}<button class="copy" aria-label="复制配置" title="复制配置">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">02</div><div><h3>校验并重载</h3><div class="code">sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+sudo systemctl status caddy --no-pager<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="notice">MinIO Console 的 9001 端口只允许内网或 VPN 访问。不要将 PostgreSQL 5432 和 Redis 6379 暴露到公网。</div>
     </section>
 
     <section id="services">
@@ -112,16 +174,42 @@ docker compose ps<button class="copy" aria-label="复制命令" title="复制命
 docker compose ps<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
     </section>
 
+    <section id="accounts">
+      <h2>创建账户</h2><p class="section-note">平台业务管理员和 Django Admin 是两套入口，按实际职责创建。</p>
+      <div class="step"><div class="step-no">01</div><div><h3>创建平台管理员</h3><p>仅限全新数据库首次部署。该命令会重建 v2 初始化数据，已有业务数据时禁止使用 <code>--reset</code>。</p><div class="code">read -s ADMIN_PASSWORD
+docker compose exec web python manage.py bootstrap_v2_system --reset \
+  --username &lt;platform-admin&gt; --password "$ADMIN_PASSWORD" --noinput
+unset ADMIN_PASSWORD<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">02</div><div><h3>创建 Django Admin 超级用户</h3><p>只给需要维护 Django 数据的运维人员使用。</p><div class="code">docker compose exec web python manage.py createsuperuser<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">03</div><div><h3>已有数据库只同步目录</h3><p>更新版本后可以安全同步权限、角色和菜单，不重建业务数据。</p><div class="code">docker compose exec -T web python manage.py bootstrap_v2_system<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+    </section>
+
+    <section id="dji">
+      <h2>创建 DJI 连接</h2><p class="section-note">DJI 上云地址、账号和密码由平台用户配置，保存在 PostgreSQL 的连接记录中，不写入部署环境变量。</p>
+      <div class="step"><div class="step-no">01</div><div><h3>登录并取得 Bearer Token</h3><p>在 Swagger 中使用平台管理员登录，然后通过授权按钮设置返回的 Token。</p><div class="footer-links"><a href="/api/v2/docs/">打开 Swagger</a><a href="/api/v2/docs/schema/">查看 OpenAPI Schema</a></div></div></div>
+      <div class="step"><div class="step-no">02</div><div><h3>通过 API 创建上云连接</h3><div class="code">POST /api/v2/resource/dji-connections
+Authorization: Bearer &lt;token&gt;
+Content-Type: application/json
+
+{
+  "name": "正式 DJI 上云",
+  "baseUrl": "https://dji-upstream.example.com",
+  "username": "&lt;upstream-user&gt;",
+  "password": "&lt;upstream-password&gt;",
+  "loginFlag": 1
+}<button class="copy" aria-label="复制请求" title="复制请求">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">03</div><div><h3>可选：媒体上传 Webhook</h3><p>只有上云侧要主动推送媒体上传结果时才配置；没有配置 Token 时跳过本步。</p><div class="code">POST https://api.example.com/api/internal/dji/callbacks/media-upload
+X-DJI-Internal-Token: &lt;DJI_INTERNAL_API_TOKEN&gt;<button class="copy" aria-label="复制请求" title="复制请求">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">04</div><div><h3>验证发现与 Worker</h3><p>创建连接后调用该连接的 <code>discover</code> 接口，并确认 worker 日志持续运行且没有认证、MQTT 或 Redis 错误。</p><div class="code">docker compose exec -T web python manage.py run_v2_dji_worker --once
+docker compose logs --tail=200 v2-dji-worker<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+    </section>
+
     <section id="verify">
       <h2>上线验收</h2><p class="section-note">先验证基础设施与迁移，再创建首个管理员，最后接入 DJI。</p>
       <div class="step"><div class="step-no">01</div><div><h3>检查状态与迁移</h3><div class="code">docker compose ps
 docker compose exec -T web python manage.py showmigrations --plan
 docker compose exec -T web python manage.py check --deploy<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
-      <div class="step"><div class="step-no">02</div><div><h3>创建首个平台管理员</h3><p>仅限全新数据库首次部署。命令会重建 v2 初始化数据，已有业务数据时禁止使用 <code>--reset</code>。</p><div class="code">read -s ADMIN_PASSWORD
-docker compose exec web python manage.py bootstrap_v2_system --reset \
-  --username &lt;platform-admin&gt; --password "$ADMIN_PASSWORD" --noinput
-unset ADMIN_PASSWORD<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
-      <div class="step"><div class="step-no">03</div><div><h3>验证公开入口与后台任务</h3><div class="code">curl -fsS https://api.example.com/api/v2/docs/schema/ &gt; /dev/null
+      <div class="step"><div class="step-no">02</div><div><h3>验证公开入口与后台任务</h3><div class="code">curl -fsS https://api.example.com/api/v2/docs/schema/ &gt; /dev/null
 curl -fsS https://files.example.com/minio/health/live &gt; /dev/null
 docker compose exec -T web python manage.py run_v2_dji_worker --once<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
 
@@ -133,6 +221,50 @@ docker compose exec -T web python manage.py run_v2_dji_worker --once<button clas
       </div>
       <div class="footer-links"><a href="/api/v2/docs/">打开 Swagger</a><a href="/admin/">打开 Admin</a><a href="/api/v2/docs/schema/">查看 OpenAPI Schema</a></div>
     </section>
+
+    <section id="backup">
+      <h2>备份与恢复</h2><p class="section-note">上线前必须实际恢复一次。只生成备份文件但从未恢复，不算完成备份。</p>
+      <div class="step"><div class="step-no">01</div><div><h3>备份 PostgreSQL</h3><div class="code">mkdir -p backups
+docker compose exec -T db sh -c \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+  &gt; backups/dikong-$(date +%F-%H%M).dump<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">02</div><div><h3>恢复 PostgreSQL</h3><p>仅恢复到空库或经过确认的目标库，执行前停止写入并再次备份当前数据。</p><div class="code">docker compose exec -T db sh -c \
+  'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
+  &lt; backups/&lt;backup-file&gt;.dump<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">03</div><div><h3>备份与恢复对象存储</h3><p>使用 Compose 中已有的 MinIO Client 镜像，凭据只在容器环境中读取。</p><div class="code">mkdir -p backups/minio
+docker compose run --rm --entrypoint /bin/sh \
+  -v "$PWD/backups/minio:/backup" minio-init -c \
+  'mc alias set source http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" &amp;&amp; mc mirror --overwrite "source/$OBJECT_STORAGE_BUCKET_NAME" /backup'
+
+# 恢复时确认目标 bucket 后执行
+docker compose run --rm --entrypoint /bin/sh \
+  -v "$PWD/backups/minio:/backup" minio-init -c \
+  'mc alias set target http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" &amp;&amp; mc mirror --overwrite /backup "target/$OBJECT_STORAGE_BUCKET_NAME"'<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="notice">备份文件必须复制到部署主机之外，并设置加密、访问权限、保留周期和定时任务。不要把备份提交进 Git。</div>
+    </section>
+
+    <section id="operations">
+      <h2>更新与回滚</h2><p class="section-note">更新前记录当前 commit 并完成备份；先查看迁移，再重建应用容器。</p>
+      <div class="step"><div class="step-no">01</div><div><h3>更新版本</h3><div class="code">git rev-parse HEAD
+git fetch --all --tags
+git checkout &lt;new-release-tag-or-commit&gt;
+docker compose build web v2-dji-worker
+docker compose run --rm web python manage.py migrate --plan
+docker compose up -d web v2-dji-worker<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <div class="step"><div class="step-no">02</div><div><h3>回滚应用版本</h3><p>数据库迁移是否可逆必须按发布内容单独确认；不可逆时从升级前备份恢复。</p><div class="code">git checkout &lt;previous-commit&gt;
+docker compose up -d --build web v2-dji-worker
+docker compose ps<button class="copy" aria-label="复制命令" title="复制命令">⧉</button></div></div></div>
+      <h2 style="margin-top:44px">日志与停服</h2>
+      <table><thead><tr><th>目标</th><th>命令</th></tr></thead><tbody>
+        <tr><td>API / 迁移</td><td><code>docker compose logs -f --tail=200 web</code></td></tr>
+        <tr><td>DJI / MQTT</td><td><code>docker compose logs -f --tail=200 v2-dji-worker</code></td></tr>
+        <tr><td>数据库</td><td><code>docker compose logs -f --tail=200 db</code></td></tr>
+        <tr><td>对象存储</td><td><code>docker compose logs -f --tail=200 minio</code></td></tr>
+        <tr><td>重启应用</td><td><code>docker compose restart web v2-dji-worker</code></td></tr>
+        <tr><td>停服并保留数据</td><td><code>docker compose down</code></td></tr>
+      </tbody></table>
+      <div class="notice"><strong>禁止在正式环境执行 <code>docker compose down -v</code>。</strong>它会删除 PostgreSQL 和 MinIO 数据卷。</div>
+    </section>
   </main>
 </div>
 <script>
@@ -142,6 +274,13 @@ docker compose exec -T web python manage.py run_v2_dji_worker --once<button clas
     button.textContent = '✓';
     setTimeout(() => button.textContent = '⧉', 1200);
   }));
+  document.getElementById('generate-secrets')?.addEventListener('click', () => {
+    const randomHex = bytes => Array.from(crypto.getRandomValues(new Uint8Array(bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
+    document.getElementById('DB_PASSWORD').value = randomHex(18);
+    document.getElementById('DJANGO_SECRET_KEY').value = randomHex(32);
+    document.getElementById('MINIO_ROOT_PASSWORD').value = randomHex(18);
+    document.getElementById('DJI_INTERNAL_API_TOKEN').value = randomHex(32);
+  });
 </script>
 </body>
 </html>
