@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.urls import include, path
+from django.views.generic import TemplateView
 from drf_spectacular.views import SpectacularJSONAPIView, SpectacularSwaggerView
 
 from apps.api_v2.docs_metadata import API_V2_FRONTEND_GUIDE_DESCRIPTION
@@ -21,6 +22,7 @@ API_V2_SPECTACULAR_SETTINGS = {
 
 urlpatterns = [
     path("onboarding/", OnboardingView.as_view(), name="onboarding"),
+    path("operations/", TemplateView.as_view(template_name="operations.html"), name="operations"),
     path("admin/", admin.site.urls),
     path(
         "api/v2/docs/schema/",

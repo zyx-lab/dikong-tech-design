@@ -4,7 +4,7 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     environment:
-      DB_ENGINE: postgres
+      DB_ENGINE: sqlite
       DJANGO_SETTINGS_MODULE: config.settings
       ONBOARDING_CONFIG_WRITABLE: "true"
     volumes:

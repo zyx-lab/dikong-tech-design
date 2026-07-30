@@ -5,7 +5,8 @@
 ## 当前入口
 
 - API v2：`/api/v2/*`
-- 生产部署 Onboarding：`/onboarding/`
+- 启动 Onboarding：`/onboarding/`
+- 运维页面：`/operations/`
 - OpenAPI JSON：`/api/v2/docs/schema/`
 - Swagger UI：`/api/v2/docs/`
 - DJI internal callback：`/api/internal/dji/callbacks/media-upload`
@@ -44,23 +45,25 @@
 
 ## 本地运行
 
+本地 Docker 调试也从启动向导开始：
+
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-export DJANGO_LOG_DIR=/tmp/dikong-tech-design-logs
-export DB_ENGINE=sqlite
-python manage.py migrate
-python manage.py runserver 0.0.0.0:8000
+docker compose up -d --build onboarding
+open http://127.0.0.1:8080/onboarding/
+```
+
+按向导保存 `.env` 后启动系统：
+
+```bash
+docker compose stop onboarding
+docker compose up -d db redis minio minio-init
+docker compose up -d --build web v2-dji-worker
 ```
 
 ## v2 初始化
 
 ```bash
-export DJANGO_LOG_DIR=/tmp/dikong-tech-design-logs
-export DB_ENGINE=sqlite
-python manage.py migrate
-python manage.py bootstrap_v2_system
+docker compose exec web python manage.py bootstrap_v2_system
 ```
 
 ## 对象存储
