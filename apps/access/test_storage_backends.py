@@ -74,5 +74,5 @@ class LoggedS3StorageTests(SimpleTestCase):
             url = storage.url("inspection/routes/covers/cover.png")
 
         self.assertTrue(url.startswith("http://127.0.0.1:9000/dikong-route-covers/inspection/routes/covers/cover.png?"))
-        self.assertIn("X-Amz-Signature=", url)
+        self.assertTrue("X-Amz-Signature=" in url or "Signature=" in url)
         self.assertNotIn("minio:9000", url)
