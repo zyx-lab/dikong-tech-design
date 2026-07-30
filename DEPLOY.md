@@ -28,9 +28,12 @@ DB_PASSWORD=dikong-local-postgres
 DJANGO_SECRET_KEY=dev-dikong-secret-key-change-me-32chars
 DJANGO_DEBUG=true
 DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+WEB_PORT=8000
 
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=minioadmin123
+MINIO_API_PORT=9000
+MINIO_CONSOLE_PORT=9001
 OBJECT_STORAGE_BUCKET_NAME=dikong-route-covers
 OBJECT_STORAGE_ENDPOINT_URL=http://<your-machine-ip>:9000
 
@@ -42,6 +45,16 @@ DJI_INTERNAL_API_TOKEN=
 ```dotenv
 OBJECT_STORAGE_ENDPOINT_URL=http://192.168.1.20:9000
 ```
+
+如果本机端口被其他进程占用，可以只改宿主机端口：
+
+```dotenv
+WEB_PORT=8010
+MINIO_API_PORT=9100
+MINIO_CONSOLE_PORT=9101
+```
+
+这时访问地址也要跟着变成 `http://127.0.0.1:8010/api/v2/docs/`。
 
 ## 3. 正式部署怎么填
 
@@ -56,9 +69,12 @@ DB_PASSWORD=<strong-postgres-password>
 DJANGO_SECRET_KEY=<long-random-django-secret>
 DJANGO_DEBUG=false
 DJANGO_ALLOWED_HOSTS=api.example.com
+WEB_PORT=8000
 
 MINIO_ROOT_USER=dikong-storage
 MINIO_ROOT_PASSWORD=<strong-minio-password>
+MINIO_API_PORT=9000
+MINIO_CONSOLE_PORT=9001
 OBJECT_STORAGE_BUCKET_NAME=dikong-route-covers
 OBJECT_STORAGE_ENDPOINT_URL=https://files.example.com
 
@@ -90,8 +106,11 @@ openssl rand -hex 32
 | `DJANGO_SECRET_KEY` | 随机长字符串 | Django 签名密钥，正式环境必须保密 |
 | `DJANGO_DEBUG` | 本地 `true`，正式 `false` | 是否开启调试模式 |
 | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` 或 `api.example.com` | 允许访问 API 的主机名，多个用英文逗号分隔 |
+| `WEB_PORT` | 默认 `8000` | 宿主机访问 API 的端口；如果改成 `8010`，Swagger 就在 `http://127.0.0.1:8010/api/v2/docs/` |
 | `MINIO_ROOT_USER` | 本地 `minioadmin`，正式自定义 | MinIO 管理员 Access Key |
 | `MINIO_ROOT_PASSWORD` | 本地 `minioadmin123`，正式用强密码 | MinIO 管理员 Secret Key |
+| `MINIO_API_PORT` | 默认 `9000` | 宿主机访问 MinIO S3 API 的端口 |
+| `MINIO_CONSOLE_PORT` | 默认 `9001` | 宿主机访问 MinIO Console 的端口 |
 | `OBJECT_STORAGE_BUCKET_NAME` | 常用 `dikong-route-covers` | MinIO bucket 名 |
 | `OBJECT_STORAGE_ENDPOINT_URL` | 本地 MinIO 地址或正式文件域名 | API 返回文件 URL 时使用 |
 | `DJI_INTERNAL_API_TOKEN` | 可留空 | 可选媒体 Webhook 鉴权，不是 DJI 上游账号 |
