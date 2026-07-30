@@ -1,0 +1,30 @@
+@startuml redis_role
+title Redis 的两个职责
+left to right direction
+skinparam componentStyle rectangle
+
+component "v2-dji-worker" as Worker
+component "web\nDjango ASGI" as Web
+
+rectangle "Redis" as Redis {
+  component "1. Channels 广播\n组: v2.dji.mqtt" as Channels
+  component "2. worker 心跳\nkey: v2:dji:mqtt:health:<connection_id>\nTTL: 30s 默认" as Heartbeat
+}
+
+component "WebSocket\n/ws/v2/dji/mqtt" as WS
+component "MQTT 健康 API\n/mqtt-health" as HealthApi
+
+Worker --> Channels : group_send(mqtt.message)
+Channels --> WS : 推给已订阅前端
+Web --> WS : 管理连接和权限过滤
+
+Worker --> Heartbeat : setex(status, heartbeatAt)
+HealthApi --> Heartbeat : 读取 redisState
+Web --> HealthApi : 返回健康状态
+
+note bottom of Redis
+Redis 不存业务主数据。
+业务真相在 PostgreSQL。
+end note
+
+@enduml

@@ -1,0 +1,37 @@
+@startuml dji_worker_loop
+title v2-dji-worker 主循环
+start
+
+:读取 ACTIVE 的 DJI 连接;
+
+if (run_once?) then (是)
+  :同步资源状态;
+  :同步到期媒体;
+  :打印 summary 后退出;
+  stop
+else (否)
+  :每个 DJI 连接启动一个线程;
+endif
+
+:向 DJI HTTP 获取 workspace 配置;
+:拿到 mqtt_addr / mqtt_username / mqtt_password;
+
+if (MQTT 配置完整?) then (是)
+  :连接 DJI MQTT broker;
+  :订阅默认 topic;
+else (否)
+  :标记连接 ERROR;
+  stop
+endif
+
+repeat
+  :等待 MQTT 消息;
+  :分发给 handle_message;
+  :按周期同步资源状态;
+  :按周期同步媒体;
+repeat while (worker 未停止?) is (继续)
+
+:断开 MQTT;
+stop
+
+@enduml

@@ -1,0 +1,31 @@
+@startuml dji_worker_message_flow
+title v2-dji-worker 处理一条 MQTT 消息
+start
+
+:收到 topic + payload;
+:保存最新消息\nv2_mqtt_latest_messages;
+:更新 MQTT 健康\nv2_mqtt_connection_health;
+:发出实时消息\n给 WebSocket 通道;
+
+if (topic 以 /osd 结尾?) then (是)
+  :解析设备 SN;
+  :更新无人机遥测快照;
+  stop
+endif
+
+if (topic 是 sys/product/+/status?) then (是)
+  :解析设备 SN;
+  :更新设备在线状态;
+  stop
+endif
+
+if (topic 以 /events 或 /services_reply 结尾?) then (是)
+  :解析 job_id 和状态;
+  :更新任务执行状态;
+  stop
+endif
+
+:暂不产生业务更新;
+stop
+
+@enduml
