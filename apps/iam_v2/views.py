@@ -7,7 +7,7 @@ from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 
 from apps.access.api_base import EmptySerializer
-from apps.access.exceptions import StandardForbidden
+from apps.access.exceptions import StandardConstraintConflict, StandardForbidden
 from apps.access.authentication import BearerAuthSessionAuthentication
 from apps.api_contracts.openapi import V2MeContextSerializer, list_data_serializer
 from apps.access.models import DirectoryStatus, UserStatus
@@ -255,12 +255,34 @@ def _ensure_not_last_active_super_account(account: V2AccountProfile) -> None:
         return
     active_super_count = V2AccountProfile.objects.filter(
         status=DirectoryStatus.ACTIVE,
+        department__status=DirectoryStatus.ACTIVE,
         user__is_active=True,
         user__status=UserStatus.ACTIVE,
         role_assignments__role_code__in=_super_role_codes(),
     ).distinct().count()
     if active_super_count <= 1:
         raise serializers.ValidationError({"id": ["不能停用、删除或移除最后一个有效超管账号"]})
+
+
+def _ensure_department_can_be_disabled(context, department: Department) -> None:
+    if department.parent_id is None:
+        raise StandardConstraintConflict(msg="根部门不能禁用")
+    if department.id == context.department_id:
+        raise StandardConstraintConflict(msg="不能禁用当前登录超管所在部门")
+    has_remaining_super = (
+        V2AccountProfile.objects.filter(
+            status=DirectoryStatus.ACTIVE,
+            department__status=DirectoryStatus.ACTIVE,
+            user__is_active=True,
+            user__status=UserStatus.ACTIVE,
+            role_assignments__role_code__in=_super_role_codes(),
+        )
+        .exclude(department=department)
+        .distinct()
+        .exists()
+    )
+    if not has_remaining_super:
+        raise StandardConstraintConflict(msg="不能禁用最后一个有效超管所在部门")
 
 
 class V2IamAPIView(BusinessApiResponseMixin, GenericAPIView):
@@ -430,6 +452,7 @@ class DepartmentDisableView(V2IamAPIView):
         department = Department.objects.filter(pk=id).first()
         if department is None:
             return _not_found_response()
+        _ensure_department_can_be_disabled(context, department)
         before_data = DepartmentReadSerializer(department).data
         department.status = DirectoryStatus.DISABLED
         department.save(update_fields=["status", "updated_at"])

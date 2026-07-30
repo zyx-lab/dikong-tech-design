@@ -1249,6 +1249,25 @@ class IamV2ApiTests(TestCase):
         child.refresh_from_db()
         self.assertEqual(child.status, 1)
 
+    def test_platform_super_admin_should_not_disable_root_or_own_department(self):
+        root_response = self.client.post(f"/api/v2/iam/departments/{self.root.id}/disable", {}, format="json")
+
+        self.assertEqual(root_response.status_code, 409, getattr(root_response, "data", root_response.content))
+        self.root.refresh_from_db()
+        self.assertEqual(self.root.status, DirectoryStatus.ACTIVE)
+
+        child = Department.objects.create(name="超管所在部门", parent=self.root)
+        self.super_profile.department = child
+        self.super_profile.save(update_fields=["department", "updated_at"])
+
+        own_department_response = self.client.post(f"/api/v2/iam/departments/{child.id}/disable", {}, format="json")
+
+        self.assertEqual(own_department_response.status_code, 409, getattr(own_department_response, "data", own_department_response.content))
+        child.refresh_from_db()
+        self.assertEqual(child.status, DirectoryStatus.ACTIVE)
+        context_response = self.client.get("/api/v2/iam/me/context")
+        self.assertEqual(context_response.status_code, 200, getattr(context_response, "data", context_response.content))
+
     def test_platform_super_admin_department_management_should_write_audit_logs(self):
         create_response = self.client.post(
             "/api/v2/iam/departments",
