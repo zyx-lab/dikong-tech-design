@@ -131,6 +131,39 @@ docker compose exec -T web python manage.py bootstrap_v2_system --reset \
 
 这个账号是**平台业务管理员**，用于登录 `/api/v2/*` 和前端业务系统。
 
+如果只是想快速创建一组不同角色的联调账号，可以额外执行：
+
+```bash
+docker compose exec -T web python manage.py bootstrap_v2_system \
+  --frontend-test-accounts \
+  --frontend-prefix jnu \
+  --frontend-password '123456'
+```
+
+这会在根部门“总部”下同步以下账号，统一密码为 `123456`：
+
+| 用户名 | 角色 | 用途 |
+| --- | --- | --- |
+| `jnu_super` | `platform_super_admin` | 平台超级管理员 |
+| `jnu_admin` | `department_admin` | 部门管理员 |
+| `jnu_dispatcher` | `task_monitor_dispatcher` | 任务监控调度员 |
+| `jnu_pilot` | `pilot` | 飞手 |
+| `jnu_handler` | `work_order_handler` | 工单处理员 |
+
+这组账号用于本地联调或演示。正式生产用户建议登录系统后在“账号/部门”里按真实组织创建，或调用 `POST /api/v2/iam/accounts` 创建。
+
+第一次初始化时也可以和 `--reset` 合并执行：
+
+```bash
+docker compose exec -T web python manage.py bootstrap_v2_system --reset \
+  --username admin \
+  --password "$ADMIN_PASSWORD" \
+  --frontend-test-accounts \
+  --frontend-prefix jnu \
+  --frontend-password '123456' \
+  --noinput
+```
+
 不要把它和 Django Admin 混在一起。只有确实需要进入 `/admin/` 后台维护时，才额外创建 Django 后台账号：
 
 ```bash
