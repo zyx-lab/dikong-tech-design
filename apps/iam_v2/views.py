@@ -246,19 +246,22 @@ def _super_role_codes() -> list[str]:
     return codes or ["platform_super_admin"]
 
 
-def _is_super_admin_account(account: V2AccountProfile) -> bool:
-    return account.has_any_role(_super_role_codes())
-
-
 def _ensure_not_last_active_super_account(account: V2AccountProfile) -> None:
-    if not _is_super_admin_account(account):
+    super_role_codes = _super_role_codes()
+    if not (
+        account.status == DirectoryStatus.ACTIVE
+        and account.department.status == DirectoryStatus.ACTIVE
+        and account.user.is_active
+        and account.user.status == UserStatus.ACTIVE
+        and account.has_any_role(super_role_codes)
+    ):
         return
     active_super_count = V2AccountProfile.objects.filter(
         status=DirectoryStatus.ACTIVE,
         department__status=DirectoryStatus.ACTIVE,
         user__is_active=True,
         user__status=UserStatus.ACTIVE,
-        role_assignments__role_code__in=_super_role_codes(),
+        role_assignments__role_code__in=super_role_codes,
     ).distinct().count()
     if active_super_count <= 1:
         raise serializers.ValidationError({"id": ["不能停用、删除或移除最后一个有效超管账号"]})

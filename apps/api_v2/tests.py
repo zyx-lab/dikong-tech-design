@@ -1268,6 +1268,36 @@ class IamV2ApiTests(TestCase):
         context_response = self.client.get("/api/v2/iam/me/context")
         self.assertEqual(context_response.status_code, 200, getattr(context_response, "data", context_response.content))
 
+    def test_platform_super_admin_should_cleanup_invalid_super_accounts(self):
+        disabled_department = Department.objects.create(
+            name="已停用超管部门",
+            parent=self.root,
+            status=DirectoryStatus.DISABLED,
+        )
+        stale_user, stale_profile = create_v2_actor(
+            username="stale_super_to_disable",
+            role_code=FixedRole.PLATFORM_SUPER_ADMIN,
+            department=disabled_department,
+        )
+        deletable_user, deletable_profile = create_v2_actor(
+            username="stale_super_to_delete",
+            role_code=FixedRole.PLATFORM_SUPER_ADMIN,
+            department=disabled_department,
+        )
+
+        disable_response = self.client.post(f"/api/v2/iam/accounts/{stale_profile.id}/disable", {}, format="json")
+        delete_response = self.client.delete(f"/api/v2/iam/accounts/{deletable_profile.id}")
+
+        self.assertEqual(disable_response.status_code, 200, getattr(disable_response, "data", disable_response.content))
+        self.assertEqual(delete_response.status_code, 200, getattr(delete_response, "data", delete_response.content))
+        stale_profile.refresh_from_db()
+        stale_user.refresh_from_db()
+        self.assertEqual(stale_profile.status, DirectoryStatus.DISABLED)
+        self.assertEqual(stale_user.status, UserStatus.DISABLED)
+        self.assertFalse(stale_user.is_active)
+        self.assertFalse(V2AccountProfile.objects.filter(pk=deletable_profile.id).exists())
+        self.assertFalse(User.objects.filter(pk=deletable_user.id).exists())
+
     def test_platform_super_admin_department_management_should_write_audit_logs(self):
         create_response = self.client.post(
             "/api/v2/iam/departments",
