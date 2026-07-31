@@ -107,8 +107,10 @@ class ApiV2DocsSyncTests(TestCase):
             "GET /api/v2/system/menus/current",
             "bootstrap_v2_system --reset",
             "bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu",
+            "--frontend-password '123456'",
             "jnu_super",
             "jnu_dispatcher",
+            "jnu_pilot` 会同步飞手档案和一条有效 `pilot` 资质",
             "docs/api-v2-frontend-guide.md",
         ):
             with self.subTest(expected=expected):

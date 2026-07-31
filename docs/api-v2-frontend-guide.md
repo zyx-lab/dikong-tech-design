@@ -23,10 +23,10 @@
    若需要一组前端联调账号，让后端执行：
 
    ```bash
-   python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu --frontend-password 'FrontTest@123'
+   python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu --frontend-password '123456'
    ```
 
-   默认会按当前 v2 角色体系生成 `jnu_super`、`jnu_admin`、`jnu_dispatcher`、`jnu_pilot`、`jnu_handler`。
+   默认会按当前 v2 角色体系生成 `jnu_super`、`jnu_admin`、`jnu_dispatcher`、`jnu_pilot`、`jnu_handler`；其中 `jnu_pilot` 会同步飞手档案和一条有效 `pilot` 资质。
 
 2. 调用 `POST /api/v2/iam/session/login`，保存 `accessToken` 和 `refreshToken`。
 3. 所有业务请求带 `Authorization: Bearer <accessToken>`。

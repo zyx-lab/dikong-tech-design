@@ -4,7 +4,7 @@ API v2 文档。前端只调用 `/api/v2/*`；旧 API v1 已移除。文档页�
 ## 前端接入流程（10 分钟接入流程）
 
 1. 本地联调没有固定内置业务账号；需要账号时让后端先执行 `python manage.py bootstrap_v2_system --reset --username <platform_admin_username> --password '<strong_password>' --noinput`。
-   若需要一组前端联调账号，执行 `python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu --frontend-password 'FrontTest@123'`，默认会按当前 v2 角色体系生成 `jnu_super`、`jnu_admin`、`jnu_dispatcher`、`jnu_pilot`、`jnu_handler`。
+   若需要一组前端联调账号，执行 `python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix jnu --frontend-password '123456'`，默认会按当前 v2 角色体系生成 `jnu_super`、`jnu_admin`、`jnu_dispatcher`、`jnu_pilot`、`jnu_handler`；其中 `jnu_pilot` 会同步飞手档案和一条有效 `pilot` 资质。
 2. 调用 `POST /api/v2/iam/session/login` 获取 `accessToken` 和 `refreshToken`。
 3. 后续业务请求统一带 Bearer Token：`Authorization: Bearer <accessToken>`。
 4. 首屏初始化依次调用 `GET /api/v2/iam/me/context`、`GET /api/v2/system/menus/current`、`GET /api/v2/iam/me/profile`。
@@ -467,7 +467,7 @@ def request_example_value(method: str, path: str, media_type: str):
         }
 
     if path.endswith("/session/login"):
-        return {"username": "v2_frontend_admin", "password": "pass1234"}
+        return {"username": "jnu_super", "password": "123456"}
     if path.endswith("/session/refresh"):
         return {"refreshToken": "<refreshToken>"}
     if path.endswith("/session/logout"):
