@@ -1,3 +1,5 @@
+from datetime import date
+
 from django.contrib.auth import get_user_model
 from django.db import transaction
 
@@ -294,6 +296,33 @@ def sync_frontend_test_accounts(*, username_prefix: str = "jnu", password: str =
             defaults={"assigned_by_user": user},
         )
         V2AccountRoleAssignment.objects.filter(account_profile=profile).exclude(role_code=role_code).delete()
+        if role_code == FixedRole.PILOT:
+            V2AccountRoleProfile.objects.update_or_create(
+                account_profile=profile,
+                profile_type=FixedRole.PILOT,
+                deleted_at__isnull=True,
+                defaults={
+                    "display_name": display_name,
+                    "level": "多旋翼",
+                    "status": DirectoryStatus.ACTIVE,
+                    "remark": "联调飞手档案",
+                    "deleted_at": None,
+                },
+            )
+            V2AccountQualification.objects.update_or_create(
+                account_profile=profile,
+                profile_type=FixedRole.PILOT,
+                qualification_type="多旋翼巡检",
+                certificate_no=f"{username.upper()}-001",
+                deleted_at__isnull=True,
+                defaults={
+                    "issued_at": date(2020, 1, 1),
+                    "expires_at": date(2099, 12, 31),
+                    "status": DirectoryStatus.ACTIVE,
+                    "remark": "联调飞手资质",
+                    "deleted_at": None,
+                },
+            )
         prepared_usernames.append(username)
         prepared_user_ids.add(user.id)
 

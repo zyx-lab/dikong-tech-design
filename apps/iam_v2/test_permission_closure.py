@@ -6,8 +6,10 @@ from rest_framework.test import APIClient
 from apps.access.models import DirectoryStatus, UserStatus
 from apps.iam_v2.models import (
     Department,
+    V2AccountQualification,
     V2AccountProfile,
     V2AccountRoleAssignment,
+    V2AccountRoleProfile,
     V2Menu,
     V2MenuPermissionBinding,
     V2Permission,
@@ -395,6 +397,23 @@ class V2PermissionClosureTests(TestCase):
         self.assertEqual(len(phones), 5)
         self.assertEqual(len(set(phones)), 5)
         self.assertTrue(all(phone.startswith("137") and len(phone) == 11 for phone in phones), phones)
+        pilot_profile = V2AccountProfile.objects.get(user__username="jnu_pilot")
+        self.assertTrue(
+            V2AccountRoleProfile.objects.filter(
+                account_profile=pilot_profile,
+                profile_type="pilot",
+                status=DirectoryStatus.ACTIVE,
+                deleted_at__isnull=True,
+            ).exists()
+        )
+        pilot_qualification = V2AccountQualification.objects.get(
+            account_profile=pilot_profile,
+            profile_type="pilot",
+            qualification_type="多旋翼巡检",
+            certificate_no="JNU_PILOT-001",
+            deleted_at__isnull=True,
+        )
+        self.assertTrue(pilot_qualification.is_effective())
 
         dispatcher_login = self.client.post(
             "/api/v2/iam/session/login",

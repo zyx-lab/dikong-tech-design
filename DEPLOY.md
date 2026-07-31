@@ -147,7 +147,7 @@ docker compose exec -T web python manage.py bootstrap_v2_system \
 | `jnu_super` | `platform_super_admin` | 平台超级管理员 |
 | `jnu_admin` | `department_admin` | 部门管理员 |
 | `jnu_dispatcher` | `task_monitor_dispatcher` | 任务监控调度员 |
-| `jnu_pilot` | `pilot` | 飞手 |
+| `jnu_pilot` | `pilot` | 飞手，含飞手档案和有效资质 |
 | `jnu_handler` | `work_order_handler` | 工单处理员 |
 
 这组账号用于本地联调或演示。正式生产用户建议登录系统后在“账号/部门”里按真实组织创建，或调用 `POST /api/v2/iam/accounts` 创建。
