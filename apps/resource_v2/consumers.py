@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import parse_qs
 
+import websockets
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.utils import timezone
@@ -10,15 +12,40 @@ from apps.access.authentication import sha256_text
 from apps.access.models import AuthSession, DirectoryStatus, UserStatus
 from apps.iam_v2.models import V2AccountProfile, V2AccountRoleAssignment
 from apps.iam_v2.services import V2RequestContext, active_roles_for_codes, data_scopes_for_roles, permission_codes_for_roles
-from apps.resource_v2.models import ResourceType
+from apps.resource_v2.models import CameraResource, ResourceType
 from apps.resource_v2.mqtt import MQTT_BROADCAST_GROUP
 from apps.resource_v2.services import effective_permissions_for_binding, get_resource, visible_bindings_queryset
 
 
+def _token_from_scope(scope) -> str:
+    query = scope.get("query_string", b"").decode("utf-8", errors="ignore")
+    return (parse_qs(query).get("token") or [""])[0]
+
+
+@database_sync_to_async
+def _authenticate_token(token: str) -> int | None:
+    if not token:
+        return None
+    session = (
+        AuthSession.objects.select_related("user")
+        .filter(
+            access_token_hash=sha256_text(token),
+            revoked_at__isnull=True,
+            access_token_expires_at__gt=timezone.now(),
+        )
+        .first()
+    )
+    if session is None:
+        return None
+    user = session.user
+    if not user.is_active or user.status != UserStatus.ACTIVE:
+        return None
+    return user.id
+
+
 class DjiMqttConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
-        token = self._token_from_query()
-        self.user_id = await self._authenticate_token(token)
+        self.user_id = await _authenticate_token(_token_from_scope(self.scope))
         if self.user_id is None:
             await self.close(code=4401)
             return
@@ -78,30 +105,6 @@ class DjiMqttConsumer(AsyncJsonWebsocketConsumer):
             return False
         return True
 
-    def _token_from_query(self) -> str:
-        query = self.scope.get("query_string", b"").decode("utf-8", errors="ignore")
-        return (parse_qs(query).get("token") or [""])[0]
-
-    @database_sync_to_async
-    def _authenticate_token(self, token: str) -> int | None:
-        if not token:
-            return None
-        session = (
-            AuthSession.objects.select_related("user")
-            .filter(
-                access_token_hash=sha256_text(token),
-                revoked_at__isnull=True,
-                access_token_expires_at__gt=timezone.now(),
-            )
-            .first()
-        )
-        if session is None:
-            return None
-        user = session.user
-        if not user.is_active or user.status != UserStatus.ACTIVE:
-            return None
-        return user.id
-
     @database_sync_to_async
     def _resolve_subscription(self, user_id: int, content: dict) -> dict:
         context = _context_for_user(user_id)
@@ -117,6 +120,73 @@ class DjiMqttConsumer(AsyncJsonWebsocketConsumer):
             "topicKinds": topic_kinds,
             "topics": topics,
         }
+
+
+class CameraResultsConsumer(AsyncJsonWebsocketConsumer):
+    async def connect(self):
+        self.user_id = await _authenticate_token(_token_from_scope(self.scope))
+        if self.user_id is None:
+            await self.close(code=4401)
+            return
+
+        camera_id = self.scope.get("url_route", {}).get("kwargs", {}).get("id")
+        config = await self._camera_config(self.user_id, camera_id)
+        if config is None:
+            await self.close(code=4404)
+            return
+
+        try:
+            # ponytail: one upstream subscription per viewer; add shared fan-out only when concurrent load requires it.
+            self.upstream = await websockets.connect(
+                config["results_ws_url"],
+                extra_headers={"X-API-Key": config["api_key"]},
+                ping_interval=20,
+                ping_timeout=20,
+            )
+        except Exception:
+            await self.close(code=1011)
+            return
+
+        await self.accept()
+        self.forward_task = asyncio.create_task(self._forward_results())
+
+    async def disconnect(self, code):
+        del code
+        task = getattr(self, "forward_task", None)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        upstream = getattr(self, "upstream", None)
+        if upstream is not None:
+            await upstream.close()
+
+    async def receive(self, text_data=None, bytes_data=None):
+        del text_data, bytes_data
+
+    async def _forward_results(self):
+        try:
+            async for message in self.upstream:
+                if isinstance(message, bytes):
+                    await self.send(bytes_data=message)
+                else:
+                    await self.send(text_data=message)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await self.close(code=1011)
+
+    @database_sync_to_async
+    def _camera_config(self, user_id: int, camera_id: int | None) -> dict | None:
+        context = _context_for_user(user_id)
+        if context is None or camera_id is None:
+            return None
+        binding = visible_bindings_queryset(context, resource_type=ResourceType.CAMERA).filter(resource_object_id=camera_id).first()
+        if binding is None:
+            return None
+        camera = CameraResource.objects.filter(pk=camera_id).first()
+        if camera is None:
+            return None
+        return {"results_ws_url": camera.results_ws_url, "api_key": camera.api_key}
 
 
 def _string_list(value) -> list[str]:

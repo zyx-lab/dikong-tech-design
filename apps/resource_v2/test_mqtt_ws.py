@@ -1,4 +1,6 @@
+import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -11,6 +13,7 @@ from apps.access.session_services import create_auth_session
 from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountRoleAssignment
 from apps.resource_v2.models import (
     BindingStatus,
+    CameraResource,
     DjiConnection,
     DroneResource,
     MqttLatestMessage,
@@ -24,7 +27,7 @@ from config.asgi import application
 User = get_user_model()
 
 
-def create_v2_actor(*, username: str, role_code: str, department: Department):
+def create_v2_actor(*, username: str, role_code: str | None, department: Department):
     user = User.objects.create_user(username=username, password="pass1234", status=1)
     profile = V2AccountProfile.objects.create(
         user=user,
@@ -33,7 +36,8 @@ def create_v2_actor(*, username: str, role_code: str, department: Department):
         phone=f"139{user.id:08d}",
         email=f"{username}@example.test",
     )
-    V2AccountRoleAssignment.objects.create(account_profile=profile, role_code=role_code, assigned_by_user=user)
+    if role_code is not None:
+        V2AccountRoleAssignment.objects.create(account_profile=profile, role_code=role_code, assigned_by_user=user)
     return user
 
 
@@ -149,3 +153,68 @@ class ResourceV2MqttWebSocketTests(TransactionTestCase):
         self.assertEqual(pushed["rawPayload"]["data"]["latitude"], 31.24)
 
         await communicator.disconnect()
+
+
+class FakeCameraResultsUpstream:
+    def __init__(self):
+        self.messages = asyncio.Queue()
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        return await self.messages.get()
+
+    async def close(self):
+        self.closed = True
+
+
+@override_settings(
+    CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
+)
+class CameraResultsWebSocketTests(TransactionTestCase):
+    def setUp(self):
+        self.root = Department.objects.create(name="总部")
+        self.owner_department = Department.objects.create(name="资源队", parent=self.root)
+        self.viewer = create_v2_actor(username="camera_viewer", role_code=None, department=self.owner_department)
+        self.camera = CameraResource.objects.create(
+            device_sn="CAMERA-WS-001",
+            name="固定摄像头",
+            webrtc_url="https://video.example.test/camera/whep",
+            results_ws_url="wss://video.example.test/target.results",
+            api_key="camera-secret",
+        )
+        ResourceBinding.objects.create(
+            resource_type=ResourceType.CAMERA,
+            resource_object_id=self.camera.id,
+            owner_department=self.owner_department,
+            status=BindingStatus.ACTIVE,
+            bound_by_user=self.viewer,
+        )
+
+    def test_camera_results_should_proxy_for_tree_visible_user_without_role(self):
+        token = create_auth_session(user=self.viewer, request=SimpleNamespace(META={}))["accessToken"]
+        async_to_sync(self._run_proxy)(token)
+
+    async def _run_proxy(self, token: str):
+        upstream = FakeCameraResultsUpstream()
+        connect = AsyncMock(return_value=upstream)
+        with patch("apps.resource_v2.consumers.websockets.connect", connect):
+            communicator = WebsocketCommunicator(application, f"/ws/v2/cameras/{self.camera.id}/results?token={token}")
+            connected, _subprotocol = await communicator.connect()
+            self.assertTrue(connected)
+            connect.assert_awaited_once_with(
+                self.camera.results_ws_url,
+                extra_headers={"X-API-Key": "camera-secret"},
+                ping_interval=20,
+                ping_timeout=20,
+            )
+
+            await upstream.messages.put('{"tracking_state":"TRACKING","class_id":1}')
+            pushed = await communicator.receive_json_from(timeout=1)
+            self.assertEqual(pushed["tracking_state"], "TRACKING")
+            self.assertEqual(pushed["class_id"], 1)
+
+            await communicator.disconnect()
+            self.assertTrue(upstream.closed)

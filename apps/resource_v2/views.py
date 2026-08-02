@@ -31,6 +31,7 @@ from apps.iam_v2.services import (
 )
 from apps.resource_v2.models import (
     BindingStatus,
+    CameraResource,
     DjiConnection,
     MqttConnectionHealth,
     MqttLatestMessage,
@@ -41,6 +42,10 @@ from apps.resource_v2.models import (
 from apps.resource_v2.serializers import (
     BindingCreateSerializer,
     BindingReadSerializer,
+    CameraPlaybackSerializer,
+    CameraRegistrationReadSerializer,
+    CameraResourceReadSerializer,
+    CameraResourceWriteSerializer,
     DjiConnectionCredentialReadSerializer,
     DjiConnectionReadSerializer,
     DjiConnectionWriteSerializer,
@@ -55,6 +60,7 @@ from apps.resource_v2.serializers import (
     ShareGroupTargetCreateSerializer,
     ShareGroupTargetReadSerializer,
     ShareGroupUpdateSerializer,
+    serialize_camera_binding,
     serialize_resource_binding,
 )
 from apps.resource_v2.services import (
@@ -77,6 +83,7 @@ class V2ResourceAPIView(BusinessApiResponseMixin, GenericAPIView):
 
 DJI_CONNECTION_LIST_RESPONSE = list_data_serializer("V2DjiConnectionListData", DjiConnectionReadSerializer)
 RESOURCE_LIST_RESPONSE = list_data_serializer("V2ResourceListData", ResourceReadSerializer)
+CAMERA_RESOURCE_LIST_RESPONSE = list_data_serializer("V2CameraResourceListData", CameraResourceReadSerializer)
 MQTT_HEALTH_LIST_RESPONSE = list_data_serializer("V2MqttHealthListData", MqttConnectionHealthReadSerializer)
 MQTT_LATEST_MESSAGE_LIST_RESPONSE = list_data_serializer("V2MqttLatestMessageListData", MqttLatestMessageReadSerializer)
 SHARE_GROUP_LIST_RESPONSE = list_data_serializer("V2ShareGroupListData", ShareGroupReadSerializer)
@@ -509,11 +516,97 @@ class PayloadResourceDetailView(ResourceDetailView):
         return super().get(request, id=id)
 
 
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="v2_resource_cameras_list",
+        summary="查询权限树内固定摄像头",
+        description="按认领部门层级和共享关系过滤；所有已登录账号均可读取，不检查角色操作权限。",
+        responses={200: OpenApiResponse(response=CAMERA_RESOURCE_LIST_RESPONSE, description="查询成功。")},
+    ),
+    post=extend_schema(
+        operation_id="v2_resource_cameras_register",
+        summary="登记固定摄像头地址",
+        description="登记上游 WebRTC 和识别结果 WebSocket 地址；登记后再通过 bindings 接口认领到部门。",
+        request=CameraResourceWriteSerializer,
+        responses={201: OpenApiResponse(response=CameraRegistrationReadSerializer, description="登记成功。")},
+    ),
+)
+class CameraResourceListCreateView(V2ResourceAPIView):
+    def get(self, request):
+        context = resolve_v2_context(request)
+        bindings = visible_bindings_queryset(context, resource_type=ResourceType.CAMERA)
+        items = [serialize_camera_binding(binding) for binding in bindings]
+        return Response({"list": items, "total": len(items)}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        context = resolve_v2_context(request)
+        if not (is_platform_super_admin(context) or is_department_admin(context)):
+            raise StandardForbidden()
+        serializer = CameraResourceWriteSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        try:
+            camera = serializer.save()
+        except IntegrityError:
+            return _duplicate_response({"deviceSn": ["摄像头标识已存在"]})
+        data = CameraRegistrationReadSerializer(camera).data
+        log_v2_action(
+            request=request,
+            context=context,
+            action="register_camera_resource",
+            target_type="camera_resource",
+            target_id=camera.id,
+            resource_type=ResourceType.CAMERA,
+            resource_object_id=camera.id,
+            after_data=data,
+        )
+        return Response(data, status=status.HTTP_201_CREATED)
+
+
+class CameraResourceDetailView(V2ResourceAPIView):
+    @extend_schema(
+        operation_id="v2_resource_cameras_retrieve",
+        summary="读取固定摄像头详情",
+        description="按认领部门层级和共享关系过滤；所有已登录账号均可读取，不检查角色操作权限。",
+        responses={200: OpenApiResponse(response=CameraResourceReadSerializer, description="读取成功。")},
+    )
+    def get(self, request, id: int):
+        context = resolve_v2_context(request)
+        binding = visible_bindings_queryset(context, resource_type=ResourceType.CAMERA).filter(resource_object_id=id).first()
+        if binding is None:
+            return _not_found_response()
+        return Response(serialize_camera_binding(binding), status=status.HTTP_200_OK)
+
+
+class CameraPlaybackView(V2ResourceAPIView):
+    @extend_schema(
+        operation_id="v2_resource_cameras_playback",
+        summary="获取固定摄像头播放配置",
+        description="返回上游 WebRTC/WHEP 播放地址和平台识别结果 WebSocket 路径；不会返回上游 API Key。",
+        responses={200: OpenApiResponse(response=CameraPlaybackSerializer, description="查询成功。")},
+    )
+    def get(self, request, id: int):
+        context = resolve_v2_context(request)
+        binding = visible_bindings_queryset(context, resource_type=ResourceType.CAMERA).filter(resource_object_id=id).first()
+        if binding is None:
+            return _not_found_response()
+        camera = CameraResource.objects.get(pk=id)
+        data = {
+            "cameraId": camera.id,
+            "name": camera.name,
+            "video": {
+                "protocol": "WHEP" if camera.webrtc_url.rstrip("/").endswith("/whep") else "WEBRTC",
+                "url": camera.webrtc_url,
+            },
+            "resultsWebSocketPath": f"/ws/v2/cameras/{camera.id}/results",
+        }
+        return Response(data, status=status.HTTP_200_OK)
+
+
 class BindingListCreateView(V2ResourceAPIView):
     @extend_schema(
         operation_id="v2_resource_bindings_create",
         summary="绑定资源到部门",
-        description="将已发现资源绑定到 DJI 连接归属部门。",
+        description="DJI 资源绑定到连接归属部门；固定摄像头不使用 DJI 连接，认领到当前管理员部门。",
         request=BindingCreateSerializer,
         responses={201: OpenApiResponse(response=BindingReadSerializer, description="绑定成功。")},
     )
@@ -524,15 +617,22 @@ class BindingListCreateView(V2ResourceAPIView):
         serializer.is_valid(raise_exception=True)
         resource_type = serializer.validated_data["resourceType"]
         resource_id = serializer.validated_data["resourceId"]
-        connection = (
-            DjiConnection.objects.select_for_update()
-            .select_related("owner_department")
-            .filter(pk=serializer.validated_data["djiConnectionId"])
-            .first()
-        )
-        if connection is None:
-            return _not_found_response()
-        require_bind_connection(context, connection)
+        if resource_type == ResourceType.CAMERA:
+            if not (is_platform_super_admin(context) or is_department_admin(context)):
+                raise StandardForbidden()
+            connection = None
+            owner_department = context.department
+        else:
+            connection = (
+                DjiConnection.objects.select_for_update()
+                .select_related("owner_department")
+                .filter(pk=serializer.validated_data["djiConnectionId"])
+                .first()
+            )
+            if connection is None:
+                return _not_found_response()
+            require_bind_connection(context, connection)
+            owner_department = connection.owner_department
         get_resource(resource_type, resource_id)
         existing = (
             ResourceBinding.objects.select_for_update()
@@ -558,7 +658,7 @@ class BindingListCreateView(V2ResourceAPIView):
         binding = ResourceBinding.objects.create(
             resource_type=resource_type,
             resource_object_id=resource_id,
-            owner_department=connection.owner_department,
+            owner_department=owner_department,
             dji_connection=connection,
             status=BindingStatus.ACTIVE,
             bound_by_user=request.user,

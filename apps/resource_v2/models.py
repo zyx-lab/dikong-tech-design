@@ -26,6 +26,7 @@ class ResourceType(models.TextChoices):
     DOCK = "dock", "机场"
     GATEWAY = "gateway", "执行端/网关"
     PAYLOAD = "payload", "负载"
+    CAMERA = "camera", "固定摄像头"
 
 
 class BindingStatus(models.TextChoices):
@@ -191,6 +192,31 @@ class PayloadResource(TimeStampedModel):
         return self.payload_sn
 
 
+class CameraResource(TimeStampedModel):
+    device_sn = models.CharField(max_length=128, unique=True)
+    name = models.CharField(max_length=128)
+    model = models.CharField(max_length=128, blank=True, default="")
+    webrtc_url = models.CharField(max_length=1000)
+    results_ws_url = models.CharField(max_length=1000)
+    api_key = models.CharField(max_length=512)
+    online_status = models.BooleanField(default=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    created_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_v2_camera_resources",
+    )
+
+    class Meta:
+        db_table = "v2_camera_resources"
+        ordering = ["device_sn"]
+
+    def __str__(self):
+        return self.device_sn
+
+
 class MqttLatestMessage(TimeStampedModel):
     dji_connection = models.ForeignKey(DjiConnection, on_delete=models.CASCADE, related_name="mqtt_latest_messages")
     topic = models.CharField(max_length=512)
@@ -216,7 +242,13 @@ class ResourceBinding(TimeStampedModel):
     resource_type = models.CharField(max_length=16, choices=ResourceType.choices)
     resource_object_id = models.BigIntegerField()
     owner_department = models.ForeignKey(Department, on_delete=models.PROTECT, related_name="resource_bindings")
-    dji_connection = models.ForeignKey(DjiConnection, on_delete=models.PROTECT, related_name="resource_bindings")
+    dji_connection = models.ForeignKey(
+        DjiConnection,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="resource_bindings",
+    )
     status = models.CharField(max_length=16, choices=BindingStatus.choices, default=BindingStatus.ACTIVE)
     bound_by_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -244,6 +276,13 @@ class ResourceBinding(TimeStampedModel):
                 condition=Q(status=BindingStatus.ACTIVE),
                 name="uniq_v2_active_resource_binding",
             ),
+            models.CheckConstraint(
+                condition=(
+                    Q(resource_type=ResourceType.CAMERA, dji_connection__isnull=True)
+                    | (~Q(resource_type=ResourceType.CAMERA) & Q(dji_connection__isnull=False))
+                ),
+                name="chk_v2_binding_connection",
+            ),
         ]
         indexes = [
             models.Index(fields=["resource_type", "resource_object_id", "status"], name="idx_v2_binding_resource"),
@@ -255,11 +294,11 @@ class ResourceBinding(TimeStampedModel):
 
     @property
     def dji_workspace_id(self) -> str:
-        return self.dji_connection.workspace_id
+        return self.dji_connection.workspace_id if self.dji_connection_id else ""
 
     @property
     def dji_connection_name(self) -> str:
-        return self.dji_connection.name
+        return self.dji_connection.name if self.dji_connection_id else ""
 
     @property
     def owner_department_name(self) -> str:

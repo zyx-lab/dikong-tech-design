@@ -6,6 +6,7 @@ from apps.access.api_base import StrictSerializer
 from apps.access.models import DirectoryStatus
 from apps.iam_v2.models import ResourceShareGroup, ResourceShareGroupTargetDepartment
 from apps.resource_v2.models import (
+    CameraResource,
     DjiConnection,
     DockResource,
     DroneTelemetrySnapshot,
@@ -200,6 +201,68 @@ class ResourceReadSerializer(serializers.Serializer):
     effectivePermissions = serializers.ListField(child=serializers.CharField())
 
 
+class CameraResourceWriteSerializer(StrictSerializer):
+    deviceSn = serializers.CharField(max_length=128)
+    name = serializers.CharField(max_length=128)
+    model = serializers.CharField(max_length=128, required=False, allow_blank=True, default="")
+    webrtcUrl = serializers.URLField(max_length=1000)
+    resultsWsUrl = serializers.RegexField(r"^wss?://", max_length=1000)
+    apiKey = serializers.CharField(max_length=512, trim_whitespace=False, write_only=True)
+
+    def create(self, validated_data):
+        return CameraResource.objects.create(
+            device_sn=validated_data["deviceSn"],
+            name=validated_data["name"],
+            model=validated_data.get("model", ""),
+            webrtc_url=validated_data["webrtcUrl"],
+            results_ws_url=validated_data["resultsWsUrl"],
+            api_key=validated_data["apiKey"],
+            created_by_user=self.context["request"].user,
+        )
+
+
+class CameraRegistrationReadSerializer(serializers.ModelSerializer):
+    resourceId = serializers.IntegerField(source="id", read_only=True)
+    resourceType = serializers.SerializerMethodField()
+    deviceSn = serializers.CharField(source="device_sn", read_only=True)
+    webrtcUrl = serializers.CharField(source="webrtc_url", read_only=True)
+    resultsWsUrl = serializers.CharField(source="results_ws_url", read_only=True)
+    onlineStatus = serializers.BooleanField(source="online_status", read_only=True)
+
+    class Meta:
+        model = CameraResource
+        fields = ["resourceId", "resourceType", "deviceSn", "name", "model", "webrtcUrl", "resultsWsUrl", "onlineStatus"]
+        read_only_fields = fields
+
+    def get_resourceType(self, _obj) -> str:
+        return ResourceType.CAMERA
+
+
+class CameraResourceReadSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    resourceType = serializers.CharField()
+    bindingId = serializers.IntegerField()
+    deviceSn = serializers.CharField()
+    name = serializers.CharField()
+    model = serializers.CharField()
+    onlineStatus = serializers.BooleanField()
+    lastSeenAt = serializers.DateTimeField(allow_null=True)
+    ownerDepartment = serializers.DictField()
+    playbackPath = serializers.CharField()
+
+
+class CameraPlaybackVideoSerializer(serializers.Serializer):
+    protocol = serializers.CharField()
+    url = serializers.CharField()
+
+
+class CameraPlaybackSerializer(serializers.Serializer):
+    cameraId = serializers.IntegerField()
+    name = serializers.CharField()
+    video = CameraPlaybackVideoSerializer()
+    resultsWebSocketPath = serializers.CharField()
+
+
 class MqttConnectionHealthReadSerializer(serializers.ModelSerializer):
     connectionId = serializers.IntegerField(source="dji_connection_id", read_only=True)
     connectionName = serializers.CharField(source="dji_connection.name", read_only=True)
@@ -255,7 +318,15 @@ class MqttLatestMessageReadSerializer(serializers.ModelSerializer):
 class BindingCreateSerializer(StrictSerializer):
     resourceType = serializers.ChoiceField(choices=ResourceType.choices)
     resourceId = serializers.IntegerField(min_value=1)
-    djiConnectionId = serializers.IntegerField(min_value=1)
+    djiConnectionId = serializers.IntegerField(min_value=1, required=False)
+
+    def validate(self, attrs):
+        if attrs["resourceType"] == ResourceType.CAMERA:
+            if "djiConnectionId" in attrs:
+                raise serializers.ValidationError({"djiConnectionId": ["固定摄像头认领不使用 DJI 连接"]})
+        elif "djiConnectionId" not in attrs:
+            raise serializers.ValidationError({"djiConnectionId": ["该字段是必填项。"]})
+        return attrs
 
 
 class BindingReadSerializer(serializers.ModelSerializer):
@@ -393,3 +464,23 @@ def serialize_resource_binding(binding: ResourceBinding, *, context):
     if binding.resource_type == ResourceType.DRONE:
         payload["latestTelemetry"] = _drone_latest_telemetry(resource)
     return payload
+
+
+def serialize_camera_binding(binding: ResourceBinding) -> dict:
+    resource = CameraResource.objects.get(pk=binding.resource_object_id)
+    return {
+        "id": resource.id,
+        "resourceType": ResourceType.CAMERA,
+        "bindingId": binding.id,
+        "deviceSn": resource.device_sn,
+        "name": resource.name,
+        "model": resource.model,
+        "onlineStatus": resource.online_status,
+        "lastSeenAt": resource.last_seen_at,
+        "ownerDepartment": {
+            "id": binding.owner_department_id,
+            "name": binding.owner_department_name,
+            "path": binding.owner_department_path,
+        },
+        "playbackPath": f"/api/v2/resource/cameras/{resource.id}/playback",
+    }

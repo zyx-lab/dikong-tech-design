@@ -21,6 +21,7 @@ from apps.resource_v2.gateway import DjiConnectionGateway
 from apps.resource_v2.models import (
     BindingActionType,
     BindingStatus,
+    CameraResource,
     DjiConnection,
     DockResource,
     DroneTelemetrySnapshot,
@@ -177,6 +178,94 @@ class ResourceV2ApiTests(TestCase):
             bound_by_user=actor,
         )
         return resource
+
+    def test_camera_should_register_claim_and_follow_permission_tree_without_role_gate(self):
+        self.authenticate(self.child_admin)
+        register_response = self.client.post(
+            "/api/v2/resource/cameras",
+            {
+                "deviceSn": "CAMERA-101",
+                "name": "一号固定摄像头",
+                "model": "固定枪机",
+                "webrtcUrl": "https://video.example.test/camera-101/whep",
+                "resultsWsUrl": "wss://video.example.test/target.results",
+                "apiKey": "camera-secret",
+            },
+            format="json",
+        )
+
+        self.assertEqual(register_response.status_code, 201, getattr(register_response, "data", register_response.content))
+        camera_id = register_response.data["data"]["resourceId"]
+        self.assertNotIn("apiKey", register_response.data["data"])
+        self.assertFalse(ResourceBinding.objects.filter(resource_type=ResourceType.CAMERA, resource_object_id=camera_id).exists())
+
+        self.authenticate(self.no_role_user)
+        forbidden_claim_response = self.client.post(
+            "/api/v2/resource/bindings",
+            {"resourceType": ResourceType.CAMERA, "resourceId": camera_id},
+            format="json",
+        )
+        self.assertEqual(forbidden_claim_response.status_code, 403)
+
+        self.authenticate(self.child_admin)
+        claim_response = self.client.post(
+            "/api/v2/resource/bindings",
+            {"resourceType": ResourceType.CAMERA, "resourceId": camera_id},
+            format="json",
+        )
+
+        self.assertEqual(claim_response.status_code, 201, getattr(claim_response, "data", claim_response.content))
+        self.assertIsNone(claim_response.data["data"]["djiConnectionId"])
+        self.assertEqual(claim_response.data["data"]["ownerDepartmentId"], self.child.id)
+
+        self.authenticate(self.no_role_user)
+        list_response = self.client.get("/api/v2/resource/cameras")
+        detail_response = self.client.get(f"/api/v2/resource/cameras/{camera_id}")
+        playback_response = self.client.get(f"/api/v2/resource/cameras/{camera_id}/playback")
+
+        self.assertEqual(list_response.status_code, 200, getattr(list_response, "data", list_response.content))
+        self.assertEqual(list_response.data["data"]["total"], 1)
+        self.assertEqual(list_response.data["data"]["list"][0]["deviceSn"], "CAMERA-101")
+        self.assertEqual(detail_response.status_code, 200, getattr(detail_response, "data", detail_response.content))
+        self.assertEqual(playback_response.status_code, 200, getattr(playback_response, "data", playback_response.content))
+        self.assertEqual(playback_response.data["data"]["video"]["protocol"], "WHEP")
+        self.assertEqual(playback_response.data["data"]["video"]["url"], "https://video.example.test/camera-101/whep")
+        self.assertEqual(playback_response.data["data"]["resultsWebSocketPath"], f"/ws/v2/cameras/{camera_id}/results")
+        self.assertNotIn("camera-secret", str(list_response.data))
+        self.assertNotIn("camera-secret", str(detail_response.data))
+        self.assertNotIn("camera-secret", str(playback_response.data))
+
+        self.authenticate(self.root_admin)
+        parent_list_response = self.client.get("/api/v2/resource/cameras")
+        self.assertEqual(parent_list_response.data["data"]["total"], 1)
+
+        self.authenticate(self.other_dispatcher)
+        hidden_list_response = self.client.get("/api/v2/resource/cameras")
+        hidden_playback_response = self.client.get(f"/api/v2/resource/cameras/{camera_id}/playback")
+        self.assertEqual(hidden_list_response.data["data"]["total"], 0)
+        self.assertEqual(hidden_playback_response.status_code, 404)
+
+        self.authenticate(self.child_admin)
+        group_response = self.client.post("/api/v2/resource/share-groups", {"name": "摄像头共享"}, format="json")
+        group_id = group_response.data["data"]["id"]
+        self.client.post(
+            f"/api/v2/resource/share-groups/{group_id}/departments",
+            {"departmentId": self.other.id},
+            format="json",
+        )
+        share_response = self.client.post(
+            f"/api/v2/resource/share-groups/{group_id}/resources",
+            {"resourceType": ResourceType.CAMERA, "resourceId": camera_id, "permissions": ["view"]},
+            format="json",
+        )
+        self.assertEqual(share_response.status_code, 201, getattr(share_response, "data", share_response.content))
+
+        self.authenticate(self.other_dispatcher)
+        shared_list_response = self.client.get("/api/v2/resource/cameras")
+        self.assertEqual(shared_list_response.data["data"]["total"], 1)
+
+        camera = CameraResource.objects.get(pk=camera_id)
+        self.assertEqual(camera.api_key, "camera-secret")
 
     @override_settings(DJI_MQTT_OSD_FRESHNESS_SECONDS=60)
     def test_drone_resource_should_include_latest_mqtt_telemetry_snapshot(self):

@@ -108,6 +108,10 @@
 | `GET /api/v2/resource/gateways/{id}` | 读取网关/执行端详情。 |
 | `GET /api/v2/resource/payloads` | 查询当前账号可见负载。 |
 | `GET /api/v2/resource/payloads/{id}` | 读取负载详情。 |
+| `POST /api/v2/resource/cameras` | 登记固定摄像头 WebRTC 和识别结果地址。 |
+| `GET /api/v2/resource/cameras` | 按部门权限树查询已认领固定摄像头，不限制账号角色。 |
+| `GET /api/v2/resource/cameras/{id}` | 读取权限树内固定摄像头详情。 |
+| `GET /api/v2/resource/cameras/{id}/playback` | 获取 WebRTC/WHEP 播放地址和识别结果 WebSocket 路径。 |
 | `GET /api/v2/resource/summary` | 资源总览统计。 |
 | `GET /api/v2/resource/share-groups` | 查询资源共享组。 |
 | `POST /api/v2/resource/share-groups` | 创建资源共享组。 |
@@ -237,6 +241,17 @@ python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix 
 ```
 
 `djiConnectionId` 是 v2 本地 DJI 连接 ID，不是 DJI workspace ID。`resourceType + resourceId` 才能唯一定位一个 v2 资源。
+
+### 固定摄像头接入与认领
+
+固定摄像头使用上游提供的 WebRTC/WHEP 地址，不由 Django 转码。接入顺序：
+
+1. 部门管理员调用 `POST /api/v2/resource/cameras` 登记 `deviceSn/name/webrtcUrl/resultsWsUrl/apiKey`，摄像头先进入未认领资源池。
+2. 调用 `POST /api/v2/resource/bindings`，请求体传 `{ "resourceType": "camera", "resourceId": 1 }`；摄像头不传 `djiConnectionId`，认领到当前管理员部门。
+3. 所有已登录账号均可调用 `GET /api/v2/resource/cameras` 和详情、播放接口；可见范围沿用认领部门层级与资源共享组，不检查账号角色的 view/monitor 权限。
+4. 播放前调用 `GET /api/v2/resource/cameras/{id}/playback`。前端使用 `data.video.url` 播放 WebRTC/WHEP，并把当前 access token 追加到 `data.resultsWebSocketPath`：`/ws/v2/cameras/{id}/results?token=<accessToken>`。
+
+`apiKey` 仅在登记时写入后端，列表、详情和播放接口均不返回。平台 WebSocket 会使用该密钥订阅上游 `target.results`，前端不直接接触上游密钥。上级部门可见下级部门认领的摄像头；其他部门需要通过现有资源共享组获得可见性。
 
 资源列表和详情都会返回 `djiConnectionId`、`djiConnectionName`。前端展示无人机、机场、网关或负载时，可以直接显示资源所属 DJI 连接；排查 MQTT 或 DJI 上游问题时，也可以用这个 ID 去查 `mqtt-health` 和 `mqtt-messages/latest`。
 

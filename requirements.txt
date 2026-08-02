@@ -9,3 +9,4 @@ channels==4.2.0
 channels-redis==4.2.1
 daphne==4.1.2
 redis==5.2.1
+websockets==13.1

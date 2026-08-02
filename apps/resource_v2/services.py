@@ -18,6 +18,7 @@ from apps.audit_v2.services import log_v2_action
 from apps.resource_v2.models import (
     BindingActionType,
     BindingStatus,
+    CameraResource,
     DjiConnection,
     DjiConnectionStatus,
     DockResource,
@@ -36,6 +37,7 @@ RESOURCE_MODELS = {
     ResourceType.DOCK: DockResource,
     ResourceType.GATEWAY: GatewayResource,
     ResourceType.PAYLOAD: PayloadResource,
+    ResourceType.CAMERA: CameraResource,
 }
 
 
@@ -62,7 +64,9 @@ def resource_identifier(resource_type: str, resource_id: int) -> str:
     return str(getattr(get_resource(resource_type, resource_id), "device_sn", resource_id))
 
 
-def dji_connection_snapshot(connection: DjiConnection) -> dict:
+def dji_connection_snapshot(connection: DjiConnection | None) -> dict:
+    if connection is None:
+        return {}
     return {
         "id": connection.id,
         "owner_department_id": connection.owner_department_id,
@@ -114,7 +118,6 @@ def visible_bindings_queryset(context, *, resource_type: str) -> QuerySet:
     shared_resource_filter = Q(
         resource_type=resource_type,
         status=BindingStatus.ACTIVE,
-        dji_connection__isnull=False,
         resource_object_id__in=ResourceSharePermission.objects.filter(
             share_group__target_departments__department=context.department,
             share_group__status=DirectoryStatus.ACTIVE,

@@ -63,7 +63,7 @@ http://127.0.0.1:8000/api/v2/docs/
 
 - `apps.access`：账号、Bearer token 会话、认证、异常、请求日志、存储后端。
 - `apps.iam_v2`：部门、账号档案、角色、权限、菜单、当前用户上下文。
-- `apps.resource_v2`：DJI 连接、无人机、机场、网关、负载、资源绑定、共享组、MQTT/WebSocket。
+- `apps.resource_v2`：DJI 连接、无人机、机场、网关、负载、固定摄像头、资源绑定、共享组、MQTT/WebSocket。
 - `apps.inspection_v2`：航线、巡检任务、飞行会话、遥测、直播、相机动作、飞行记录、云媒体文件。
 - `apps.system_v2`：系统菜单、操作日志、登录日志、文件日志。
 - `apps.api_v2`：v2 聚合路由、OpenAPI 文档和边界测试。
