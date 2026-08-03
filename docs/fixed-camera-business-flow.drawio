@@ -1,0 +1,102 @@
+<mxfile host="app.diagrams.net"><diagram id="camera-flow" name="固定摄像头业务流">
+    <mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="800" pageHeight="600" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="2" value="固定摄像头接入与观看业务流" style="text;html=1;align=center;verticalAlign=middle;fontSize=20;fontStyle=1;fontColor=#17201D;" vertex="1" parent="1">
+          <mxGeometry x="180" y="18" width="440" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="3" value="" style="rounded=1;arcSize=4;whiteSpace=wrap;html=1;fillColor=#F4F7F5;strokeColor=#C9D5CF;" vertex="1" parent="1">
+          <mxGeometry x="30" y="62" width="740" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="4" value="" style="rounded=1;arcSize=4;whiteSpace=wrap;html=1;fillColor=#F7F9FA;strokeColor=#CAD4DA;" vertex="1" parent="1">
+          <mxGeometry x="30" y="238" width="740" height="337" as="geometry" />
+        </mxCell>
+        <mxCell id="5" value="阶段一｜管理员接入与认领" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fontStyle=1;fontColor=#3B554A;" vertex="1" parent="1">
+          <mxGeometry x="48" y="72" width="220" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="6" value="阶段二｜用户观看与接收检测结果" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fontStyle=1;fontColor=#405664;" vertex="1" parent="1">
+          <mxGeometry x="48" y="247" width="260" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="10" value="管理员登记摄像头&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;WHEP / Results WS / 密钥&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#E6F3ED;strokeColor=#4A8C70;fontSize=13;fontColor=#173B2C;" vertex="1" parent="1">
+          <mxGeometry x="50" y="118" width="150" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="11" value="平台保存配置&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;密钥仅服务端可见&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#E8F1F6;strokeColor=#5B8298;fontSize=13;fontColor=#233F4E;" vertex="1" parent="1">
+          <mxGeometry x="235" y="118" width="145" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="12" value="管理员认领设备&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;resourceType = camera&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#FFF3DA;strokeColor=#C19032;fontSize=13;fontColor=#5B4317;" vertex="1" parent="1">
+          <mxGeometry x="415" y="118" width="145" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="13" value="绑定当前部门&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;进入部门树 / 共享体系&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#E6F3ED;strokeColor=#4A8C70;fontSize=13;fontColor=#173B2C;" vertex="1" parent="1">
+          <mxGeometry x="595" y="118" width="150" height="62" as="geometry" />
+        </mxCell>
+
+        <mxCell id="20" value="用户登录平台&lt;br&gt;查询摄像头列表" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#E8F1F6;strokeColor=#5B8298;fontSize=13;fontColor=#233F4E;" vertex="1" parent="1">
+          <mxGeometry x="52" y="286" width="140" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="21" value="部门树 / 共享&lt;br&gt;是否可见？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFF3DA;strokeColor=#C19032;fontSize=12;fontColor=#5B4317;" vertex="1" parent="1">
+          <mxGeometry x="226" y="278" width="118" height="74" as="geometry" />
+        </mxCell>
+        <mxCell id="22" value="获取播放配置&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;WHEP 路径 + Results WS 路径&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#E6F3ED;strokeColor=#4A8C70;fontSize=13;fontColor=#173B2C;" vertex="1" parent="1">
+          <mxGeometry x="382" y="286" width="166" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="23" value="不可见：返回 404" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#FCE8E6;strokeColor=#C45B52;fontSize=11;fontColor=#7A2923;" vertex="1" parent="1"><mxGeometry x="230" y="365" width="110" height="28" as="geometry" /></mxCell>
+
+        <mxCell id="30" value="" style="rounded=1;arcSize=4;whiteSpace=wrap;html=1;fillColor=#F0F7F3;strokeColor=#A9C8B9;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="48" y="401" width="332" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="31" value="" style="rounded=1;arcSize=4;whiteSpace=wrap;html=1;fillColor=#F1F6F9;strokeColor=#AABFCB;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="420" y="401" width="332" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="32" value="视频链路（WHEP / WebRTC）" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontStyle=1;fontColor=#3B554A;" vertex="1" parent="1">
+          <mxGeometry x="60" y="408" width="190" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="33" value="浏览器生成&lt;br&gt;SDP offer" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6E9E88;fontSize=11;fontColor=#27483A;" vertex="1" parent="1">
+          <mxGeometry x="62" y="444" width="84" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="34" value="平台代理&lt;br&gt;Basic Auth" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6E9E88;fontSize=11;fontColor=#27483A;" vertex="1" parent="1">
+          <mxGeometry x="174" y="444" width="84" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="35" value="上游返回 SDP&lt;br&gt;直传 WebRTC 媒体" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6E9E88;fontSize=11;fontColor=#27483A;" vertex="1" parent="1">
+          <mxGeometry x="286" y="444" width="80" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="40" value="检测结果链路（WebSocket）" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontStyle=1;fontColor=#405664;" vertex="1" parent="1">
+          <mxGeometry x="432" y="408" width="190" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="41" value="浏览器连接&lt;br&gt;平台 WS + Token" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6D92A6;fontSize=11;fontColor=#294654;" vertex="1" parent="1">
+          <mxGeometry x="434" y="444" width="86" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="42" value="平台校验可见性&lt;br&gt;连接上游 WS" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6D92A6;fontSize=11;fontColor=#294654;" vertex="1" parent="1">
+          <mxGeometry x="544" y="444" width="88" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="43" value="转发 JSON&lt;br&gt;绘制检测框" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6D92A6;fontSize=11;fontColor=#294654;" vertex="1" parent="1">
+          <mxGeometry x="656" y="444" width="82" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="50" value="页面展示：实时视频 + 检测结果叠加" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#173B2C;strokeColor=#173B2C;fontColor=#FFFFFF;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="285" y="538" width="230" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="100" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#527467;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="10" target="11"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="101" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#527467;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="11" target="12"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="102" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#527467;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="12" target="13"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="110" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#5A7280;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="20" target="21"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="111" value="可见" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4A8C70;fontColor=#3B6E58;fontSize=10;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="21" target="22"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="112" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#C45B52;fontColor=#8A3A33;fontSize=10;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="21" target="23"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="120" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4A8C70;fontColor=#3B6E58;fontSize=10;endArrow=classic;exitX=0.35;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="22" target="33"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="440" y="396" /><mxPoint x="104" y="396" /></Array></mxGeometry></mxCell>
+        <mxCell id="121" value="识别结果" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#5B8298;fontColor=#405664;fontSize=10;endArrow=classic;exitX=0.7;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="22" target="41"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="500" y="372" /><mxPoint x="477" y="372" /></Array></mxGeometry></mxCell>
+
+        <mxCell id="130" value="offer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#527467;fontSize=9;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="33" target="34"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="131" value="answer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#527467;fontSize=9;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="34" target="35"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="132" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4A8C70;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.25;entryY=0;" edge="1" parent="1" source="35" target="50"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="326" y="515" /><mxPoint x="343" y="515" /></Array></mxGeometry></mxCell>
+
+        <mxCell id="140" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#5A7280;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="41" target="42"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="141" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#5A7280;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="42" target="43"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="142" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#5B8298;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.75;entryY=0;" edge="1" parent="1" source="43" target="50"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="697" y="522" /><mxPoint x="458" y="522" /></Array></mxGeometry></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram></mxfile>
