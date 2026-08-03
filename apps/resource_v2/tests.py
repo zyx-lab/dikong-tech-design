@@ -189,6 +189,7 @@ class ResourceV2ApiTests(TestCase):
                 "model": "固定枪机",
                 "webrtcUrl": "https://video.example.test/camera-101/whep",
                 "resultsWsUrl": "wss://video.example.test/target.results",
+                "apiUsername": "camera-user",
                 "apiKey": "camera-secret",
             },
             format="json",
@@ -196,6 +197,7 @@ class ResourceV2ApiTests(TestCase):
 
         self.assertEqual(register_response.status_code, 201, getattr(register_response, "data", register_response.content))
         camera_id = register_response.data["data"]["resourceId"]
+        self.assertNotIn("apiUsername", register_response.data["data"])
         self.assertNotIn("apiKey", register_response.data["data"])
         self.assertFalse(ResourceBinding.objects.filter(resource_type=ResourceType.CAMERA, resource_object_id=camera_id).exists())
 
@@ -265,7 +267,30 @@ class ResourceV2ApiTests(TestCase):
         self.assertEqual(shared_list_response.data["data"]["total"], 1)
 
         camera = CameraResource.objects.get(pk=camera_id)
+        self.assertEqual(camera.api_username, "camera-user")
         self.assertEqual(camera.api_key, "camera-secret")
+
+    def test_camera_registration_should_require_api_username(self):
+        self.authenticate(self.child_admin)
+        for device_sn, api_username in (
+            ("CAMERA-MISSING-USERNAME", None),
+            ("CAMERA-BLANK-USERNAME", ""),
+        ):
+            payload = {
+                "deviceSn": device_sn,
+                "name": "缺账号摄像头",
+                "webrtcUrl": "https://video.example.test/camera-missing/whep",
+                "resultsWsUrl": "wss://video.example.test/target.results",
+                "apiKey": "camera-secret",
+            }
+            if api_username is not None:
+                payload["apiUsername"] = api_username
+
+            with self.subTest(device_sn=device_sn):
+                response = self.client.post("/api/v2/resource/cameras", payload, format="json")
+
+                self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+                self.assertFalse(CameraResource.objects.filter(device_sn=device_sn).exists())
 
     def test_camera_whep_should_exchange_sdp_through_server_side_basic_auth(self):
         camera = CameraResource.objects.create(
@@ -273,6 +298,7 @@ class ResourceV2ApiTests(TestCase):
             name="WHEP 摄像头",
             webrtc_url="http://110.42.32.122:18889/camera-101/whep",
             results_ws_url="ws://110.42.32.122:18081/target.results",
+            api_username="camera-user",
             api_key="camera-secret",
         )
         ResourceBinding.objects.create(
@@ -300,7 +326,7 @@ class ResourceV2ApiTests(TestCase):
         self.assertEqual(upstream_request.full_url, camera.webrtc_url)
         self.assertEqual(upstream_request.get_method(), "POST")
         self.assertEqual(upstream_request.data, b"v=0\r\ns=browser-offer\r\n")
-        self.assertEqual(upstream_request.get_header("Authorization"), "Basic am51Y2xvdWQ6Y2FtZXJhLXNlY3JldA==")
+        self.assertEqual(upstream_request.get_header("Authorization"), "Basic Y2FtZXJhLXVzZXI6Y2FtZXJhLXNlY3JldA==")
 
     @override_settings(DJI_MQTT_OSD_FRESHNESS_SECONDS=60)
     def test_drone_resource_should_include_latest_mqtt_telemetry_snapshot(self):

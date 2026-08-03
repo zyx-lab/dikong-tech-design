@@ -248,12 +248,12 @@ python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix 
 固定摄像头使用上游提供的 WHEP/WebRTC，不由 Django 转码。当前上游实际调用约定是：
 
 - WHEP：`POST http://110.42.32.122:18889/camera-101/whep`，请求和响应均为 SDP。
-- WHEP 鉴权：`Authorization: Basic base64("jnucloud:<apiKey>")`。
+- WHEP 鉴权：`Authorization: Basic base64("<apiUsername>:<apiKey>")`。
 - 识别结果：`ws://110.42.32.122:18081/target.results`，上游 WebSocket 不需要 API Key。
 
 平台接入顺序：
 
-1. 部门管理员调用 `POST /api/v2/resource/cameras` 登记 `deviceSn/name/webrtcUrl/resultsWsUrl/apiKey`，摄像头先进入未认领资源池。
+1. 部门管理员调用 `POST /api/v2/resource/cameras` 登记 `deviceSn/name/webrtcUrl/resultsWsUrl/apiUsername/apiKey`，摄像头先进入未认领资源池。
 2. 调用 `POST /api/v2/resource/bindings`，请求体传 `{ "resourceType": "camera", "resourceId": 1 }`；摄像头不传 `djiConnectionId`，认领到当前管理员部门。
 3. 所有已登录账号均可调用 `GET /api/v2/resource/cameras` 和详情、播放接口；可见范围沿用认领部门层级与资源共享组，不检查账号角色的 view/monitor 权限。
 4. 播放前调用 `GET /api/v2/resource/cameras/{id}/playback`。`data.video.url` 是平台 WHEP 信令代理，不是上游地址；前端将 SDP offer 作为 `{ "offerSdp": "..." }` POST 到该地址，再用 `data.answerSdp` 设置远端描述。
@@ -267,11 +267,31 @@ python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix 
   "name": "一号固定摄像头",
   "webrtcUrl": "http://110.42.32.122:18889/camera-101/whep",
   "resultsWsUrl": "ws://110.42.32.122:18081/target.results",
+  "apiUsername": "jnucloud",
   "apiKey": "<平台密钥>"
 }
 ```
 
-`apiKey` 仅在登记时写入后端，作为上游 WHEP Basic Auth 的密码；列表、详情和播放接口均不返回。识别结果上游不使用该密钥。这样前端既不接触密钥，也不会直接请求公网 HTTP WHEP 地址。上级部门可见下级部门认领的摄像头；其他部门需要通过现有资源共享组获得可见性。
+`apiUsername` 和 `apiKey` 仅在登记时写入后端，作为上游 WHEP Basic Auth 的用户名和密码；列表、详情和播放接口均不返回。识别结果上游不使用该账号密钥。这样前端既不接触密钥，也不会直接请求公网 HTTP WHEP 地址。上级部门可见下级部门认领的摄像头；其他部门需要通过现有资源共享组获得可见性。
+
+登记字段扩展规格：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `deviceSn` | 是 | 摄像头稳定唯一标识。 |
+| `name` | 是 | 摄像头显示名称。 |
+| `model` | 否 | 摄像头型号，未传为空字符串。 |
+| `webrtcUrl` | 是 | 上游 WHEP 地址。 |
+| `resultsWsUrl` | 是 | 上游识别结果 WebSocket 地址，必须是 `ws://` 或 `wss://`。 |
+| `apiUsername` | 是 | 上游 WHEP Basic Auth 用户名。 |
+| `apiKey` | 是 | 上游 WHEP Basic Auth 密码或密钥，write-only。 |
+
+验收标准：
+
+- 新登记请求传入 `apiUsername="camera-user"` 和 `apiKey="secret"` 后，播放时后端向上游 WHEP 发送 `Authorization: Basic base64("camera-user:secret")`。
+- 登记请求缺少 `apiUsername` 或 `apiUsername` 为空时返回 `400`，不创建摄像头资源。
+- `apiUsername` 和 `apiKey` 均不得出现在摄像头登记响应、列表、详情、播放配置和 OpenAPI 读模型中。
+- 绑定接口保持不变：固定摄像头仍只传 `{ "resourceType": "camera", "resourceId": <id> }`，不传摄像头账号，也不传 `djiConnectionId`。
 
 前端的核心 WebRTC 调用与上游示例一致，只把 WHEP `fetch` 改为平台 JSON 接口：
 

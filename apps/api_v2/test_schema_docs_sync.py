@@ -221,7 +221,7 @@ class ApiV2DocsSyncTests(TestCase):
                 method="post",
                 content_type="application/json",
             ),
-            {"deviceSn", "name", "model", "webrtcUrl", "resultsWsUrl", "apiKey"},
+            {"deviceSn", "name", "model", "webrtcUrl", "resultsWsUrl", "apiUsername", "apiKey"},
         )
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/resource/cameras"),

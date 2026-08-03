@@ -207,6 +207,7 @@ class CameraResourceWriteSerializer(StrictSerializer):
     model = serializers.CharField(max_length=128, required=False, allow_blank=True, default="")
     webrtcUrl = serializers.URLField(max_length=1000)
     resultsWsUrl = serializers.RegexField(r"^wss?://", max_length=1000)
+    apiUsername = serializers.CharField(max_length=512, write_only=True)
     apiKey = serializers.CharField(max_length=512, trim_whitespace=False, write_only=True)
 
     def create(self, validated_data):
@@ -216,6 +217,7 @@ class CameraResourceWriteSerializer(StrictSerializer):
             model=validated_data.get("model", ""),
             webrtc_url=validated_data["webrtcUrl"],
             results_ws_url=validated_data["resultsWsUrl"],
+            api_username=validated_data["apiUsername"],
             api_key=validated_data["apiKey"],
             created_by_user=self.context["request"].user,
         )

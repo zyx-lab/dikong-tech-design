@@ -183,6 +183,7 @@ class CameraResultsWebSocketTests(TransactionTestCase):
             name="固定摄像头",
             webrtc_url="https://video.example.test/camera/whep",
             results_ws_url="wss://video.example.test/target.results",
+            api_username="camera-user",
             api_key="camera-secret",
         )
         ResourceBinding.objects.create(

@@ -198,6 +198,7 @@ class CameraResource(TimeStampedModel):
     model = models.CharField(max_length=128, blank=True, default="")
     webrtc_url = models.CharField(max_length=1000)
     results_ws_url = models.CharField(max_length=1000)
+    api_username = models.CharField(max_length=512)
     api_key = models.CharField(max_length=512)
     online_status = models.BooleanField(default=True)
     last_seen_at = models.DateTimeField(null=True, blank=True)

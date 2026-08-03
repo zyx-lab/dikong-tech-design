@@ -19,7 +19,7 @@ class CameraWhepGatewayError(RuntimeError):
 
 
 def exchange_camera_whep_offer(camera, offer_sdp: str) -> str:
-    credentials = base64.b64encode(f"jnucloud:{camera.api_key}".encode()).decode()
+    credentials = base64.b64encode(f"{camera.api_username}:{camera.api_key}".encode()).decode()
     request = Request(
         camera.webrtc_url,
         data=offer_sdp.encode(),
