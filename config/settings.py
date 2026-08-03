@@ -8,7 +8,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
-ALLOWED_HOSTS = [host.strip() for host in os.getenv("DJANGO_ALLOWED_HOSTS", "*").split(",") if host.strip()]
+
+
+def _allowed_hosts_config(env, debug):
+    hosts = [host.strip() for host in env.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if host.strip()]
+    if debug and "*" not in hosts:
+        hosts.append("*")
+    return hosts
+
+
+ALLOWED_HOSTS = _allowed_hosts_config(os.environ, DEBUG)
 
 DJANGO_LOG_DIR = Path(os.getenv("DJANGO_LOG_DIR", str(BASE_DIR / "logs")))
 DJANGO_LOG_LEVEL = os.getenv("DJANGO_LOG_LEVEL", "INFO")
