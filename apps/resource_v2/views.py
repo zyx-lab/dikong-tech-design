@@ -39,6 +39,7 @@ from apps.resource_v2.models import (
     ResourceSharePermission,
     ResourceType,
 )
+from apps.resource_v2.gateway import CameraWhepGatewayError, exchange_camera_whep_offer
 from apps.resource_v2.serializers import (
     BindingCreateSerializer,
     BindingReadSerializer,
@@ -46,6 +47,8 @@ from apps.resource_v2.serializers import (
     CameraRegistrationReadSerializer,
     CameraResourceReadSerializer,
     CameraResourceWriteSerializer,
+    CameraWhepAnswerSerializer,
+    CameraWhepOfferSerializer,
     DjiConnectionCredentialReadSerializer,
     DjiConnectionReadSerializer,
     DjiConnectionWriteSerializer,
@@ -581,7 +584,7 @@ class CameraPlaybackView(V2ResourceAPIView):
     @extend_schema(
         operation_id="v2_resource_cameras_playback",
         summary="获取固定摄像头播放配置",
-        description="返回上游 WebRTC/WHEP 播放地址和平台识别结果 WebSocket 路径；不会返回上游 API Key。",
+        description="返回平台 WHEP 信令代理地址和识别结果 WebSocket 路径；不会返回上游地址或 API Key。",
         responses={200: OpenApiResponse(response=CameraPlaybackSerializer, description="查询成功。")},
     )
     def get(self, request, id: int):
@@ -594,12 +597,36 @@ class CameraPlaybackView(V2ResourceAPIView):
             "cameraId": camera.id,
             "name": camera.name,
             "video": {
-                "protocol": "WHEP" if camera.webrtc_url.rstrip("/").endswith("/whep") else "WEBRTC",
-                "url": camera.webrtc_url,
+                "protocol": "WHEP",
+                "url": f"/api/v2/resource/cameras/{camera.id}/whep",
             },
             "resultsWebSocketPath": f"/ws/v2/cameras/{camera.id}/results",
         }
         return Response(data, status=status.HTTP_200_OK)
+
+
+class CameraWhepView(V2ResourceAPIView):
+    @extend_schema(
+        operation_id="v2_resource_cameras_whep",
+        summary="交换固定摄像头 WHEP SDP",
+        description="接收浏览器 SDP offer，后端使用固定平台身份和摄像头密钥请求上游 WHEP，并返回 SDP answer。",
+        request=CameraWhepOfferSerializer,
+        responses={200: OpenApiResponse(response=CameraWhepAnswerSerializer, description="交换成功。")},
+    )
+    def post(self, request, id: int):
+        context = resolve_v2_context(request)
+        binding = visible_bindings_queryset(context, resource_type=ResourceType.CAMERA).filter(resource_object_id=id).first()
+        if binding is None:
+            return _not_found_response()
+        serializer = CameraWhepOfferSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        camera = CameraResource.objects.get(pk=id)
+        try:
+            answer_sdp = exchange_camera_whep_offer(camera, serializer.validated_data["offerSdp"])
+        except CameraWhepGatewayError:
+            return Response({"detail": "固定摄像头上游 WHEP 连接失败"}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({"answerSdp": answer_sdp}, status=status.HTTP_200_OK)
 
 
 class BindingListCreateView(V2ResourceAPIView):

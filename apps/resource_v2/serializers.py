@@ -263,6 +263,14 @@ class CameraPlaybackSerializer(serializers.Serializer):
     resultsWebSocketPath = serializers.CharField()
 
 
+class CameraWhepOfferSerializer(StrictSerializer):
+    offerSdp = serializers.CharField(trim_whitespace=False, allow_blank=False)
+
+
+class CameraWhepAnswerSerializer(serializers.Serializer):
+    answerSdp = serializers.CharField(trim_whitespace=False)
+
+
 class MqttConnectionHealthReadSerializer(serializers.ModelSerializer):
     connectionId = serializers.IntegerField(source="dji_connection_id", read_only=True)
     connectionName = serializers.CharField(source="dji_connection.name", read_only=True)

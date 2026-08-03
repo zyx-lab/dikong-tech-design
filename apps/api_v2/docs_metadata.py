@@ -13,7 +13,7 @@ API v2 文档。前端只调用 `/api/v2/*`；旧 API v1 已移除。文档页�
 ## 模块接入顺序
 
 - IAM：部门、账号、角色、权限和菜单先完成；飞手不是独立资源，而是账号具备 `pilot` 角色、`pilot` 档案和有效 `pilot` 资质后的能力。
-- 资源发现与绑定：DJI 资源按“创建 DJI 连接 -> discover 发现资源 -> bindings 绑定资源 -> drones/docks/gateways/payloads 列表展示”接入；固定摄像头按“登记 WebRTC 地址 -> bindings 认领到部门 -> cameras/playback 展示”接入，并沿用部门权限树但不限制查看角色。
+- 资源发现与绑定：DJI 资源按“创建 DJI 连接 -> discover 发现资源 -> bindings 绑定资源 -> drones/docks/gateways/payloads 列表展示”接入；固定摄像头按“登记 WHEP 地址 -> bindings 认领到部门 -> cameras/playback 获取配置 -> cameras/whep 交换 SDP”接入，并沿用部门权限树但不限制查看角色。
 - 巡检：按“航线 KMZ 上传 -> 选择无人机 -> 选择 dockId 或 executorId -> 创建任务 -> preflight-check -> start -> active-flights/telemetry/live/camera -> complete/cancel/fail/abort -> flight-records/media-files”接入。`dockId` 是机场自动执行，会创建 DJI wayline flight task；`executorId` 是 Pilot2 手动执行，不会调用 `/flight-tasks`。
 - 系统：`GET /api/v2/system/menus/current` 驱动当前用户导航和按钮；日志接口用于后台审计页。
 

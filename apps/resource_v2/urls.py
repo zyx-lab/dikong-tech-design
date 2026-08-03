@@ -32,6 +32,7 @@ urlpatterns = [
     path("cameras", views.CameraResourceListCreateView.as_view(), name="v2-resource-cameras"),
     path("cameras/<int:id>", views.CameraResourceDetailView.as_view(), name="v2-resource-camera-detail"),
     path("cameras/<int:id>/playback", views.CameraPlaybackView.as_view(), name="v2-resource-camera-playback"),
+    path("cameras/<int:id>/whep", views.CameraWhepView.as_view(), name="v2-resource-camera-whep"),
     path("bindings", views.BindingListCreateView.as_view(), name="v2-resource-bindings"),
     path("bindings/<int:id>", views.BindingDetailView.as_view(), name="v2-resource-binding-detail"),
     path("share-groups", views.ShareGroupListCreateView.as_view(), name="v2-resource-share-groups"),

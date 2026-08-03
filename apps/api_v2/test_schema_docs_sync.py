@@ -230,6 +230,17 @@ class ApiV2DocsSyncTests(TestCase):
         camera_playback = self._schema_data(schema, path="/api/v2/resource/cameras/{id}/playback", method="get")
         self._assert_properties_include(camera_playback.get("properties", {}), {"cameraId", "name", "video", "resultsWebSocketPath"})
         self._assert_properties_include(
+            self._request_body_properties(
+                schema,
+                path="/api/v2/resource/cameras/{id}/whep",
+                method="post",
+                content_type="application/json",
+            ),
+            {"offerSdp"},
+        )
+        camera_whep = self._schema_data(schema, path="/api/v2/resource/cameras/{id}/whep", method="post")
+        self._assert_properties_include(camera_whep.get("properties", {}), {"answerSdp"})
+        self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/resource/dji-connections/mqtt-health"),
             {"connectionId", "status", "mqttAddr", "lastMessageAt", "messageCount"},
         )

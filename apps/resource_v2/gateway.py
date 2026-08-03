@@ -1,3 +1,6 @@
+import base64
+from urllib.request import Request, urlopen
+
 from django.utils import timezone
 
 from apps.dji_cloud.gateway import DjiGateway, DjiGatewayError, DjiGatewayUpstreamError
@@ -9,6 +12,32 @@ RESOURCE_DOMAINS = {
     ResourceType.DOCK: 3,
 }
 DJI_GATEWAY_DOMAIN = 2
+
+
+class CameraWhepGatewayError(RuntimeError):
+    pass
+
+
+def exchange_camera_whep_offer(camera, offer_sdp: str) -> str:
+    credentials = base64.b64encode(f"jnucloud:{camera.api_key}".encode()).decode()
+    request = Request(
+        camera.webrtc_url,
+        data=offer_sdp.encode(),
+        headers={
+            "Accept": "application/sdp",
+            "Authorization": f"Basic {credentials}",
+            "Content-Type": "application/sdp",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            answer_sdp = response.read().decode()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise CameraWhepGatewayError("WHEP upstream request failed") from exc
+    if not answer_sdp.strip():
+        raise CameraWhepGatewayError("WHEP upstream returned an empty SDP answer")
+    return answer_sdp
 
 
 class DjiConnectionGateway(DjiGateway):

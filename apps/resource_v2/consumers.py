@@ -139,7 +139,6 @@ class CameraResultsConsumer(AsyncJsonWebsocketConsumer):
             # ponytail: one upstream subscription per viewer; add shared fan-out only when concurrent load requires it.
             self.upstream = await websockets.connect(
                 config["results_ws_url"],
-                extra_headers={"X-API-Key": config["api_key"]},
                 ping_interval=20,
                 ping_timeout=20,
             )
@@ -186,7 +185,7 @@ class CameraResultsConsumer(AsyncJsonWebsocketConsumer):
         camera = CameraResource.objects.filter(pk=camera_id).first()
         if camera is None:
             return None
-        return {"results_ws_url": camera.results_ws_url, "api_key": camera.api_key}
+        return {"results_ws_url": camera.results_ws_url}
 
 
 def _string_list(value) -> list[str]:

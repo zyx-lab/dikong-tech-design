@@ -206,7 +206,6 @@ class CameraResultsWebSocketTests(TransactionTestCase):
             self.assertTrue(connected)
             connect.assert_awaited_once_with(
                 self.camera.results_ws_url,
-                extra_headers={"X-API-Key": "camera-secret"},
                 ping_interval=20,
                 ping_timeout=20,
             )

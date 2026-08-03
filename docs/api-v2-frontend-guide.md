@@ -108,10 +108,11 @@
 | `GET /api/v2/resource/gateways/{id}` | 读取网关/执行端详情。 |
 | `GET /api/v2/resource/payloads` | 查询当前账号可见负载。 |
 | `GET /api/v2/resource/payloads/{id}` | 读取负载详情。 |
-| `POST /api/v2/resource/cameras` | 登记固定摄像头 WebRTC 和识别结果地址。 |
+| `POST /api/v2/resource/cameras` | 登记固定摄像头 WHEP 和识别结果地址。 |
 | `GET /api/v2/resource/cameras` | 按部门权限树查询已认领固定摄像头，不限制账号角色。 |
 | `GET /api/v2/resource/cameras/{id}` | 读取权限树内固定摄像头详情。 |
-| `GET /api/v2/resource/cameras/{id}/playback` | 获取 WebRTC/WHEP 播放地址和识别结果 WebSocket 路径。 |
+| `GET /api/v2/resource/cameras/{id}/playback` | 获取平台 WHEP 信令接口和识别结果 WebSocket 路径。 |
+| `POST /api/v2/resource/cameras/{id}/whep` | 用浏览器 SDP offer 换取上游 SDP answer。 |
 | `GET /api/v2/resource/summary` | 资源总览统计。 |
 | `GET /api/v2/resource/share-groups` | 查询资源共享组。 |
 | `POST /api/v2/resource/share-groups` | 创建资源共享组。 |
@@ -244,14 +245,58 @@ python manage.py bootstrap_v2_system --frontend-test-accounts --frontend-prefix 
 
 ### 固定摄像头接入与认领
 
-固定摄像头使用上游提供的 WebRTC/WHEP 地址，不由 Django 转码。接入顺序：
+固定摄像头使用上游提供的 WHEP/WebRTC，不由 Django 转码。当前上游实际调用约定是：
+
+- WHEP：`POST http://110.42.32.122:18889/camera-101/whep`，请求和响应均为 SDP。
+- WHEP 鉴权：`Authorization: Basic base64("jnucloud:<apiKey>")`。
+- 识别结果：`ws://110.42.32.122:18081/target.results`，上游 WebSocket 不需要 API Key。
+
+平台接入顺序：
 
 1. 部门管理员调用 `POST /api/v2/resource/cameras` 登记 `deviceSn/name/webrtcUrl/resultsWsUrl/apiKey`，摄像头先进入未认领资源池。
 2. 调用 `POST /api/v2/resource/bindings`，请求体传 `{ "resourceType": "camera", "resourceId": 1 }`；摄像头不传 `djiConnectionId`，认领到当前管理员部门。
 3. 所有已登录账号均可调用 `GET /api/v2/resource/cameras` 和详情、播放接口；可见范围沿用认领部门层级与资源共享组，不检查账号角色的 view/monitor 权限。
-4. 播放前调用 `GET /api/v2/resource/cameras/{id}/playback`。前端使用 `data.video.url` 播放 WebRTC/WHEP，并把当前 access token 追加到 `data.resultsWebSocketPath`：`/ws/v2/cameras/{id}/results?token=<accessToken>`。
+4. 播放前调用 `GET /api/v2/resource/cameras/{id}/playback`。`data.video.url` 是平台 WHEP 信令代理，不是上游地址；前端将 SDP offer 作为 `{ "offerSdp": "..." }` POST 到该地址，再用 `data.answerSdp` 设置远端描述。
+5. 将当前 access token 追加到 `data.resultsWebSocketPath`：`/ws/v2/cameras/{id}/results?token=<accessToken>`，订阅平台代理的识别结果。
 
-`apiKey` 仅在登记时写入后端，列表、详情和播放接口均不返回。平台 WebSocket 会使用该密钥订阅上游 `target.results`，前端不直接接触上游密钥。上级部门可见下级部门认领的摄像头；其他部门需要通过现有资源共享组获得可见性。
+当前公网地址的登记请求体示例：
+
+```json
+{
+  "deviceSn": "CAMERA-101",
+  "name": "一号固定摄像头",
+  "webrtcUrl": "http://110.42.32.122:18889/camera-101/whep",
+  "resultsWsUrl": "ws://110.42.32.122:18081/target.results",
+  "apiKey": "<平台密钥>"
+}
+```
+
+`apiKey` 仅在登记时写入后端，作为上游 WHEP Basic Auth 的密码；列表、详情和播放接口均不返回。识别结果上游不使用该密钥。这样前端既不接触密钥，也不会直接请求公网 HTTP WHEP 地址。上级部门可见下级部门认领的摄像头；其他部门需要通过现有资源共享组获得可见性。
+
+前端的核心 WebRTC 调用与上游示例一致，只把 WHEP `fetch` 改为平台 JSON 接口：
+
+```javascript
+const peer = new RTCPeerConnection();
+peer.addTransceiver("video", { direction: "recvonly" });
+peer.ontrack = event => {
+  video.srcObject = event.streams[0] || new MediaStream([event.track]);
+};
+
+const offer = await peer.createOffer();
+await peer.setLocalDescription(offer);
+await waitForIceGatheringComplete(peer);
+
+const response = await fetch(playback.data.video.url, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({ offerSdp: peer.localDescription.sdp })
+});
+const payload = await response.json();
+await peer.setRemoteDescription({ type: "answer", sdp: payload.data.answerSdp });
+```
 
 资源列表和详情都会返回 `djiConnectionId`、`djiConnectionName`。前端展示无人机、机场、网关或负载时，可以直接显示资源所属 DJI 连接；排查 MQTT 或 DJI 上游问题时，也可以用这个 ID 去查 `mqtt-health` 和 `mqtt-messages/latest`。
 

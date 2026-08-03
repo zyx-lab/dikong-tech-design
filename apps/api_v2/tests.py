@@ -147,6 +147,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/resource/cameras",
             "/api/v2/resource/cameras/{id}",
             "/api/v2/resource/cameras/{id}/playback",
+            "/api/v2/resource/cameras/{id}/whep",
             "/api/v2/resource/summary",
             "/api/v2/resource/bindings",
             "/api/v2/resource/bindings/{id}",
@@ -723,7 +724,7 @@ class ApiV2ImplementationBoundaryTests(TestCase):
     def test_external_implementation_imports_should_stay_at_adapter_seams(self):
         project_root = Path(settings.BASE_DIR)
         allowed_by_module = {
-            "urllib.request": {"apps/dji_cloud/gateway.py"},
+            "urllib.request": {"apps/dji_cloud/gateway.py", "apps/resource_v2/gateway.py"},
             "storages.backends.s3": {"apps/access/storage_backends.py"},
             "redis": {"apps/resource_v2/mqtt.py"},
             "channels.layers": {"apps/resource_v2/mqtt.py"},

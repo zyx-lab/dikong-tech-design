@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.db import connection as db_connection
@@ -229,7 +229,7 @@ class ResourceV2ApiTests(TestCase):
         self.assertEqual(detail_response.status_code, 200, getattr(detail_response, "data", detail_response.content))
         self.assertEqual(playback_response.status_code, 200, getattr(playback_response, "data", playback_response.content))
         self.assertEqual(playback_response.data["data"]["video"]["protocol"], "WHEP")
-        self.assertEqual(playback_response.data["data"]["video"]["url"], "https://video.example.test/camera-101/whep")
+        self.assertEqual(playback_response.data["data"]["video"]["url"], f"/api/v2/resource/cameras/{camera_id}/whep")
         self.assertEqual(playback_response.data["data"]["resultsWebSocketPath"], f"/ws/v2/cameras/{camera_id}/results")
         self.assertNotIn("camera-secret", str(list_response.data))
         self.assertNotIn("camera-secret", str(detail_response.data))
@@ -266,6 +266,41 @@ class ResourceV2ApiTests(TestCase):
 
         camera = CameraResource.objects.get(pk=camera_id)
         self.assertEqual(camera.api_key, "camera-secret")
+
+    def test_camera_whep_should_exchange_sdp_through_server_side_basic_auth(self):
+        camera = CameraResource.objects.create(
+            device_sn="CAMERA-WHEP-001",
+            name="WHEP 摄像头",
+            webrtc_url="http://110.42.32.122:18889/camera-101/whep",
+            results_ws_url="ws://110.42.32.122:18081/target.results",
+            api_key="camera-secret",
+        )
+        ResourceBinding.objects.create(
+            resource_type=ResourceType.CAMERA,
+            resource_object_id=camera.id,
+            owner_department=self.child,
+            status=BindingStatus.ACTIVE,
+            bound_by_user=self.child_admin,
+        )
+        self.authenticate(self.no_role_user)
+
+        upstream = MagicMock()
+        upstream.read.return_value = b"v=0\r\ns=upstream-answer\r\n"
+        upstream.__enter__.return_value = upstream
+        with patch("apps.resource_v2.gateway.urlopen", return_value=upstream) as urlopen:
+            response = self.client.post(
+                f"/api/v2/resource/cameras/{camera.id}/whep",
+                {"offerSdp": "v=0\r\ns=browser-offer\r\n"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["answerSdp"], "v=0\r\ns=upstream-answer\r\n")
+        upstream_request = urlopen.call_args.args[0]
+        self.assertEqual(upstream_request.full_url, camera.webrtc_url)
+        self.assertEqual(upstream_request.get_method(), "POST")
+        self.assertEqual(upstream_request.data, b"v=0\r\ns=browser-offer\r\n")
+        self.assertEqual(upstream_request.get_header("Authorization"), "Basic am51Y2xvdWQ6Y2FtZXJhLXNlY3JldA==")
 
     @override_settings(DJI_MQTT_OSD_FRESHNESS_SECONDS=60)
     def test_drone_resource_should_include_latest_mqtt_telemetry_snapshot(self):
