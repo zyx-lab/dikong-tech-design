@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
@@ -28,6 +29,7 @@ from apps.resource_v2.models import (
     DroneResource,
     GatewayResource,
     MqttConnectionHealth,
+    MqttHealthStatus,
     MqttLatestMessage,
     PayloadResource,
     ResourceBinding,
@@ -158,6 +160,41 @@ class ResourceV2ApiTests(TestCase):
 
     def authenticate(self, user):
         self.client.force_authenticate(user)
+
+    def create_cached_dji_connection(self, *, name: str = "缓存 DJI"):
+        now = timezone.now()
+        connection = DjiConnection.objects.create(
+            owner_department=self.child,
+            name=name,
+            base_url="https://old-dji.example.test",
+            username="adminPC1",
+            password="secret",
+            login_flag=1,
+            workspace_id="workspace-old",
+            dji_user_id="dji-user-old",
+            dji_username="dji-admin-old",
+            dji_user_type="1",
+            access_token="access-token-old",
+            mqtt_username="mqtt-user-old",
+            mqtt_password="mqtt-pass-old",
+            mqtt_addr="tcp://old-mqtt.example.test:1883",
+            expires_at=now + timedelta(days=1),
+            last_checked_at=now,
+            created_by_user=self.child_admin,
+        )
+        MqttConnectionHealth.objects.create(
+            dji_connection=connection,
+            status=MqttHealthStatus.ERROR,
+            mqtt_addr=connection.mqtt_addr,
+            subscribed_topics=["thing/product/+/osd"],
+            last_connected_at=now,
+            last_subscribed_at=now,
+            last_message_at=now,
+            last_heartbeat_at=now,
+            last_error="timed out",
+            message_count=7,
+        )
+        return connection
 
     def bind_v2_drone(self, *, department: Department, actor, device_sn: str):
         connection = DjiConnection.objects.create(
@@ -605,6 +642,78 @@ class ResourceV2ApiTests(TestCase):
                 target_id=str(connection.id),
             ).exists()
         )
+
+    def test_updating_dji_connection_session_inputs_should_clear_cached_session_and_health(self):
+        cases = [
+            ("baseUrl", "https://new-dji.example.test"),
+            ("username", "adminPC2"),
+            ("password", "changed-secret"),
+            ("loginFlag", 2),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field):
+                connection = self.create_cached_dji_connection(name=f"缓存 DJI {field}")
+                self.authenticate(self.child_admin)
+                payload = {
+                    "name": connection.name,
+                    "baseUrl": connection.base_url,
+                    "username": connection.username,
+                    "password": connection.password,
+                    "loginFlag": connection.login_flag,
+                }
+                payload[field] = value
+
+                response = self.client.put(f"/api/v2/resource/dji-connections/{connection.id}", payload, format="json")
+
+                self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+                connection.refresh_from_db()
+                self.assertEqual(connection.access_token, "")
+                self.assertEqual(connection.workspace_id, "")
+                self.assertEqual(connection.dji_user_id, "")
+                self.assertEqual(connection.dji_username, "")
+                self.assertEqual(connection.dji_user_type, "")
+                self.assertEqual(connection.mqtt_addr, "")
+                self.assertEqual(connection.mqtt_username, "")
+                self.assertEqual(connection.mqtt_password, "")
+                self.assertIsNone(connection.expires_at)
+                self.assertIsNone(connection.last_checked_at)
+
+                health = MqttConnectionHealth.objects.get(dji_connection=connection)
+                self.assertEqual(health.status, MqttHealthStatus.CONNECTING)
+                self.assertEqual(health.mqtt_addr, "")
+                self.assertEqual(health.last_error, "")
+                self.assertEqual(health.subscribed_topics, [])
+                self.assertIsNone(health.last_connected_at)
+                self.assertIsNone(health.last_subscribed_at)
+                self.assertIsNotNone(health.last_message_at)
+                self.assertEqual(health.message_count, 7)
+
+    def test_updating_dji_connection_name_should_keep_cached_session_and_health(self):
+        connection = self.create_cached_dji_connection(name="缓存 DJI name")
+        self.authenticate(self.child_admin)
+
+        response = self.client.put(
+            f"/api/v2/resource/dji-connections/{connection.id}",
+            {
+                "name": "只改名称",
+                "baseUrl": connection.base_url,
+                "username": connection.username,
+                "password": connection.password,
+                "loginFlag": connection.login_flag,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        connection.refresh_from_db()
+        self.assertEqual(connection.access_token, "access-token-old")
+        self.assertEqual(connection.workspace_id, "workspace-old")
+        self.assertEqual(connection.mqtt_addr, "tcp://old-mqtt.example.test:1883")
+
+        health = MqttConnectionHealth.objects.get(dji_connection=connection)
+        self.assertEqual(health.status, MqttHealthStatus.ERROR)
+        self.assertEqual(health.mqtt_addr, "tcp://old-mqtt.example.test:1883")
+        self.assertEqual(health.last_error, "timed out")
 
     def test_platform_super_admin_should_bind_resource_for_any_department_connection(self):
         self.authenticate(self.platform_super)

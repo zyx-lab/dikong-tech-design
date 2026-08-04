@@ -24,6 +24,8 @@ from apps.resource_v2.models import (
     DockResource,
     DroneResource,
     GatewayResource,
+    MqttConnectionHealth,
+    MqttHealthStatus,
     PayloadResource,
     ResourceBinding,
     ResourceBindingHistory,
@@ -121,6 +123,46 @@ def dji_connection_snapshot(connection: DjiConnection | None) -> dict:
         "username": connection.username,
         "workspace_id": connection.workspace_id,
     }
+
+
+def invalidate_dji_connection_session(connection: DjiConnection) -> None:
+    connection.access_token = ""
+    connection.workspace_id = ""
+    connection.dji_user_id = ""
+    connection.dji_username = ""
+    connection.dji_user_type = ""
+    connection.mqtt_addr = ""
+    connection.mqtt_username = ""
+    connection.mqtt_password = ""
+    connection.expires_at = None
+    connection.last_checked_at = None
+    connection.save(
+        update_fields=[
+            "access_token",
+            "workspace_id",
+            "dji_user_id",
+            "dji_username",
+            "dji_user_type",
+            "mqtt_addr",
+            "mqtt_username",
+            "mqtt_password",
+            "expires_at",
+            "last_checked_at",
+            "updated_at",
+        ]
+    )
+    MqttConnectionHealth.objects.update_or_create(
+        dji_connection=connection,
+        defaults={
+            "status": MqttHealthStatus.CONNECTING,
+            "mqtt_addr": "",
+            "subscribed_topics": [],
+            "last_connected_at": None,
+            "last_subscribed_at": None,
+            "last_error": "",
+            "last_heartbeat_at": timezone.now(),
+        },
+    )
 
 
 def can_manage_connection(context, connection: DjiConnection) -> bool:

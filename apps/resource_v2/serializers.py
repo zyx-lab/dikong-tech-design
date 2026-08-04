@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -21,7 +22,7 @@ from apps.resource_v2.models import (
     SHARE_PERMISSION_CHOICES,
 )
 from apps.resource_v2.mqtt import read_redis_health
-from apps.resource_v2.services import effective_permissions_for_binding, normalize_base_url
+from apps.resource_v2.services import effective_permissions_for_binding, invalidate_dji_connection_session, normalize_base_url
 
 
 SHARE_PERMISSION_ORDER = ["view", "monitor", "dispatch_task", "use", "review_task", "edit_config"]
@@ -170,18 +171,28 @@ class DjiConnectionWriteSerializer(StrictSerializer):
 
     def update(self, instance, validated_data):
         owner_department = validated_data.get("owner_department")
-        if owner_department is not None:
-            instance.owner_department = owner_department
-        instance.name = validated_data["name"]
-        instance.base_url = validated_data["baseUrl"]
-        instance.username = validated_data["username"]
-        instance.password = validated_data["password"]
-        instance.login_flag = validated_data.get("loginFlag", instance.login_flag)
-        instance.extra_params = validated_data.get("extraParams", instance.extra_params)
-        update_fields = ["name", "base_url", "username", "password", "login_flag", "extra_params", "updated_at"]
-        if owner_department is not None:
-            update_fields.append("owner_department")
-        instance.save(update_fields=update_fields)
+        new_login_flag = validated_data.get("loginFlag", instance.login_flag)
+        session_inputs_changed = (
+            instance.base_url != validated_data["baseUrl"]
+            or instance.username != validated_data["username"]
+            or instance.password != validated_data["password"]
+            or instance.login_flag != new_login_flag
+        )
+        with transaction.atomic():
+            if owner_department is not None:
+                instance.owner_department = owner_department
+            instance.name = validated_data["name"]
+            instance.base_url = validated_data["baseUrl"]
+            instance.username = validated_data["username"]
+            instance.password = validated_data["password"]
+            instance.login_flag = new_login_flag
+            instance.extra_params = validated_data.get("extraParams", instance.extra_params)
+            update_fields = ["name", "base_url", "username", "password", "login_flag", "extra_params", "updated_at"]
+            if owner_department is not None:
+                update_fields.append("owner_department")
+            instance.save(update_fields=update_fields)
+            if session_inputs_changed:
+                invalidate_dji_connection_session(instance)
         return instance
 
 
