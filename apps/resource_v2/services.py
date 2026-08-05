@@ -41,6 +41,52 @@ RESOURCE_MODELS = {
 }
 
 
+# DJI 上游把同一台机场在 workspace 视角下既算 dock(domain=3) 又算 gateway(domain=2)，
+# 导致 v2_dock_resources 和 v2_gateway_resources 里会有同 device_sn 的两行。
+# 绑定一台时必须同时绑姐妹行，否则会出现"半绑"——dock 视角已绑、gateway 视角未绑，
+# 或反之。下面这张表标出哪些类型之间存在姐妹关系。drone/payload/camera 不参与联动。
+_SISTER_RESOURCE_TYPE = {
+    ResourceType.DOCK: ResourceType.GATEWAY,
+    ResourceType.GATEWAY: ResourceType.DOCK,
+}
+
+
+def find_sister_resource(resource_type: str, device_sn: str):
+    """查找 (resource_type, device_sn) 对应的姐妹资源。
+
+    仅 dock ↔ gateway 之间存在姐妹关系（同 SN 在另一张资源表里的行）。
+    其它类型返回 (None, None)；SN 为空或姐妹行不存在时也返回 (None, None)。
+    """
+    sister_type = _SISTER_RESOURCE_TYPE.get(ResourceType(resource_type))
+    if sister_type is None or not device_sn:
+        return None, None
+    sister_model = RESOURCE_MODELS[sister_type]
+    sister_row = sister_model.objects.filter(device_sn=device_sn).first()
+    if sister_row is None:
+        return None, None
+    return sister_type, sister_row
+
+
+def find_sister_binding(binding: ResourceBinding):
+    """查找 binding 在另一张资源表里的姐妹绑定（同 SN、当前 ACTIVE）。
+
+    仅对 dock / gateway binding 有意义；其它返回 None。资源行已被删除时返回 None。
+    """
+    sister_type = _SISTER_RESOURCE_TYPE.get(ResourceType(binding.resource_type))
+    if sister_type is None:
+        return None
+    primary = get_resource(binding.resource_type, binding.resource_object_id)
+    sister_model = RESOURCE_MODELS[sister_type]
+    sister_row_id = sister_model.objects.filter(device_sn=primary.device_sn).values_list("id", flat=True).first()
+    if sister_row_id is None:
+        return None
+    return ResourceBinding.objects.filter(
+        resource_type=sister_type,
+        resource_object_id=sister_row_id,
+        status=BindingStatus.ACTIVE,
+    ).first()
+
+
 def normalize_base_url(value: str) -> str:
     return str(value or "").strip().rstrip("/")
 

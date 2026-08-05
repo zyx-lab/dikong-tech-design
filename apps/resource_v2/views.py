@@ -67,6 +67,8 @@ from apps.resource_v2.serializers import (
     serialize_resource_binding,
 )
 from apps.resource_v2.services import (
+    find_sister_binding,
+    find_sister_resource,
     get_resource,
     mark_binding_created,
     mark_binding_unbound,
@@ -660,9 +662,9 @@ class BindingListCreateView(V2ResourceAPIView):
                 return _not_found_response()
             require_bind_connection(context, connection)
             owner_department = connection.owner_department
-        get_resource(resource_type, resource_id)
+        primary_resource = get_resource(resource_type, resource_id)
         existing = (
-            ResourceBinding.objects.select_for_update()
+            ResourceBinding.objects.select_for_update(of=("self",))
             .select_related("owner_department")
             .filter(resource_type=resource_type, resource_object_id=resource_id, status=BindingStatus.ACTIVE)
             .first()
@@ -682,6 +684,40 @@ class BindingListCreateView(V2ResourceAPIView):
                 ),
                 status=status.HTTP_409_CONFLICT,
             )
+        # 同一个 device_sn 在另一张资源表里的"姐妹行"如果存在 ACTIVE 绑定，
+        # 必须归属同一个部门，否则会产生半绑状态——优先于创建主绑定进行检查。
+        sister_type, sister_row, existing_sister = None, None, None
+        if resource_type in (ResourceType.DOCK, ResourceType.GATEWAY):
+            sister_type, sister_row = find_sister_resource(resource_type, primary_resource.device_sn)
+            if sister_row is not None:
+                existing_sister = (
+                    ResourceBinding.objects.select_for_update(of=("self",))
+                    .select_related("owner_department")
+                    .filter(
+                        resource_type=sister_type,
+                        resource_object_id=sister_row.id,
+                        status=BindingStatus.ACTIVE,
+                    )
+                    .first()
+                )
+                if existing_sister is not None and existing_sister.owner_department_id != owner_department.id:
+                    return Response(
+                        standard_error_payload(
+                            StandardCode.STATE_CONFLICT,
+                            "该设备的同 SN 姐妹视图已被其他部门绑定",
+                            {
+                                "occupyingDepartment": {
+                                    "id": existing_sister.owner_department_id,
+                                    "name": existing_sister.owner_department.name,
+                                    "path": existing_sister.owner_department.path,
+                                },
+                                "sisterResourceType": sister_type,
+                                "sisterResourceId": sister_row.id,
+                            },
+                        ),
+                        status=status.HTTP_409_CONFLICT,
+                    )
+        bound_at = timezone.now()
         binding = ResourceBinding.objects.create(
             resource_type=resource_type,
             resource_object_id=resource_id,
@@ -689,10 +725,35 @@ class BindingListCreateView(V2ResourceAPIView):
             dji_connection=connection,
             status=BindingStatus.ACTIVE,
             bound_by_user=request.user,
-            bound_at=timezone.now(),
+            bound_at=bound_at,
         )
         mark_binding_created(binding=binding, context=context, request=request)
-        return Response(BindingReadSerializer(binding).data, status=status.HTTP_201_CREATED)
+        sister_binding = None
+        if sister_row is not None and existing_sister is None:
+            sister_binding = ResourceBinding.objects.create(
+                resource_type=sister_type,
+                resource_object_id=sister_row.id,
+                owner_department=owner_department,
+                dji_connection=connection,
+                status=BindingStatus.ACTIVE,
+                bound_by_user=request.user,
+                bound_at=bound_at,
+            )
+            mark_binding_created(binding=sister_binding, context=context, request=request)
+        response_data = BindingReadSerializer(binding).data
+        response_data["linkedBindings"] = (
+            [
+                {
+                    "id": sister_binding.id,
+                    "resourceType": sister_binding.resource_type,
+                    "resourceId": sister_binding.resource_object_id,
+                    "status": sister_binding.status,
+                }
+            ]
+            if sister_binding is not None
+            else []
+        )
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 
 class BindingDetailView(V2ResourceAPIView):
@@ -718,12 +779,36 @@ class BindingDetailView(V2ResourceAPIView):
         if binding is None:
             return _not_found_response()
         require_unbind(context, binding)
+        # 解绑前先找到姐妹绑定（同 SN、另一张资源表里的 ACTIVE 绑定）。
+        # 如果不解姐妹行，会出现"半解绑"——主绑定 UNBOUND、姐妹仍 ACTIVE，
+        # 下次别人查还能看到这台设备"已绑"，留下不一致状态。
+        sister_binding = find_sister_binding(binding)
+        unbound_at = timezone.now()
         mark_binding_unbound(binding=binding, context=context, request=request)
         binding.status = BindingStatus.UNBOUND
         binding.unbound_by_user = request.user
-        binding.unbound_at = timezone.now()
+        binding.unbound_at = unbound_at
         binding.save(update_fields=["status", "unbound_by_user", "unbound_at", "updated_at"])
-        return Response(BindingReadSerializer(binding).data, status=status.HTTP_200_OK)
+        if sister_binding is not None:
+            mark_binding_unbound(binding=sister_binding, context=context, request=request)
+            sister_binding.status = BindingStatus.UNBOUND
+            sister_binding.unbound_by_user = request.user
+            sister_binding.unbound_at = unbound_at
+            sister_binding.save(update_fields=["status", "unbound_by_user", "unbound_at", "updated_at"])
+        response_data = BindingReadSerializer(binding).data
+        response_data["linkedBindings"] = (
+            [
+                {
+                    "id": sister_binding.id,
+                    "resourceType": sister_binding.resource_type,
+                    "resourceId": sister_binding.resource_object_id,
+                    "status": sister_binding.status,
+                }
+            ]
+            if sister_binding is not None
+            else []
+        )
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class ShareGroupListCreateView(V2ResourceAPIView):
