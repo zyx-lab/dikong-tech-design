@@ -706,8 +706,11 @@ class BindingDetailView(V2ResourceAPIView):
     @transaction.atomic
     def delete(self, request, id: int):
         context = resolve_v2_context(request)
+        # of=("self",) 仅锁定 v2_resource_bindings 自身行；select_related 进来的
+        # v2_dji_connections 是可空外键（LEFT JOIN），PostgreSQL 不允许对 OUTER JOIN
+        # 的可空一侧加 FOR UPDATE，所以必须把锁范围限定在本表。
         binding = (
-            ResourceBinding.objects.select_for_update()
+            ResourceBinding.objects.select_for_update(of=("self",))
             .select_related("owner_department", "dji_connection")
             .filter(pk=id, status=BindingStatus.ACTIVE)
             .first()
