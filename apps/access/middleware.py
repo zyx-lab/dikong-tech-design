@@ -2,16 +2,44 @@ import logging
 import time
 import uuid
 
+from django.conf import settings
+from django.http import HttpResponse
+
 from apps.access.request_logging import (
     build_exception_log_payload,
     build_request_context,
     build_request_log_payload,
+    current_request_base_url,
     build_response_log_payload,
     current_request_id,
     log_json,
 )
 
 logger = logging.getLogger("apps.access.lifecycle")
+
+
+class CorsMiddleware:
+    """Allow configured browser origins to call the token-based v2 API."""
+
+    allow_methods = "DELETE, GET, OPTIONS, PATCH, POST, PUT"
+    allow_headers = "Authorization, Content-Type, X-Request-ID"
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        origin = request.headers.get("Origin")
+        allowed_origins = settings.CORS_ALLOWED_ORIGINS
+        allowed = bool(origin and ("*" in allowed_origins or origin in allowed_origins))
+
+        response = HttpResponse(status=204) if allowed and request.method == "OPTIONS" else self.get_response(request)
+        if allowed:
+            response["Access-Control-Allow-Origin"] = "*" if "*" in allowed_origins else origin
+            response["Access-Control-Allow-Methods"] = self.allow_methods
+            response["Access-Control-Allow-Headers"] = self.allow_headers
+            response["Access-Control-Expose-Headers"] = "X-Request-ID"
+            response["Access-Control-Max-Age"] = "86400"
+        return response
 
 
 def _should_log_api_lifecycle(request) -> bool:
@@ -35,11 +63,13 @@ class RequestContextMiddleware:
         request.log_started_at = time.monotonic()
         request.log_context = build_request_context(request)
         token = current_request_id.set(request_id)
+        base_url_token = current_request_base_url.set(request.build_absolute_uri("/").rstrip("/"))
         try:
             response = self.get_response(request)
             response[self.response_header] = request_id
             return response
         finally:
+            current_request_base_url.reset(base_url_token)
             current_request_id.reset(token)
 
 

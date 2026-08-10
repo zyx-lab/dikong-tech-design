@@ -20,6 +20,7 @@ from apps.common.request import resolve_client_ip
 
 
 current_request_id: ContextVar[str | None] = ContextVar("current_request_id", default=None)
+current_request_base_url: ContextVar[str | None] = ContextVar("current_request_base_url", default=None)
 current_sync_run_id: ContextVar[str | None] = ContextVar("current_sync_run_id", default=None)
 
 SENSITIVE_KEYS = {

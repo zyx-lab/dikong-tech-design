@@ -18,6 +18,11 @@ def _allowed_hosts_config(env, debug):
 
 
 ALLOWED_HOSTS = _allowed_hosts_config(os.environ, DEBUG)
+CORS_ALLOWED_ORIGINS = tuple(
+    origin.strip()
+    for origin in os.getenv("DJANGO_CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+)
 
 DJANGO_LOG_DIR = Path(os.getenv("DJANGO_LOG_DIR", str(BASE_DIR / "logs")))
 DJANGO_LOG_LEVEL = os.getenv("DJANGO_LOG_LEVEL", "INFO")
@@ -58,6 +63,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "apps.access.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -178,6 +184,7 @@ AUTH_USER_MODEL = "access.User"
 
 OBJECT_STORAGE_BACKEND = os.getenv("OBJECT_STORAGE_BACKEND", "filesystem").lower()
 OBJECT_STORAGE_PUBLIC_ENDPOINT_URL = os.getenv("OBJECT_STORAGE_PUBLIC_ENDPOINT_URL", "").strip()
+OBJECT_STORAGE_PUBLIC_PORT = int(os.getenv("OBJECT_STORAGE_PUBLIC_PORT", "9000"))
 STORAGES = {
     "staticfiles": {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",

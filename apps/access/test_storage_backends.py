@@ -76,3 +76,25 @@ class LoggedS3StorageTests(SimpleTestCase):
         self.assertTrue(url.startswith("http://127.0.0.1:9000/dikong-route-covers/inspection/routes/covers/cover.png?"))
         self.assertTrue("X-Amz-Signature=" in url or "Signature=" in url)
         self.assertNotIn("minio:9000", url)
+
+    @override_settings(
+        AWS_ACCESS_KEY_ID="minioadmin",
+        AWS_SECRET_ACCESS_KEY="minioadmin123",
+        AWS_STORAGE_BUCKET_NAME="dikong-route-covers",
+        AWS_S3_ENDPOINT_URL="http://minio:9000",
+        AWS_S3_ADDRESSING_STYLE="path",
+        OBJECT_STORAGE_PUBLIC_ENDPOINT_URL="",
+        OBJECT_STORAGE_PUBLIC_PORT=9100,
+    )
+    def test_logged_s3_storage_should_use_request_host_when_public_endpoint_is_unset(self):
+        from apps.access.request_logging import current_request_base_url
+        from apps.access.storage_backends import LoggedS3Storage
+
+        token = current_request_base_url.set("http://192.168.1.8:8010")
+        try:
+            with patch("apps.access.external_call_logging.log_json"):
+                url = LoggedS3Storage().url("inspection/routes/covers/cover.png")
+        finally:
+            current_request_base_url.reset(token)
+
+        self.assertTrue(url.startswith("http://192.168.1.8:9100/dikong-route-covers/inspection/routes/covers/cover.png?"))

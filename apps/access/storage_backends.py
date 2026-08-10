@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from storages.backends.s3 import S3Storage
@@ -11,13 +12,28 @@ from apps.access.external_call_logging import (
     log_external_call_finished,
     log_external_call_started,
 )
-from apps.access.request_logging import redact_payload
+from apps.access.request_logging import current_request_base_url, redact_payload
 
 
 class LoggedS3Storage(S3Storage):
     """S3/MinIO storage backend with structured external-call logging."""
 
     service_name = "object_storage"
+
+    @staticmethod
+    def _public_endpoint() -> str:
+        configured = str(getattr(settings, "OBJECT_STORAGE_PUBLIC_ENDPOINT_URL", "") or "").rstrip("/")
+        if configured:
+            return configured
+        request_base_url = current_request_base_url.get()
+        if not request_base_url:
+            return ""
+        parsed = urlsplit(request_base_url)
+        hostname = parsed.hostname
+        if not hostname:
+            return ""
+        port = int(getattr(settings, "OBJECT_STORAGE_PUBLIC_PORT", 9000))
+        return f"{parsed.scheme}://{hostname}:{port}"
 
     def _storage_url(self, name: str = "") -> str:
         endpoint = str(getattr(self, "endpoint_url", "") or "").rstrip("/")
@@ -40,7 +56,7 @@ class LoggedS3Storage(S3Storage):
         return payload
 
     def _rewrite_public_endpoint_url(self, url: str) -> str:
-        public_endpoint = str(getattr(settings, "OBJECT_STORAGE_PUBLIC_ENDPOINT_URL", "") or "").rstrip("/")
+        public_endpoint = self._public_endpoint()
         internal_endpoint = str(getattr(self, "endpoint_url", "") or "").rstrip("/")
         if not public_endpoint or not internal_endpoint:
             return url
@@ -51,7 +67,7 @@ class LoggedS3Storage(S3Storage):
         return url
 
     def _public_presigned_url(self, name, parameters=None, expire=None, http_method=None) -> str | None:
-        public_endpoint = str(getattr(settings, "OBJECT_STORAGE_PUBLIC_ENDPOINT_URL", "") or "").rstrip("/")
+        public_endpoint = self._public_endpoint()
         if not public_endpoint or self.custom_domain or not self.querystring_auth:
             return None
         normalized_name = self._normalize_name(clean_name(name))
