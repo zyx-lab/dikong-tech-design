@@ -234,6 +234,26 @@ class DjiGateway:
             data={"cmd": action, "data": data},
         ).data
 
+    def takeoff_to_point(self, dock_sn: str, data: dict):
+        return self._request_json(
+            "POST", f"/api/v1/control/devices/{dock_sn}/jobs/takeoff-to-point", data=data
+        ).data
+
+    def fly_to_point(self, dock_sn: str, data: dict):
+        return self._request_json(
+            "POST", f"/api/v1/control/devices/{dock_sn}/jobs/fly-to-point", data=data
+        ).data
+
+    def update_fly_to_point(self, dock_sn: str, data: dict):
+        return self._request_json(
+            "PUT", f"/api/v1/control/devices/{dock_sn}/jobs/fly-to-point", data=data
+        ).data
+
+    def stop_fly_to_point(self, dock_sn: str):
+        return self._request_json(
+            "DELETE", f"/api/v1/control/devices/{dock_sn}/jobs/fly-to-point"
+        ).data
+
     def connect_drc(self, *, dock_sn: str, expire_sec: int, client_id: str | None = None):
         workspace_id = self._workspace_id()
         return self._request_json(

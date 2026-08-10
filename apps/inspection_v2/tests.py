@@ -3698,7 +3698,16 @@ class InspectionV2ApiTests(TestCase):
             return {"accepted": True, "cmd": action}
 
         cases = [
+            (
+                "camera_frame_zoom",
+                {"cameraType": "zoom", "locked": True, "x": 0.1, "y": 0.2, "width": 0.3, "height": 0.4},
+                {
+                    "payload_index": "88-0-0", "camera_type": "zoom", "locked": True,
+                    "x": 0.1, "y": 0.2, "width": 0.3, "height": 0.4,
+                },
+            ),
             ("camera_photo_take", {}, {"payload_index": "88-0-0"}),
+            ("camera_photo_stop", {}, {"payload_index": "88-0-0"}),
             ("camera_recording_start", {}, {"payload_index": "88-0-0"}),
             ("camera_recording_stop", {}, {"payload_index": "88-0-0"}),
             ("camera_mode_switch", {"cameraMode": 1}, {"payload_index": "88-0-0", "camera_mode": 1}),
@@ -3713,6 +3722,66 @@ class InspectionV2ApiTests(TestCase):
                 {"payload_index": "88-0-0", "camera_type": "wide", "locked": False, "x": 0.25, "y": 0.75},
             ),
             ("gimbal_reset", {"resetMode": 0}, {"payload_index": "88-0-0", "reset_mode": 0}),
+            (
+                "camera_screen_drag",
+                {"locked": False, "pitchSpeed": 0.1, "yawSpeed": 0.2},
+                {"payload_index": "88-0-0", "locked": False, "pitch_speed": 0.1, "yaw_speed": 0.2},
+            ),
+            (
+                "camera_look_at",
+                {"locked": True, "latitude": 22.5, "longitude": 113.9, "height": 120.5},
+                {
+                    "payload_index": "88-0-0", "locked": True, "latitude": 22.5,
+                    "longitude": 113.9, "height": 120.5,
+                },
+            ),
+            ("camera_screen_split", {"enable": True}, {"payload_index": "88-0-0", "enable": True}),
+            (
+                "photo_storage_set",
+                {"photoStorageSettings": ["current", "ir"]},
+                {"payload_index": "88-0-0", "photo_storage_settings": ["current", "ir"]},
+            ),
+            (
+                "video_storage_set",
+                {"videoStorageSettings": ["wide", "zoom"]},
+                {"payload_index": "88-0-0", "video_storage_settings": ["wide", "zoom"]},
+            ),
+            (
+                "camera_exposure_mode_set",
+                {"cameraType": "wide", "exposureMode": 1},
+                {"payload_index": "88-0-0", "camera_type": "wide", "exposure_mode": 1},
+            ),
+            (
+                "camera_exposure_set",
+                {"cameraType": "zoom", "exposureValue": 16},
+                {"payload_index": "88-0-0", "camera_type": "zoom", "exposure_value": 16},
+            ),
+            (
+                "camera_focus_mode_set",
+                {"cameraType": "zoom", "focusMode": 1},
+                {"payload_index": "88-0-0", "camera_type": "zoom", "focus_mode": 1},
+            ),
+            (
+                "camera_focus_value_set",
+                {"cameraType": "zoom", "focusValue": 42},
+                {"payload_index": "88-0-0", "camera_type": "zoom", "focus_value": 42},
+            ),
+            (
+                "camera_point_focus_action",
+                {"cameraType": "wide", "x": 0.25, "y": 0.75},
+                {"payload_index": "88-0-0", "camera_type": "wide", "x": 0.25, "y": 0.75},
+            ),
+            ("ir_metering_mode_set", {"mode": 1}, {"payload_index": "88-0-0", "mode": 1}),
+            (
+                "ir_metering_point_set",
+                {"x": 0.25, "y": 0.75},
+                {"payload_index": "88-0-0", "x": 0.25, "y": 0.75},
+            ),
+            (
+                "ir_metering_area_set",
+                {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.4},
+                {"payload_index": "88-0-0", "x": 0.1, "y": 0.2, "width": 0.3, "height": 0.4},
+            ),
         ]
 
         with patch("apps.inspection_v2.views.DjiConnectionGateway.grab_payload_authority", side_effect=grab_authority), patch(
@@ -3767,6 +3836,15 @@ class InspectionV2ApiTests(TestCase):
             {**base_payload, "action": "camera_aim", "camera_type": "zoom", "locked": True, "x": 0.5, "y": 0.5},
             {**base_payload, "action": "gimbal_reset"},
             {**base_payload, "action": "gimbal_reset", "reset_mode": 0},
+            {**base_payload, "action": "camera_screen_drag", "locked": False, "pitchSpeed": 0.1},
+            {
+                **base_payload, "action": "photo_storage_set",
+                "photoStorageSettings": ["wide"],
+            },
+            {
+                **base_payload, "action": "camera_exposure_set",
+                "cameraType": "ir", "exposureValue": 16,
+            },
             {"droneId": self.drone.id, "executorId": executor.id, "action": "camera_photo_take"},
         ]
 

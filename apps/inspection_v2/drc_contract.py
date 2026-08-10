@@ -25,6 +25,65 @@ class DrcExitSerializer(StrictSerializer):
     sessionId = serializers.UUIDField()
 
 
+class DrcPointSerializer(StrictSerializer):
+    latitude = serializers.FloatField(min_value=-90, max_value=90)
+    longitude = serializers.FloatField(min_value=-180, max_value=180)
+    height = serializers.FloatField(min_value=2, max_value=10000)
+
+
+DRC_FLIGHT_ACTION_FIELDS = {
+    "takeoff_to_point": {
+        "targetLatitude": "target_latitude",
+        "targetLongitude": "target_longitude",
+        "targetHeight": "target_height",
+        "securityTakeoffHeight": "security_takeoff_height",
+        "rthMode": "rth_mode",
+        "rthAltitude": "rth_altitude",
+        "rcLostAction": "rc_lost_action",
+        "commanderModeLostAction": "commander_mode_lost_action",
+        "commanderFlightMode": "commander_flight_mode",
+        "commanderFlightHeight": "commander_flight_height",
+        "maxSpeed": "max_speed",
+    },
+    "fly_to_point": {"maxSpeed": "max_speed", "points": "points"},
+    "fly_to_point_update": {"maxSpeed": "max_speed", "points": "points"},
+    "fly_to_point_stop": {},
+}
+
+
+class DrcFlightActionSerializer(StrictSerializer):
+    dockId = StrictIntegerField(min_value=1)
+    action = serializers.ChoiceField(choices=list(DRC_FLIGHT_ACTION_FIELDS))
+    targetLatitude = serializers.FloatField(required=False, min_value=-90, max_value=90)
+    targetLongitude = serializers.FloatField(required=False, min_value=-180, max_value=180)
+    targetHeight = serializers.FloatField(required=False, min_value=2, max_value=1500)
+    securityTakeoffHeight = serializers.FloatField(required=False, min_value=20, max_value=1500)
+    rthMode = serializers.ChoiceField(choices=[1], required=False)
+    rthAltitude = serializers.FloatField(required=False, min_value=2, max_value=1500)
+    rcLostAction = serializers.ChoiceField(choices=[0, 1, 2], required=False)
+    commanderModeLostAction = serializers.ChoiceField(choices=[0, 1], required=False)
+    commanderFlightMode = serializers.ChoiceField(choices=[0, 1], required=False)
+    commanderFlightHeight = serializers.FloatField(required=False, min_value=2, max_value=3000)
+    maxSpeed = StrictIntegerField(required=False, min_value=1, max_value=15)
+    points = DrcPointSerializer(many=True, required=False, min_length=1, max_length=1)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        action = attrs["action"]
+        action_fields = DRC_FLIGHT_ACTION_FIELDS[action]
+        missing = [field for field in action_fields if field not in attrs]
+        if missing:
+            raise serializers.ValidationError({field: [f"{action} 需要该字段"] for field in missing})
+        optional_fields = {field for fields in DRC_FLIGHT_ACTION_FIELDS.values() for field in fields}
+        unexpected = sorted(optional_fields.intersection(attrs) - set(action_fields))
+        if unexpected:
+            raise serializers.ValidationError({field: [f"{action} 不接受该字段"] for field in unexpected})
+        attrs["_dji_data"] = {dji_name: attrs[field] for field, dji_name in action_fields.items()}
+        if action == "takeoff_to_point":
+            attrs["_dji_data"]["exit_wayline_when_rc_lost"] = 0
+        return attrs
+
+
 class DrcConnectResponseSerializer(serializers.Serializer):
     sessionId = serializers.UUIDField()
     dockId = serializers.IntegerField()
@@ -45,3 +104,11 @@ class DrcCapabilityResponseSerializer(serializers.Serializer):
 
 class DrcExitResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
+
+
+class DrcFlightActionResponseSerializer(serializers.Serializer):
+    action = serializers.CharField()
+    status = serializers.CharField()
+    dockId = serializers.IntegerField()
+    droneId = serializers.IntegerField()
+    upstream = serializers.JSONField()

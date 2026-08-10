@@ -24,8 +24,10 @@ Frontend --REST/WebSocket--> Django --REST--> Java Cloud API
 | 接口 | 作用 |
 |---|---|
 | `GET /api/v2/inspection/drc/capabilities?dockId=` | 返回 Dock、子无人机、摇杆范围和当前已开放的载荷能力。 |
+| `POST /api/v2/inspection/drc/actions` | 通过现有 Java services MQTT 执行一键起飞和 FlyTo 动作。 |
 | `POST /api/v2/inspection/drc/connect` | Django 调用 Java `connect -> enter`，内部保存 MQTT 凭据，只返回会话 ID 和本项目 WebSocket 地址。 |
 | `WS /ws/v2/drc/sessions/{sessionId}?token=` | Django 代理 DRC MQTT；前端不能指定 broker 或 topic。 |
+| `WS /ws/v2/dji/mqtt?token=` | 复用现有标准 MQTT 事件流，接收起飞、FlyTo 和拍照进度。 |
 | `POST /api/v2/inspection/drc/exit` | 按服务端会话调用 Java `exit`，撤销 ACL 并删除本地短期配置。 |
 | `POST /api/v2/inspection/camera/actions` | 通过 Django/Java 的标准 services MQTT 执行相机和云台命令。 |
 
@@ -56,9 +58,8 @@ DRC WebSocket 只承载 `stick_control`、`drone_emergency_stop` 和 DRC 上行�
 
 ## 6. 页面范围与缺口
 
-- 飞控链路：使用本项目 DRC WebSocket。
-- 已有相机能力：拍照、开始/停止录像、模式切换、变焦、点选瞄准、云台复位，继续复用 `/camera/actions`。
-- 官方页面其余相机、云台和红外方法：后续扩展现有 `CameraActionSerializer` 与 Java `PayloadCommandsEnum`，仍走 services MQTT。
+- 飞控链路：一键起飞和 FlyTo 走 `/drc/actions`，杆量与急停走本项目 DRC WebSocket。
+- 官方页面的 22 个相机、云台和红外方法：统一复用 `/camera/actions`，由 Django 严格校验并经 Java services MQTT 下发。
 - 扬声器与探照灯：只有协议和真机型号确认后再开放，不混入通用 DRC down。
 
 ## 7. 交付顺序
@@ -66,4 +67,4 @@ DRC WebSocket 只承载 `stick_control`、`drone_emergency_stop` 和 DRC 上行�
 1. 修正 Django 会话响应和 DRC WebSocket 代理，确保前端只连本项目。
 2. 保留 Java 最小 ACL、workspace 校验、频率和幂等退出修改。
 3. 前端接入 REST/WebSocket 和现有相机动作接口。
-4. 按官方 services 方法逐项补齐剩余页面操作并做真机验收。
+4. 对官方 services 方法做真机验收。

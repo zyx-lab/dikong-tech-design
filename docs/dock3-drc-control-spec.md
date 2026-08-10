@@ -19,6 +19,7 @@ Frontend -> Django REST/WebSocket -> Django DRC MQTT client -> DJI broker -> Doc
 
 - 用户为超级管理员、调度员或飞手。
 - 用户对 Dock 和其子无人机具备 `use` 或 `dispatch_task` 权限。
+- 订阅标准 MQTT 起飞、FlyTo 和拍照进度时，用户还需具备现有 `monitor` 权限。
 - Dock 型号为 Dock 3，Dock 和子无人机在线，并绑定到同一个 DJI connection。
 - Java 上云 API 已配置 DRC broker，Dock 当前状态允许进入指令飞行。
 - 前端使用本项目 access token 连接 WebSocket。
@@ -43,7 +44,8 @@ GET /api/v2/inspection/drc/capabilities?dockId=12
   "control": {
     "protocol": "stick_control",
     "frequency": {"min": 5, "max": 10, "default": 10},
-    "channel": {"min": 364, "neutral": 1024, "max": 1684}
+    "channel": {"min": 364, "neutral": 1024, "max": 1684},
+    "actions": ["takeoff_to_point", "fly_to_point", "fly_to_point_update", "fly_to_point_stop"]
   },
   "payloads": []
 }
@@ -90,7 +92,39 @@ Django 按以下顺序执行：
 
 任一步失败时不得返回半份凭据；已取得 clientId 时必须 best-effort 调用 Java `exit`。
 
-### 3.3 退出 DRC 会话
+### 3.3 一键起飞与 FlyTo
+
+```http
+POST /api/v2/inspection/drc/actions
+Content-Type: application/json
+```
+
+公共字段为 `dockId` 和 `action`。动作契约：
+
+| action | 字段 |
+|---|---|
+| `takeoff_to_point` | `targetLatitude=-90..90`、`targetLongitude=-180..180`、`targetHeight=2..1500`、`securityTakeoffHeight=20..1500`、`rthMode=1`、`rthAltitude=2..1500`、`rcLostAction=0..2`、`commanderModeLostAction=0..1`、`commanderFlightMode=0..1`、`commanderFlightHeight=2..3000`、`maxSpeed=1..15` |
+| `fly_to_point` | `maxSpeed=1..15`，`points` 仅一个目标点；点包含 `latitude=-90..90`、`longitude=-180..180`、`height=2..10000` |
+| `fly_to_point_update` | 与 `fly_to_point` 相同，只更新当前 FlyTo 目标 |
+| `fly_to_point_stop` | 无额外字段 |
+
+Django 校验操作者和 Dock/子无人机权限、型号及在线状态后，通过 Java 现有 control service 发布到标准 services topic。飞行控制权由 Java 现有起飞、FlyTo 和 DRC enter 流程按需抢夺，不向浏览器开放独立的 authority 接口。
+
+成功响应：
+
+```json
+{
+  "action": "fly_to_point",
+  "status": "SUCCEEDED",
+  "dockId": 12,
+  "droneId": 31,
+  "upstream": {}
+}
+```
+
+`takeoff_to_point_progress`、`fly_to_point_progress` 和 `camera_photo_take_progress` 属于标准 events topic，复用本项目 `WS /ws/v2/dji/mqtt?token=` 权限过滤后转发，不进入短期 `/drc/up` 会话。
+
+### 3.4 退出 DRC 会话
 
 ```http
 POST /api/v2/inspection/drc/exit
@@ -286,6 +320,25 @@ Django 每 5 秒发送：
 
 退出 DRC 并删除 owner/ACL；Dock 已退出时仍返回成功。
 
+### 5.4 起飞与 FlyTo
+
+Django 复用 Java 现有设备 control service：
+
+- `POST /api/v1/control/devices/{dockSn}/jobs/takeoff-to-point`
+- `POST /api/v1/control/devices/{dockSn}/jobs/fly-to-point`
+- `PUT /api/v1/control/devices/{dockSn}/jobs/fly-to-point`
+- `DELETE /api/v1/control/devices/{dockSn}/jobs/fly-to-point`
+
+其中 `PUT` 只补充到现有 `IControlService`，直接调用 SDK 已有 `flyToPointUpdate`；不新增任务表、状态机或会话。
+
+### 5.5 控制权、事件与废弃方法
+
+- `flight_authority_grab` 由 Java 在起飞、FlyTo 和 DRC enter 内部执行。
+- `payload_authority_grab` 由 Django `/camera/actions` 在每次载荷动作前调用 Java 执行。
+- `obstacle_avoidance_notify`、`takeoff_to_point_progress`、`fly_to_point_progress` 和 `camera_photo_take_progress` 复用现有标准 MQTT 事件入库及 `/ws/v2/dji/mqtt` 转发。
+- `joystick_invalid_notify`、`hsi_info_push`、`delay_info_push` 和 `osd_info_push` 由当前 DRC `/drc/up` WebSocket 转发。
+- 官方已废弃的 `drc_status_notify` 和 `drone_control` 不新增调用入口；飞控使用 `stick_control`。
+
 ## 6. 相机、云台、红外和扬声器
 
 官方 Dock 3 页面中的相机、云台和红外方法发布到 `thing/product/{gatewaySn}/services`，不属于短期 DRC `/drc/down`。前端必须调用本项目 REST，由 Django 再调用 Java 标准 payload command。
@@ -296,16 +349,39 @@ Django 每 5 秒发送：
 POST /api/v2/inspection/camera/actions
 ```
 
-已实现方法：`camera_mode_switch`、`camera_photo_take`、`camera_recording_start`、`camera_recording_stop`、`camera_focal_length_set`、`camera_aim`、`gimbal_reset`。
+后端已实现方法：
 
-整个页面仍需补齐的方法：
-
-- 相机/云台：`camera_photo_stop`、`camera_screen_drag`、`camera_look_at`、`camera_screen_split`、`photo_storage_set`、`video_storage_set`。
+- 相机/云台：`camera_frame_zoom`、`camera_mode_switch`、`camera_photo_take`、`camera_photo_stop`、`camera_recording_start`、`camera_recording_stop`、`camera_screen_drag`、`camera_aim`、`camera_focal_length_set`、`gimbal_reset`、`camera_look_at`、`camera_screen_split`、`photo_storage_set`、`video_storage_set`。
 - 曝光/对焦：`camera_exposure_mode_set`、`camera_exposure_set`、`camera_focus_mode_set`、`camera_focus_value_set`、`camera_point_focus_action`。
 - 红外：`ir_metering_mode_set`、`ir_metering_point_set`、`ir_metering_area_set`。
 - 扬声器：协议、payload index 和真机支持确认后，通过受控 REST/services 路径开放；不得把私有 `drc_speaker_*` 当成官方公共方法。
 
-补齐时扩展现有 Django `CameraActionSerializer` 和 Java `PayloadCommandsEnum/DronePayloadParam`，不再创建另一套 DRC session 或 operation 平台。
+所有请求公共字段为 `droneId`、`executorId`、`payloadIndex` 和 `action`；`payloadIndex` 格式为 `type-subtype-index`。动作字段由 Django 转为 DJI snake_case：
+
+| action | 动作字段与约束 |
+|---|---|
+| `camera_frame_zoom` | `cameraType=wide/zoom/ir`，`locked`，`x/y/width/height=0..1` |
+| `camera_mode_switch` | `cameraMode=0..3` |
+| `camera_photo_take` / `camera_photo_stop` | 无额外字段 |
+| `camera_recording_start` / `camera_recording_stop` | 无额外字段 |
+| `camera_screen_drag` | `locked`，`pitchSpeed`，`yawSpeed` |
+| `camera_aim` | `cameraType=wide/zoom/ir`，`locked`，`x/y=0..1` |
+| `camera_focal_length_set` | `cameraType=zoom/ir`；zoom 为 `2..200`，ir 为 `2..20` |
+| `gimbal_reset` | `resetMode=0..3` |
+| `camera_look_at` | `locked`，`latitude=-90..90`，`longitude=-180..180`，`height=2..10000` |
+| `camera_screen_split` | `enable` |
+| `photo_storage_set` | 非空 `photoStorageSettings`，成员为 `current/vision/ir` |
+| `video_storage_set` | 非空 `videoStorageSettings`，成员为 `current/wide/zoom/ir` |
+| `camera_exposure_mode_set` | `cameraType=wide/zoom`，`exposureMode=1..4` |
+| `camera_exposure_set` | `cameraType=wide/zoom`，`exposureValue=1..31/255` |
+| `camera_focus_mode_set` | `cameraType=wide/zoom`，`focusMode=0..2` |
+| `camera_focus_value_set` | `cameraType=wide/zoom`，整数 `focusValue`；有效范围取设备物模型值 |
+| `camera_point_focus_action` | `cameraType=wide/zoom`，`x/y=0..1` |
+| `ir_metering_mode_set` | `mode=0..2` |
+| `ir_metering_point_set` | `x/y=0..1` |
+| `ir_metering_area_set` | `x/y/width/height=0..1` |
+
+动作缺少必填字段、携带其他动作字段、枚举或范围不合法时，Django 必须在调用 Java 前返回 400。Java 复用 `PayloadCommandsEnum/DronePayloadParam` 和 SDK request 校验，不创建另一套 DRC session 或 operation 平台。
 
 ## 7. 安全与日志
 
@@ -322,6 +398,7 @@ POST /api/v2/inspection/camera/actions
 - connect 响应不包含任何 MQTT 凭据、topic 或上游 clientId，cache 内存在对应短期配置。
 - 无权限用户不能查询能力、创建会话或使用其他用户会话。
 - exit 只使用 sessionId，并使用 cache 内 dockSn/clientId 调 Java。
+- 一键起飞、FlyTo 开始/更新/停止只通过 `/drc/actions` 调用现有 Java services 接口。
 - 四轴边界、布尔伪整数和 clientSeq 重放被拒绝。
 - 同一 session 的第二条 WebSocket 被 `4409` 拒绝，断开后 Redis 占用被删除。
 - 急停按中立帧、`drone_emergency_stop` 的顺序发布，并锁定后续 arm。
@@ -333,4 +410,4 @@ POST /api/v2/inspection/camera/actions
 - 5 Hz 与 10 Hz 四轴方向、中立值和序列行为正确。
 - 松杆、切后台、断网、MQTT 断开和页面关闭后停止非中立控制。
 - heartbeat、OSD、HSI 和 delay 上行可经本项目 WebSocket 收到。
-- 已实现的 7 个相机/云台方法通过现有 REST 逐项验证；其余方法在补齐契约后再开放。
+- 22 个相机、云台和红外方法通过现有 REST 逐项验证，并确认发布到 services topic。

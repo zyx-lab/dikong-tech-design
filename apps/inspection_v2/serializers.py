@@ -596,17 +596,42 @@ class CloudMediaFileUrlRefreshSerializer(StrictSerializer):
     urlType = serializers.ChoiceField(choices=["download", "preview", "playback"], required=False, default="download")
 
 
-CAMERA_ACTION_CHOICES = [
-    "camera_mode_switch",
-    "camera_photo_take",
-    "camera_recording_start",
-    "camera_recording_stop",
-    "camera_focal_length_set",
-    "camera_aim",
-    "gimbal_reset",
-]
+CAMERA_ACTION_FIELDS = {
+    "camera_frame_zoom": {
+        "cameraType": "camera_type", "locked": "locked", "x": "x", "y": "y",
+        "width": "width", "height": "height",
+    },
+    "camera_mode_switch": {"cameraMode": "camera_mode"},
+    "camera_photo_take": {},
+    "camera_photo_stop": {},
+    "camera_recording_start": {},
+    "camera_recording_stop": {},
+    "camera_screen_drag": {
+        "locked": "locked", "pitchSpeed": "pitch_speed", "yawSpeed": "yaw_speed",
+    },
+    "camera_aim": {"cameraType": "camera_type", "locked": "locked", "x": "x", "y": "y"},
+    "camera_focal_length_set": {"cameraType": "camera_type", "zoomFactor": "zoom_factor"},
+    "gimbal_reset": {"resetMode": "reset_mode"},
+    "camera_look_at": {
+        "locked": "locked", "latitude": "latitude", "longitude": "longitude", "height": "height",
+    },
+    "camera_screen_split": {"enable": "enable"},
+    "photo_storage_set": {"photoStorageSettings": "photo_storage_settings"},
+    "video_storage_set": {"videoStorageSettings": "video_storage_settings"},
+    "camera_exposure_mode_set": {"cameraType": "camera_type", "exposureMode": "exposure_mode"},
+    "camera_exposure_set": {"cameraType": "camera_type", "exposureValue": "exposure_value"},
+    "camera_focus_mode_set": {"cameraType": "camera_type", "focusMode": "focus_mode"},
+    "camera_focus_value_set": {"cameraType": "camera_type", "focusValue": "focus_value"},
+    "camera_point_focus_action": {"cameraType": "camera_type", "x": "x", "y": "y"},
+    "ir_metering_mode_set": {"mode": "mode"},
+    "ir_metering_point_set": {"x": "x", "y": "y"},
+    "ir_metering_area_set": {"x": "x", "y": "y", "width": "width", "height": "height"},
+}
+CAMERA_ACTION_CHOICES = list(CAMERA_ACTION_FIELDS)
 CAMERA_TYPE_CHOICES = ["wide", "zoom", "ir"]
 FOCAL_CAMERA_TYPE_CHOICES = ["zoom", "ir"]
+EXPOSURE_CAMERA_TYPE_CHOICES = ["wide", "zoom"]
+LENS_STORAGE_CHOICES = ["current", "wide", "zoom", "vision", "ir"]
 PAYLOAD_INDEX_PATTERN = re.compile(r"^\d+-\d+-\d+$")
 
 
@@ -619,8 +644,26 @@ class CameraActionSerializer(StrictSerializer):
     cameraType = serializers.ChoiceField(choices=CAMERA_TYPE_CHOICES, required=False)
     zoomFactor = serializers.FloatField(required=False)
     locked = serializers.BooleanField(required=False)
+    pitchSpeed = serializers.FloatField(required=False)
+    yawSpeed = serializers.FloatField(required=False)
     x = serializers.FloatField(required=False, min_value=0, max_value=1)
     y = serializers.FloatField(required=False, min_value=0, max_value=1)
+    width = serializers.FloatField(required=False, min_value=0, max_value=1)
+    height = serializers.FloatField(required=False)
+    latitude = serializers.FloatField(required=False, min_value=-90, max_value=90)
+    longitude = serializers.FloatField(required=False, min_value=-180, max_value=180)
+    enable = serializers.BooleanField(required=False)
+    photoStorageSettings = serializers.ListField(
+        child=serializers.ChoiceField(choices=LENS_STORAGE_CHOICES), allow_empty=False, required=False
+    )
+    videoStorageSettings = serializers.ListField(
+        child=serializers.ChoiceField(choices=LENS_STORAGE_CHOICES), allow_empty=False, required=False
+    )
+    exposureMode = serializers.ChoiceField(choices=[1, 2, 3, 4], required=False)
+    exposureValue = serializers.ChoiceField(choices=[*range(1, 32), 255], required=False)
+    focusMode = serializers.ChoiceField(choices=[0, 1, 2], required=False)
+    focusValue = serializers.IntegerField(required=False)
+    mode = serializers.ChoiceField(choices=[0, 1, 2], required=False)
     resetMode = serializers.IntegerField(required=False)
 
     def validate(self, attrs):
@@ -632,50 +675,54 @@ class CameraActionSerializer(StrictSerializer):
             raise serializers.ValidationError({"payloadIndex": ["格式必须为 type-subtype-index，例如 88-0-0"]})
 
         action = attrs["action"]
+        action_fields = CAMERA_ACTION_FIELDS[action]
+        missing = [field for field in action_fields if field not in attrs]
+        if missing:
+            raise serializers.ValidationError({field: [f"{action} 需要该字段"] for field in missing})
+        optional_fields = {field for fields in CAMERA_ACTION_FIELDS.values() for field in fields}
+        unexpected = sorted(optional_fields.intersection(attrs) - set(action_fields))
+        if unexpected:
+            raise serializers.ValidationError({field: [f"{action} 不接受该字段"] for field in unexpected})
+
         dji_data = {"payload_index": payload_index}
+        dji_data.update({dji_name: attrs[field] for field, dji_name in action_fields.items()})
 
         if action == "camera_mode_switch":
-            if "cameraMode" not in attrs:
-                raise serializers.ValidationError({"cameraMode": ["camera_mode_switch 需要 cameraMode"]})
             camera_mode = attrs["cameraMode"]
             if camera_mode not in {0, 1, 2, 3}:
                 raise serializers.ValidationError({"cameraMode": ["取值必须是 0、1、2 或 3"]})
-            dji_data["camera_mode"] = camera_mode
 
         if action == "camera_focal_length_set":
-            if "cameraType" not in attrs:
-                raise serializers.ValidationError({"cameraType": ["camera_focal_length_set 需要 cameraType"]})
             camera_type = attrs["cameraType"]
             if camera_type not in FOCAL_CAMERA_TYPE_CHOICES:
                 raise serializers.ValidationError({"cameraType": ["camera_focal_length_set 只支持 zoom 或 ir"]})
-            if "zoomFactor" not in attrs:
-                raise serializers.ValidationError({"zoomFactor": ["camera_focal_length_set 需要 zoomFactor"]})
             zoom_factor = attrs["zoomFactor"]
             max_zoom = 20 if camera_type == "ir" else 200
             if zoom_factor < 2 or zoom_factor > max_zoom:
                 raise serializers.ValidationError({"zoomFactor": [f"{camera_type} 变焦倍率必须在 2 到 {max_zoom} 之间"]})
-            dji_data["camera_type"] = camera_type
-            dji_data["zoom_factor"] = zoom_factor
-
-        if action == "camera_aim":
-            if "cameraType" not in attrs:
-                raise serializers.ValidationError({"cameraType": ["camera_aim 需要 cameraType"]})
-            camera_type = attrs["cameraType"]
-            missing = [field for field in ("locked", "x", "y") if field not in attrs]
-            if missing:
-                raise serializers.ValidationError({field: ["camera_aim 需要该字段"] for field in missing})
-            dji_data["camera_type"] = camera_type
-            dji_data["locked"] = attrs["locked"]
-            dji_data["x"] = attrs["x"]
-            dji_data["y"] = attrs["y"]
 
         if action == "gimbal_reset":
-            if "resetMode" not in attrs:
-                raise serializers.ValidationError({"resetMode": ["gimbal_reset 需要 resetMode"]})
             reset_mode = attrs["resetMode"]
             if reset_mode not in {0, 1, 2, 3}:
                 raise serializers.ValidationError({"resetMode": ["取值必须是 0、1、2 或 3"]})
-            dji_data["reset_mode"] = reset_mode
+
+        if action == "camera_look_at" and not 2 <= attrs["height"] <= 10000:
+            raise serializers.ValidationError({"height": ["camera_look_at 高度必须在 2 到 10000 米之间"]})
+
+        if action in {"camera_frame_zoom", "ir_metering_area_set"} and not 0 <= attrs["height"] <= 1:
+            raise serializers.ValidationError({"height": [f"{action} 的 height 必须在 0 到 1 之间"]})
+
+        if action == "photo_storage_set" and not set(attrs["photoStorageSettings"]) <= {"current", "vision", "ir"}:
+            raise serializers.ValidationError({"photoStorageSettings": ["只支持 current、vision 或 ir"]})
+
+        if action == "video_storage_set" and not set(attrs["videoStorageSettings"]) <= {"current", "wide", "zoom", "ir"}:
+            raise serializers.ValidationError({"videoStorageSettings": ["只支持 current、wide、zoom 或 ir"]})
+
+        if action in {
+            "camera_exposure_mode_set", "camera_exposure_set", "camera_focus_mode_set",
+            "camera_focus_value_set", "camera_point_focus_action",
+        } and attrs["cameraType"] not in EXPOSURE_CAMERA_TYPE_CHOICES:
+            raise serializers.ValidationError({"cameraType": [f"{action} 只支持 wide 或 zoom"]})
 
         attrs["_payload_index"] = payload_index
         attrs["_dji_data"] = dji_data

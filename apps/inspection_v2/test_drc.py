@@ -298,6 +298,62 @@ class DrcProxyApiTests(TransactionTestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_flight_actions_use_existing_java_services_endpoints(self):
+        self.gateway.takeoff_to_point.return_value = {"accepted": True}
+        self.gateway.fly_to_point.return_value = {"accepted": True}
+        self.gateway.update_fly_to_point.return_value = {"accepted": True}
+        self.gateway.stop_fly_to_point.return_value = {"accepted": True}
+        point = {"latitude": 22.5, "longitude": 113.9, "height": 120.0}
+        cases = [
+            (
+                {
+                    "dockId": self.dock.id,
+                    "action": "takeoff_to_point",
+                    "targetLatitude": 22.5,
+                    "targetLongitude": 113.9,
+                    "targetHeight": 120.0,
+                    "securityTakeoffHeight": 30.0,
+                    "rthMode": 1,
+                    "rthAltitude": 100.0,
+                    "rcLostAction": 2,
+                    "commanderModeLostAction": 1,
+                    "commanderFlightMode": 1,
+                    "commanderFlightHeight": 80.0,
+                    "maxSpeed": 10,
+                },
+                "takeoff_to_point",
+            ),
+            ({"dockId": self.dock.id, "action": "fly_to_point", "maxSpeed": 10, "points": [point]}, "fly_to_point"),
+            (
+                {"dockId": self.dock.id, "action": "fly_to_point_update", "maxSpeed": 8, "points": [point]},
+                "update_fly_to_point",
+            ),
+            ({"dockId": self.dock.id, "action": "fly_to_point_stop"}, "stop_fly_to_point"),
+        ]
+
+        with patch(
+            "apps.inspection_v2.drc_services.dji_connection_gateway",
+            return_value=self.gateway,
+        ):
+            for request_data, gateway_method in cases:
+                with self.subTest(action=request_data["action"]):
+                    response = self.client.post(
+                        "/api/v2/inspection/drc/actions", request_data, format="json"
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.data["data"]["action"], request_data["action"])
+                    getattr(self.gateway, gateway_method).assert_called_once()
+
+        takeoff_data = self.gateway.takeoff_to_point.call_args.args[1]
+        self.assertEqual(takeoff_data["exit_wayline_when_rc_lost"], 0)
+        self.gateway.fly_to_point.assert_called_once_with(
+            "DOCK-1", {"max_speed": 10, "points": [point]}
+        )
+        self.gateway.update_fly_to_point.assert_called_once_with(
+            "DOCK-1", {"max_speed": 8, "points": [point]}
+        )
+        self.gateway.stop_fly_to_point.assert_called_once_with("DOCK-1")
+
     def test_connect_requires_an_operator_role(self):
         user = get_user_model().objects.create_user(
             username="viewer", password="pass1234", status=1

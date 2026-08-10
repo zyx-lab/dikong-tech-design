@@ -41,8 +41,10 @@ from apps.inspection_v2.drc_contract import (
     DrcConnectSerializer,
     DrcExitResponseSerializer,
     DrcExitSerializer,
+    DrcFlightActionResponseSerializer,
+    DrcFlightActionSerializer,
 )
-from apps.inspection_v2.drc_services import connect_drc, drc_capabilities, exit_drc
+from apps.inspection_v2.drc_services import connect_drc, drc_capabilities, execute_drc_flight_action, exit_drc
 from apps.inspection_v2.route_kmz import parse_route_kmz
 from apps.inspection_v2.serializers import (
     ActiveFlightReadSerializer,
@@ -1565,6 +1567,34 @@ class DrcConnectView(InspectionV2APIView):
             resource_type=ResourceType.DOCK,
             resource_object_id=payload["dockId"],
             after_data={"connected": True},
+        )
+        return Response(payload)
+
+
+class DrcFlightActionView(InspectionV2APIView):
+    @extend_schema(
+        operation_id="v2_inspection_drc_flight_action",
+        summary="执行 Dock 3 起飞或 FlyTo 动作",
+        request=DrcFlightActionSerializer,
+        responses={200: DrcFlightActionResponseSerializer},
+    )
+    def post(self, request):
+        serializer = DrcFlightActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        context = resolve_v2_context(request)
+        try:
+            payload = execute_drc_flight_action(context=context, data=serializer.validated_data)
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
+        log_v2_action(
+            request=request,
+            context=context,
+            action="drc_flight_action",
+            target_type="dock",
+            target_id=payload["dockId"],
+            resource_type=ResourceType.DOCK,
+            resource_object_id=payload["dockId"],
+            after_data={"action": payload["action"], "status": payload["status"]},
         )
         return Response(payload)
 

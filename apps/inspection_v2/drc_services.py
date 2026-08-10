@@ -6,7 +6,9 @@ from django.utils import timezone
 
 from apps.access.exceptions import StandardConstraintConflict, StandardForbidden, StandardNotFound
 from apps.iam_v2.models import FixedRole
+from apps.inspection_v2.drc_contract import DRC_FLIGHT_ACTION_FIELDS
 from apps.inspection_v2.services import is_dispatcher, usable_resource_binding
+from apps.inspection_v2.serializers import CAMERA_ACTION_CHOICES
 from apps.resource_v2.gateway import DjiGatewayError, dji_connection_gateway
 from apps.resource_v2.models import (
     BindingStatus,
@@ -20,10 +22,7 @@ from apps.resource_v2.models import (
 from apps.resource_v2.services import effective_permissions_for_binding
 
 
-CAMERA_METHODS = [
-    "camera_mode_switch", "camera_photo_take", "camera_recording_start",
-    "camera_recording_stop", "camera_aim", "camera_focal_length_set", "gimbal_reset",
-]
+CAMERA_METHODS = CAMERA_ACTION_CHOICES
 DRC_SESSION_CACHE_PREFIX = "drc:mqtt:"
 DRC_SESSION_LEASE_PREFIX = "drc:websocket:"
 
@@ -113,8 +112,38 @@ def drc_capabilities(*, context, dock_id):
         "control": {
             "protocol": "stick_control", "frequency": {"min": 5, "max": 10, "default": 10},
             "channel": {"min": 364, "neutral": 1024, "max": 1684},
+            "actions": list(DRC_FLIGHT_ACTION_FIELDS),
         },
         "payloads": _payloads(context, binding.dji_connection_id),
+    }
+
+
+def execute_drc_flight_action(*, context, data):
+    capability = drc_capabilities(context=context, dock_id=data["dockId"])
+    if not capability["available"]:
+        blocker = capability["blockers"][0]
+        raise StandardConstraintConflict(
+            msg=blocker["message"], data={"reasonCode": blocker["code"]}
+        )
+    dock = DockResource.objects.get(pk=data["dockId"])
+    binding = _binding(context, ResourceType.DOCK, dock.id)
+    gateway = dji_connection_gateway(binding.dji_connection)
+    action = data["action"]
+    if action == "fly_to_point_stop":
+        upstream = gateway.stop_fly_to_point(dock.device_sn)
+    else:
+        method = {
+            "takeoff_to_point": gateway.takeoff_to_point,
+            "fly_to_point": gateway.fly_to_point,
+            "fly_to_point_update": gateway.update_fly_to_point,
+        }[action]
+        upstream = method(dock.device_sn, data["_dji_data"])
+    return {
+        "action": action,
+        "status": "SUCCEEDED",
+        "dockId": dock.id,
+        "droneId": capability["droneId"],
+        "upstream": upstream,
     }
 
 
