@@ -92,6 +92,21 @@ def _is_dock3_model(model) -> bool:
     return str(model or "").lower().replace(" ", "") in {"3", "dock3"}
 
 
+_DOCK_ACTION_TARGET_STATES = {
+    "debug_mode_open": (("mode_code", "modeCode"), 2),
+    "debug_mode_close": (("mode_code", "modeCode"), 0),
+    "cover_open": (("cover_state", "coverState"), 1),
+    "cover_close": (("cover_state", "coverState"), 0),
+}
+
+
+def _dock_action_already_applied(dock, action: str) -> bool:
+    payload = dock.last_payload if isinstance(dock.last_payload, dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    keys, expected = _DOCK_ACTION_TARGET_STATES[action]
+    return any(data.get(key) == expected for key in keys)
+
+
 def drc_capabilities(*, context, dock_id):
     require_drc_operator(context)
     dock = DockResource.objects.filter(pk=dock_id).first()
@@ -140,6 +155,13 @@ def execute_dock_debug_action(*, context, data):
         raise StandardConstraintConflict(
             msg="机场不在线", data={"reasonCode": "DOCK_OFFLINE"}
         )
+    if _dock_action_already_applied(dock, data["action"]):
+        return {
+            "action": data["action"],
+            "status": "SUCCEEDED",
+            "dockId": dock.id,
+            "upstream": {"skipped": True, "reason": "ALREADY_IN_STATE"},
+        }
     upstream = dji_connection_gateway(binding.dji_connection).control_dock_debug(
         dock.device_sn, data["action"]
     )

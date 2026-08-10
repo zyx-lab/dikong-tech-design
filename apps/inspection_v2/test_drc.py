@@ -408,6 +408,29 @@ class DrcProxyApiTests(TransactionTestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_dock_debug_action_is_idempotent_when_target_state_is_reached(self):
+        self.dock.model = "3"
+        self.dock.last_payload = {"data": {"mode_code": 2}}
+        self.dock.save(update_fields=["model", "last_payload", "updated_at"])
+
+        with patch(
+            "apps.inspection_v2.drc_services.dji_connection_gateway",
+            return_value=self.gateway,
+        ):
+            response = self.client.post(
+                "/api/v2/inspection/drc/dock-actions",
+                {"dockId": self.dock.id, "action": "debug_mode_open"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["status"], "SUCCEEDED")
+        self.assertEqual(
+            response.data["data"]["upstream"]["reason"],
+            "ALREADY_IN_STATE",
+        )
+        self.gateway.control_dock_debug.assert_not_called()
+
     def test_dock_debug_reply_timeout_warns_that_outcome_is_unknown(self):
         self.gateway.control_dock_debug.side_effect = DjiGatewayUpstreamError(
             "DJI upstream business error",
