@@ -335,8 +335,8 @@ Django 复用 Java 现有设备 control service：
 
 - `flight_authority_grab` 由 Java 在起飞、FlyTo 和 DRC enter 内部执行。
 - `payload_authority_grab` 由 Django `/camera/actions` 在每次载荷动作前调用 Java 执行。
-- `obstacle_avoidance_notify`、`takeoff_to_point_progress`、`fly_to_point_progress` 和 `camera_photo_take_progress` 复用现有标准 MQTT 事件入库及 `/ws/v2/dji/mqtt` 转发。
-- `joystick_invalid_notify`、`hsi_info_push`、`delay_info_push` 和 `osd_info_push` 由当前 DRC `/drc/up` WebSocket 转发。
+- `obstacle_avoidance_notify`、`takeoff_to_point_progress`、`fly_to_point_progress`、`camera_photo_take_progress` 和 `joystick_invalid_notify` 复用现有标准 MQTT 事件入库及 `/ws/v2/dji/mqtt` 转发。
+- `heart_beat`、`hsi_info_push`、`delay_info_push` 和 `osd_info_push` 由当前 DRC `/drc/up` WebSocket 转发。
 - 官方已废弃的 `drc_status_notify` 和 `drone_control` 不新增调用入口；飞控使用 `stick_control`。
 
 ## 6. 相机、云台、红外和扬声器
