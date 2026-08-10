@@ -25,6 +25,19 @@ class DrcExitSerializer(StrictSerializer):
     sessionId = serializers.UUIDField()
 
 
+DOCK_DEBUG_ACTIONS = (
+    "debug_mode_open",
+    "cover_open",
+    "cover_close",
+    "debug_mode_close",
+)
+
+
+class DrcDockDebugActionSerializer(StrictSerializer):
+    dockId = StrictIntegerField(min_value=1)
+    action = serializers.ChoiceField(choices=DOCK_DEBUG_ACTIONS)
+
+
 class DrcPointSerializer(StrictSerializer):
     latitude = serializers.FloatField(min_value=-90, max_value=90)
     longitude = serializers.FloatField(min_value=-180, max_value=180)
@@ -124,4 +137,11 @@ class DrcFlightActionResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
     dockId = serializers.IntegerField()
     droneId = serializers.IntegerField()
+    upstream = serializers.JSONField()
+
+
+class DrcDockDebugActionResponseSerializer(serializers.Serializer):
+    action = serializers.CharField()
+    status = serializers.CharField()
+    dockId = serializers.IntegerField()
     upstream = serializers.JSONField()

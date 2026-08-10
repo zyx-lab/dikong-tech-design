@@ -154,6 +154,12 @@
 | `POST /api/v2/inspection/live/update` | 更新直播质量等参数。 |
 | `POST /api/v2/inspection/live/switch` | 切换直播镜头。 |
 | `POST /api/v2/inspection/camera/actions` | 相机拍照、录像、变焦、点选瞄准和云台复位。 |
+| `GET /api/v2/inspection/drc/capabilities?dockId=` | 查询 Dock 3、子无人机和当前 DRC 可用性；DRC 页面用它代替不存在的 Dock cockpit 接口。 |
+| `POST /api/v2/inspection/drc/actions` | 执行一键起飞和 FlyTo 开始、更新、停止。 |
+| `POST /api/v2/inspection/drc/dock-actions` | 开关调试模式和舱盖。 |
+| `POST /api/v2/inspection/drc/connect` | 创建由本项目托管的短期 DRC 会话。 |
+| `POST /api/v2/inspection/drc/exit` | 退出短期 DRC 会话。 |
+| `WS /ws/v2/drc/sessions/{sessionId}?token=` | 发送摇杆帧并接收 DRC 上行消息；前端不连接 DJI MQTT。 |
 | `GET /api/v2/inspection/flight-records` | 查询飞行记录。 |
 | `GET /api/v2/inspection/flight-records/{id}` | 读取飞行记录详情。 |
 | `PUT /api/v2/inspection/flight-records/{id}` | 更新飞行记录备注。 |
@@ -373,6 +379,10 @@ POST /api/v1/manage/token/refresh
 | `POST /api/v2/inspection/live/update` | 更新 DJI live stream | 常用于调整 `videoQuality` |
 | `POST /api/v2/inspection/live/switch` | 切换 DJI live stream 镜头 | `videoType` 用 `wide/zoom/ir/normal` |
 | `POST /api/v2/inspection/camera/actions` | 抢占 payload authority 后下发 payload commands | 用本地 `droneId/executorId` 和 capacity 中的 `payloadIndex` |
+| `POST /api/v2/inspection/drc/actions` | 调用 DJI 一键起飞和 FlyTo services 接口 | 只传本地 `dockId` 和动作契约字段 |
+| `POST /api/v2/inspection/drc/dock-actions` | 调用远程调试 `debug_mode_open/cover_open/cover_close/debug_mode_close` | 只传本地 `dockId` 和白名单 `action`；舱盖动作不要求先解析子无人机 |
+| `POST /api/v2/inspection/drc/connect` | 调用 DRC `connect -> enter` 并由 Django 保存短期 MQTT 凭据 | 前端响应中不会出现 broker、凭据、clientId 或 topic |
+| `POST /api/v2/inspection/drc/exit` | 调用 DRC `exit` 并清理本地会话 | 前端只传 `sessionId` |
 | `POST /api/v2/inspection/flight-records/{id}/refresh-media` | 查询 DJI media files 列表；Dock 按 `djiJobId` 精确归属，Pilot2 按 workspace、无人机和会话时间窗唯一命中归属无 job 媒体 | 显式刷新媒体索引并更新后台同步状态；照片预览 URL 和视频播放 URL 在媒体列表和详情读取时按需补齐 |
 | `POST /api/v2/inspection/media-files/{id}/refresh-url` | 按本地媒体文件显式刷新 DJI signed URL | `urlType=download|preview|playback`，用于下载、播放或预览失败重试 |
 

@@ -71,13 +71,20 @@ def _payload_online(payload: dict) -> bool | None:
     return None
 
 
-def _resource_defaults(payload: dict) -> dict:
+def _resource_defaults(payload: dict, previous_payload: dict | None = None) -> dict:
+    last_payload = dict(payload)
+    if (
+        isinstance(previous_payload, dict)
+        and isinstance(previous_payload.get("data"), dict)
+        and not isinstance(payload.get("data"), dict)
+    ):
+        last_payload["data"] = previous_payload["data"]
     defaults = {
         "name": _payload_string(payload, "name", "device_name", "nickname") or _payload_string(payload, "device_sn"),
         "model": _payload_string(payload, "model", "device_model", "product_type", "type"),
         "firmware_version": _payload_string(payload, "firmware_version", "firmwareVersion"),
         "firmware_status": _payload_string(payload, "firmware_status", "firmwareStatus"),
-        "last_payload": payload,
+        "last_payload": last_payload,
     }
     online = _payload_online(payload)
     if online is not None:
@@ -105,7 +112,11 @@ def upsert_resource_from_payload(resource_type: str, payload: dict):
         ResourceType.DOCK: DockResource,
         ResourceType.GATEWAY: GatewayResource,
     }[resolved_type]
-    resource, _created = model.objects.update_or_create(device_sn=device_sn, defaults=_resource_defaults(payload))
+    previous_payload = model.objects.filter(device_sn=device_sn).values_list("last_payload", flat=True).first()
+    resource, _created = model.objects.update_or_create(
+        device_sn=device_sn,
+        defaults=_resource_defaults(payload, previous_payload),
+    )
     return resource
 
 

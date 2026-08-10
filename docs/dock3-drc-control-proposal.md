@@ -25,6 +25,7 @@ Frontend --REST/WebSocket--> Django --REST--> Java Cloud API
 |---|---|
 | `GET /api/v2/inspection/drc/capabilities?dockId=` | 返回 Dock、子无人机、摇杆范围和当前已开放的载荷能力。 |
 | `POST /api/v2/inspection/drc/actions` | 通过现有 Java services MQTT 执行一键起飞和 FlyTo 动作。 |
+| `POST /api/v2/inspection/drc/dock-actions` | 通过 Java 远程调试接口执行开关调试模式与舱盖。 |
 | `POST /api/v2/inspection/drc/connect` | Django 调用 Java `connect -> enter`，内部保存 MQTT 凭据，只返回会话 ID 和本项目 WebSocket 地址。 |
 | `WS /ws/v2/drc/sessions/{sessionId}?token=` | Django 代理 DRC MQTT；前端不能指定 broker 或 topic。 |
 | `WS /ws/v2/dji/mqtt?token=` | 复用现有标准 MQTT 事件流，接收起飞、FlyTo 和拍照进度。 |
@@ -59,6 +60,7 @@ DRC WebSocket 只承载 `stick_control`、`drone_emergency_stop` 和 DRC 上行�
 ## 6. 页面范围与缺口
 
 - 飞控链路：一键起飞和 FlyTo 走 `/drc/actions`，杆量与急停走本项目 DRC WebSocket。
+- 机场本体：首版 `/drc/dock-actions` 只开放 `debug_mode_open`、`cover_open`、`cover_close`、`debug_mode_close`。
 - 官方页面的 22 个相机、云台和红外方法：统一复用 `/camera/actions`，由 Django 严格校验并经 Java services MQTT 下发。
 - 扬声器与探照灯：只有协议和真机型号确认后再开放，不混入通用 DRC down。
 

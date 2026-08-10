@@ -39,12 +39,20 @@ from apps.inspection_v2.drc_contract import (
     DrcCapabilityResponseSerializer,
     DrcConnectResponseSerializer,
     DrcConnectSerializer,
+    DrcDockDebugActionResponseSerializer,
+    DrcDockDebugActionSerializer,
     DrcExitResponseSerializer,
     DrcExitSerializer,
     DrcFlightActionResponseSerializer,
     DrcFlightActionSerializer,
 )
-from apps.inspection_v2.drc_services import connect_drc, drc_capabilities, execute_drc_flight_action, exit_drc
+from apps.inspection_v2.drc_services import (
+    connect_drc,
+    drc_capabilities,
+    execute_dock_debug_action,
+    execute_drc_flight_action,
+    exit_drc,
+)
 from apps.inspection_v2.route_kmz import parse_route_kmz
 from apps.inspection_v2.serializers import (
     ActiveFlightReadSerializer,
@@ -165,6 +173,20 @@ _duplicate_response = standard_duplicate_response
 
 def _upstream_error_response(exc: DjiGatewayError):
     error_text = f"{exc} {getattr(exc, 'data', '')}"
+    if "211001" in error_text:
+        return Response(
+            standard_error_payload(
+                StandardCode.INTERNAL_ERROR,
+                "机场未及时确认指令，动作可能已经执行，请先检查机场状态，勿重复下发",
+                {
+                    "reasonCode": "DJI_COMMAND_OUTCOME_UNKNOWN",
+                    "detail": str(exc),
+                    "upstreamStatus": getattr(exc, "status_code", 502),
+                    "upstream": getattr(exc, "data", None),
+                },
+            ),
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
     if "210003" in error_text:
         return Response(
             standard_error_payload(
@@ -1590,6 +1612,34 @@ class DrcFlightActionView(InspectionV2APIView):
             request=request,
             context=context,
             action="drc_flight_action",
+            target_type="dock",
+            target_id=payload["dockId"],
+            resource_type=ResourceType.DOCK,
+            resource_object_id=payload["dockId"],
+            after_data={"action": payload["action"], "status": payload["status"]},
+        )
+        return Response(payload)
+
+
+class DrcDockDebugActionView(InspectionV2APIView):
+    @extend_schema(
+        operation_id="v2_inspection_drc_dock_debug_action",
+        summary="执行 Dock 3 远程调试动作",
+        request=DrcDockDebugActionSerializer,
+        responses={200: DrcDockDebugActionResponseSerializer},
+    )
+    def post(self, request):
+        serializer = DrcDockDebugActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        context = resolve_v2_context(request)
+        try:
+            payload = execute_dock_debug_action(context=context, data=serializer.validated_data)
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
+        log_v2_action(
+            request=request,
+            context=context,
+            action="drc_dock_debug_action",
             target_type="dock",
             target_id=payload["dockId"],
             resource_type=ResourceType.DOCK,

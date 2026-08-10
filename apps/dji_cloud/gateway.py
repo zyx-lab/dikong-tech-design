@@ -254,6 +254,11 @@ class DjiGateway:
             "DELETE", f"/api/v1/control/devices/{dock_sn}/jobs/fly-to-point"
         ).data
 
+    def control_dock_debug(self, dock_sn: str, action: str):
+        return self._request_json(
+            "POST", f"/api/v1/control/devices/{dock_sn}/jobs/{action}"
+        ).data
+
     def connect_drc(self, *, dock_sn: str, expire_sec: int, client_id: str | None = None):
         workspace_id = self._workspace_id()
         return self._request_json(

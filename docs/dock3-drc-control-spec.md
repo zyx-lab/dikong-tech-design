@@ -53,6 +53,8 @@ GET /api/v2/inspection/drc/capabilities?dockId=12
 
 阻断码至少包括：`DOCK_NOT_SUPPORTED`、`DOCK_OFFLINE`、`CHILD_DRONE_NOT_FOUND`、`DRONE_OFFLINE`。
 
+Django 从 Dock 标准 OSD 的 `data.sub_device` 解析子无人机 SN 和在线状态；OSD 为稀疏帧时合并保存 `data`，定时资源同步不得清除已收到的子机关联。`device_online_status` 同步到本地无人机的 `onlineStatus/lastSeenAt`。
+
 ### 3.2 创建 DRC 会话
 
 ```http
@@ -124,7 +126,20 @@ Django 校验操作者和 Dock/子无人机权限、型号及在线状态后，�
 
 `takeoff_to_point_progress`、`fly_to_point_progress` 和 `camera_photo_take_progress` 属于标准 events topic，复用本项目 `WS /ws/v2/dji/mqtt?token=` 权限过滤后转发，不进入短期 `/drc/up` 会话。
 
-### 3.4 退出 DRC 会话
+### 3.4 机场远程调试动作
+
+```http
+POST /api/v2/inspection/drc/dock-actions
+Content-Type: application/json
+
+{"dockId":12,"action":"cover_open"}
+```
+
+首版白名单只有 `debug_mode_open`、`cover_open`、`cover_close`、`debug_mode_close`。Django 校验操作者角色、机场资源权限、Dock 3 型号和在线状态后，调用 Java 现有通用接口 `POST /api/v1/control/devices/{dockSn}/jobs/{action}`。该接口控制机场本体，不依赖子无人机关联；不开放重启、格式化、充电、推杆或无人机开关机命令。
+
+正常顺序为 `debug_mode_open -> cover_open/cover_close -> debug_mode_close`。舱盖动作是异步机械动作，前端应从现有标准 MQTT events WebSocket 观察 `cover_open/cover_close` 进度，确认完成后再退出调试模式。
+
+### 3.5 退出 DRC 会话
 
 ```http
 POST /api/v2/inspection/drc/exit

@@ -11,8 +11,10 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.session_services import create_auth_session
+from apps.dji_cloud.gateway import DjiGatewayUpstreamError
 from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountRoleAssignment
 from apps.inspection_v2.consumers import validate_control_frame
+from apps.inspection_v2.services import apply_osd_telemetry
 from apps.resource_v2.models import (
     BindingStatus,
     DjiConnection,
@@ -21,6 +23,7 @@ from apps.resource_v2.models import (
     ResourceBinding,
     ResourceType,
 )
+from apps.resource_v2.serializers import upsert_resource_from_payload
 from config.asgi import application
 
 
@@ -288,6 +291,152 @@ class DrcProxyApiTests(TransactionTestCase):
         self.assertTrue(payload["supported"])
         self.assertTrue(payload["available"])
         self.assertEqual(payload["control"]["protocol"], "stick_control")
+
+    def test_capabilities_accepts_numeric_dock3_model(self):
+        self.dock.model = "3"
+        self.dock.save(update_fields=["model", "updated_at"])
+
+        response = self.client.get(
+            "/api/v2/inspection/drc/capabilities", {"dockId": self.dock.id}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["data"]["supported"])
+
+    def test_dock_osd_sub_device_updates_child_and_capability(self):
+        self.dock.model = "3"
+        self.dock.last_payload = {}
+        self.dock.save(update_fields=["model", "last_payload", "updated_at"])
+
+        apply_osd_telemetry(
+            device_sn=self.dock.device_sn,
+            dji_connection=self.connection,
+            payload={
+                "data": {
+                    "sub_device": {
+                        "device_sn": self.drone.device_sn,
+                        "device_online_status": 0,
+                    }
+                }
+            },
+        )
+
+        self.drone.refresh_from_db()
+        self.assertFalse(self.drone.online_status)
+        self.assertIsNone(self.drone.last_seen_at)
+        response = self.client.get(
+            "/api/v2/inspection/drc/capabilities", {"dockId": self.dock.id}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["droneId"], self.drone.id)
+        self.assertEqual(
+            response.data["data"]["blockers"],
+            [{"code": "DRONE_OFFLINE", "message": "子无人机不在线"}],
+        )
+
+    def test_sparse_dock_osd_and_resource_sync_preserve_camel_case_sub_device(self):
+        apply_osd_telemetry(
+            device_sn=self.dock.device_sn,
+            dji_connection=self.connection,
+            payload={
+                "data": {
+                    "cover_state": 0,
+                    "subDevice": {
+                        "deviceSn": self.drone.device_sn,
+                        "deviceOnlineStatus": 1,
+                    },
+                }
+            },
+        )
+        apply_osd_telemetry(
+            device_sn=self.dock.device_sn,
+            dji_connection=self.connection,
+            payload={"data": {"environment_temperature": 25}},
+        )
+        upsert_resource_from_payload(
+            ResourceType.DOCK,
+            {"device_sn": self.dock.device_sn, "type": 3, "status": False},
+        )
+
+        self.dock.refresh_from_db()
+        self.drone.refresh_from_db()
+        self.assertEqual(
+            self.dock.last_payload["data"]["subDevice"]["deviceSn"],
+            self.drone.device_sn,
+        )
+        self.assertEqual(self.dock.last_payload["data"]["cover_state"], 0)
+        self.assertEqual(self.dock.last_payload["data"]["environment_temperature"], 25)
+        self.assertTrue(self.drone.online_status)
+        self.assertIsNotNone(self.drone.last_seen_at)
+
+    def test_dock_debug_actions_use_existing_java_remote_debug_endpoint(self):
+        self.dock.model = "3"
+        self.dock.last_payload = {}
+        self.dock.save(update_fields=["model", "last_payload", "updated_at"])
+        self.drone.online_status = False
+        self.drone.save(update_fields=["online_status", "updated_at"])
+        self.gateway.control_dock_debug.return_value = {"accepted": True}
+
+        with patch(
+            "apps.inspection_v2.drc_services.dji_connection_gateway",
+            return_value=self.gateway,
+        ):
+            for action in (
+                "debug_mode_open",
+                "cover_open",
+                "cover_close",
+                "debug_mode_close",
+            ):
+                with self.subTest(action=action):
+                    response = self.client.post(
+                        "/api/v2/inspection/drc/dock-actions",
+                        {"dockId": self.dock.id, "action": action},
+                        format="json",
+                    )
+
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.data["data"]["action"], action)
+                    self.gateway.control_dock_debug.assert_called_once_with("DOCK-1", action)
+                    self.gateway.control_dock_debug.reset_mock()
+
+    def test_dock_debug_actions_reject_unknown_action(self):
+        response = self.client.post(
+            "/api/v2/inspection/drc/dock-actions",
+            {"dockId": self.dock.id, "action": "device_reboot"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_dock_debug_reply_timeout_warns_that_outcome_is_unknown(self):
+        self.gateway.control_dock_debug.side_effect = DjiGatewayUpstreamError(
+            "DJI upstream business error",
+            status_code=200,
+            data={
+                "code": "E0001",
+                "msg": "CloudSDKException: Error Code: 211001, No message reply received.",
+            },
+        )
+
+        with patch(
+            "apps.inspection_v2.drc_services.dji_connection_gateway",
+            return_value=self.gateway,
+        ):
+            response = self.client.post(
+                "/api/v2/inspection/drc/dock-actions",
+                {"dockId": self.dock.id, "action": "cover_open"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.data["msg"],
+            "机场未及时确认指令，动作可能已经执行，请先检查机场状态，勿重复下发",
+        )
+        self.assertEqual(
+            response.data["data"]["reasonCode"],
+            "DJI_COMMAND_OUTCOME_UNKNOWN",
+        )
 
     def test_connect_rejects_unknown_fields(self):
         response = self.client.post(

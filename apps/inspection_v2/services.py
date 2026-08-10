@@ -2605,7 +2605,15 @@ def refresh_mission_cloud_execution_from_dji(*, mission: InspectionMission, cont
 def _status_online_value(payload: dict):
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     for source in (data, payload):
-        for key in ("online_status", "onlineStatus", "online", "status", "state"):
+        for key in (
+            "device_online_status",
+            "deviceOnlineStatus",
+            "online_status",
+            "onlineStatus",
+            "online",
+            "status",
+            "state",
+        ):
             value = source.get(key)
             if value in (None, ""):
                 continue
@@ -2619,6 +2627,24 @@ def _status_online_value(payload: dict):
             if normalized in {"offline", "disconnected", "0", "false", "inactive"}:
                 return False
     return None
+
+
+def dock_child_device_state(payload: dict | None) -> tuple[str, bool | None]:
+    payload = payload if isinstance(payload, dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    sub_device = data.get("sub_device") or data.get("subDevice")
+    sub_device = sub_device if isinstance(sub_device, dict) else {}
+    device_sn = (
+        sub_device.get("device_sn")
+        or sub_device.get("deviceSn")
+        or data.get("child_device_sn")
+        or data.get("childDeviceSn")
+        or data.get("drone_sn")
+        or payload.get("child_device_sn")
+        or payload.get("childDeviceSn")
+        or payload.get("drone_sn")
+    )
+    return str(device_sn or "").strip(), _status_online_value(sub_device)
 
 
 def apply_device_status_event(*, device_sn: str, payload: dict | None = None) -> dict:
@@ -2641,11 +2667,34 @@ def apply_device_status_event(*, device_sn: str, payload: dict | None = None) ->
     return {"updated": updated, "onlineStatus": online}
 
 
+def _merged_osd_payload(*, device_sn: str, payload: dict, data: dict) -> dict:
+    previous = {}
+    for model in (DroneResource, DockResource, GatewayResource):
+        stored = model.objects.filter(device_sn=device_sn).values_list("last_payload", flat=True).first()
+        if stored is not None:
+            previous = stored if isinstance(stored, dict) else {}
+            break
+    previous_data = previous.get("data") if isinstance(previous.get("data"), dict) else {}
+    current = payload if isinstance(payload.get("data"), dict) else {}
+    return {**previous, **current, "online": True, "data": {**previous_data, **data}}
+
+
 def apply_osd_telemetry(*, device_sn: str, payload: dict | None = None, dji_connection: DjiConnection | None = None) -> dict:
     payload = payload if isinstance(payload, dict) else {}
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
     upsert_drone_telemetry_from_osd(connection=dji_connection, device_sn=device_sn, payload=payload)
-    apply_device_status_event(device_sn=device_sn, payload={"online": True, "data": data})
+    apply_device_status_event(
+        device_sn=device_sn,
+        payload=_merged_osd_payload(device_sn=device_sn, payload=payload, data=data),
+    )
+    child_device_sn, child_online = dock_child_device_state(payload)
+    if child_device_sn and child_online is not None:
+        now = timezone.now()
+        DroneResource.objects.filter(device_sn=child_device_sn).update(
+            online_status=child_online,
+            last_seen_at=now if child_online else None,
+            updated_at=now,
+        )
     sessions = FlightSession.objects.select_related("mission").filter(
         status=FlightSessionStatus.RUNNING,
         drone__device_sn=device_sn,

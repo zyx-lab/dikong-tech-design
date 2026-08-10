@@ -7,7 +7,11 @@ from django.utils import timezone
 from apps.access.exceptions import StandardConstraintConflict, StandardForbidden, StandardNotFound
 from apps.iam_v2.models import FixedRole
 from apps.inspection_v2.drc_contract import DRC_FLIGHT_ACTION_FIELDS
-from apps.inspection_v2.services import is_dispatcher, usable_resource_binding
+from apps.inspection_v2.services import (
+    dock_child_device_state,
+    is_dispatcher,
+    usable_resource_binding,
+)
 from apps.inspection_v2.serializers import CAMERA_ACTION_CHOICES
 from apps.resource_v2.gateway import DjiGatewayError, dji_connection_gateway
 from apps.resource_v2.models import (
@@ -43,7 +47,7 @@ def _binding(context, resource_type, resource_id):
 
 def _child_drone(dock, connection_id):
     payload = dock.last_payload if isinstance(dock.last_payload, dict) else {}
-    sn = payload.get("child_device_sn") or payload.get("childDeviceSn") or payload.get("drone_sn")
+    sn, _online = dock_child_device_state(payload)
     if sn:
         drone = DroneResource.objects.filter(device_sn=sn).first()
         if drone and ResourceBinding.objects.filter(
@@ -84,6 +88,10 @@ def _payloads(context, connection_id):
     return result
 
 
+def _is_dock3_model(model) -> bool:
+    return str(model or "").lower().replace(" ", "") in {"3", "dock3"}
+
+
 def drc_capabilities(*, context, dock_id):
     require_drc_operator(context)
     dock = DockResource.objects.filter(pk=dock_id).first()
@@ -94,7 +102,7 @@ def drc_capabilities(*, context, dock_id):
     if drone is not None:
         _binding(context, ResourceType.DRONE, drone.id)
     blockers = []
-    supported = dock.model.lower().replace(" ", "") == "dock3"
+    supported = _is_dock3_model(dock.model)
     if not supported:
         blockers.append({"code": "DOCK_NOT_SUPPORTED", "message": "当前设备不是 Dock 3"})
     if not dock.online_status:
@@ -115,6 +123,31 @@ def drc_capabilities(*, context, dock_id):
             "actions": list(DRC_FLIGHT_ACTION_FIELDS),
         },
         "payloads": _payloads(context, binding.dji_connection_id),
+    }
+
+
+def execute_dock_debug_action(*, context, data):
+    require_drc_operator(context)
+    dock = DockResource.objects.filter(pk=data["dockId"]).first()
+    if dock is None:
+        raise StandardNotFound(data={"reasonCode": "DOCK_NOT_FOUND"})
+    binding = _binding(context, ResourceType.DOCK, dock.id)
+    if not _is_dock3_model(dock.model):
+        raise StandardConstraintConflict(
+            msg="当前设备不是 Dock 3", data={"reasonCode": "DOCK_NOT_SUPPORTED"}
+        )
+    if not dock.online_status:
+        raise StandardConstraintConflict(
+            msg="机场不在线", data={"reasonCode": "DOCK_OFFLINE"}
+        )
+    upstream = dji_connection_gateway(binding.dji_connection).control_dock_debug(
+        dock.device_sn, data["action"]
+    )
+    return {
+        "action": data["action"],
+        "status": "SUCCEEDED",
+        "dockId": dock.id,
+        "upstream": upstream,
     }
 
 

@@ -7,6 +7,7 @@ urlpatterns = [
     path("drc/capabilities", views.DrcCapabilityView.as_view(), name="v2-inspection-drc-capabilities"),
     path("drc/connect", views.DrcConnectView.as_view(), name="v2-inspection-drc-connect"),
     path("drc/actions", views.DrcFlightActionView.as_view(), name="v2-inspection-drc-actions"),
+    path("drc/dock-actions", views.DrcDockDebugActionView.as_view(), name="v2-inspection-drc-dock-actions"),
     path("drc/exit", views.DrcExitView.as_view(), name="v2-inspection-drc-exit"),
     path("routes", views.RouteListCreateView.as_view(), name="v2-inspection-routes"),
     path("routes/<int:id>", views.RouteDetailView.as_view(), name="v2-inspection-route-detail"),
