@@ -16,32 +16,21 @@ class DrcCapabilityQuerySerializer(StrictSerializer):
 
 class DrcConnectSerializer(StrictSerializer):
     dockId = StrictIntegerField(min_value=1)
-    clientId = serializers.CharField(max_length=128, required=False, allow_null=True, allow_blank=False)
     expireSec = StrictIntegerField(min_value=1800, max_value=86400, required=False, default=3600)
     osdFrequency = StrictIntegerField(min_value=1, max_value=30, required=False, default=10)
     hsiFrequency = StrictIntegerField(min_value=1, max_value=30, required=False, default=5)
 
 
 class DrcExitSerializer(StrictSerializer):
-    dockId = StrictIntegerField(min_value=1)
-    clientId = serializers.CharField(min_length=1, max_length=128)
-
-
-class DrcMqttSerializer(serializers.Serializer):
-    address = serializers.CharField()
-    username = serializers.CharField()
-    password = serializers.CharField()
-    clientId = serializers.CharField()
-    expireTime = serializers.IntegerField()
-    enableTls = serializers.BooleanField()
+    sessionId = serializers.UUIDField()
 
 
 class DrcConnectResponseSerializer(serializers.Serializer):
+    sessionId = serializers.UUIDField()
     dockId = serializers.IntegerField()
     droneId = serializers.IntegerField()
-    mqtt = DrcMqttSerializer()
-    publishTopic = serializers.CharField()
-    subscribeTopic = serializers.CharField()
+    expiresAt = serializers.DateTimeField()
+    webSocketPath = serializers.CharField()
 
 
 class DrcCapabilityResponseSerializer(serializers.Serializer):

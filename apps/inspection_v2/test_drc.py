@@ -1,10 +1,13 @@
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountRoleAssignment
+from apps.inspection_v2.consumers import validate_control_frame
 from apps.resource_v2.models import (
     BindingStatus,
     DjiConnection,
@@ -15,7 +18,7 @@ from apps.resource_v2.models import (
 )
 
 
-class DrcDirectMqttApiTests(TestCase):
+class DrcProxyApiTests(TestCase):
     def setUp(self):
         self.department = Department.objects.create(name="DRC")
         self.user = get_user_model().objects.create_user(
@@ -71,7 +74,7 @@ class DrcDirectMqttApiTests(TestCase):
             "username": "operator",
             "password": "short-lived-password",
             "clientId": "drc-client-1",
-            "expireTime": 1_800_000_000,
+            "expireTime": int(timezone.now().timestamp()) + 1800,
             "enableTls": False,
         }
         self.gateway.enter_drc.return_value = {
@@ -79,7 +82,7 @@ class DrcDirectMqttApiTests(TestCase):
             "sub": ["thing/product/DOCK-1/drc/up"],
         }
 
-    def test_connect_returns_short_lived_mqtt_credentials_and_topics(self):
+    def test_connect_keeps_mqtt_credentials_inside_the_project(self):
         with patch(
             "apps.inspection_v2.drc_services.dji_connection_gateway",
             return_value=self.gateway,
@@ -99,10 +102,16 @@ class DrcDirectMqttApiTests(TestCase):
         payload = response.data["data"]
         self.assertEqual(payload["dockId"], self.dock.id)
         self.assertEqual(payload["droneId"], self.drone.id)
-        self.assertEqual(payload["mqtt"]["password"], "short-lived-password")
-        self.assertEqual(payload["mqtt"]["clientId"], "drc-client-1")
-        self.assertEqual(payload["publishTopic"], "thing/product/DOCK-1/drc/down")
-        self.assertEqual(payload["subscribeTopic"], "thing/product/DOCK-1/drc/up")
+        self.assertEqual(
+            payload["webSocketPath"], f"/ws/v2/drc/sessions/{payload['sessionId']}"
+        )
+        self.assertFalse(
+            {"mqtt", "address", "username", "password", "clientId", "publishTopic", "subscribeTopic"}
+            .intersection(payload)
+        )
+        config = cache.get(f"drc:mqtt:{payload['sessionId']}")
+        self.assertEqual(config["password"], "short-lived-password")
+        self.assertEqual(config["publishTopic"], "thing/product/DOCK-1/drc/down")
         self.gateway.connect_drc.assert_called_once_with(
             dock_sn="DOCK-1", expire_sec=1800, client_id=None
         )
@@ -114,38 +123,48 @@ class DrcDirectMqttApiTests(TestCase):
             hsi_frequency=5,
         )
 
-    def test_connect_reuses_client_id_for_credential_refresh(self):
+    def test_exit_uses_the_server_side_session(self):
         with patch(
             "apps.inspection_v2.drc_services.dji_connection_gateway",
             return_value=self.gateway,
         ):
-            response = self.client.post(
+            connected = self.client.post(
                 "/api/v2/inspection/drc/connect",
-                {"dockId": self.dock.id, "clientId": "drc-client-1"},
+                {"dockId": self.dock.id},
                 format="json",
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.gateway.connect_drc.assert_called_once_with(
-            dock_sn="DOCK-1", expire_sec=3600, client_id="drc-client-1"
-        )
-
-    def test_exit_uses_the_same_dock_and_client(self):
-        with patch(
-            "apps.inspection_v2.drc_services.dji_connection_gateway",
-            return_value=self.gateway,
-        ):
+            ).data["data"]
             response = self.client.post(
                 "/api/v2/inspection/drc/exit",
-                {"dockId": self.dock.id, "clientId": "drc-client-1"},
+                {"sessionId": connected["sessionId"]},
                 format="json",
             )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["data"], {"status": "CLOSED"})
+        self.assertIsNone(cache.get(f"drc:mqtt:{connected['sessionId']}"))
         self.gateway.exit_drc.assert_called_once_with(
             dock_sn="DOCK-1", client_id="drc-client-1"
         )
+
+    def test_control_frame_validation_enforces_range_and_sequence(self):
+        frame = {
+            "type": "control.frame",
+            "clientSeq": 2,
+            "sentAt": 1,
+            "roll": 364,
+            "pitch": 1024,
+            "throttle": 1684,
+            "yaw": 1024,
+        }
+        client_seq, values = validate_control_frame(frame, last_client_seq=1)
+        self.assertEqual(client_seq, 2)
+        self.assertEqual(values["throttle"], 1684)
+        with self.assertRaises(ValueError):
+            validate_control_frame({**frame, "roll": 363}, last_client_seq=1)
+        with self.assertRaises(ValueError):
+            validate_control_frame({**frame, "roll": True}, last_client_seq=1)
+        with self.assertRaises(ValueError):
+            validate_control_frame(frame, last_client_seq=2)
 
     def test_capabilities_are_local_and_do_not_call_upstream(self):
         response = self.client.get(

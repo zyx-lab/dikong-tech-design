@@ -728,9 +728,12 @@ class ApiV2ImplementationBoundaryTests(TestCase):
             "storages.backends.s3": {"apps/access/storage_backends.py"},
             "redis": {"apps/resource_v2/mqtt.py"},
             "channels.layers": {"apps/resource_v2/mqtt.py"},
-            "channels.db": {"apps/resource_v2/consumers.py"},
-            "channels.generic.websocket": {"apps/resource_v2/consumers.py"},
-            "paho.mqtt.client": {"apps/inspection_v2/management/commands/run_v2_dji_worker.py"},
+            "channels.db": {"apps/resource_v2/consumers.py", "apps/inspection_v2/consumers.py"},
+            "channels.generic.websocket": {"apps/resource_v2/consumers.py", "apps/inspection_v2/consumers.py"},
+            "paho.mqtt.client": {
+                "apps/inspection_v2/consumers.py",
+                "apps/inspection_v2/management/commands/run_v2_dji_worker.py",
+            },
         }
         offenders = []
 

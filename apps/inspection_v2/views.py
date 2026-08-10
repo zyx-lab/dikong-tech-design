@@ -1547,7 +1547,7 @@ class DrcCapabilityView(InspectionV2APIView):
 class DrcConnectView(InspectionV2APIView):
     @extend_schema(
         operation_id="v2_inspection_drc_connect",
-        summary="获取 Dock 3 DRC MQTT 临时凭据并进入 DRC",
+        summary="创建 Dock 3 DRC 代理会话并进入 DRC",
         request=DrcConnectSerializer,
         responses={200: DrcConnectResponseSerializer},
     )
@@ -1580,15 +1580,17 @@ class DrcExitView(InspectionV2APIView):
         serializer = DrcExitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         context = resolve_v2_context(request)
-        payload = exit_drc(context=context, data=serializer.validated_data)
+        session_id = serializer.validated_data["sessionId"]
+        dock_id = exit_drc(context=context, session_id=session_id)
+        payload = {"status": "CLOSED"}
         log_v2_action(
             request=request,
             context=context,
             action="drc_exit",
             target_type="dock",
-            target_id=serializer.validated_data["dockId"],
+            target_id=dock_id,
             resource_type=ResourceType.DOCK,
-            resource_object_id=serializer.validated_data["dockId"],
+            resource_object_id=dock_id,
             after_data=payload,
         )
         return Response(payload)

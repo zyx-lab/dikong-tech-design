@@ -1,9 +1,16 @@
+from datetime import datetime, timedelta
+from uuid import uuid4
+
+from django.core.cache import cache
+from django.utils import timezone
+
 from apps.access.exceptions import StandardConstraintConflict, StandardForbidden, StandardNotFound
 from apps.iam_v2.models import FixedRole
 from apps.inspection_v2.services import is_dispatcher, usable_resource_binding
 from apps.resource_v2.gateway import DjiGatewayError, dji_connection_gateway
 from apps.resource_v2.models import (
     BindingStatus,
+    DjiConnection,
     DockResource,
     DroneResource,
     PayloadResource,
@@ -14,18 +21,10 @@ from apps.resource_v2.services import effective_permissions_for_binding
 
 
 CAMERA_METHODS = [
-    "camera_mode_switch", "camera_photo_take", "camera_photo_stop",
-    "camera_recording_start", "camera_recording_stop", "camera_screen_drag",
-    "camera_aim", "camera_focal_length_set", "gimbal_reset", "camera_look_at",
-    "camera_screen_split", "photo_storage_set", "video_storage_set",
-    "camera_exposure_mode_set", "camera_exposure_set", "camera_focus_mode_set",
-    "camera_focus_value_set", "camera_point_focus_action", "ir_metering_mode_set",
-    "ir_metering_point_set", "ir_metering_area_set",
+    "camera_mode_switch", "camera_photo_take", "camera_recording_start",
+    "camera_recording_stop", "camera_aim", "camera_focal_length_set", "gimbal_reset",
 ]
-SPEAKER_METHODS = [
-    "speaker_play_volume_set", "speaker_play_mode_set", "speaker_play_stop",
-    "speaker_replay", "speaker_tts_play_start",
-]
+DRC_SESSION_CACHE_PREFIX = "drc:mqtt:"
 
 
 def require_drc_operator(context):
@@ -79,13 +78,9 @@ def _payloads(context, connection_id):
             continue
         data = payload.last_payload if isinstance(payload.last_payload, dict) else {}
         payload_index = data.get("payload_index") or data.get("payloadIndex")
-        psdk_index = data.get("psdk_index") if "psdk_index" in data else data.get("psdkIndex")
         if payload_index:
             result.append({"payloadIndex": str(payload_index), "psdkIndex": None,
                            "model": payload.model, "online": True, "methods": CAMERA_METHODS})
-        elif type(psdk_index) is int and 0 <= psdk_index <= 3:
-            result.append({"payloadIndex": None, "psdkIndex": psdk_index,
-                           "model": payload.model, "online": True, "methods": SPEAKER_METHODS})
     return result
 
 
@@ -137,11 +132,11 @@ def connect_drc(*, context, data):
         mqtt = gateway.connect_drc(
             dock_sn=dock.device_sn,
             expire_sec=data["expireSec"],
-            client_id=data.get("clientId"),
+            client_id=None,
         )
         client_id = mqtt.get("clientId") if isinstance(mqtt, dict) else None
-        if not client_id:
-            raise DjiGatewayError("DRC connect response missing clientId", status_code=502)
+        if not client_id or not all(mqtt.get(key) for key in ("address", "username", "password")):
+            raise DjiGatewayError("DRC connect response is incomplete", status_code=502)
         acl = gateway.enter_drc(
             dock_sn=dock.device_sn,
             client_id=client_id,
@@ -158,9 +153,11 @@ def connect_drc(*, context, data):
         raise StandardConstraintConflict(
             msg="上云 API DRC 连接失败", data={"reasonCode": "UPSTREAM_ERROR"}
         ) from exc
+    expected_pub = f"thing/product/{dock.device_sn}/drc/down"
+    expected_sub = f"thing/product/{dock.device_sn}/drc/up"
     pub = acl.get("pub") if isinstance(acl, dict) else None
     sub = acl.get("sub") if isinstance(acl, dict) else None
-    if not pub or not sub:
+    if pub != [expected_pub] or sub != [expected_sub]:
         try:
             gateway.exit_drc(dock_sn=dock.device_sn, client_id=client_id)
         except DjiGatewayError:
@@ -168,27 +165,80 @@ def connect_drc(*, context, data):
         raise StandardConstraintConflict(
             msg="上云 API 未返回 DRC topic", data={"reasonCode": "UPSTREAM_CONTRACT_ERROR"}
         )
+    now = timezone.now()
+    expire_time = mqtt.get("expireTime")
+    try:
+        expires_at = datetime.fromtimestamp(int(expire_time), tz=timezone.get_current_timezone())
+    except (TypeError, ValueError, OSError):
+        expires_at = now + timedelta(seconds=data["expireSec"])
+    ttl = max(1, min(data["expireSec"], int((expires_at - now).total_seconds())))
+    session_id = uuid4()
+    cache.set(
+        _session_key(session_id),
+        {
+            "userId": context.user.id,
+            "dockId": dock.id,
+            "droneId": capability["droneId"],
+            "connectionId": binding.dji_connection_id,
+            "dockSn": dock.device_sn,
+            "address": mqtt["address"],
+            "username": mqtt["username"],
+            "password": mqtt["password"],
+            "clientId": client_id,
+            "enableTls": bool(mqtt.get("enableTls")),
+            "publishTopic": expected_pub,
+            "subscribeTopic": expected_sub,
+            "expiresAt": expires_at.isoformat(),
+        },
+        timeout=ttl,
+    )
     return {
+        "sessionId": session_id,
         "dockId": dock.id,
         "droneId": capability["droneId"],
-        "mqtt": mqtt,
-        "publishTopic": pub[0],
-        "subscribeTopic": sub[0],
+        "expiresAt": expires_at,
+        "webSocketPath": f"/ws/v2/drc/sessions/{session_id}",
     }
 
 
-def exit_drc(*, context, data):
+def _session_key(session_id):
+    return f"{DRC_SESSION_CACHE_PREFIX}{session_id}"
+
+
+def drc_session_config(*, context, session_id):
     require_drc_operator(context)
-    dock = DockResource.objects.filter(pk=data["dockId"]).first()
-    if dock is None:
-        raise StandardNotFound(data={"reasonCode": "DOCK_NOT_FOUND"})
-    binding = _binding(context, ResourceType.DOCK, dock.id)
+    config = cache.get(_session_key(session_id))
+    if not isinstance(config, dict) or config.get("userId") != context.user.id:
+        raise StandardNotFound(data={"reasonCode": "DRC_SESSION_NOT_FOUND"})
+    _binding(context, ResourceType.DOCK, config["dockId"])
+    return config
+
+
+def exit_drc(*, context, session_id):
+    config = drc_session_config(context=context, session_id=session_id)
     try:
-        dji_connection_gateway(binding.dji_connection).exit_drc(
-            dock_sn=dock.device_sn, client_id=data["clientId"]
-        )
+        _exit_upstream(config)
     except DjiGatewayError as exc:
         raise StandardConstraintConflict(
             msg="上云 API DRC 退出失败", data={"reasonCode": "UPSTREAM_ERROR"}
         ) from exc
-    return {"status": "CLOSED"}
+    cache.delete(_session_key(session_id))
+    return config["dockId"]
+
+
+def close_drc_session(*, session_id, config):
+    try:
+        _exit_upstream(config)
+    except DjiGatewayError:
+        pass
+    finally:
+        cache.delete(_session_key(session_id))
+
+
+def _exit_upstream(config):
+    connection = DjiConnection.objects.filter(pk=config["connectionId"]).first()
+    if connection is None:
+        raise DjiGatewayError("DRC connection no longer exists", status_code=404)
+    dji_connection_gateway(connection).exit_drc(
+        dock_sn=config["dockSn"], client_id=config["clientId"]
+    )
