@@ -49,6 +49,9 @@ DRC_FLIGHT_ACTION_FIELDS = {
     "fly_to_point_update": {"maxSpeed": "max_speed", "points": "points"},
     "fly_to_point_stop": {},
 }
+DRC_FLIGHT_ACTION_OPTIONAL_FIELDS = {
+    "takeoff_to_point": {"flightSafetyAdvanceCheck": "flight_safety_advance_check"},
+}
 
 
 class DrcFlightActionSerializer(StrictSerializer):
@@ -64,6 +67,7 @@ class DrcFlightActionSerializer(StrictSerializer):
     commanderModeLostAction = serializers.ChoiceField(choices=[0, 1], required=False)
     commanderFlightMode = serializers.ChoiceField(choices=[0, 1], required=False)
     commanderFlightHeight = serializers.FloatField(required=False, min_value=2, max_value=3000)
+    flightSafetyAdvanceCheck = serializers.BooleanField(required=False)
     maxSpeed = StrictIntegerField(required=False, min_value=1, max_value=15)
     points = DrcPointSerializer(many=True, required=False, min_length=1, max_length=1)
 
@@ -74,11 +78,20 @@ class DrcFlightActionSerializer(StrictSerializer):
         missing = [field for field in action_fields if field not in attrs]
         if missing:
             raise serializers.ValidationError({field: [f"{action} 需要该字段"] for field in missing})
-        optional_fields = {field for fields in DRC_FLIGHT_ACTION_FIELDS.values() for field in fields}
-        unexpected = sorted(optional_fields.intersection(attrs) - set(action_fields))
+        action_optional_fields = DRC_FLIGHT_ACTION_OPTIONAL_FIELDS.get(action, {})
+        input_fields = {
+            field for fields in (*DRC_FLIGHT_ACTION_FIELDS.values(), *DRC_FLIGHT_ACTION_OPTIONAL_FIELDS.values())
+            for field in fields
+        }
+        unexpected = sorted(input_fields.intersection(attrs) - set(action_fields) - set(action_optional_fields))
         if unexpected:
             raise serializers.ValidationError({field: [f"{action} 不接受该字段"] for field in unexpected})
         attrs["_dji_data"] = {dji_name: attrs[field] for field, dji_name in action_fields.items()}
+        attrs["_dji_data"].update({
+            dji_name: attrs[field]
+            for field, dji_name in action_optional_fields.items()
+            if field in attrs
+        })
         if action == "takeoff_to_point":
             attrs["_dji_data"]["exit_wayline_when_rc_lost"] = 0
         return attrs

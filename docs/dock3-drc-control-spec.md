@@ -103,7 +103,7 @@ Content-Type: application/json
 
 | action | 字段 |
 |---|---|
-| `takeoff_to_point` | `targetLatitude=-90..90`、`targetLongitude=-180..180`、`targetHeight=2..1500`、`securityTakeoffHeight=20..1500`、`rthMode=1`、`rthAltitude=2..1500`、`rcLostAction=0..2`、`commanderModeLostAction=0..1`、`commanderFlightMode=0..1`、`commanderFlightHeight=2..3000`、`maxSpeed=1..15` |
+| `takeoff_to_point` | `targetLatitude=-90..90`、`targetLongitude=-180..180`、`targetHeight=2..1500`、`securityTakeoffHeight=20..1500`、`rthMode=1`、`rthAltitude=2..1500`、`rcLostAction=0..2`、`commanderModeLostAction=0..1`、`commanderFlightMode=0..1`、`commanderFlightHeight=2..3000`、`maxSpeed=1..15`；可选 `flightSafetyAdvanceCheck` |
 | `fly_to_point` | `maxSpeed=1..15`，`points` 仅一个目标点；点包含 `latitude=-90..90`、`longitude=-180..180`、`height=2..10000` |
 | `fly_to_point_update` | 与 `fly_to_point` 相同，只更新当前 FlyTo 目标 |
 | `fly_to_point_stop` | 无额外字段 |

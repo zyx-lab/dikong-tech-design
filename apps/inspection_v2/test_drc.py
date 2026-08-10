@@ -319,6 +319,7 @@ class DrcProxyApiTests(TransactionTestCase):
                     "commanderModeLostAction": 1,
                     "commanderFlightMode": 1,
                     "commanderFlightHeight": 80.0,
+                    "flightSafetyAdvanceCheck": True,
                     "maxSpeed": 10,
                 },
                 "takeoff_to_point",
@@ -346,6 +347,7 @@ class DrcProxyApiTests(TransactionTestCase):
 
         takeoff_data = self.gateway.takeoff_to_point.call_args.args[1]
         self.assertEqual(takeoff_data["exit_wayline_when_rc_lost"], 0)
+        self.assertTrue(takeoff_data["flight_safety_advance_check"])
         self.gateway.fly_to_point.assert_called_once_with(
             "DOCK-1", {"max_speed": 10, "points": [point]}
         )
