@@ -247,6 +247,13 @@ DJI_V2_MQTT_HEARTBEAT_TTL_SECONDS = int(os.getenv("DJI_V2_MQTT_HEARTBEAT_TTL_SEC
 CHANNEL_REDIS_URL = os.getenv("CHANNEL_REDIS_URL", os.getenv("REDIS_URL", ""))
 DJI_V2_MQTT_REDIS_URL = os.getenv("DJI_V2_MQTT_REDIS_URL", CHANNEL_REDIS_URL)
 if CHANNEL_REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": CHANNEL_REDIS_URL,
+            "KEY_PREFIX": "dikong",
+        }
+    }
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",

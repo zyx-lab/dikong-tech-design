@@ -15,7 +15,7 @@ Frontend --REST/WebSocket--> Django --REST--> Java Cloud API
 职责：
 
 - 前端：展示 DRC 页面，通过 REST 创建/退出会话，通过本项目 WebSocket 发送摇杆帧并接收 DRC 上行消息。
-- Django：登录态、角色和资源权限；保管短期 MQTT 凭据；连接固定 DRC pub/sub topic；heartbeat、序列号、停帧中立和断线退出。
+- Django：登录态、角色和资源权限；用现有 Redis 保管短期 MQTT 会话；连接固定 DRC pub/sub topic；heartbeat、序列号、急停、停帧中立和断线退出。
 - Java：复用现有 `connect/enter/exit`；生成最小 topic ACL；通过现有 services 接口处理相机和云台命令。
 - Dock：执行 `stick_control`，返回心跳、OSD、HSI、延迟及控制结果。
 
@@ -29,15 +29,18 @@ Frontend --REST/WebSocket--> Django --REST--> Java Cloud API
 | `POST /api/v2/inspection/drc/exit` | 按服务端会话调用 Java `exit`，撤销 ACL 并删除本地短期配置。 |
 | `POST /api/v2/inspection/camera/actions` | 通过 Django/Java 的标准 services MQTT 执行相机和云台命令。 |
 
-DRC WebSocket 只承载 `stick_control` 和 DRC 上行数据。官方页面中的相机、云台、红外命令使用 `thing/product/{gatewaySn}/services`，不能错误发布到 `/drc/down`。
+DRC WebSocket 只承载 `stick_control`、`drone_emergency_stop` 和 DRC 上行数据。官方页面中的相机、云台、红外命令使用 `thing/product/{gatewaySn}/services`，不能错误发布到 `/drc/down`。
 
 ## 4. 会话与安全
 
-- Django cache 只保存短期会话配置，不新增数据库 session/operation 表。
+- Django 使用现有 `CHANNEL_REDIS_URL` 保存短期会话配置和单 WebSocket 占用，不新增数据库 session/operation 表。
 - 浏览器响应和日志中不得出现 MQTT secrets、真实 topic 或上游 clientId。
-- WebSocket 只接受 `control.arm`、`control.disarm`、`control.frame`，四轴值限制为 `364..1684`。
+- 同一 session 只允许一个 WebSocket；重复连接返回 `4409`。
+- WebSocket 只接受 `control.arm`、`control.disarm`、`control.frame`、`control.emergencyStop`，四轴值限制为 `364..1684`。
+- 急停先发送中立帧，再发布 `drone_emergency_stop` 并锁定控制；当前会话不能再次 armed。
 - Django 每 5 秒发送 `heart_beat`，控制帧停发 500 ms 后发送四轴 `1024` 并解除 armed。
 - WebSocket 断开时 best-effort 发送中立帧、断开 MQTT、调用 Java `exit` 并删除会话。
+- 正常退出固定为 `disarm -> POST /drc/exit -> 关闭 WebSocket`；异常断线由 WebSocket cleanup 兜底。
 - Java ACL 只能发布 `{dockSn}/drc/down`、订阅 `{dockSn}/drc/up`，禁止空 topic `ALL`。
 
 ## 5. Java 范围
@@ -49,7 +52,7 @@ DRC WebSocket 只承载 `stick_control` 和 DRC 上行数据。官方页面中�
 - `enter` 使用请求中的有效期、OSD 和 HSI 频率。
 - `exit` 幂等清理 DRC owner 和 MQTT ACL。
 
-不恢复 Java DRC session manager、Java WebSocket、operation registry、Redis 租约平台或联合 OpenAPI 类型。
+不恢复 Java 侧 DRC session manager、WebSocket、operation registry、Redis 租约平台或联合 OpenAPI 类型。
 
 ## 6. 页面范围与缺口
 

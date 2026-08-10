@@ -9,8 +9,8 @@ import paho.mqtt.client as mqtt
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
-from apps.access.exceptions import StandardForbidden, StandardNotFound
-from apps.inspection_v2.drc_services import close_drc_session, drc_session_config
+from apps.access.exceptions import StandardConstraintConflict, StandardForbidden, StandardNotFound
+from apps.inspection_v2.drc_services import claim_drc_session, close_drc_session
 from apps.resource_v2.consumers import _authenticate_token, _context_for_user, _token_from_scope
 
 
@@ -44,7 +44,10 @@ class DrcSessionConsumer(AsyncJsonWebsocketConsumer):
             return
 
         self.session_id = str(self.scope["url_route"]["kwargs"]["session_id"])
-        close_code, self.config = await self._load_config(self.user_id, self.session_id)
+        self.lease_owner = self.channel_name
+        close_code, self.config = await self._load_config(
+            self.user_id, self.session_id, self.lease_owner
+        )
         if self.config is None:
             await self.close(code=close_code)
             return
@@ -53,12 +56,15 @@ class DrcSessionConsumer(AsyncJsonWebsocketConsumer):
         self.mqtt_connected = False
         self.closing = False
         self.armed = False
+        self.emergency_stopped = False
         self.sequence = 0
         self.last_client_seq = 0
         self.last_frame_at = 0.0
         try:
             self.mqtt_client, endpoint = self._mqtt_client(self.config)
         except ValueError:
+            await self._close_session(self.session_id, self.config, self.lease_owner)
+            self.config = None
             await self.close(code=1011)
             return
 
@@ -90,7 +96,7 @@ class DrcSessionConsumer(AsyncJsonWebsocketConsumer):
             client.loop_stop()
         config = getattr(self, "config", None)
         if config is not None:
-            await self._close_session(self.session_id, config)
+            await self._close_session(self.session_id, config, self.lease_owner)
 
     async def receive_json(self, content, **kwargs):
         del kwargs
@@ -99,6 +105,9 @@ class DrcSessionConsumer(AsyncJsonWebsocketConsumer):
             if not self.mqtt_connected:
                 await self._error("MQTT_NOT_CONNECTED")
                 return
+            if self.emergency_stopped:
+                await self._error("EMERGENCY_STOP_LATCHED")
+                return
             self.armed = True
             self.last_frame_at = self.event_loop.time()
             await self.send_json({"type": "control.state", "armed": True})
@@ -106,6 +115,26 @@ class DrcSessionConsumer(AsyncJsonWebsocketConsumer):
         if message_type == "control.disarm" and set(content) == {"type"}:
             await self._neutralize()
             await self.send_json({"type": "control.state", "armed": False})
+            return
+        if message_type == "control.emergencyStop" and set(content) == {"type"}:
+            if not self.mqtt_connected:
+                await self._error("MQTT_NOT_CONNECTED")
+                return
+            await self._neutralize()
+            if not self.mqtt_connected:
+                await self._error("MQTT_PUBLISH_FAILED")
+                return
+            try:
+                sequence = self._publish("drone_emergency_stop", {})
+            except RuntimeError:
+                self.mqtt_connected = False
+                await self._error("MQTT_PUBLISH_FAILED")
+                return
+            self.emergency_stopped = True
+            await self.send_json(
+                {"type": "control.state", "armed": False, "reason": "EMERGENCY_STOP_LATCHED"}
+            )
+            await self.send_json({"type": "control.emergencyStop.ack", "seq": sequence})
             return
         if message_type != "control.frame":
             await self._error("UNKNOWN_MESSAGE_TYPE")
@@ -147,7 +176,7 @@ class DrcSessionConsumer(AsyncJsonWebsocketConsumer):
 
     async def _neutralize(self):
         self.armed = False
-        if self.mqtt_connected:
+        if self.mqtt_connected and not self.emergency_stopped:
             try:
                 self._publish("stick_control", NEUTRAL_STICK)
             except RuntimeError:
@@ -248,17 +277,23 @@ class DrcSessionConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({"type": "error", "code": code})
 
     @database_sync_to_async
-    def _load_config(self, user_id, session_id):
+    def _load_config(self, user_id, session_id, lease_owner):
         context = _context_for_user(user_id)
         if context is None:
             return 4403, None
         try:
-            return 0, drc_session_config(context=context, session_id=session_id)
+            return 0, claim_drc_session(
+                context=context, session_id=session_id, lease_owner=lease_owner
+            )
         except StandardForbidden:
             return 4403, None
         except StandardNotFound:
             return 4404, None
+        except StandardConstraintConflict:
+            return 4409, None
 
     @database_sync_to_async
-    def _close_session(self, session_id, config):
-        close_drc_session(session_id=session_id, config=config)
+    def _close_session(self, session_id, config, lease_owner):
+        close_drc_session(
+            session_id=session_id, config=config, lease_owner=lease_owner
+        )

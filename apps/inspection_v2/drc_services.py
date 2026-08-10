@@ -25,6 +25,7 @@ CAMERA_METHODS = [
     "camera_recording_stop", "camera_aim", "camera_focal_length_set", "gimbal_reset",
 ]
 DRC_SESSION_CACHE_PREFIX = "drc:mqtt:"
+DRC_SESSION_LEASE_PREFIX = "drc:websocket:"
 
 
 def require_drc_operator(context):
@@ -205,12 +206,25 @@ def _session_key(session_id):
     return f"{DRC_SESSION_CACHE_PREFIX}{session_id}"
 
 
+def _lease_key(session_id):
+    return f"{DRC_SESSION_LEASE_PREFIX}{session_id}"
+
+
 def drc_session_config(*, context, session_id):
     require_drc_operator(context)
     config = cache.get(_session_key(session_id))
     if not isinstance(config, dict) or config.get("userId") != context.user.id:
         raise StandardNotFound(data={"reasonCode": "DRC_SESSION_NOT_FOUND"})
     _binding(context, ResourceType.DOCK, config["dockId"])
+    return config
+
+
+def claim_drc_session(*, context, session_id, lease_owner):
+    config = drc_session_config(context=context, session_id=session_id)
+    expires_at = datetime.fromisoformat(config["expiresAt"])
+    ttl = max(1, int((expires_at - timezone.now()).total_seconds()))
+    if not cache.add(_lease_key(session_id), lease_owner, timeout=ttl):
+        raise StandardConstraintConflict(data={"reasonCode": "DRC_SESSION_IN_USE"})
     return config
 
 
@@ -222,17 +236,23 @@ def exit_drc(*, context, session_id):
         raise StandardConstraintConflict(
             msg="上云 API DRC 退出失败", data={"reasonCode": "UPSTREAM_ERROR"}
         ) from exc
-    cache.delete(_session_key(session_id))
+    _delete_session(session_id)
     return config["dockId"]
 
 
-def close_drc_session(*, session_id, config):
+def close_drc_session(*, session_id, config, lease_owner):
     try:
         _exit_upstream(config)
     except DjiGatewayError:
         pass
     finally:
-        cache.delete(_session_key(session_id))
+        _delete_session(session_id, lease_owner=lease_owner)
+
+
+def _delete_session(session_id, *, lease_owner=None):
+    cache.delete(_session_key(session_id))
+    if lease_owner is None or cache.get(_lease_key(session_id)) == lease_owner:
+        cache.delete(_lease_key(session_id))
 
 
 def _exit_upstream(config):

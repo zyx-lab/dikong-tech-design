@@ -1,11 +1,16 @@
+import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from asgiref.sync import async_to_sync
+from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from apps.access.session_services import create_auth_session
 from apps.iam_v2.models import Department, FixedRole, V2AccountProfile, V2AccountRoleAssignment
 from apps.inspection_v2.consumers import validate_control_frame
 from apps.resource_v2.models import (
@@ -16,9 +21,45 @@ from apps.resource_v2.models import (
     ResourceBinding,
     ResourceType,
 )
+from config.asgi import application
 
 
-class DrcProxyApiTests(TestCase):
+class FakeDrcMqttClient:
+    def __init__(self, *args, **kwargs):
+        del args, kwargs
+        self.published = []
+        self.on_connect = None
+        self.on_disconnect = None
+        self.on_message = None
+
+    def username_pw_set(self, username, password):
+        self.credentials = (username, password)
+
+    def connect_async(self, host, port, keepalive):
+        self.endpoint = (host, port, keepalive)
+
+    def loop_start(self):
+        self.on_connect(self, None, None, SimpleNamespace(is_failure=False), None)
+
+    def loop_stop(self):
+        pass
+
+    def disconnect(self):
+        self.on_disconnect(self, None, None, 0, None)
+
+    def subscribe(self, topic, qos):
+        self.subscription = (topic, qos)
+
+    def publish(self, topic, payload, qos):
+        self.published.append((topic, json.loads(payload), qos))
+        return SimpleNamespace(rc=0)
+
+
+@override_settings(
+    CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
+    CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
+)
+class DrcProxyApiTests(TransactionTestCase):
     def setUp(self):
         self.department = Department.objects.create(name="DRC")
         self.user = get_user_model().objects.create_user(
@@ -165,6 +206,77 @@ class DrcProxyApiTests(TestCase):
             validate_control_frame({**frame, "roll": True}, last_client_seq=1)
         with self.assertRaises(ValueError):
             validate_control_frame(frame, last_client_seq=2)
+
+    def test_websocket_control_emergency_stop_and_single_connection(self):
+        mqtt_client = FakeDrcMqttClient()
+        token = create_auth_session(
+            user=self.user, request=SimpleNamespace(META={})
+        )["accessToken"]
+        with patch(
+            "apps.inspection_v2.drc_services.dji_connection_gateway",
+            return_value=self.gateway,
+        ), patch(
+            "apps.inspection_v2.consumers.mqtt.Client",
+            return_value=mqtt_client,
+        ):
+            session = self.client.post(
+                "/api/v2/inspection/drc/connect",
+                {"dockId": self.dock.id},
+                format="json",
+            ).data["data"]
+            async_to_sync(self._run_websocket_control)(
+                token, str(session["sessionId"]), mqtt_client
+            )
+
+        self.assertIsNone(cache.get(f"drc:mqtt:{session['sessionId']}"))
+        self.assertIsNone(cache.get(f"drc:websocket:{session['sessionId']}"))
+        self.gateway.exit_drc.assert_called_once_with(
+            dock_sn="DOCK-1", client_id="drc-client-1"
+        )
+
+    async def _run_websocket_control(self, token, session_id, mqtt_client):
+        path = f"/ws/v2/drc/sessions/{session_id}?token={token}"
+        communicator = WebsocketCommunicator(application, path)
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        self.assertEqual((await communicator.receive_json_from())["type"], "session.connecting")
+        self.assertEqual((await communicator.receive_json_from())["type"], "session.connected")
+
+        duplicate = WebsocketCommunicator(application, path)
+        self.assertEqual(await duplicate.connect(), (False, 4409))
+
+        await communicator.send_json_to({"type": "control.arm"})
+        self.assertEqual(
+            await communicator.receive_json_from(),
+            {"type": "control.state", "armed": True},
+        )
+        await communicator.send_json_to({
+            "type": "control.frame",
+            "clientSeq": 1,
+            "sentAt": 1,
+            "roll": 1024,
+            "pitch": 1024,
+            "throttle": 1024,
+            "yaw": 1024,
+        })
+        self.assertEqual((await communicator.receive_json_from())["type"], "control.ack")
+
+        await communicator.send_json_to({"type": "control.emergencyStop"})
+        state = await communicator.receive_json_from()
+        ack = await communicator.receive_json_from()
+        self.assertEqual(state["reason"], "EMERGENCY_STOP_LATCHED")
+        self.assertEqual(ack["type"], "control.emergencyStop.ack")
+        self.assertEqual(
+            [message[1]["method"] for message in mqtt_client.published[-2:]],
+            ["stick_control", "drone_emergency_stop"],
+        )
+
+        await communicator.send_json_to({"type": "control.arm"})
+        self.assertEqual(
+            await communicator.receive_json_from(),
+            {"type": "error", "code": "EMERGENCY_STOP_LATCHED"},
+        )
+        await communicator.disconnect()
 
     def test_capabilities_are_local_and_do_not_call_upstream(self):
         response = self.client.get(

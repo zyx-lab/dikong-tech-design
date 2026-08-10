@@ -73,7 +73,7 @@ Django 按以下顺序执行：
 2. 调用 Java `drc/connect` 取得短期 MQTT 凭据。
 3. 使用相同 `dockSn/clientId` 调用 Java `drc/enter`。
 4. 严格确认 Java 只返回当前 Dock 的 `/drc/down` 和 `/drc/up`。
-5. 将凭据和 topic 写入短期 Django cache，TTL 不超过上游凭据有效期。
+5. 将凭据和 topic 写入短期 Django Redis cache，TTL 不超过上游凭据有效期。
 6. 只向前端返回本项目会话信息。
 
 响应：
@@ -107,6 +107,8 @@ Django 只允许会话创建者退出。成功调用 Java `exit` 后删除 cache
 
 Java `exit` 必须幂等。上游失败时 Django 返回 `UPSTREAM_ERROR`，保留会话供重试；会话过期或不属于当前用户时返回 `DRC_SESSION_NOT_FOUND`。
 
+正常退出顺序固定为：前端发送 `control.disarm` 并收到 `armed=false`，调用本接口，成功后关闭 WebSocket。WebSocket 意外断开时由 Django 自动执行同一上游清理。
+
 ## 4. Django WebSocket
 
 ### 4.1 建连
@@ -122,9 +124,10 @@ WS /ws/v2/drc/sessions/{sessionId}?token={accessToken}
 | `4401` | token 缺失或失效 |
 | `4403` | 角色或资源权限不足 |
 | `4404` | 会话不存在、已过期或不属于当前用户 |
+| `4409` | 当前会话已有 WebSocket 控制连接 |
 | `1011` | Django 无法连接上游 DRC MQTT |
 
-建连后 Django 从 cache 读取内部凭据，按 `address/enableTls` 建立 TCP、TLS、WS 或 WSS MQTT 连接，并只订阅固定 `/drc/up`。
+建连时 Django 在 Redis 中原子占用 session；建连后从 Redis 读取内部凭据，按 `address/enableTls` 建立 TCP、TLS、WS 或 WSS MQTT 连接，并只订阅固定 `/drc/up`。占用 TTL 不超过 session 有效期。
 
 状态消息：
 
@@ -149,6 +152,21 @@ MQTT 重连成功后保持 `disarmed`，不得自动恢复非中立控制。
 ```json
 {"type":"control.disarm"}
 ```
+
+飞行急停：
+
+```json
+{"type":"control.emergencyStop"}
+```
+
+Django 先发送中立帧，再发布 `drone_emergency_stop`。成功返回：
+
+```json
+{"type":"control.state","armed":false,"reason":"EMERGENCY_STOP_LATCHED"}
+{"type":"control.emergencyStop.ack","seq":89}
+```
+
+急停在当前 WebSocket 内锁定；再次 `control.arm` 返回 `EMERGENCY_STOP_LATCHED`，前端必须退出并创建新会话。
 
 摇杆帧：
 
@@ -185,7 +203,7 @@ MQTT 重连成功后保持 `disarmed`，不得自动恢复非中立控制。
 {"type":"error","code":"CONTROL_NOT_ARMED"}
 ```
 
-错误码包括：`MQTT_NOT_CONNECTED`、`CONTROL_NOT_ARMED`、`INVALID_FIELDS`、`CLIENT_SEQ_REPLAY`、`INVALID_SENT_AT` 和四轴范围错误。
+错误码包括：`MQTT_NOT_CONNECTED`、`CONTROL_NOT_ARMED`、`EMERGENCY_STOP_LATCHED`、`INVALID_FIELDS`、`CLIENT_SEQ_REPLAY`、`INVALID_SENT_AT` 和四轴范围错误。
 
 ### 4.3 内部 MQTT 下行
 
@@ -209,7 +227,13 @@ Django 每 5 秒发送：
 }
 ```
 
-两类消息只能发布到内部 session 的固定 `/drc/down`，QoS 为 1。
+急停发布：
+
+```json
+{"seq":89,"method":"drone_emergency_stop","data":{}}
+```
+
+以上消息只能发布到内部 session 的固定 `/drc/down`，QoS 为 1。
 
 ### 4.4 上行转发
 
@@ -232,8 +256,9 @@ Django 每 5 秒发送：
 
 - armed 后 500 ms 未收到控制帧：发布一次中立帧，解除 armed，返回 `CONTROL_TIMEOUT`。
 - `control.disarm`：先发布中立帧，再解除 armed。
+- `control.emergencyStop`：先发布中立帧和急停，再锁定当前会话，后续不再发布摇杆帧。
 - MQTT 断开：立即解除 armed；重连后必须由前端重新 arm。
-- WebSocket 断开：best-effort 发布中立帧，停止 heartbeat，断开 MQTT，调用 Java `exit`，删除 cache。
+- WebSocket 断开：未急停时 best-effort 发布中立帧，停止 heartbeat，断开 MQTT，调用 Java `exit`，删除 Redis session 和占用。
 - 页面隐藏、窗口失焦和松杆由前端立即发送 `control.disarm`；不能只依赖 WebSocket 最终断开。
 
 ## 5. Java REST
@@ -284,7 +309,7 @@ POST /api/v2/inspection/camera/actions
 
 ## 7. 安全与日志
 
-- MQTT password、username、address、clientId 和 topic 只存在于 Django 短期 cache 与当前 MQTT client 内存。
+- MQTT password、username、address、clientId 和 topic 只存在于 Django Redis 短期 cache 与当前 MQTT client 内存。
 - REST、WebSocket、审计、异常和请求日志不得记录上述字段。
 - 前端不能上传 broker、topic、MQTT envelope 或任意 method。
 - sessionId 不替代用户鉴权；每次 REST/WS 使用都校验 owner、角色和资源权限。
@@ -298,6 +323,8 @@ POST /api/v2/inspection/camera/actions
 - 无权限用户不能查询能力、创建会话或使用其他用户会话。
 - exit 只使用 sessionId，并使用 cache 内 dockSn/clientId 调 Java。
 - 四轴边界、布尔伪整数和 clientSeq 重放被拒绝。
+- 同一 session 的第二条 WebSocket 被 `4409` 拒绝，断开后 Redis 占用被删除。
+- 急停按中立帧、`drone_emergency_stop` 的顺序发布，并锁定后续 arm。
 - Java ACL 只有当前 Dock 的 DRC down/up，且 enter 使用请求频率和有效期。
 
 真机检查：
