@@ -128,8 +128,20 @@ class DjiGateway:
         return {
             "status_code": response.status_code,
             "headers": redact_payload(dict(response.headers)),
-            "body": redact_payload(response.data),
+            "body": redact_payload(DjiGateway._redact_response_passwords(response.data)),
         }
+
+    @staticmethod
+    def _redact_response_passwords(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: "***REDACTED***" if str(key).lower() == "password"
+                else DjiGateway._redact_response_passwords(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [DjiGateway._redact_response_passwords(item) for item in value]
+        return value
 
     @staticmethod
     def _upstream_error_type(exc: DjiGatewayUpstreamError) -> str:
@@ -220,6 +232,46 @@ class DjiGateway:
             "POST",
             f"/api/v1/control/devices/{gateway_sn}/payload/commands",
             data={"cmd": action, "data": data},
+        ).data
+
+    def connect_drc(self, *, dock_sn: str, expire_sec: int, client_id: str | None = None):
+        workspace_id = self._workspace_id()
+        return self._request_json(
+            "POST",
+            f"/api/v1/control/workspaces/{workspace_id}/drc/connect",
+            data={"dockSn": dock_sn, "expireSec": expire_sec, "clientId": client_id},
+        ).data
+
+    def enter_drc(
+        self,
+        *,
+        dock_sn: str,
+        client_id: str,
+        expire_sec: int,
+        osd_frequency: int,
+        hsi_frequency: int,
+    ):
+        workspace_id = self._workspace_id()
+        return self._request_json(
+            "POST",
+            f"/api/v1/control/workspaces/{workspace_id}/drc/enter",
+            data={
+                "dockSn": dock_sn,
+                "clientId": client_id,
+                "expireSec": expire_sec,
+                "deviceInfo": {
+                    "osdFrequency": osd_frequency,
+                    "hsiFrequency": hsi_frequency,
+                },
+            },
+        ).data
+
+    def exit_drc(self, *, dock_sn: str, client_id: str):
+        workspace_id = self._workspace_id()
+        return self._request_json(
+            "POST",
+            f"/api/v1/control/workspaces/{workspace_id}/drc/exit",
+            data={"dockSn": dock_sn, "clientId": client_id},
         ).data
 
     def set_live_video_quality(self, device_sn: str, **kwargs):

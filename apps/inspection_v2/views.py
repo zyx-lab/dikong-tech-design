@@ -34,6 +34,15 @@ from apps.inspection_v2.models import (
     WaypointRouteCloudFile,
     WaypointRoute,
 )
+from apps.inspection_v2.drc_contract import (
+    DrcCapabilityQuerySerializer,
+    DrcCapabilityResponseSerializer,
+    DrcConnectResponseSerializer,
+    DrcConnectSerializer,
+    DrcExitResponseSerializer,
+    DrcExitSerializer,
+)
+from apps.inspection_v2.drc_services import connect_drc, drc_capabilities, exit_drc
 from apps.inspection_v2.route_kmz import parse_route_kmz
 from apps.inspection_v2.serializers import (
     ActiveFlightReadSerializer,
@@ -1515,3 +1524,71 @@ class MediaFileUrlRefreshView(InspectionV2APIView):
         except DjiGatewayError as exc:
             return _upstream_error_response(exc)
         return Response(CloudMediaFileReadSerializer(media).data, status=status.HTTP_200_OK)
+
+
+class DrcCapabilityView(InspectionV2APIView):
+    @extend_schema(
+        operation_id="v2_inspection_drc_capabilities",
+        summary="查询 Dock 3 DRC 能力",
+        parameters=[OpenApiParameter("dockId", int, OpenApiParameter.QUERY, required=True)],
+        responses={200: DrcCapabilityResponseSerializer},
+    )
+    def get(self, request):
+        serializer = DrcCapabilityQuerySerializer(data=request.query_params.dict())
+        serializer.is_valid(raise_exception=True)
+        return Response(
+            drc_capabilities(
+                context=resolve_v2_context(request),
+                dock_id=serializer.validated_data["dockId"],
+            )
+        )
+
+
+class DrcConnectView(InspectionV2APIView):
+    @extend_schema(
+        operation_id="v2_inspection_drc_connect",
+        summary="获取 Dock 3 DRC MQTT 临时凭据并进入 DRC",
+        request=DrcConnectSerializer,
+        responses={200: DrcConnectResponseSerializer},
+    )
+    def post(self, request):
+        serializer = DrcConnectSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        context = resolve_v2_context(request)
+        payload = connect_drc(context=context, data=serializer.validated_data)
+        log_v2_action(
+            request=request,
+            context=context,
+            action="drc_connect",
+            target_type="dock",
+            target_id=payload["dockId"],
+            resource_type=ResourceType.DOCK,
+            resource_object_id=payload["dockId"],
+            after_data={"connected": True},
+        )
+        return Response(payload)
+
+
+class DrcExitView(InspectionV2APIView):
+    @extend_schema(
+        operation_id="v2_inspection_drc_exit",
+        summary="退出 Dock 3 DRC",
+        request=DrcExitSerializer,
+        responses={200: DrcExitResponseSerializer},
+    )
+    def post(self, request):
+        serializer = DrcExitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        context = resolve_v2_context(request)
+        payload = exit_drc(context=context, data=serializer.validated_data)
+        log_v2_action(
+            request=request,
+            context=context,
+            action="drc_exit",
+            target_type="dock",
+            target_id=serializer.validated_data["dockId"],
+            resource_type=ResourceType.DOCK,
+            resource_object_id=serializer.validated_data["dockId"],
+            after_data=payload,
+        )
+        return Response(payload)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from functools import wraps
+from uuid import uuid4
 
 from django.conf import settings
 from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from apps.common.request import load_json_body
@@ -236,6 +238,43 @@ def payload_commands(request, gateway_sn: str):
         return _error(str(result.get("code") or "E0001"), str(result.get("msg") or "mock payload command failed"), status=200)
     result.pop("ok", None)
     return _success(result)
+
+
+@csrf_exempt
+@protected_mock_dji_view
+def drc_connect(request, workspace_id: str):
+    if request.method != "POST":
+        raise Http404
+    payload = load_json_body(request)
+    dock_sn = str(payload.get("dockSn") or "")
+    client_id = str(payload.get("clientId") or f"mock-drc-{uuid4().hex[:12]}")
+    return _success({
+        "address": "mqtt://127.0.0.1:1883",
+        "username": "mock-drc",
+        "password": "mock-drc-password",
+        "clientId": client_id,
+        "expireTime": int(timezone.now().timestamp()) + int(payload.get("expireSec", 3600)),
+        "enableTls": False,
+        "dockSn": dock_sn,
+    })
+
+
+@csrf_exempt
+@protected_mock_dji_view
+def drc_enter(request, workspace_id: str):
+    if request.method != "POST":
+        raise Http404
+    dock_sn = str(load_json_body(request).get("dockSn") or "")
+    topic = f"thing/product/{dock_sn}/drc"
+    return _success({"pub": [f"{topic}/down"], "sub": [f"{topic}/up"]})
+
+
+@csrf_exempt
+@protected_mock_dji_view
+def drc_exit(request, workspace_id: str):
+    if request.method != "POST":
+        raise Http404
+    return _success()
 
 
 @protected_mock_dji_view

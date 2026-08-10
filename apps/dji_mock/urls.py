@@ -17,6 +17,9 @@ urlpatterns = [
     path("api/v1/manage/live/streams/switch", views.live_switch),
     path("api/v1/control/devices/<str:gateway_sn>/authority/payload", views.payload_authority),
     path("api/v1/control/devices/<str:gateway_sn>/payload/commands", views.payload_commands),
+    path("api/v1/control/workspaces/<str:workspace_id>/drc/connect", views.drc_connect),
+    path("api/v1/control/workspaces/<str:workspace_id>/drc/enter", views.drc_enter),
+    path("api/v1/control/workspaces/<str:workspace_id>/drc/exit", views.drc_exit),
     path("api/v1/wayline/workspaces/<str:workspace_id>/waylines", views.wayline_list),
     path(
         "api/v1/wayline/workspaces/<str:workspace_id>/waylines/duplicate-names",
