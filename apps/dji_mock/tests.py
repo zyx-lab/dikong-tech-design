@@ -230,6 +230,21 @@ class DjiMockServerTests(SimpleTestCase):
         self.assertEqual(stop_response.status_code, 200)
         self.assertEqual(stop_response.json()["data"], {})
 
+        camera_change_response = self.client.post(
+            "/__mock-dji__/api/v1/manage/live/streams/camera-change",
+            data=json.dumps(
+                {
+                    "device_sn": "MOCK-DRONE-001",
+                    "video_id": "MOCK-DRONE-001/88-0-0/normal-0",
+                    "camera_position": 1,
+                }
+            ),
+            content_type="application/json",
+            HTTP_X_AUTH_TOKEN=token,
+        )
+        self.assertEqual(camera_change_response.status_code, 200)
+        self.assertEqual(camera_change_response.json()["data"], {})
+
         not_found_response = self.client.post(
             "/__mock-dji__/api/v1/manage/live/streams/start",
             data=json.dumps({"video_id": "UNKNOWN-SN/88-0-0/normal-0", "url_type": 1}),

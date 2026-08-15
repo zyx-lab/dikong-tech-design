@@ -62,8 +62,12 @@ from apps.inspection_v2.serializers import (
     CloudMediaFileUrlRefreshSerializer,
     FlightRecordReadSerializer,
     FlightRecordUpdateSerializer,
-    LiveActionSerializer,
     LiveCapacityQuerySerializer,
+    LiveCameraChangeSerializer,
+    LiveStartSerializer,
+    LiveStopSerializer,
+    LiveSwitchSerializer,
+    LiveUpdateSerializer,
     MissionCloseSerializer,
     MissionPreflightCheckResponseSerializer,
     MissionReadSerializer,
@@ -772,6 +776,17 @@ def _validated_mission_inputs(context, data):
     return route, pilot_account, drone, dock, executor, payload, bindings
 
 
+def _mission_option_values(data):
+    fields = {
+        "waylinePrecisionType": "wayline_precision_type",
+        "rthMode": "rth_mode",
+        "rthAltitude": "rth_altitude",
+        "exitWaylineWhenRcLost": "exit_wayline_when_rc_lost",
+        "outOfControlAction": "out_of_control_action",
+    }
+    return {model_field: data[api_field] for api_field, model_field in fields.items() if api_field in data}
+
+
 class MissionListCreateView(InspectionV2APIView):
     @extend_schema(
         operation_id="v2_inspection_missions_list",
@@ -830,6 +845,7 @@ class MissionListCreateView(InspectionV2APIView):
             scheduled_at=serializer.validated_data.get("scheduledAt"),
             remark=serializer.validated_data.get("remark", ""),
             created_by_user=request.user,
+            **_mission_option_values(serializer.validated_data),
         )
         create_assignments(mission, bindings)
         data = MissionReadSerializer(mission).data
@@ -888,6 +904,9 @@ class MissionDetailView(InspectionV2APIView):
         mission.pilot_account_profile = pilot_account
         mission.scheduled_at = serializer.validated_data.get("scheduledAt")
         mission.remark = serializer.validated_data.get("remark", "")
+        option_values = _mission_option_values(serializer.validated_data)
+        for field, value in option_values.items():
+            setattr(mission, field, value)
         mission.save(
             update_fields=[
                 "route",
@@ -901,6 +920,7 @@ class MissionDetailView(InspectionV2APIView):
                 "pilot_account_profile",
                 "scheduled_at",
                 "remark",
+                *option_values,
                 "updated_at",
             ]
         )
@@ -1152,6 +1172,7 @@ class TelemetrySnapshotView(InspectionV2APIView):
 def _live_payload(validated_data: dict) -> dict:
     data = dict(validated_data)
     data.pop("droneId", None)
+    data.pop("dockId", None)
     if "videoId" in data:
         data.setdefault("video_id", data.pop("videoId"))
     if "videoType" in data:
@@ -1161,6 +1182,17 @@ def _live_payload(validated_data: dict) -> dict:
     if "videoQuality" in data:
         data.setdefault("video_quality", data.pop("videoQuality"))
     return data
+
+
+def _live_resource(validated_data: dict):
+    if "droneId" in validated_data:
+        return ResourceType.DRONE, validated_data["droneId"]
+    return ResourceType.DOCK, validated_data["dockId"]
+
+
+def _ensure_live_video_id_matches_resource(video_id: str, resource) -> None:
+    if video_id.split("/", 1)[0] != resource.device_sn:
+        raise StandardConstraintConflict(msg="videoId 与所选资源不匹配")
 
 
 def _require_control_operator(context) -> None:
@@ -1200,19 +1232,26 @@ class LiveCapacityView(InspectionV2APIView):
     @extend_schema(
         operation_id="v2_inspection_live_capacity",
         summary="查询直播能力",
-        parameters=[OpenApiParameter("droneId", int, OpenApiParameter.QUERY, required=True, description="无人机资源 ID。")],
+        parameters=[
+            OpenApiParameter("droneId", int, OpenApiParameter.QUERY, required=False, description="无人机资源 ID；与 dockId 二选一。"),
+            OpenApiParameter("dockId", int, OpenApiParameter.QUERY, required=False, description="机场资源 ID；与 droneId 二选一。"),
+        ],
         responses={200: generic_object_response("查询成功。返回 DJI 直播能力数据。")},
     )
     def get(self, request):
         context = resolve_v2_context(request)
         serializer = LiveCapacityQuerySerializer(data=request.query_params.dict())
         serializer.is_valid(raise_exception=True)
-        drone_id = serializer.validated_data["droneId"]
-        binding = visible_resource_for_live(context, drone_id)
-        drone = get_resource(ResourceType.DRONE, drone_id)
-        _ensure_online(drone, "无人机不在线")
+        resource_type, resource_id = (
+            (ResourceType.DRONE, serializer.validated_data["droneId"])
+            if "droneId" in serializer.validated_data
+            else (ResourceType.DOCK, serializer.validated_data["dockId"])
+        )
+        binding = visible_resource_for_live(context, resource_id, resource_type=resource_type)
+        resource = get_resource(resource_type, resource_id)
+        _ensure_online(resource, "无人机不在线" if resource_type == ResourceType.DRONE else "机场不在线")
         try:
-            data = dji_connection_gateway(binding.dji_connection).get_live_capacity(drone.device_sn)
+            data = dji_connection_gateway(binding.dji_connection).get_live_capacity(resource.device_sn)
         except DjiGatewayError as exc:
             return _upstream_error_response(exc)
         return Response(data, status=status.HTTP_200_OK)
@@ -1221,23 +1260,25 @@ class LiveCapacityView(InspectionV2APIView):
 class LiveActionView(InspectionV2APIView):
     gateway_method = ""
     audit_action = ""
+    serializer_class = LiveStartSerializer
 
     @extend_schema(
-        request=LiveActionSerializer,
+        request=LiveStartSerializer,
         responses={200: generic_object_response("操作成功。返回 DJI 直播操作结果。")},
     )
     def post(self, request):
         context = resolve_v2_context(request)
-        serializer = LiveActionSerializer(data=request.data)
+        serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
-        drone_id = serializer.validated_data["droneId"]
+        resource_type, resource_id = _live_resource(serializer.validated_data)
         _require_control_operator(context)
-        binding = _resource_binding_for_control(context, ResourceType.DRONE, drone_id)
-        drone = get_resource(ResourceType.DRONE, drone_id)
-        _ensure_online(drone, "无人机不在线")
+        binding = _resource_binding_for_control(context, resource_type, resource_id)
+        resource = get_resource(resource_type, resource_id)
+        _ensure_online(resource, "无人机不在线" if resource_type == ResourceType.DRONE else "机场不在线")
+        _ensure_live_video_id_matches_resource(serializer.validated_data["videoId"], resource)
         try:
             gateway = dji_connection_gateway(binding.dji_connection)
-            data = getattr(gateway, self.gateway_method)(drone.device_sn, **_live_payload(serializer.validated_data))
+            data = getattr(gateway, self.gateway_method)(resource.device_sn, **_live_payload(serializer.validated_data))
         except DjiGatewayError as exc:
             return _upstream_error_response(exc)
         log_v2_action(
@@ -1245,10 +1286,10 @@ class LiveActionView(InspectionV2APIView):
             context=context,
             action=self.audit_action,
             target_type="live_stream",
-            target_id=drone_id,
+            target_id=resource_id,
             resource_owner_department=binding.owner_department,
-            resource_type=ResourceType.DRONE,
-            resource_object_id=drone_id,
+            resource_type=resource_type,
+            resource_object_id=resource_id,
             after_data=data,
         )
         return Response(data, status=status.HTTP_200_OK)
@@ -1257,21 +1298,74 @@ class LiveActionView(InspectionV2APIView):
 class LiveStartView(LiveActionView):
     gateway_method = "start_live"
     audit_action = "start_live_stream"
+    serializer_class = LiveStartSerializer
 
 
 class LiveStopView(LiveActionView):
     gateway_method = "stop_live"
     audit_action = "stop_live_stream"
+    serializer_class = LiveStopSerializer
+
+    @extend_schema(request=LiveStopSerializer)
+    def post(self, request):
+        return super().post(request)
 
 
 class LiveUpdateView(LiveActionView):
     gateway_method = "update_live"
     audit_action = "update_live_stream"
+    serializer_class = LiveUpdateSerializer
+
+    @extend_schema(request=LiveUpdateSerializer)
+    def post(self, request):
+        return super().post(request)
 
 
 class LiveSwitchView(LiveActionView):
     gateway_method = "switch_live"
     audit_action = "switch_live_stream"
+    serializer_class = LiveSwitchSerializer
+
+    @extend_schema(request=LiveSwitchSerializer)
+    def post(self, request):
+        return super().post(request)
+
+
+class LiveCameraChangeView(InspectionV2APIView):
+    @extend_schema(
+        request=LiveCameraChangeSerializer,
+        responses={200: generic_object_response("操作成功。返回 DJI 直播相机切换结果。")},
+    )
+    def post(self, request):
+        context = resolve_v2_context(request)
+        serializer = LiveCameraChangeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        dock_id = serializer.validated_data["dockId"]
+        _require_control_operator(context)
+        binding = _resource_binding_for_control(context, ResourceType.DOCK, dock_id)
+        dock = get_resource(ResourceType.DOCK, dock_id)
+        _ensure_online(dock, "机场不在线")
+        _ensure_live_video_id_matches_resource(serializer.validated_data["videoId"], dock)
+        try:
+            data = dji_connection_gateway(binding.dji_connection).change_live_camera(
+                dock.device_sn,
+                video_id=serializer.validated_data["videoId"],
+                camera_position=serializer.validated_data["cameraPosition"],
+            )
+        except DjiGatewayError as exc:
+            return _upstream_error_response(exc)
+        log_v2_action(
+            request=request,
+            context=context,
+            action="camera_change_live_stream",
+            target_type="live_stream",
+            target_id=dock_id,
+            resource_owner_department=binding.owner_department,
+            resource_type=ResourceType.DOCK,
+            resource_object_id=dock_id,
+            after_data=data,
+        )
+        return Response(data, status=status.HTTP_200_OK)
 
 
 class CameraActionView(InspectionV2APIView):

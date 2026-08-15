@@ -51,6 +51,27 @@ class WaylineType(models.IntegerChoices):
     MAPPING_STRIP = 3, "mappingStrip"
 
 
+class WaylinePrecisionType(models.IntegerChoices):
+    GNSS = 0, "GNSS/GPS"
+    RTK = 1, "RTK"
+
+
+class RthMode(models.IntegerChoices):
+    SMART_ALTITUDE = 0, "最佳高度"
+    PRESET_ALTITUDE = 1, "预设高度"
+
+
+class ExitWaylineWhenRcLost(models.IntegerChoices):
+    CONTINUE_WAYLINE = 0, "继续航线"
+    EXECUTE_RC_LOST_ACTION = 1, "执行失联动作"
+
+
+class OutOfControlAction(models.IntegerChoices):
+    RETURN_HOME = 0, "返航"
+    HOVER = 1, "悬停"
+    LAND = 2, "降落"
+
+
 class CloudExecutionStatus(models.TextChoices):
     STARTING = "STARTING", "启动中"
     RUNNING = "RUNNING", "执行中"
@@ -196,6 +217,20 @@ class InspectionMission(TimeStampedModel):
     payload = models.ForeignKey(PayloadResource, null=True, blank=True, on_delete=models.PROTECT, related_name="v2_missions")
     pilot_account_profile = models.ForeignKey(V2AccountProfile, on_delete=models.PROTECT, related_name="v2_inspection_missions")
     scheduled_at = models.DateTimeField(null=True, blank=True)
+    wayline_precision_type = models.PositiveSmallIntegerField(
+        choices=WaylinePrecisionType.choices,
+        default=WaylinePrecisionType.RTK,
+    )
+    rth_mode = models.PositiveSmallIntegerField(choices=RthMode.choices, default=RthMode.PRESET_ALTITUDE)
+    rth_altitude = models.PositiveSmallIntegerField(default=30)
+    exit_wayline_when_rc_lost = models.PositiveSmallIntegerField(
+        choices=ExitWaylineWhenRcLost.choices,
+        default=ExitWaylineWhenRcLost.EXECUTE_RC_LOST_ACTION,
+    )
+    out_of_control_action = models.PositiveSmallIntegerField(
+        choices=OutOfControlAction.choices,
+        default=OutOfControlAction.RETURN_HOME,
+    )
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     canceled_at = models.DateTimeField(null=True, blank=True)

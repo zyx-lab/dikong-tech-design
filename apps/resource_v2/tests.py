@@ -28,6 +28,7 @@ from apps.resource_v2.models import (
     DroneTelemetrySnapshot,
     DroneResource,
     GatewayResource,
+    HmsAlert,
     MqttConnectionHealth,
     MqttHealthStatus,
     MqttLatestMessage,
@@ -38,6 +39,7 @@ from apps.resource_v2.models import (
     ResourceType,
 )
 from apps.resource_v2.serializers import upsert_resource_from_payload
+from apps.resource_v2.mqtt import osd_reported_at, upsert_drone_telemetry_from_osd
 
 User = get_user_model()
 
@@ -378,6 +380,10 @@ class ResourceV2ApiTests(TestCase):
             speed="8.20",
             heading="91.00",
             battery_percent=87,
+            total_flight_time=128400,
+            total_flight_distance="35240.50",
+            total_flight_sorties=83,
+            battery_cycles=[{"sn": "BATTERY-SN-LEFT", "index": 0, "loopTimes": 37}],
             reported_at=timezone.now(),
             raw_payload={"data": {"latitude": 31.2304, "longitude": 121.4737}},
         )
@@ -391,6 +397,14 @@ class ResourceV2ApiTests(TestCase):
         self.assertEqual(list_item["latestTelemetry"]["latitude"], "31.23040000")
         self.assertEqual(list_item["latestTelemetry"]["longitude"], "121.47370000")
         self.assertEqual(list_item["latestTelemetry"]["batteryPercent"], 87)
+        self.assertEqual(list_item["latestTelemetry"]["totalFlightTime"], 128400)
+        self.assertEqual(list_item["latestTelemetry"]["totalFlightDistance"], "35240.50")
+        self.assertEqual(list_item["latestTelemetry"]["totalFlightSorties"], 83)
+        self.assertEqual(
+            list_item["latestTelemetry"]["batteryCycles"],
+            [{"sn": "BATTERY-SN-LEFT", "index": 0, "loopTimes": 37}],
+        )
+        self.assertIsNotNone(list_item["latestTelemetry"]["updatedAt"])
         self.assertFalse(list_item["latestTelemetry"]["isStale"])
         self.assertEqual(list_item["latestTelemetry"]["rawPayload"]["data"]["latitude"], 31.2304)
         self.assertEqual(list_item["djiConnectionId"], binding.dji_connection_id)
@@ -400,6 +414,163 @@ class ResourceV2ApiTests(TestCase):
         self.assertEqual(detail_response.data["data"]["latestTelemetry"]["heading"], "91.00")
         self.assertEqual(detail_response.data["data"]["djiConnectionId"], binding.dji_connection_id)
         self.assertEqual(detail_response.data["data"]["djiConnectionName"], binding.dji_connection.name)
+
+    def test_osd_should_persist_and_merge_aircraft_cumulative_properties(self):
+        drone = self.bind_v2_drone(department=self.child, actor=self.child_admin, device_sn="DRONE-STATS-001")
+        binding = ResourceBinding.objects.get(resource_type=ResourceType.DRONE, resource_object_id=drone.id)
+        newer_at = timezone.now()
+        older_at = newer_at - timedelta(seconds=1)
+
+        snapshot = upsert_drone_telemetry_from_osd(
+            connection=binding.dji_connection,
+            device_sn=drone.device_sn,
+            payload={
+                "timestamp": int(newer_at.timestamp() * 1000),
+                "data": {
+                    "latitude": 31.2,
+                    "total_flight_time": 120,
+                    "total_flight_distance": 345.67,
+                    "total_flight_sorties": 8,
+                    "battery": {
+                        "capacity_percent": 80,
+                        "batteries": [
+                            {"sn": "BAT-A", "index": 0, "loop_times": 12},
+                            {"sn": "", "index": 1, "loop_times": 99},
+                        ],
+                    },
+                },
+            },
+        )
+        snapshot.refresh_from_db()
+
+        self.assertEqual(snapshot.total_flight_time, 120)
+        self.assertEqual(str(snapshot.total_flight_distance), "345.67")
+        self.assertEqual(snapshot.total_flight_sorties, 8)
+        self.assertEqual(snapshot.battery_cycles, [{"sn": "BAT-A", "index": 0, "loopTimes": 12}])
+        accepted_updated_at = snapshot.updated_at
+
+        sparse_at = newer_at + timedelta(seconds=1)
+        snapshot = upsert_drone_telemetry_from_osd(
+            connection=binding.dji_connection,
+            device_sn=drone.device_sn,
+            payload={
+                "timestamp": int(sparse_at.timestamp() * 1000),
+                "data": {
+                    "longitude": 121.4,
+                    "total_flight_time": 0,
+                    "total_flight_distance": "invalid",
+                    "total_flight_sorties": 7,
+                    "battery": {"capacity_percent": 79},
+                },
+            },
+        )
+        snapshot.refresh_from_db()
+
+        self.assertEqual(snapshot.total_flight_time, 120)
+        self.assertEqual(str(snapshot.total_flight_distance), "345.67")
+        self.assertEqual(snapshot.total_flight_sorties, 8)
+        self.assertEqual(snapshot.battery_cycles, [{"sn": "BAT-A", "index": 0, "loopTimes": 12}])
+        self.assertEqual(str(snapshot.longitude), "121.40000000")
+        self.assertGreater(snapshot.updated_at, accepted_updated_at)
+        accepted_updated_at = snapshot.updated_at
+
+        stale = upsert_drone_telemetry_from_osd(
+            connection=binding.dji_connection,
+            device_sn=drone.device_sn,
+            payload={
+                "timestamp": int(older_at.timestamp() * 1000),
+                "data": {"latitude": 0, "total_flight_time": 999, "total_flight_sorties": 999},
+            },
+        )
+        stale.refresh_from_db()
+        self.assertEqual(str(stale.longitude), "121.40000000")
+        self.assertEqual(stale.total_flight_time, 120)
+        self.assertEqual(stale.updated_at, accepted_updated_at)
+
+    def test_osd_should_replace_current_batteries_without_decreasing_known_cycles(self):
+        drone = self.bind_v2_drone(department=self.child, actor=self.child_admin, device_sn="DRONE-BATTERY-001")
+        binding = ResourceBinding.objects.get(resource_type=ResourceType.DRONE, resource_object_id=drone.id)
+        first_at = timezone.now()
+        upsert_drone_telemetry_from_osd(
+            connection=binding.dji_connection,
+            device_sn=drone.device_sn,
+            payload={
+                "timestamp": int(first_at.timestamp() * 1000),
+                "data": {
+                    "total_flight_time": 0,
+                    "total_flight_distance": 0,
+                    "total_flight_sorties": 0,
+                    "battery": {"batteries": [{"sn": "BAT-A", "index": 0, "loop_times": 12}]},
+                },
+            },
+        )
+        snapshot = upsert_drone_telemetry_from_osd(
+            connection=binding.dji_connection,
+            device_sn=drone.device_sn,
+            payload={
+                "timestamp": int((first_at + timedelta(seconds=1)).timestamp() * 1000),
+                "data": {
+                    "battery": {
+                        "batteries": [
+                            {"sn": "BAT-A", "index": 1, "loop_times": 10},
+                            {"sn": "BAT-B", "index": 0, "loop_times": 3},
+                            {"sn": "BAT-C", "index": 2, "loop_times": -1},
+                        ]
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(
+            snapshot.battery_cycles,
+            [
+                {"sn": "BAT-A", "index": 1, "loopTimes": 12},
+                {"sn": "BAT-B", "index": 0, "loopTimes": 3},
+            ],
+        )
+        self.assertEqual(snapshot.total_flight_time, 0)
+        self.assertEqual(snapshot.total_flight_distance, 0)
+        self.assertEqual(snapshot.total_flight_sorties, 0)
+        self.assertIsNone(
+            upsert_drone_telemetry_from_osd(
+                connection=binding.dji_connection,
+                device_sn="UNKNOWN-DRONE",
+                payload={"data": {"total_flight_time": 1}},
+            )
+        )
+
+    def test_osd_should_ignore_non_finite_cumulative_values_and_invalid_timestamp(self):
+        drone = self.bind_v2_drone(department=self.child, actor=self.child_admin, device_sn="DRONE-STATS-INVALID-001")
+        binding = ResourceBinding.objects.get(resource_type=ResourceType.DRONE, resource_object_id=drone.id)
+        snapshot = upsert_drone_telemetry_from_osd(
+            connection=binding.dji_connection,
+            device_sn=drone.device_sn,
+            payload={
+                "data": {
+                    "latitude": 31.2,
+                    "total_flight_time": 10,
+                    "total_flight_distance": 20,
+                }
+            },
+        )
+
+        snapshot = upsert_drone_telemetry_from_osd(
+            connection=binding.dji_connection,
+            device_sn=drone.device_sn,
+            payload={
+                "data": {
+                    "latitude": 32.1,
+                    "total_flight_time": "Infinity",
+                    "total_flight_distance": "NaN",
+                }
+            },
+        )
+        snapshot.refresh_from_db()
+
+        self.assertEqual(str(snapshot.latitude), "32.10000000")
+        self.assertEqual(snapshot.total_flight_time, 10)
+        self.assertEqual(snapshot.total_flight_distance, 20)
+        self.assertLess(abs((osd_reported_at({"timestamp": float("inf")}) - timezone.now()).total_seconds()), 1)
 
     def test_mqtt_health_should_be_visible_to_connection_manager_only(self):
         child_connection = DjiConnection.objects.create(
@@ -477,6 +648,97 @@ class ResourceV2ApiTests(TestCase):
             {"deviceSn": drone.device_sn},
         )
         self.assertEqual(forbidden_response.status_code, 403)
+
+    def test_hms_alerts_should_filter_paginate_and_serialize_for_connection_manager(self):
+        connection = self.create_cached_dji_connection(name="HMS DJI")
+        now = timezone.now()
+        for index, resolved in enumerate((False, True, False), start=1):
+            HmsAlert.objects.create(
+                dji_connection=connection,
+                gateway_sn="DOCK-HMS-001",
+                from_sn="DOCK-HMS-001",
+                alarm_key=f"alarm-{index}",
+                code=f"CODE-{index}",
+                device_domain=3,
+                level=2 if index < 3 else 1,
+                module=3,
+                raw_item={"code": f"CODE-{index}"},
+                first_reported_at=now - timedelta(minutes=index),
+                last_reported_at=now,
+                resolved_at=now if resolved else None,
+            )
+        other_connection = DjiConnection.objects.create(
+            owner_department=self.other,
+            name="other HMS",
+            base_url="https://other-hms.example.test",
+            username="admin",
+            password="secret",
+            created_by_user=self.other_admin,
+        )
+        HmsAlert.objects.create(
+            dji_connection=other_connection,
+            gateway_sn="OTHER-DOCK",
+            from_sn="OTHER-DOCK",
+            alarm_key="other-alarm",
+            code="OTHER",
+            raw_item={"code": "OTHER"},
+            first_reported_at=now,
+            last_reported_at=now,
+        )
+
+        self.authenticate(self.child_admin)
+        response = self.client.get(
+            f"/api/v2/resource/dji-connections/{connection.id}/hms-alerts",
+            {"gatewaySn": "DOCK-HMS-001", "active": "true", "pageNum": 1, "pageSize": 1},
+        )
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["total"], 2)
+        self.assertEqual(len(response.data["data"]["list"]), 1)
+        item = response.data["data"]["list"][0]
+        self.assertEqual(item["djiConnectionId"], connection.id)
+        self.assertEqual(item["gatewaySn"], "DOCK-HMS-001")
+        self.assertEqual(item["alarmKey"], "alarm-1")
+        self.assertEqual(item["rawItem"], {"code": "CODE-1"})
+        self.assertTrue(item["active"])
+        self.assertIsNone(item["resolvedAt"])
+
+        filtered = self.client.get(
+            f"/api/v2/resource/dji-connections/{connection.id}/hms-alerts",
+            {
+                "code": "CODE-2",
+                "level": 2,
+                "active": "false",
+                "firstReportedAfter": (now - timedelta(minutes=3)).isoformat(),
+                "firstReportedBefore": now.isoformat(),
+            },
+        )
+        self.assertEqual(filtered.status_code, 200, getattr(filtered, "data", filtered.content))
+        self.assertEqual(filtered.data["data"]["total"], 1)
+        self.assertEqual(filtered.data["data"]["list"][0]["code"], "CODE-2")
+
+    def test_hms_alerts_should_validate_query_and_protect_connection_scope(self):
+        connection = self.create_cached_dji_connection(name="HMS protected")
+        endpoint = f"/api/v2/resource/dji-connections/{connection.id}/hms-alerts"
+
+        self.authenticate(self.other_admin)
+        self.assertEqual(self.client.get(endpoint).status_code, 404)
+
+        self.authenticate(self.other_dispatcher)
+        self.assertEqual(self.client.get(endpoint).status_code, 403)
+
+        self.authenticate(self.platform_super)
+        self.assertEqual(self.client.get(endpoint).status_code, 200)
+        self.assertEqual(self.client.get("/api/v2/resource/dji-connections/999999/hms-alerts").status_code, 404)
+        for params in (
+            {"active": "maybe"},
+            {"level": "high"},
+            {"firstReportedAfter": "yesterday"},
+            {"pageNum": 0},
+            {"pageSize": 101},
+        ):
+            with self.subTest(params=params):
+                self.assertEqual(self.client.get(endpoint, params).status_code, 400)
 
     def test_v2_resource_endpoints_should_require_fixed_role_operation_permissions(self):
         self.authenticate(self.no_role_user)

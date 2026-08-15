@@ -13,6 +13,7 @@ from apps.resource_v2.models import (
     DroneTelemetrySnapshot,
     DroneResource,
     GatewayResource,
+    HmsAlert,
     MqttConnectionHealth,
     MqttLatestMessage,
     PayloadResource,
@@ -207,6 +208,29 @@ class DjiConnectionWriteSerializer(StrictSerializer):
         return instance
 
 
+class BatteryCycleReadSerializer(serializers.Serializer):
+    sn = serializers.CharField()
+    index = serializers.IntegerField(allow_null=True)
+    loopTimes = serializers.IntegerField()
+
+
+class DroneLatestTelemetryReadSerializer(serializers.Serializer):
+    latitude = serializers.CharField(allow_null=True)
+    longitude = serializers.CharField(allow_null=True)
+    altitude = serializers.CharField(allow_null=True)
+    speed = serializers.CharField(allow_null=True)
+    heading = serializers.CharField(allow_null=True)
+    batteryPercent = serializers.IntegerField(allow_null=True)
+    totalFlightTime = serializers.IntegerField(allow_null=True)
+    totalFlightDistance = serializers.CharField(allow_null=True)
+    totalFlightSorties = serializers.IntegerField(allow_null=True)
+    batteryCycles = BatteryCycleReadSerializer(many=True)
+    reportedAt = serializers.DateTimeField()
+    updatedAt = serializers.DateTimeField()
+    isStale = serializers.BooleanField()
+    rawPayload = serializers.JSONField()
+
+
 class ResourceReadSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     resourceType = serializers.CharField()
@@ -218,7 +242,7 @@ class ResourceReadSerializer(serializers.Serializer):
     model = serializers.CharField()
     onlineStatus = serializers.BooleanField()
     lastSeenAt = serializers.DateTimeField(required=False, allow_null=True)
-    latestTelemetry = serializers.DictField(required=False, allow_null=True)
+    latestTelemetry = DroneLatestTelemetryReadSerializer(required=False, allow_null=True)
     ownerDepartment = serializers.DictField()
     effectivePermissions = serializers.ListField(child=serializers.CharField())
 
@@ -347,6 +371,58 @@ class MqttLatestMessageReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class HmsAlertQuerySerializer(StrictSerializer):
+    gatewaySn = serializers.CharField(required=False, allow_blank=False)
+    fromSn = serializers.CharField(required=False, allow_blank=False)
+    code = serializers.CharField(required=False, allow_blank=False)
+    level = serializers.IntegerField(required=False)
+    active = serializers.BooleanField(required=False)
+    firstReportedAfter = serializers.DateTimeField(required=False)
+    firstReportedBefore = serializers.DateTimeField(required=False)
+    pageNum = serializers.IntegerField(min_value=1, required=False)
+    pageSize = serializers.IntegerField(min_value=1, max_value=100, required=False)
+
+
+class HmsAlertReadSerializer(serializers.ModelSerializer):
+    djiConnectionId = serializers.IntegerField(source="dji_connection_id", read_only=True)
+    gatewaySn = serializers.CharField(source="gateway_sn", read_only=True)
+    fromSn = serializers.CharField(source="from_sn", read_only=True)
+    alarmKey = serializers.CharField(source="alarm_key", read_only=True)
+    deviceDomain = serializers.IntegerField(source="device_domain", read_only=True)
+    rawItem = serializers.JSONField(source="raw_item", read_only=True)
+    firstReportedAt = serializers.DateTimeField(source="first_reported_at", read_only=True)
+    lastReportedAt = serializers.DateTimeField(source="last_reported_at", read_only=True)
+    resolvedAt = serializers.DateTimeField(source="resolved_at", read_only=True)
+    active = serializers.SerializerMethodField()
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
+
+    class Meta:
+        model = HmsAlert
+        fields = [
+            "id",
+            "djiConnectionId",
+            "gatewaySn",
+            "fromSn",
+            "alarmKey",
+            "code",
+            "deviceDomain",
+            "level",
+            "module",
+            "rawItem",
+            "firstReportedAt",
+            "lastReportedAt",
+            "resolvedAt",
+            "active",
+            "createdAt",
+            "updatedAt",
+        ]
+        read_only_fields = fields
+
+    def get_active(self, obj) -> bool:
+        return obj.resolved_at is None
+
+
 class BindingCreateSerializer(StrictSerializer):
     resourceType = serializers.ChoiceField(choices=ResourceType.choices)
     resourceId = serializers.IntegerField(min_value=1)
@@ -461,7 +537,12 @@ def _drone_latest_telemetry(resource) -> dict | None:
         "speed": str(snapshot.speed) if snapshot.speed is not None else None,
         "heading": str(snapshot.heading) if snapshot.heading is not None else None,
         "batteryPercent": snapshot.battery_percent,
+        "totalFlightTime": snapshot.total_flight_time,
+        "totalFlightDistance": str(snapshot.total_flight_distance) if snapshot.total_flight_distance is not None else None,
+        "totalFlightSorties": snapshot.total_flight_sorties,
+        "batteryCycles": snapshot.battery_cycles,
         "reportedAt": snapshot.reported_at,
+        "updatedAt": snapshot.updated_at,
         "isStale": _telemetry_is_stale(snapshot),
         "rawPayload": snapshot.raw_payload,
     }

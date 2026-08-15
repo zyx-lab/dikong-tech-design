@@ -13,14 +13,18 @@ from apps.inspection_v2.models import (
     FlightTelemetrySnapshot,
     InspectionFlightRecord,
     InspectionMission,
+    ExitWaylineWhenRcLost,
     MissionCloudExecution,
     MissionExecutionMode,
     MissionResourceAssignment,
     MissionStatus,
+    OutOfControlAction,
+    RthMode,
     Waypoint,
     WaypointRoute,
     WaypointRouteCloudFile,
     WaylineType,
+    WaylinePrecisionType,
     route_cover_image_url,
 )
 from apps.inspection_v2.route_cover_images import RouteCoverImageField, validate_route_cover_upload
@@ -284,6 +288,11 @@ class MissionReadSerializer(serializers.ModelSerializer):
     executionMode = serializers.CharField(source="execution_mode", read_only=True)
     pilot = serializers.SerializerMethodField()
     scheduledAt = serializers.DateTimeField(source="scheduled_at", allow_null=True, read_only=True)
+    waylinePrecisionType = serializers.IntegerField(source="wayline_precision_type", read_only=True)
+    rthMode = serializers.IntegerField(source="rth_mode", read_only=True)
+    rthAltitude = serializers.IntegerField(source="rth_altitude", read_only=True)
+    exitWaylineWhenRcLost = serializers.IntegerField(source="exit_wayline_when_rc_lost", read_only=True)
+    outOfControlAction = serializers.IntegerField(source="out_of_control_action", read_only=True)
     startedAt = serializers.DateTimeField(source="started_at", allow_null=True, read_only=True)
     finishedAt = serializers.DateTimeField(source="finished_at", allow_null=True, read_only=True)
     canceledAt = serializers.DateTimeField(source="canceled_at", allow_null=True, read_only=True)
@@ -311,6 +320,11 @@ class MissionReadSerializer(serializers.ModelSerializer):
             "executionMode",
             "pilot",
             "scheduledAt",
+            "waylinePrecisionType",
+            "rthMode",
+            "rthAltitude",
+            "exitWaylineWhenRcLost",
+            "outOfControlAction",
             "startedAt",
             "finishedAt",
             "canceledAt",
@@ -343,6 +357,11 @@ class MissionWriteSerializer(StrictSerializer):
     )
     payloadId = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     scheduledAt = serializers.DateTimeField(required=False, allow_null=True)
+    waylinePrecisionType = serializers.ChoiceField(choices=WaylinePrecisionType.choices, required=False)
+    rthMode = serializers.ChoiceField(choices=RthMode.choices, required=False)
+    rthAltitude = serializers.IntegerField(min_value=20, max_value=500, required=False)
+    exitWaylineWhenRcLost = serializers.ChoiceField(choices=ExitWaylineWhenRcLost.choices, required=False)
+    outOfControlAction = serializers.ChoiceField(choices=OutOfControlAction.choices, required=False)
     remark = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
@@ -351,6 +370,15 @@ class MissionWriteSerializer(StrictSerializer):
         has_executor = attrs.get("executorId") is not None
         if has_dock == has_executor:
             raise serializers.ValidationError({"dockId": ["dockId 与 executorId 必须二选一"], "executorId": ["dockId 与 executorId 必须二选一"]})
+        option_fields = {
+            "waylinePrecisionType",
+            "rthMode",
+            "rthAltitude",
+            "exitWaylineWhenRcLost",
+            "outOfControlAction",
+        }
+        if has_executor and option_fields.intersection(attrs):
+            raise serializers.ValidationError("航线任务参数只支持 dockId 模式")
         return attrs
 
 
@@ -741,13 +769,52 @@ class CameraActionResponseSerializer(serializers.Serializer):
     upstream = serializers.JSONField()
 
 
-class LiveActionSerializer(StrictSerializer):
-    droneId = serializers.IntegerField(min_value=1)
-    videoId = serializers.CharField(required=False, allow_blank=True)
-    videoType = serializers.ChoiceField(choices=["wide", "zoom", "ir", "normal"], required=False)
-    urlType = serializers.IntegerField(required=False)
-    videoQuality = serializers.IntegerField(required=False)
+def validate_live_video_id(value):
+    parts = value.split("/")
+    if len(parts) != 3 or not all(part.strip() for part in parts):
+        raise serializers.ValidationError("必须是包含三个非空分段的 DJI videoId")
+    return value
+
+
+class LiveResourceActionSerializer(StrictSerializer):
+    droneId = serializers.IntegerField(min_value=1, required=False)
+    dockId = serializers.IntegerField(min_value=1, required=False)
+    videoId = serializers.CharField(allow_blank=False, validators=[validate_live_video_id])
+
+    def validate(self, attrs):
+        if ("droneId" in attrs) == ("dockId" in attrs):
+            raise serializers.ValidationError("droneId 与 dockId 必须二选一")
+        return attrs
+
+
+class LiveStartSerializer(LiveResourceActionSerializer):
+    urlType = serializers.ChoiceField(choices=range(5))
+    videoQuality = serializers.ChoiceField(choices=range(5))
+
+
+class LiveStopSerializer(LiveResourceActionSerializer):
+    pass
+
+
+class LiveUpdateSerializer(LiveResourceActionSerializer):
+    videoQuality = serializers.ChoiceField(choices=range(5))
+
+
+class LiveSwitchSerializer(LiveResourceActionSerializer):
+    videoType = serializers.ChoiceField(choices=["wide", "zoom", "ir", "normal"])
+
+
+class LiveCameraChangeSerializer(StrictSerializer):
+    dockId = serializers.IntegerField(min_value=1)
+    videoId = serializers.CharField(allow_blank=False, validators=[validate_live_video_id])
+    cameraPosition = serializers.ChoiceField(choices=[0, 1])
 
 
 class LiveCapacityQuerySerializer(StrictSerializer):
-    droneId = serializers.IntegerField(min_value=1)
+    droneId = serializers.IntegerField(min_value=1, required=False)
+    dockId = serializers.IntegerField(min_value=1, required=False)
+
+    def validate(self, attrs):
+        if ("droneId" in attrs) == ("dockId" in attrs):
+            raise serializers.ValidationError("droneId 与 dockId 必须二选一")
+        return attrs

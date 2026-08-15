@@ -33,6 +33,7 @@ from apps.resource_v2.models import (
     BindingStatus,
     CameraResource,
     DjiConnection,
+    HmsAlert,
     MqttConnectionHealth,
     MqttLatestMessage,
     ResourceBinding,
@@ -52,6 +53,8 @@ from apps.resource_v2.serializers import (
     DjiConnectionCredentialReadSerializer,
     DjiConnectionReadSerializer,
     DjiConnectionWriteSerializer,
+    HmsAlertQuerySerializer,
+    HmsAlertReadSerializer,
     MqttConnectionHealthReadSerializer,
     MqttLatestMessageReadSerializer,
     ResourceReadSerializer,
@@ -91,6 +94,7 @@ RESOURCE_LIST_RESPONSE = list_data_serializer("V2ResourceListData", ResourceRead
 CAMERA_RESOURCE_LIST_RESPONSE = list_data_serializer("V2CameraResourceListData", CameraResourceReadSerializer)
 MQTT_HEALTH_LIST_RESPONSE = list_data_serializer("V2MqttHealthListData", MqttConnectionHealthReadSerializer)
 MQTT_LATEST_MESSAGE_LIST_RESPONSE = list_data_serializer("V2MqttLatestMessageListData", MqttLatestMessageReadSerializer)
+HMS_ALERT_LIST_RESPONSE = list_data_serializer("V2HmsAlertListData", HmsAlertReadSerializer)
 SHARE_GROUP_LIST_RESPONSE = list_data_serializer("V2ShareGroupListData", ShareGroupReadSerializer)
 
 
@@ -400,6 +404,47 @@ class DjiConnectionMqttLatestMessageView(V2ResourceAPIView):
         queryset = queryset.order_by("-received_at", "-id")
         serializer = MqttLatestMessageReadSerializer(queryset, many=True)
         return Response({"list": serializer.data, "total": queryset.count()}, status=status.HTTP_200_OK)
+
+
+class DjiConnectionHmsAlertView(V2ResourceAPIView):
+    @extend_schema(
+        operation_id="v2_resource_dji_connection_hms_alerts",
+        summary="查询 DJI HMS 告警",
+        parameters=[HmsAlertQuerySerializer],
+        responses={200: OpenApiResponse(response=HMS_ALERT_LIST_RESPONSE, description="查询成功。")},
+    )
+    def get(self, request, id: int):
+        context = resolve_v2_context(request)
+        if is_platform_super_admin(context):
+            connection = DjiConnection.objects.filter(pk=id).first()
+        elif is_department_admin(context):
+            connection = DjiConnection.objects.filter(pk=id, owner_department=context.department).first()
+        else:
+            raise StandardForbidden()
+        if connection is None:
+            return _not_found_response()
+
+        query = HmsAlertQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        data = query.validated_data
+        queryset = HmsAlert.objects.filter(dji_connection=connection)
+        for api_field, model_field in (
+            ("gatewaySn", "gateway_sn"),
+            ("fromSn", "from_sn"),
+            ("code", "code"),
+            ("level", "level"),
+        ):
+            if api_field in data:
+                queryset = queryset.filter(**{model_field: data[api_field]})
+        if "active" in data:
+            queryset = queryset.filter(resolved_at__isnull=data["active"])
+        if "firstReportedAfter" in data:
+            queryset = queryset.filter(first_reported_at__gte=data["firstReportedAfter"])
+        if "firstReportedBefore" in data:
+            queryset = queryset.filter(first_reported_at__lte=data["firstReportedBefore"])
+        queryset = queryset.order_by("-first_reported_at", "-id")
+        page = self.paginate_queryset(queryset)
+        return self.get_paginated_response(HmsAlertReadSerializer(page, many=True).data)
 
 
 class ResourceListView(V2ResourceAPIView):

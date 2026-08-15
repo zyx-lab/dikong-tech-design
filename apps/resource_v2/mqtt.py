@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import timezone as dt_timezone
 from decimal import Decimal
+from hashlib import sha256
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -14,6 +15,7 @@ from apps.resource_v2.models import (
     DjiConnection,
     DroneResource,
     DroneTelemetrySnapshot,
+    HmsAlert,
     MqttConnectionHealth,
     MqttHealthStatus,
     MqttLatestMessage,
@@ -208,11 +210,80 @@ def record_mqtt_message(*, connection: DjiConnection, topic: str, payload: dict,
     return envelope
 
 
+def record_hms_alerts(*, connection: DjiConnection | None, topic: str, payload: dict, received_at=None) -> dict:
+    if connection is None or not isinstance(payload, dict):
+        return {"updated": 0}
+    gateway_sn = device_sn_from_topic(topic)
+    data = payload.get("data")
+    alerts = data.get("list") if isinstance(data, dict) else None
+    if not str(topic).startswith("thing/product/") or not str(topic).endswith("/events") or not gateway_sn or not isinstance(alerts, list):
+        return {"updated": 0}
+    if any(not isinstance(item, dict) or not str(item.get("code") or "").strip() for item in alerts):
+        return {"updated": 0}
+
+    received_at = received_at or timezone.now()
+    from_sn = str(payload.get("from") or "").strip() or gateway_sn
+    normalized = {}
+    for item in alerts:
+        code = str(item["code"]).strip()
+        identity = {
+            "code": code,
+            "device_type": item.get("device_type", item.get("deviceType")),
+            "in_the_sky": item.get("in_the_sky", item.get("inTheSky")),
+            "args": item.get("args"),
+        }
+        alarm_key = sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+        normalized[alarm_key] = item
+
+    scope = {
+        "dji_connection": connection,
+        "gateway_sn": gateway_sn,
+        "from_sn": from_sn,
+    }
+    with transaction.atomic():
+        active = {
+            alert.alarm_key: alert
+            for alert in HmsAlert.objects.select_for_update().filter(**scope, resolved_at__isnull=True)
+        }
+        for alarm_key, item in normalized.items():
+            device_type = item.get("device_type", item.get("deviceType"))
+            device_domain = device_type.get("domain") if isinstance(device_type, dict) else None
+            defaults = {
+                "code": str(item["code"]).strip(),
+                "device_domain": _integer_or_none(device_domain),
+                "level": _integer_or_none(item.get("level")),
+                "module": _integer_or_none(item.get("module")),
+                "raw_item": item,
+                "last_reported_at": received_at,
+            }
+            alert = active.get(alarm_key)
+            if alert is None:
+                HmsAlert.objects.create(
+                    **scope,
+                    alarm_key=alarm_key,
+                    first_reported_at=received_at,
+                    **defaults,
+                )
+            else:
+                for field, value in defaults.items():
+                    setattr(alert, field, value)
+                alert.save(update_fields=[*defaults, "updated_at"])
+        HmsAlert.objects.filter(**scope, resolved_at__isnull=True).exclude(
+            alarm_key__in=normalized
+        ).update(resolved_at=received_at, updated_at=received_at)
+    return {"updated": len(normalized)}
+
+
 def osd_reported_at(payload: dict):
     timestamp = payload.get("timestamp")
     if isinstance(timestamp, (int, float)):
-        seconds = timestamp / 1000 if timestamp > 10_000_000_000 else timestamp
-        return timezone.datetime.fromtimestamp(seconds, tz=dt_timezone.utc)
+        try:
+            seconds = timestamp / 1000 if timestamp > 10_000_000_000 else timestamp
+            return timezone.datetime.fromtimestamp(seconds, tz=dt_timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            pass
     return timezone.now()
 
 
@@ -234,9 +305,66 @@ def _decimal_or_none(value):
     if value in (None, ""):
         return None
     try:
-        return Decimal(str(value))
+        parsed = Decimal(str(value))
+        return parsed if parsed.is_finite() else None
     except Exception:
         return None
+
+
+def _integer_or_none(value):
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _nonnegative_integer(value):
+    parsed = _integer_or_none(value)
+    return parsed if parsed is not None and parsed >= 0 else None
+
+
+def _nonnegative_decimal(value):
+    parsed = _decimal_or_none(value)
+    return parsed if parsed is not None and parsed >= 0 else None
+
+
+def _max_value(previous, current):
+    if current is None:
+        return previous
+    if previous is None:
+        return current
+    return max(previous, current)
+
+
+def _battery_cycles(data: dict, previous: list) -> list | None:
+    battery = data.get("battery")
+    if not isinstance(battery, dict) or "batteries" not in battery:
+        return None
+    batteries = battery.get("batteries")
+    if not isinstance(batteries, list):
+        return None
+    known_cycles = {
+        str(item.get("sn") or "").strip(): _nonnegative_integer(item.get("loopTimes"))
+        for item in previous
+        if isinstance(item, dict) and str(item.get("sn") or "").strip()
+    }
+    result = []
+    for item in batteries:
+        if not isinstance(item, dict):
+            continue
+        sn = str(item.get("sn") or "").strip()
+        loop_times = _nonnegative_integer(item.get("loop_times", item.get("loopTimes")))
+        if not sn or loop_times is None:
+            continue
+        entry = {
+            "sn": sn,
+            "index": _nonnegative_integer(item.get("index")),
+            "loopTimes": _max_value(known_cycles.get(sn), loop_times),
+        }
+        result.append(entry)
+    return result
 
 
 def upsert_drone_telemetry_from_osd(
@@ -247,12 +375,15 @@ def upsert_drone_telemetry_from_osd(
 ) -> DroneTelemetrySnapshot | None:
     payload = payload if isinstance(payload, dict) else {}
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-    drone = DroneResource.objects.filter(device_sn=device_sn).first()
-    if drone is None:
-        return None
-    snapshot, _created = DroneTelemetrySnapshot.objects.update_or_create(
-        drone=drone,
-        defaults={
+    reported_at = osd_reported_at(payload)
+    with transaction.atomic():
+        drone = DroneResource.objects.select_for_update().filter(device_sn=device_sn).first()
+        if drone is None:
+            return None
+        snapshot = DroneTelemetrySnapshot.objects.select_for_update().filter(drone=drone).first()
+        if snapshot is not None and reported_at < snapshot.reported_at:
+            return snapshot
+        defaults = {
             "dji_connection": connection,
             "latitude": _decimal_or_none(data.get("latitude")),
             "longitude": _decimal_or_none(data.get("longitude")),
@@ -260,8 +391,23 @@ def upsert_drone_telemetry_from_osd(
             "speed": _decimal_or_none(data.get("speed", data.get("horizontal_speed"))),
             "heading": _decimal_or_none(data.get("heading", data.get("attitude_head"))),
             "battery_percent": osd_battery_percent(data),
-            "reported_at": osd_reported_at(payload),
+            "total_flight_time": _max_value(
+                snapshot.total_flight_time if snapshot else None,
+                _nonnegative_integer(data.get("total_flight_time", data.get("totalFlightTime"))),
+            ),
+            "total_flight_distance": _max_value(
+                snapshot.total_flight_distance if snapshot else None,
+                _nonnegative_decimal(data.get("total_flight_distance", data.get("totalFlightDistance"))),
+            ),
+            "total_flight_sorties": _max_value(
+                snapshot.total_flight_sorties if snapshot else None,
+                _nonnegative_integer(data.get("total_flight_sorties", data.get("totalFlightSorties"))),
+            ),
+            "reported_at": reported_at,
             "raw_payload": payload,
-        },
-    )
+        }
+        cycles = _battery_cycles(data, snapshot.battery_cycles if snapshot else [])
+        if cycles is not None:
+            defaults["battery_cycles"] = cycles
+        snapshot, _created = DroneTelemetrySnapshot.objects.update_or_create(drone=drone, defaults=defaults)
     return snapshot

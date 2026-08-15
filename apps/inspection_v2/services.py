@@ -963,8 +963,11 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
             "dock_sn": mission.dock_sn,
             "wayline_type": int(route_cloud_file.wayline_type),
             "task_type": 0,
-            "rth_altitude": DjiConnectionGateway.DEFAULT_RTH_ALTITUDE,
-            "out_of_control_action": DjiConnectionGateway.DEFAULT_OUT_OF_CONTROL_ACTION,
+            "wayline_precision_type": mission.wayline_precision_type,
+            "rth_mode": mission.rth_mode,
+            "rth_altitude": mission.rth_altitude,
+            "exit_wayline_when_rc_lost": mission.exit_wayline_when_rc_lost,
+            "out_of_control_action": mission.out_of_control_action,
         }
         live_video_id, live_request, live_response_payload = _start_live_required(gateway=gateway, mission=mission)
         try:
@@ -974,7 +977,10 @@ def start_mission(*, mission: InspectionMission, context, request) -> FlightSess
                 dock_sn=mission.dock_sn,
                 wayline_type=route_cloud_file.wayline_type,
                 task_type=request_payload["task_type"],
+                wayline_precision_type=request_payload["wayline_precision_type"],
+                rth_mode=request_payload["rth_mode"],
                 rth_altitude=request_payload["rth_altitude"],
+                exit_wayline_when_rc_lost=request_payload["exit_wayline_when_rc_lost"],
                 out_of_control_action=request_payload["out_of_control_action"],
             )
         except Exception:
@@ -2718,8 +2724,8 @@ def apply_osd_telemetry(*, device_sn: str, payload: dict | None = None, dji_conn
     return {"updated": updated}
 
 
-def visible_resource_for_live(context, drone_id: int) -> ResourceBinding:
-    binding = monitorable_resource_binding(context, ResourceType.DRONE, drone_id)
+def visible_resource_for_live(context, resource_id: int, *, resource_type: str = ResourceType.DRONE) -> ResourceBinding:
+    binding = monitorable_resource_binding(context, resource_type, resource_id)
     from apps.resource_v2.services import effective_permissions_for_binding
 
     effective = set(effective_permissions_for_binding(context, binding))

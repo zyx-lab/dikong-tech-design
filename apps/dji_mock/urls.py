@@ -15,6 +15,7 @@ urlpatterns = [
     path("api/v1/manage/live/streams/stop", views.live_stop),
     path("api/v1/manage/live/streams/update", views.live_update),
     path("api/v1/manage/live/streams/switch", views.live_switch),
+    path("api/v1/manage/live/streams/camera-change", views.live_camera_change),
     path("api/v1/control/devices/<str:gateway_sn>/authority/payload", views.payload_authority),
     path("api/v1/control/devices/<str:gateway_sn>/payload/commands", views.payload_commands),
     path("api/v1/control/workspaces/<str:workspace_id>/drc/connect", views.drc_connect),

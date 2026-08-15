@@ -21,6 +21,11 @@ urlpatterns = [
         views.DjiConnectionMqttLatestMessageView.as_view(),
         name="v2-resource-dji-connection-mqtt-latest-messages",
     ),
+    path(
+        "dji-connections/<int:id>/hms-alerts",
+        views.DjiConnectionHmsAlertView.as_view(),
+        name="v2-resource-dji-connection-hms-alerts",
+    ),
     path("drones", views.DroneResourceListView.as_view(), name="v2-resource-drones"),
     path("drones/<int:id>", views.DroneResourceDetailView.as_view(), name="v2-resource-drone-detail"),
     path("docks", views.DockResourceListView.as_view(), name="v2-resource-docks"),

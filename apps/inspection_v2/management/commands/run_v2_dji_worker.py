@@ -19,7 +19,13 @@ from apps.inspection_v2.services import (
 )
 from apps.resource_v2.gateway import DjiConnectionGateway, DjiGatewayError, dji_connection_gateway
 from apps.resource_v2.models import DjiConnection, DjiConnectionStatus, MqttHealthStatus
-from apps.resource_v2.mqtt import DEFAULT_MQTT_TOPICS, configured_mqtt_topics, mark_mqtt_health, record_mqtt_message
+from apps.resource_v2.mqtt import (
+    DEFAULT_MQTT_TOPICS,
+    configured_mqtt_topics,
+    mark_mqtt_health,
+    record_hms_alerts,
+    record_mqtt_message,
+)
 from apps.resource_v2.services import sync_connection_resources_from_upstream
 
 logger = logging.getLogger(__name__)
@@ -201,6 +207,8 @@ class V2DjiWorker:
         message = None
         if connection is not None:
             message = record_mqtt_message(connection=connection, topic=topic, payload=payload)
+        if not isinstance(payload, dict):
+            return self._with_message({"updated": 0}, message)
 
         if topic.endswith("/osd"):
             device_sn = self._device_sn_from_topic(topic)
@@ -218,6 +226,14 @@ class V2DjiWorker:
             if device_sn:
                 return self._with_message(apply_device_status_event(device_sn=device_sn, payload=payload), message)
             return self._with_message({"updated": 0}, message)
+
+        if topic.endswith("/events") and payload.get("method") == "hms":
+            try:
+                result = record_hms_alerts(connection=connection, topic=topic, payload=payload)
+            except Exception:
+                logger.exception("v2 DJI HMS persistence failed", extra={"dji_connection_id": getattr(connection, "id", None)})
+                result = {"updated": 0}
+            return self._with_message(result, message)
 
         if topic.endswith("/events") or topic.endswith("/services_reply"):
             job_id = self._job_id_from_payload(payload)

@@ -125,6 +125,10 @@ class DroneTelemetrySnapshot(TimeStampedModel):
     speed = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     heading = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
     battery_percent = models.PositiveIntegerField(null=True, blank=True)
+    total_flight_time = models.PositiveBigIntegerField(null=True, blank=True)
+    total_flight_distance = models.DecimalField(max_digits=16, decimal_places=2, null=True, blank=True)
+    total_flight_sorties = models.PositiveIntegerField(null=True, blank=True)
+    battery_cycles = models.JSONField(default=list, blank=True)
     reported_at = models.DateTimeField()
     raw_payload = models.JSONField(default=dict, blank=True)
 
@@ -236,6 +240,32 @@ class MqttLatestMessage(TimeStampedModel):
         indexes = [
             models.Index(fields=["dji_connection", "topic_kind", "device_sn"], name="idx_v2_mqtt_latest_filter"),
             models.Index(fields=["device_sn", "received_at"], name="idx_v2_mqtt_latest_device_time"),
+        ]
+
+
+class HmsAlert(TimeStampedModel):
+    dji_connection = models.ForeignKey(DjiConnection, on_delete=models.CASCADE, related_name="hms_alerts")
+    gateway_sn = models.CharField(max_length=128)
+    from_sn = models.CharField(max_length=128)
+    alarm_key = models.CharField(max_length=64)
+    code = models.CharField(max_length=64)
+    device_domain = models.IntegerField(null=True, blank=True)
+    level = models.IntegerField(null=True, blank=True)
+    module = models.IntegerField(null=True, blank=True)
+    raw_item = models.JSONField(default=dict)
+    first_reported_at = models.DateTimeField()
+    last_reported_at = models.DateTimeField()
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "v2_hms_alerts"
+        ordering = ["-first_reported_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["dji_connection", "gateway_sn", "from_sn", "alarm_key"],
+                condition=Q(resolved_at__isnull=True),
+                name="uniq_v2_active_hms_alert",
+            ),
         ]
 
 

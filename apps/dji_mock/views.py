@@ -206,6 +206,18 @@ def live_switch(request):
 
 @csrf_exempt
 @protected_mock_dji_view
+def live_camera_change(request):
+    if request.method != "POST":
+        raise Http404
+    payload = load_json_body(request)
+    result = mock_dji_state.change_live_camera(payload)
+    if result is None:
+        return _live_not_found()
+    return _success(result)
+
+
+@csrf_exempt
+@protected_mock_dji_view
 def payload_authority(request, gateway_sn: str):
     if request.method != "POST":
         raise Http404

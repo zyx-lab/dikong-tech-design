@@ -48,10 +48,12 @@ def _operation_key(method: str, path: str) -> tuple[str, str]:
 
 
 SUMMARY_OVERRIDES = {
+    _operation_key("GET", "/api/v2/resource/dji-connections/{id}/hms-alerts"): "查询 DJI HMS 告警",
     _operation_key("POST", "/api/v2/inspection/live/start"): "启动 DJI 直播",
     _operation_key("POST", "/api/v2/inspection/live/stop"): "停止 DJI 直播",
     _operation_key("POST", "/api/v2/inspection/live/update"): "更新 DJI 直播参数",
     _operation_key("POST", "/api/v2/inspection/live/switch"): "切换 DJI 直播源",
+    _operation_key("POST", "/api/v2/inspection/live/camera-change"): "切换 Dock 直播相机",
     _operation_key("POST", "/api/v2/inspection/camera/actions"): "控制 DJI 相机与云台",
 }
 
@@ -224,31 +226,36 @@ DJI_UPSTREAM_OPERATION_DETAILS = {
     _operation_key("GET", "/api/v2/inspection/live/capacity"): """
 ### DJI 上游调用
 
-该接口会调用 DJI live capacity，按本地 `droneId` 映射出的 `drone.deviceSn` 过滤当前无人机的直播能力。响应基本透传 DJI 能力数据，常用字段是 `cameras_list[].index` 和 `videos_list[].index`。
+该接口会调用 DJI live capacity，按本地 `droneId` 或 `dockId` 映射出的设备 SN 过滤目标资源的直播能力。响应基本透传 DJI 能力数据，常用字段是 `cameras_list[].index` 和 `videos_list[].index`。
 
 前端用 capacity 组装 `videoId`：`{droneSn}/{payloadIndex}/{videoIndex}`；也用 `cameras_list[].index` 作为相机动作接口的 `payloadIndex`。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/live/start"): """
 ### DJI 上游调用
 
-该接口把本地 `droneId` 映射成 DJI `device_sn`，再调用 DJI live stream start。`videoId` 来自 capacity，`urlType/videoQuality` 会转成 DJI 需要的 snake_case 字段。
+该接口把本地 `droneId` 或 `dockId` 映射成 DJI `device_sn`，再调用 DJI live stream start。`videoId` 来自 capacity，`urlType/videoQuality` 会转成 DJI 需要的 snake_case 字段。
 
 响应为 DJI 直播启动结果，可能包含 `url/rtmp_url/webrtc_url/play_url/hls_url` 等播放地址；前端按实际返回字段选择播放器地址。上游失败时返回标准错误 envelope。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/live/stop"): """
 ### DJI 上游调用
 
-该接口把 `droneId` 映射成 DJI `device_sn`，用前端传入的 `videoId` 调用 DJI live stream stop。成功后前端应停止播放器并清理直播状态。
+该接口把 `droneId` 或 `dockId` 映射成 DJI `device_sn`，用前端传入的 `videoId` 调用 DJI live stream stop。成功后前端应停止播放器并清理直播状态。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/live/update"): """
 ### DJI 上游调用
 
-该接口把 `droneId` 映射成 DJI `device_sn`，用 `videoId/videoQuality` 调用 DJI live stream update。前端通常用于调整清晰度或码流质量；失败时保持当前播放状态并展示 `msg`。
+该接口把 `droneId` 或 `dockId` 映射成 DJI `device_sn`，用 `videoId/videoQuality` 调用 DJI live stream update。前端通常用于调整清晰度或码流质量；失败时保持当前播放状态并展示 `msg`。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/live/switch"): """
 ### DJI 上游调用
 
-该接口把 `droneId` 映射成 DJI `device_sn`，用 `videoId` 和 `videoType=wide|zoom|ir|normal` 调用 DJI live stream switch。前端切换镜头前应先从 capacity 获取可用 `payloadIndex/videoIndex`，并在切换成功后刷新播放器源。
+该接口把 `droneId` 或 `dockId` 映射成 DJI `device_sn`，用 `videoId` 和 `videoType=wide|zoom|ir|normal` 调用 DJI live stream switch。前端切换镜头前应先从 capacity 获取可用 `payloadIndex/videoIndex`，并在切换成功后刷新播放器源。
+""".strip(),
+    _operation_key("POST", "/api/v2/inspection/live/camera-change"): """
+### DJI 上游调用
+
+该接口把本地 `dockId` 映射为 Dock SN，经 Java 上云发布 DJI `live_camera_change`。`cameraPosition=0` 表示舱内 FPV，`cameraPosition=1` 表示舱外 FPV；该操作与 `/live/switch` 的广角、变焦、红外镜头切换不同。
 """.strip(),
     _operation_key("POST", "/api/v2/inspection/camera/actions"): """
 ### DJI 上游调用
@@ -318,6 +325,8 @@ def _domain_response(method: str, path: str) -> str:
         return "`data.list[]` 展示 worker 状态、MQTT 地址、订阅 topic、心跳时间和累计消息数。"
     if "/mqtt-messages/latest" in path:
         return "`data.list[]` 返回每个 topic/device 的最新透传消息，原始 DJI payload 在 `rawPayload`。"
+    if "/hms-alerts" in path:
+        return "`data.list[]` 返回 HMS 告警生命周期；`active=true` 表示告警尚未解除。"
     if "/resource/" in path and path.split("/")[-1] in {"drones", "docks", "gateways", "payloads"}:
         return "`data.list[]` 只包含当前账号可见且已绑定的资源，不包含未绑定的 discover 结果。"
     if "/routes/" in path and method.upper() == "DELETE":
@@ -349,6 +358,8 @@ def _domain_response(method: str, path: str) -> str:
 
 def _request_notes(method: str, path: str) -> str:
     if method.upper() == "GET":
+        if "/hms-alerts" in path:
+            return "按 `gatewaySn/fromSn/code/level/active/firstReportedAfter/firstReportedBefore` 过滤，使用 `pageNum/pageSize` 分页。"
         return "按文档中的 query 参数过滤；没有分页参数的列表一次返回当前可见范围。"
     if path.endswith("/discover"):
         return "请求体固定为空对象 `{}`；连接账号和 DJI baseUrl 来自 `dji-connections/{id}`。"
@@ -370,8 +381,10 @@ def _request_notes(method: str, path: str) -> str:
         return "请求体为空对象；仅 Dock 模式按本地 `djiJobId` 查询 DJI jobs，不允许前端传任意 job id。Pilot2 模式会返回 409。"
     if "/missions/" in path and method.upper() == "POST":
         return "请求体可为空对象；取消/失败接口可传 `reason` 便于审计和前端展示。"
+    if "/live/camera-change" in path:
+        return "传本地 `dockId`、capacity 中组装的 `videoId` 和 `cameraPosition=0|1`。"
     if "/live/" in path:
-        return "传本地 `droneId`；`videoId` 从 capacity 的镜头/视频能力组装，切换镜头时传 `videoType=wide|zoom|ir`。"
+        return "传本地 `droneId` 或 `dockId`；`videoId` 从 capacity 的镜头/视频能力组装，切换镜头时传 `videoType=wide|zoom|ir|normal`。"
     if "/camera/actions" in path:
         return "传本地 `droneId/executorId` 和 capacity 中的 `payloadIndex`，`action` 选择 DJI payload command；额外字段按 action 传，前端主推 camelCase。"
     if path.endswith("/refresh-url"):
@@ -396,6 +409,8 @@ def _next_step(method: str, path: str) -> str:
         return "状态正常后按 `deviceSn` 调用 latest 消息接口，或打开 WebSocket 订阅实时消息。"
     if "/mqtt-messages/latest" in path:
         return "将 `rawPayload` 用于设备状态面板；需要实时推送时改用 WebSocket。"
+    if "/hms-alerts" in path:
+        return "展示告警列表；告警解除后记录仍保留，`resolvedAt` 表示后端首次观察到告警消失的时间。"
     if path.endswith("/routes") and method.upper() == "POST":
         return "使用返回的 route id 创建任务；下载 KMZ 前先读详情获取最新 `djiFile.downloadUrl`。"
     if "/missions" in path and method.upper() == "POST" and path.endswith("/missions"):
@@ -550,6 +565,8 @@ def request_example_value(method: str, path: str, media_type: str):
         return {"droneId": 1, "videoId": "1581F7FVC252A00CJ5TT/88-0-0/normal-0", "videoQuality": 1}
     if path.endswith("/live/switch"):
         return {"droneId": 1, "videoId": "1581F7FVC252A00CJ5TT/88-0-0/zoom-0", "videoType": "zoom"}
+    if path.endswith("/live/camera-change"):
+        return {"dockId": 1, "videoId": "1ZNDH1D0010098/165-0-7/normal-0", "cameraPosition": 1}
     if path.endswith("/camera/actions"):
         return {"droneId": 1, "executorId": 2, "payloadIndex": "88-0-0", "action": "camera_photo_take"}
     if path.endswith("/refresh-url"):

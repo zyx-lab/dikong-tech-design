@@ -17,6 +17,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access.models import DirectoryStatus
+from apps.audit_v2.models import V2AuditLog
 from apps.iam_v2.models import (
     Department,
     FixedRole,
@@ -57,6 +58,7 @@ from apps.resource_v2.models import (
     DroneTelemetrySnapshot,
     DroneResource,
     GatewayResource,
+    HmsAlert,
     MqttConnectionHealth,
     MqttLatestMessage,
     PayloadResource,
@@ -378,7 +380,19 @@ class InspectionV2ApiTests(TestCase):
             },
         )
 
-    def create_mission_by_api(self, user, *, route_id, drone_id, pilot_id, dock_id=None, executor_id=None, payload_id=None, name="一号任务"):
+    def create_mission_by_api(
+        self,
+        user,
+        *,
+        route_id,
+        drone_id,
+        pilot_id,
+        dock_id=None,
+        executor_id=None,
+        payload_id=None,
+        name="一号任务",
+        mission_options=None,
+    ):
         self.authenticate(user)
         payload = {
             "name": name,
@@ -402,6 +416,7 @@ class InspectionV2ApiTests(TestCase):
             payload["executorId"] = executor_id
         if payload_id is not None:
             payload["payloadId"] = payload_id
+        payload.update(mission_options or {})
         response = self.client.post(
             "/api/v2/inspection/missions",
             payload,
@@ -859,6 +874,103 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(response.status_code, 409, getattr(response, "data", response.content))
         self.assertIn("任务航线尚未同步到当前 DJI 连接", str(response.data))
 
+    def test_dock_mission_options_should_default_validate_and_preserve_on_update(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="任务参数航线")
+        _connection, dock = self.prepare_route_for_dock_execution(route, dock_sn="DOCK-MISSION-OPTIONS-001")
+        mission = self.create_mission_by_api(
+            self.owner_dispatcher,
+            route_id=route["id"],
+            drone_id=self.drone.id,
+            dock_id=dock.id,
+            pilot_id=self.owner_pilot.id,
+        )
+
+        self.assertEqual(
+            {key: mission[key] for key in (
+                "waylinePrecisionType",
+                "rthMode",
+                "rthAltitude",
+                "exitWaylineWhenRcLost",
+                "outOfControlAction",
+            )},
+            {
+                "waylinePrecisionType": 1,
+                "rthMode": 1,
+                "rthAltitude": 30,
+                "exitWaylineWhenRcLost": 1,
+                "outOfControlAction": 0,
+            },
+        )
+
+        base_payload = {
+            "name": "任务参数更新",
+            "routeId": route["id"],
+            "droneId": self.drone.id,
+            "dockId": dock.id,
+            "pilotAccountProfileId": self.owner_pilot.id,
+        }
+        custom = {
+            "waylinePrecisionType": 0,
+            "rthMode": 0,
+            "rthAltitude": 88,
+            "exitWaylineWhenRcLost": 0,
+            "outOfControlAction": 2,
+        }
+        updated = self.client.put(
+            f"/api/v2/inspection/missions/{mission['id']}",
+            {**base_payload, **custom},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, getattr(updated, "data", updated.content))
+        for key, value in custom.items():
+            self.assertEqual(updated.data["data"][key], value)
+
+        preserved = self.client.put(
+            f"/api/v2/inspection/missions/{mission['id']}",
+            base_payload,
+            format="json",
+        )
+        self.assertEqual(preserved.status_code, 200, getattr(preserved, "data", preserved.content))
+        for key, value in custom.items():
+            self.assertEqual(preserved.data["data"][key], value)
+
+        invalid_cases = (
+            {"waylinePrecisionType": 2},
+            {"rthMode": 2},
+            {"rthAltitude": 19},
+            {"rthAltitude": 501},
+            {"exitWaylineWhenRcLost": 2},
+            {"outOfControlAction": 3},
+        )
+        for invalid in invalid_cases:
+            with self.subTest(invalid=invalid):
+                response = self.client.put(
+                    f"/api/v2/inspection/missions/{mission['id']}",
+                    {**base_payload, **invalid},
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+
+    def test_pilot2_mission_should_reject_explicit_dock_options(self):
+        route = self.create_route_by_api(self.owner_dispatcher, name="Pilot2 参数限制航线")
+        _connection, executor = self.prepare_route_for_cloud_execution(route, gateway_sn="RC-MISSION-OPTIONS-001")
+        self.authenticate(self.owner_dispatcher)
+
+        response = self.client.post(
+            "/api/v2/inspection/missions",
+            {
+                "name": "Pilot2 参数限制任务",
+                "routeId": route["id"],
+                "droneId": self.drone.id,
+                "executorId": executor.id,
+                "pilotAccountProfileId": self.owner_pilot.id,
+                "rthAltitude": 60,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+
     def test_mission_create_should_reject_dock_from_different_dji_connection(self):
         route = self.create_route_by_api(self.owner_dispatcher, name="机场连接不一致航线")
         other_connection = DjiConnection.objects.create(
@@ -1218,6 +1330,13 @@ class InspectionV2ApiTests(TestCase):
             drone_id=self.drone.id,
             dock_id=dock.id,
             pilot_id=self.owner_pilot.id,
+            mission_options={
+                "waylinePrecisionType": 0,
+                "rthMode": 0,
+                "rthAltitude": 88,
+                "exitWaylineWhenRcLost": 0,
+                "outOfControlAction": 2,
+            },
         )
 
         with patch(
@@ -1255,8 +1374,18 @@ class InspectionV2ApiTests(TestCase):
         )
         self.assertEqual(create_job.call_args.kwargs["wayline_type"], 3)
         self.assertEqual(create_job.call_args.kwargs["dock_sn"], "DOCK-JOB-001")
+        self.assertEqual(create_job.call_args.kwargs["wayline_precision_type"], 0)
+        self.assertEqual(create_job.call_args.kwargs["rth_mode"], 0)
+        self.assertEqual(create_job.call_args.kwargs["rth_altitude"], 88)
+        self.assertEqual(create_job.call_args.kwargs["exit_wayline_when_rc_lost"], 0)
+        self.assertEqual(create_job.call_args.kwargs["out_of_control_action"], 2)
         self.assertEqual(execution.raw_request["wayline_type"], 3)
         self.assertEqual(execution.raw_request["task_type"], 0)
+        self.assertEqual(execution.raw_request["wayline_precision_type"], 0)
+        self.assertEqual(execution.raw_request["rth_mode"], 0)
+        self.assertEqual(execution.raw_request["rth_altitude"], 88)
+        self.assertEqual(execution.raw_request["exit_wayline_when_rc_lost"], 0)
+        self.assertEqual(execution.raw_request["out_of_control_action"], 2)
         self.assertEqual(execution.raw_request["live"]["video_id"], f"{self.drone.device_sn}/88-0-0/normal-0")
 
     def test_pilot2_mission_start_should_create_local_execution_without_flight_task(self):
@@ -3278,7 +3407,13 @@ class InspectionV2ApiTests(TestCase):
                     "height": 120.5,
                     "horizontal_speed": 8.2,
                     "attitude_head": 91.0,
-                    "battery": {"capacity_percent": 87},
+                    "total_flight_time": 128400,
+                    "total_flight_distance": 845210.5,
+                    "total_flight_sorties": 326,
+                    "battery": {
+                        "capacity_percent": 87,
+                        "batteries": [{"sn": "BAT-WORKER-001", "index": 0, "loop_times": 21}],
+                    },
                 },
             },
             connection=connection,
@@ -3290,9 +3425,90 @@ class InspectionV2ApiTests(TestCase):
         snapshot = DroneTelemetrySnapshot.objects.get(drone=self.drone)
         self.assertEqual(str(snapshot.latitude), "31.23040000")
         self.assertEqual(snapshot.battery_percent, 87)
+        self.assertEqual(snapshot.total_flight_time, 128400)
+        self.assertEqual(str(snapshot.total_flight_distance), "845210.50")
+        self.assertEqual(snapshot.total_flight_sorties, 326)
+        self.assertEqual(snapshot.battery_cycles, [{"sn": "BAT-WORKER-001", "index": 0, "loopTimes": 21}])
         health = MqttConnectionHealth.objects.get(dji_connection=connection)
         self.assertEqual(health.message_count, 1)
         self.assertEqual(health.status, "MESSAGE_RECEIVED")
+
+    def test_v2_dji_worker_should_persist_each_hms_alert_lifecycle(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        worker = V2DjiWorker()
+        topic = "thing/product/DOCK-HMS-001/events"
+        dock_alert = {
+            "code": "0x16100083",
+            "device_type": {"domain": 3, "type": 0, "sub_type": 0},
+            "in_the_sky": 0,
+            "imminent": 0,
+            "level": 2,
+            "module": 3,
+            "args": {},
+        }
+        aircraft_alert = {
+            "code": "0x16010001",
+            "device_type": {"domain": 0, "type": 91, "sub_type": 0},
+            "in_the_sky": 1,
+            "imminent": 1,
+            "level": 1,
+            "module": 3,
+            "args": {"sensor_index": 0},
+        }
+
+        reported_at = timezone.now()
+
+        def report(alerts):
+            nonlocal reported_at
+            reported_at += timedelta(seconds=1)
+            with patch("apps.resource_v2.mqtt.timezone.now", return_value=reported_at):
+                worker.handle_message(
+                    topic,
+                    {"method": "hms", "from": "DOCK-HMS-001", "data": {"list": alerts}},
+                    connection=connection,
+                )
+            return reported_at
+
+        first_report = report([dock_alert, aircraft_alert])
+        self.assertEqual(HmsAlert.objects.filter(resolved_at__isnull=True).count(), 2)
+        dock_lifecycle = HmsAlert.objects.get(code="0x16100083")
+        self.assertEqual(dock_lifecycle.first_reported_at, first_report)
+        self.assertEqual(dock_lifecycle.gateway_sn, "DOCK-HMS-001")
+        self.assertEqual(dock_lifecycle.device_domain, 3)
+        self.assertEqual(dock_lifecycle.raw_item, dock_alert)
+        self.assertEqual(
+            MqttLatestMessage.objects.get(dji_connection=connection, topic=topic).raw_payload["method"],
+            "hms",
+        )
+
+        repeated_report = report([dock_alert, aircraft_alert, dock_alert])
+        dock_lifecycle.refresh_from_db()
+        self.assertEqual(HmsAlert.objects.count(), 2)
+        self.assertEqual(dock_lifecycle.first_reported_at, first_report)
+        self.assertEqual(dock_lifecycle.last_reported_at, repeated_report)
+
+        resolved_at = report([aircraft_alert])
+        dock_lifecycle.refresh_from_db()
+        self.assertEqual(dock_lifecycle.resolved_at, resolved_at)
+        self.assertEqual(HmsAlert.objects.filter(resolved_at__isnull=True).count(), 1)
+
+        report([])
+        self.assertFalse(HmsAlert.objects.filter(resolved_at__isnull=True).exists())
+
+        recurring_at = report([dock_alert])
+        self.assertEqual(HmsAlert.objects.filter(code="0x16100083").count(), 2)
+        active_dock = HmsAlert.objects.get(code="0x16100083", resolved_at__isnull=True)
+        self.assertEqual(active_dock.first_reported_at, recurring_at)
+
+        for invalid_payload in (
+            {"method": "hms", "from": "DOCK-HMS-001", "data": {}},
+            {"method": "hms", "from": "DOCK-HMS-001", "data": {"list": {}}},
+            {"method": "hms", "from": "DOCK-HMS-001", "data": {"list": [{}]}},
+        ):
+            worker.handle_message(topic, invalid_payload, connection=connection)
+        active_dock.refresh_from_db()
+        self.assertIsNone(active_dock.resolved_at)
+        self.assertEqual(HmsAlert.objects.count(), 3)
 
     def test_v2_dji_worker_should_record_mqtt_addr_when_subscribed(self):
         connection = DjiConnection.objects.get(owner_department=self.owner_department)
@@ -3635,13 +3851,40 @@ class InspectionV2ApiTests(TestCase):
         ) as start_live:
             live_response = self.client.post(
                 "/api/v2/inspection/live/start",
-                {"droneId": self.drone.id, "videoId": f"{self.drone.device_sn}/88-0-0/normal-0", "urlType": 1},
+                {
+                    "droneId": self.drone.id,
+                    "videoId": f"{self.drone.device_sn}/88-0-0/normal-0",
+                    "urlType": 1,
+                    "videoQuality": 1,
+                },
                 format="json",
             )
 
         self.assertEqual(live_response.status_code, 200, getattr(live_response, "data", live_response.content))
         self.assertEqual(live_response.data["data"]["webrtc_url"], "https://live.example.test/webrtc")
-        start_live.assert_called_once_with(self.drone.device_sn, video_id=f"{self.drone.device_sn}/88-0-0/normal-0", url_type=1)
+        start_live.assert_called_once_with(
+            self.drone.device_sn,
+            video_id=f"{self.drone.device_sn}/88-0-0/normal-0",
+            url_type=1,
+            video_quality=1,
+        )
+
+    def test_live_start_should_require_video_quality(self):
+        self.authenticate(self.owner_dispatcher)
+
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.start_live") as start_live:
+            response = self.client.post(
+                "/api/v2/inspection/live/start",
+                {
+                    "droneId": self.drone.id,
+                    "videoId": f"{self.drone.device_sn}/88-0-0/normal-0",
+                    "urlType": 1,
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+        start_live.assert_not_called()
 
     def test_live_start_should_reject_snake_case_request_fields(self):
         self.authenticate(self.owner_dispatcher)
@@ -3669,6 +3912,21 @@ class InspectionV2ApiTests(TestCase):
         self.assertEqual(response.data["data"]["sn"], self.drone.device_sn)
         get_capacity.assert_called_once_with(self.drone.device_sn)
 
+    def test_live_capacity_should_query_dock_video_sources(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        dock = self.bind_dock(self.owner_department, self.owner_admin, "DOCK-LIVE-001", connection=connection)
+        self.authenticate(self.owner_dispatcher)
+
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.get_live_capacity",
+            return_value={"sn": dock.device_sn, "cameras_list": [{"index": "165-0-7"}]},
+        ) as get_capacity:
+            response = self.client.get("/api/v2/inspection/live/capacity", {"dockId": dock.id})
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        self.assertEqual(response.data["data"]["sn"], dock.device_sn)
+        get_capacity.assert_called_once_with(dock.device_sn)
+
     def test_live_switch_should_proxy_camel_case_video_type_to_dji(self):
         self.authenticate(self.owner_dispatcher)
         video_id = f"{self.drone.device_sn}/88-0-0/wide-0"
@@ -3682,6 +3940,245 @@ class InspectionV2ApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
         switch_live.assert_called_once_with(self.drone.device_sn, video_id=video_id, video_type="wide")
+
+    def test_live_start_should_control_dock_video_source(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        dock = self.bind_dock(self.owner_department, self.owner_admin, "DOCK-LIVE-START-001", connection=connection)
+        video_id = f"{dock.device_sn}/165-0-7/normal-0"
+        self.authenticate(self.owner_dispatcher)
+
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.start_live", return_value={}) as start_live:
+            response = self.client.post(
+                "/api/v2/inspection/live/start",
+                {"dockId": dock.id, "videoId": video_id, "urlType": 1, "videoQuality": 1},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        start_live.assert_called_once_with(
+            dock.device_sn,
+            video_id=video_id,
+            url_type=1,
+            video_quality=1,
+        )
+
+    def test_live_stop_update_and_switch_should_control_dock_video_source(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        dock = self.bind_dock(self.owner_department, self.owner_admin, "DOCK-LIVE-CONTROL-001", connection=connection)
+        video_id = f"{dock.device_sn}/165-0-7/normal-0"
+        self.authenticate(self.owner_dispatcher)
+        cases = [
+            ("stop", "stop_live", {}, {"video_id": video_id}),
+            ("update", "update_live", {"videoQuality": 4}, {"video_id": video_id, "video_quality": 4}),
+            ("switch", "switch_live", {"videoType": "normal"}, {"video_id": video_id, "video_type": "normal"}),
+        ]
+
+        for action, gateway_method, extra, expected in cases:
+            with self.subTest(action=action), patch(
+                f"apps.inspection_v2.views.DjiConnectionGateway.{gateway_method}", return_value={}
+            ) as gateway_call:
+                response = self.client.post(
+                    f"/api/v2/inspection/live/{action}",
+                    {"dockId": dock.id, "videoId": video_id, **extra},
+                    format="json",
+                )
+
+            self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+            gateway_call.assert_called_once_with(dock.device_sn, **expected)
+
+    def test_live_controls_should_reject_video_id_for_another_resource(self):
+        self.authenticate(self.owner_dispatcher)
+        cases = [
+            ("start", "start_live", {"urlType": 1, "videoQuality": 1}),
+            ("stop", "stop_live", {}),
+            ("update", "update_live", {"videoQuality": 1}),
+            ("switch", "switch_live", {"videoType": "normal"}),
+        ]
+
+        for action, gateway_method, extra in cases:
+            with self.subTest(action=action), patch(
+                f"apps.inspection_v2.views.DjiConnectionGateway.{gateway_method}"
+            ) as gateway_call:
+                response = self.client.post(
+                    f"/api/v2/inspection/live/{action}",
+                    {
+                        "droneId": self.drone.id,
+                        "videoId": "OTHER-SN/88-0-0/normal-0",
+                        **extra,
+                    },
+                    format="json",
+                )
+
+            self.assertEqual(response.status_code, 409, getattr(response, "data", response.content))
+            gateway_call.assert_not_called()
+
+    def test_live_controls_should_reject_invalid_enums_and_malformed_video_id(self):
+        self.authenticate(self.owner_dispatcher)
+        video_id = f"{self.drone.device_sn}/88-0-0/normal-0"
+        cases = [
+            ("start", {"droneId": self.drone.id, "videoId": video_id, "urlType": 5, "videoQuality": 1}),
+            ("update", {"droneId": self.drone.id, "videoId": video_id, "videoQuality": -1}),
+            ("switch", {"droneId": self.drone.id, "videoId": video_id, "videoType": "pano"}),
+            ("stop", {"droneId": self.drone.id, "videoId": f"{self.drone.device_sn}/normal-0"}),
+            ("stop", {"droneId": self.drone.id, "videoId": f"{self.drone.device_sn}//normal-0"}),
+        ]
+
+        for action, payload in cases:
+            with self.subTest(action=action, payload=payload):
+                response = self.client.post(f"/api/v2/inspection/live/{action}", payload, format="json")
+                self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+
+    def test_live_camera_change_should_proxy_dock_fpv_position_and_audit(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        dock = self.bind_dock(self.owner_department, self.owner_admin, "DOCK-LIVE-CAMERA-001", connection=connection)
+        video_id = f"{dock.device_sn}/165-0-7/normal-0"
+        self.authenticate(self.owner_dispatcher)
+
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.change_live_camera", return_value={}) as change_camera:
+            response = self.client.post(
+                "/api/v2/inspection/live/camera-change",
+                {"dockId": dock.id, "videoId": video_id, "cameraPosition": 1},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, getattr(response, "data", response.content))
+        change_camera.assert_called_once_with(dock.device_sn, video_id=video_id, camera_position=1)
+        self.assertTrue(
+            V2AuditLog.objects.filter(
+                action="camera_change_live_stream",
+                target_type="live_stream",
+                target_id=str(dock.id),
+                resource_type=ResourceType.DOCK,
+                resource_object_id=dock.id,
+            ).exists()
+        )
+
+    def test_live_camera_change_should_reject_invalid_position_and_video_id(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        dock = self.bind_dock(self.owner_department, self.owner_admin, "DOCK-LIVE-CAMERA-VALIDATE-001", connection=connection)
+        self.authenticate(self.owner_dispatcher)
+
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.change_live_camera") as change_camera:
+            invalid_position = self.client.post(
+                "/api/v2/inspection/live/camera-change",
+                {"dockId": dock.id, "videoId": f"{dock.device_sn}/165-0-7/normal-0", "cameraPosition": 2},
+                format="json",
+            )
+            mismatched_sn = self.client.post(
+                "/api/v2/inspection/live/camera-change",
+                {"dockId": dock.id, "videoId": "OTHER-SN/165-0-7/normal-0", "cameraPosition": 0},
+                format="json",
+            )
+
+        self.assertEqual(invalid_position.status_code, 400, getattr(invalid_position, "data", invalid_position.content))
+        self.assertEqual(mismatched_sn.status_code, 409, getattr(mismatched_sn, "data", mismatched_sn.content))
+        change_camera.assert_not_called()
+
+    def test_live_camera_change_should_reject_offline_or_unusable_dock_before_upstream(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        dock = self.bind_dock(self.owner_department, self.owner_admin, "DOCK-LIVE-CAMERA-DENY-001", connection=connection)
+        payload = {"dockId": dock.id, "videoId": f"{dock.device_sn}/165-0-7/normal-0", "cameraPosition": 0}
+        self.authenticate(self.owner_dispatcher)
+        dock.online_status = False
+        dock.save(update_fields=["online_status", "updated_at"])
+
+        with patch("apps.inspection_v2.views.DjiConnectionGateway.change_live_camera") as change_camera:
+            offline_response = self.client.post("/api/v2/inspection/live/camera-change", payload, format="json")
+
+            dock.online_status = True
+            dock.save(update_fields=["online_status", "updated_at"])
+            group = ResourceShareGroup.objects.create(owner_department=self.owner_department, name="Dock 直播共享")
+            ResourceShareGroupTargetDepartment.objects.create(share_group=group, department=self.other_department)
+            ResourceSharePermission.objects.create(
+                share_group=group,
+                resource_type=ResourceType.DOCK,
+                resource_object_id=dock.id,
+                permissions=["view", "monitor"],
+            )
+            self.authenticate(self.other_dispatcher)
+            denied_response = self.client.post("/api/v2/inspection/live/camera-change", payload, format="json")
+
+        self.assertEqual(offline_response.status_code, 409, getattr(offline_response, "data", offline_response.content))
+        self.assertEqual(denied_response.status_code, 403, getattr(denied_response, "data", denied_response.content))
+        change_camera.assert_not_called()
+
+    def test_live_camera_change_should_map_upstream_error_without_success_audit(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        dock = self.bind_dock(self.owner_department, self.owner_admin, "DOCK-LIVE-CAMERA-FAIL-001", connection=connection)
+        self.authenticate(self.owner_dispatcher)
+
+        with patch(
+            "apps.inspection_v2.views.DjiConnectionGateway.change_live_camera",
+            side_effect=DjiGatewayUpstreamError("camera change failed", status_code=200, data={"code": 513014}),
+        ):
+            response = self.client.post(
+                "/api/v2/inspection/live/camera-change",
+                {
+                    "dockId": dock.id,
+                    "videoId": f"{dock.device_sn}/165-0-7/normal-0",
+                    "cameraPosition": 1,
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 502, getattr(response, "data", response.content))
+        self.assertFalse(V2AuditLog.objects.filter(action="camera_change_live_stream", target_id=str(dock.id)).exists())
+
+    def test_live_control_contracts_should_reject_missing_or_irrelevant_fields(self):
+        self.authenticate(self.owner_dispatcher)
+        video_id = f"{self.drone.device_sn}/88-0-0/normal-0"
+        cases = [
+            ("/api/v2/inspection/live/start", {"droneId": self.drone.id, "videoId": video_id, "urlType": 1}),
+            ("/api/v2/inspection/live/stop", {"droneId": self.drone.id}),
+            ("/api/v2/inspection/live/update", {"droneId": self.drone.id, "videoId": video_id}),
+            ("/api/v2/inspection/live/switch", {"droneId": self.drone.id, "videoId": video_id}),
+            (
+                "/api/v2/inspection/live/start",
+                {"droneId": self.drone.id, "videoId": video_id, "urlType": 1, "videoQuality": 1, "videoType": "normal"},
+            ),
+            (
+                "/api/v2/inspection/live/stop",
+                {"droneId": self.drone.id, "videoId": video_id, "videoQuality": 1},
+            ),
+            (
+                "/api/v2/inspection/live/update",
+                {"droneId": self.drone.id, "videoId": video_id, "videoQuality": 1, "urlType": 1},
+            ),
+            (
+                "/api/v2/inspection/live/switch",
+                {"droneId": self.drone.id, "videoId": video_id, "videoType": "normal", "videoQuality": 1},
+            ),
+        ]
+
+        for path, payload in cases:
+            with self.subTest(path=path, payload=payload):
+                response = self.client.post(path, payload, format="json")
+                self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+
+    def test_live_resource_selection_should_validate_every_resource_aware_endpoint(self):
+        connection = DjiConnection.objects.get(owner_department=self.owner_department)
+        dock = self.bind_dock(self.owner_department, self.owner_admin, "DOCK-LIVE-XOR-001", connection=connection)
+        self.authenticate(self.owner_dispatcher)
+        video_id = f"{self.drone.device_sn}/88-0-0/normal-0"
+        controls = [
+            ("start", {"videoId": video_id, "urlType": 1, "videoQuality": 1}),
+            ("stop", {"videoId": video_id}),
+            ("update", {"videoId": video_id, "videoQuality": 1}),
+            ("switch", {"videoId": video_id, "videoType": "normal"}),
+        ]
+
+        for action, payload in controls:
+            for resources in ({}, {"droneId": self.drone.id, "dockId": dock.id}, {"droneId": 0}):
+                with self.subTest(action=action, resources=resources):
+                    response = self.client.post(
+                        f"/api/v2/inspection/live/{action}", {**payload, **resources}, format="json"
+                    )
+                    self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
+
+        for resources in ({}, {"droneId": self.drone.id, "dockId": dock.id}, {"dockId": 0}):
+            with self.subTest(action="capacity", resources=resources):
+                response = self.client.get("/api/v2/inspection/live/capacity", resources)
+                self.assertEqual(response.status_code, 400, getattr(response, "data", response.content))
 
     def test_camera_actions_should_translate_supported_dji_payload_commands_and_record_operation(self):
         connection = DjiConnection.objects.get(owner_department=self.owner_department)
@@ -3960,7 +4457,12 @@ class InspectionV2ApiTests(TestCase):
         self.authenticate(no_control_user)
         response = self.client.post(
             "/api/v2/inspection/live/start",
-            {"droneId": self.drone.id, "videoId": f"{self.drone.device_sn}/88-0-0/normal-0"},
+            {
+                "droneId": self.drone.id,
+                "videoId": f"{self.drone.device_sn}/88-0-0/normal-0",
+                "urlType": 1,
+                "videoQuality": 1,
+            },
             format="json",
         )
         self.assertEqual(response.status_code, 403, getattr(response, "data", response.content))

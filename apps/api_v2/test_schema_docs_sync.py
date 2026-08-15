@@ -215,6 +215,36 @@ class ApiV2DocsSyncTests(TestCase):
             },
         )
         self._assert_properties_include(
+            schema["components"]["schemas"]["DroneLatestTelemetryRead"]["properties"],
+            {"totalFlightTime", "totalFlightDistance", "totalFlightSorties", "batteryCycles", "updatedAt"},
+        )
+        self._assert_properties_include(
+            self._list_item_properties(schema, path="/api/v2/resource/dji-connections/{id}/hms-alerts"),
+            {
+                "id",
+                "djiConnectionId",
+                "gatewaySn",
+                "fromSn",
+                "alarmKey",
+                "code",
+                "rawItem",
+                "firstReportedAt",
+                "lastReportedAt",
+                "resolvedAt",
+                "active",
+                "updatedAt",
+            },
+        )
+        hms_parameters = {
+            item["name"]
+            for item in schema["paths"]["/api/v2/resource/dji-connections/{id}/hms-alerts"]["get"]["parameters"]
+            if item.get("in") == "query"
+        }
+        self._assert_properties_include(
+            hms_parameters,
+            {"gatewaySn", "fromSn", "code", "level", "active", "firstReportedAfter", "firstReportedBefore", "pageNum", "pageSize"},
+        )
+        self._assert_properties_include(
             self._request_body_properties(
                 schema,
                 path="/api/v2/resource/cameras",
@@ -280,7 +310,33 @@ class ApiV2DocsSyncTests(TestCase):
         self.assertNotIn("defaultSpeed", route_multipart)
         self._assert_properties_include(
             self._list_item_properties(schema, path="/api/v2/inspection/missions"),
-            {"id", "routeSnapshot", "droneId", "pilot", "status"},
+            {
+                "id",
+                "routeSnapshot",
+                "droneId",
+                "pilot",
+                "status",
+                "waylinePrecisionType",
+                "rthMode",
+                "rthAltitude",
+                "exitWaylineWhenRcLost",
+                "outOfControlAction",
+            },
+        )
+        self._assert_properties_include(
+            self._request_body_properties(
+                schema,
+                path="/api/v2/inspection/missions",
+                method="post",
+                content_type="application/json",
+            ),
+            {
+                "waylinePrecisionType",
+                "rthMode",
+                "rthAltitude",
+                "exitWaylineWhenRcLost",
+                "outOfControlAction",
+            },
         )
         self._assert_properties_include(
             self._request_body_properties(
@@ -299,6 +355,15 @@ class ApiV2DocsSyncTests(TestCase):
                 content_type="application/json",
             ),
             {"videoId", "videoType"},
+        )
+        self._assert_properties_include(
+            self._request_body_properties(
+                schema,
+                path="/api/v2/inspection/live/camera-change",
+                method="post",
+                content_type="application/json",
+            ),
+            {"dockId", "videoId", "cameraPosition"},
         )
         self._assert_properties_include(
             self._request_body_properties(
@@ -414,6 +479,7 @@ class ApiV2DocsSyncTests(TestCase):
             ("post", "/api/v2/inspection/live/stop"): ("DJI 上游调用", "live stream stop"),
             ("post", "/api/v2/inspection/live/update"): ("DJI 上游调用", "live stream update"),
             ("post", "/api/v2/inspection/live/switch"): ("DJI 上游调用", "live stream switch"),
+            ("post", "/api/v2/inspection/live/camera-change"): ("DJI 上游调用", "live_camera_change", "cameraPosition"),
             ("post", "/api/v2/inspection/camera/actions"): ("DJI 上游调用", "payload authority", "payload commands"),
             ("post", "/api/v2/inspection/flight-records/{id}/refresh-media"): ("DJI 上游调用", "media files", "djiJobId"),
             ("post", "/api/v2/inspection/media-files/{id}/refresh-url"): ("DJI 上游调用", "signed URL", "urlType"),

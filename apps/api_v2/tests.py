@@ -136,6 +136,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/resource/dji-connections/{id}",
             "/api/v2/resource/dji-connections/{id}/discover",
             "/api/v2/resource/dji-connections/{id}/mqtt-messages/latest",
+            "/api/v2/resource/dji-connections/{id}/hms-alerts",
             "/api/v2/resource/drones",
             "/api/v2/resource/drones/{id}",
             "/api/v2/resource/docks",
@@ -177,6 +178,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             "/api/v2/inspection/live/stop",
             "/api/v2/inspection/live/update",
             "/api/v2/inspection/live/switch",
+            "/api/v2/inspection/live/camera-change",
             "/api/v2/inspection/camera/actions",
             "/api/v2/inspection/flight-records",
             "/api/v2/inspection/flight-records/{id}",
@@ -281,6 +283,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("GET", "/api/v2/resource/dji-connections"),
             ("GET", "/api/v2/resource/dji-connections/mqtt-health"),
             ("GET", "/api/v2/resource/dji-connections/{id}/mqtt-messages/latest"),
+            ("GET", "/api/v2/resource/dji-connections/{id}/hms-alerts"),
             ("GET", "/api/v2/resource/docks"),
             ("GET", "/api/v2/resource/drones"),
             ("GET", "/api/v2/resource/gateways"),
@@ -348,6 +351,7 @@ class ApiV2SchemaBoundaryTests(TestCase):
             ("POST", "/api/v2/inspection/live/stop"),
             ("POST", "/api/v2/inspection/live/switch"),
             ("POST", "/api/v2/inspection/live/update"),
+            ("POST", "/api/v2/inspection/live/camera-change"),
             ("POST", "/api/v2/inspection/camera/actions"),
             ("POST", "/api/v2/inspection/media-files/{id}/refresh-url"),
             ("POST", "/api/v2/inspection/missions"),
@@ -479,6 +483,19 @@ class ApiV2SchemaBoundaryTests(TestCase):
         )
         self.assertIn("videoType", live_switch_body)
         self.assertNotIn("video_type", live_switch_body)
+
+        live_camera_change_body = self._request_body_properties(
+            schema,
+            path="/api/v2/inspection/live/camera-change",
+            method="post",
+            content_type="application/json",
+        )
+        self.assertTrue({"dockId", "videoId", "cameraPosition"}.issubset(live_camera_change_body))
+        capacity_parameters = {
+            parameter["name"]
+            for parameter in schema["paths"]["/api/v2/inspection/live/capacity"]["get"]["parameters"]
+        }
+        self.assertTrue({"droneId", "dockId"}.issubset(capacity_parameters))
 
     def test_v2_docs_should_be_available(self):
         response = self.client.get("/api/v2/docs/")

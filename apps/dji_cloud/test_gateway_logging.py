@@ -65,7 +65,10 @@ class DjiGatewayExternalLoggingTests(SimpleTestCase):
                 dock_sn="DOCK-SN-001",
                 wayline_type=3,
                 task_type=0,
+                wayline_precision_type=0,
+                rth_mode=0,
                 rth_altitude=30,
+                exit_wayline_when_rc_lost=0,
                 out_of_control_action=0,
             )
 
@@ -79,7 +82,10 @@ class DjiGatewayExternalLoggingTests(SimpleTestCase):
                 "dock_sn": "DOCK-SN-001",
                 "wayline_type": 3,
                 "task_type": 0,
+                "wayline_precision_type": 0,
+                "rth_mode": 0,
                 "rth_altitude": 30,
+                "exit_wayline_when_rc_lost": 0,
                 "out_of_control_action": 0,
             },
         )
@@ -97,6 +103,9 @@ class DjiGatewayExternalLoggingTests(SimpleTestCase):
             dock_sn="DOCK-SN-001",
             wayline_type=None,
             task_type=None,
+            wayline_precision_type=None,
+            rth_mode=None,
             rth_altitude=None,
+            exit_wayline_when_rc_lost=None,
             out_of_control_action=None,
         )

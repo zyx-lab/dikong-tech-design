@@ -98,6 +98,7 @@
 | `POST /api/v2/resource/dji-connections/{id}/discover` | 登录 DJI 并发现无人机、机场、网关、负载。 |
 | `GET /api/v2/resource/dji-connections/mqtt-health` | 查询 MQTT worker 健康状态。 |
 | `GET /api/v2/resource/dji-connections/{id}/mqtt-messages/latest` | 查询指定连接的最新 MQTT 透传消息。 |
+| `GET /api/v2/resource/dji-connections/{id}/hms-alerts` | 分页查询指定连接的 HMS 告警生命周期。 |
 | `POST /api/v2/resource/bindings` | 把发现资源绑定到部门。 |
 | `DELETE /api/v2/resource/bindings/{id}` | 解绑资源。 |
 | `GET /api/v2/resource/drones` | 查询当前账号可见无人机。 |
@@ -153,8 +154,9 @@
 | `POST /api/v2/inspection/live/stop` | 停止直播。 |
 | `POST /api/v2/inspection/live/update` | 更新直播质量等参数。 |
 | `POST /api/v2/inspection/live/switch` | 切换直播镜头。 |
+| `POST /api/v2/inspection/live/camera-change` | 切换 Dock 舱内/舱外 FPV 相机。 |
 | `POST /api/v2/inspection/camera/actions` | 相机拍照、录像、变焦、点选瞄准和云台复位。 |
-| `GET /api/v2/inspection/drc/capabilities?dockId=` | 查询 Dock 3、子无人机和当前 DRC 可用性；DRC 页面用它代替不存在的 Dock cockpit 接口。 |
+| `GET /api/v2/inspection/drc/capabilities` | 查询 Dock 3、子无人机和当前 DRC 可用性；查询参数为 `dockId`。 |
 | `POST /api/v2/inspection/drc/actions` | 执行一键起飞和 FlyTo 开始、更新、停止。 |
 | `POST /api/v2/inspection/drc/dock-actions` | 开关调试模式和舱盖。 |
 | `POST /api/v2/inspection/drc/connect` | 创建由本项目托管的短期 DRC 会话。 |
@@ -324,7 +326,7 @@ const payload = await response.json();
 await peer.setRemoteDescription({ type: "answer", sdp: payload.data.answerSdp });
 ```
 
-资源列表和详情都会返回 `djiConnectionId`、`djiConnectionName`。前端展示无人机、机场、网关或负载时，可以直接显示资源所属 DJI 连接；排查 MQTT 或 DJI 上游问题时，也可以用这个 ID 去查 `mqtt-health` 和 `mqtt-messages/latest`。
+资源列表和详情都会返回 `djiConnectionId`、`djiConnectionName`。无人机的 `latestTelemetry` 还会返回 `totalFlightTime/totalFlightDistance/totalFlightSorties/batteryCycles/reportedAt/updatedAt`；累计字段未知时为 `null`，`batteryCycles` 始终为数组。前端展示无人机、机场、网关或负载时，可以直接显示资源所属 DJI 连接；排查 MQTT 或 DJI 上游问题时，也可以用这个 ID 去查 `mqtt-health` 和 `mqtt-messages/latest`。
 
 ## MQTT
 
@@ -334,7 +336,10 @@ DJI MQTT 由后端 worker 连接，前端不直接连接 DJI broker。
 
 1. `GET /api/v2/resource/dji-connections/mqtt-health` 判断 worker 是否连接、订阅和收包。
 2. `GET /api/v2/resource/dji-connections/{id}/mqtt-messages/latest?deviceSn=<SN>` 查询设备最新消息。
-3. WebSocket `/ws/v2/dji/mqtt?token=<accessToken>` 用于实时订阅。
+3. 部门管理员用 `GET /api/v2/resource/dji-connections/{id}/hms-alerts` 查询告警历史，可按 `gatewaySn/fromSn/code/level/active/firstReportedAfter/firstReportedBefore` 过滤，并用 `pageNum/pageSize` 分页。
+4. WebSocket `/ws/v2/dji/mqtt?token=<accessToken>` 用于实时订阅。
+
+HMS 接口中的 `active=true` 表示告警仍未解除，`resolvedAt` 是后端收到后续全量列表并观察到告警消失的时间。该接口当前仅允许平台超管和连接所属部门管理员调用。
 
 常用 `topicKind`：
 
@@ -378,6 +383,7 @@ POST /api/v1/manage/token/refresh
 | `POST /api/v2/inspection/live/stop` | 停止 DJI live stream | 成功后停止播放器并清理直播状态 |
 | `POST /api/v2/inspection/live/update` | 更新 DJI live stream | 常用于调整 `videoQuality` |
 | `POST /api/v2/inspection/live/switch` | 切换 DJI live stream 镜头 | `videoType` 用 `wide/zoom/ir/normal` |
+| `POST /api/v2/inspection/live/camera-change` | 切换 Dock 3 FPV 位置 | `cameraPosition`：`0=舱内`、`1=舱外` |
 | `POST /api/v2/inspection/camera/actions` | 抢占 payload authority 后下发 payload commands | 用本地 `droneId/executorId` 和 capacity 中的 `payloadIndex` |
 | `POST /api/v2/inspection/drc/actions` | 调用 DJI 一键起飞和 FlyTo services 接口 | 只传本地 `dockId` 和动作契约字段 |
 | `POST /api/v2/inspection/drc/dock-actions` | 调用远程调试 `debug_mode_open/cover_open/cover_close/debug_mode_close` | 只传本地 `dockId` 和白名单 `action`；舱盖动作不要求先解析子无人机 |
@@ -492,7 +498,7 @@ POST /api/v1/manage/live/streams/update
 POST /api/v1/manage/live/streams/switch
 ```
 
-前端传本地 `droneId`，后端映射成 DJI `device_sn`。`videoId` 使用 DJI 格式 `{droneSn}/{payloadIndex}/{videoIndex}`，其中 `payloadIndex` 和 `videoIndex` 都来自 capacity。直播响应基本透传 DJI 结果，播放器地址优先按实际返回字段选择，例如 `play_url`、`webrtc_url`、`hls_url`、`rtmp_url` 或 `url`。
+前端传本地 `droneId` 或 `dockId`，后端映射成 DJI `device_sn`。`videoId` 使用 DJI 格式 `{deviceSn}/{cameraIndex}/{videoIndex}`，其中 `cameraIndex` 和 `videoIndex` 都来自 capacity。直播响应基本透传 DJI 结果，播放器地址优先按实际返回字段选择，例如 `play_url`、`webrtc_url`、`hls_url`、`rtmp_url` 或 `url`。
 
 相机与云台对应的 DJI 参考路径：
 
@@ -576,9 +582,16 @@ POST /api/v2/inspection/media-files/{id}/refresh-url
   "dockId": 2,
   "pilotAccountProfileId": 3,
   "scheduledAt": null,
+  "waylinePrecisionType": 1,
+  "rthMode": 1,
+  "rthAltitude": 30,
+  "exitWaylineWhenRcLost": 1,
+  "outOfControlAction": 0,
   "remark": ""
 }
 ```
+
+这五个航线任务参数只支持 `dockId` 模式：`waylinePrecisionType=0|1`、`rthMode=0|1`、`rthAltitude=20..500`、`exitWaylineWhenRcLost=0|1`、`outOfControlAction=0|1|2`。省略时分别使用 `1/1/30/1/0`；编辑时省略会保留原值。Pilot2 任务显式提交任一参数会返回 400。
 
 `executorId` 是本系统本地 Pilot2 执行端/遥控器资源 ID，对应后端 `GatewayResource.id`，也就是 `GET /api/v2/resource/gateways` 返回列表项里的 `id`。它不是飞手 ID、无人机 ID、机场 ID、DJI workspace ID，也不是 DJI 原始设备 SN。代码里任务表字段 `InspectionMission.executor` 指向 `GatewayResource`；资源类型枚举里 `gateway` 的含义是“执行端/网关”。
 
@@ -611,11 +624,12 @@ Dock 自动执行时，后端会读取机场资源的 `deviceSn`，并把它作�
 2. `POST /api/v2/inspection/live/start` 启动直播。
 3. `POST /api/v2/inspection/live/update` 调整质量等参数。
 4. `POST /api/v2/inspection/live/switch` 切换视频源。
-5. `POST /api/v2/inspection/live/stop` 停止直播。
+5. Dock FPV 需要切换舱内/舱外时调用 `POST /api/v2/inspection/live/camera-change`。
+6. `POST /api/v2/inspection/live/stop` 停止直播。
 
 直播接口会调用 DJI 上游。失败时优先展示 `msg`，并保留当前页面状态，便于用户重试。
 
-直播接口使用本地 `droneId`，后端会映射为 DJI `drone_sn`。`videoId` 使用 DJI 格式 `{drone_sn}/{payload_index}/{video_type}-0`；`payload_index` 可从 capacity 返回的 `cameras_list[].index` 获取。切换广角、变焦或红外镜头时调用 `POST /api/v2/inspection/live/switch`，请求里传 `videoType=wide|zoom|ir`，后端会转成 DJI 上游需要的 `video_type`。
+capacity 和 start/stop/update/switch 使用本地 `droneId` 或 `dockId`，两者必须二选一；后端会映射为对应 DJI SN。`videoId` 使用 DJI 格式 `{device_sn}/{camera_index}/{video_index}`，从 capacity 返回的 `cameras_list[].index` 和 `videos_list[].index` 组装。切换广角、变焦、红外或默认镜头时调用 `/live/switch`，传 `videoType=wide|zoom|ir|normal`。切换 Dock 舱内/舱外 FPV 时调用 `/live/camera-change`，传 `dockId`、`videoId` 和 `cameraPosition=0|1`。
 
 ## 相机与云台控制
 

@@ -68,7 +68,10 @@ class DjiGateway:
 
     DEFAULT_WAYLINE_TYPE = 0
     DEFAULT_TASK_TYPE = 0
+    DEFAULT_WAYLINE_PRECISION_TYPE = 1
+    DEFAULT_RTH_MODE = 1
     DEFAULT_RTH_ALTITUDE = 30
+    DEFAULT_EXIT_WAYLINE_WHEN_RC_LOST = 1
     DEFAULT_OUT_OF_CONTROL_ACTION = 0
 
     def __init__(
@@ -219,6 +222,11 @@ class DjiGateway:
         payload = {"device_sn": device_sn}
         payload.update(kwargs)
         return self._request_json("POST", "/api/v1/manage/live/streams/switch", data=payload).data
+
+    def change_live_camera(self, device_sn: str, **kwargs):
+        payload = {"device_sn": device_sn}
+        payload.update(kwargs)
+        return self._request_json("POST", "/api/v1/manage/live/streams/camera-change", data=payload).data
 
     def grab_payload_authority(self, gateway_sn: str, payload_index: str):
         return self._request_json(
@@ -411,7 +419,10 @@ class DjiGateway:
         dock_sn: str | None = None,
         wayline_type: int | None = None,
         task_type: int | None = None,
+        wayline_precision_type: int | None = None,
+        rth_mode: int | None = None,
         rth_altitude: int | None = None,
+        exit_wayline_when_rc_lost: int | None = None,
         out_of_control_action: int | None = None,
     ):
         workspace_id = self._workspace_id()
@@ -421,7 +432,16 @@ class DjiGateway:
             "dock_sn": dock_sn or "",
             "wayline_type": self.DEFAULT_WAYLINE_TYPE if wayline_type is None else int(wayline_type),
             "task_type": self.DEFAULT_TASK_TYPE if task_type is None else int(task_type),
+            "wayline_precision_type": (
+                self.DEFAULT_WAYLINE_PRECISION_TYPE if wayline_precision_type is None else int(wayline_precision_type)
+            ),
+            "rth_mode": self.DEFAULT_RTH_MODE if rth_mode is None else int(rth_mode),
             "rth_altitude": self.DEFAULT_RTH_ALTITUDE if rth_altitude is None else int(rth_altitude),
+            "exit_wayline_when_rc_lost": (
+                self.DEFAULT_EXIT_WAYLINE_WHEN_RC_LOST
+                if exit_wayline_when_rc_lost is None
+                else int(exit_wayline_when_rc_lost)
+            ),
             "out_of_control_action": (
                 self.DEFAULT_OUT_OF_CONTROL_ACTION if out_of_control_action is None else int(out_of_control_action)
             ),
@@ -445,7 +465,10 @@ class DjiGateway:
         dock_sn: str | None = None,
         wayline_type: int | None = None,
         task_type: int | None = None,
+        wayline_precision_type: int | None = None,
+        rth_mode: int | None = None,
         rth_altitude: int | None = None,
+        exit_wayline_when_rc_lost: int | None = None,
         out_of_control_action: int | None = None,
     ):
         return self.create_dock_flight_task(
@@ -454,7 +477,10 @@ class DjiGateway:
             dock_sn=dock_sn,
             wayline_type=wayline_type,
             task_type=task_type,
+            wayline_precision_type=wayline_precision_type,
+            rth_mode=rth_mode,
             rth_altitude=rth_altitude,
+            exit_wayline_when_rc_lost=exit_wayline_when_rc_lost,
             out_of_control_action=out_of_control_action,
         )
 

@@ -251,6 +251,13 @@ class MockDjiState:
                 return None
             return {}
 
+    def change_live_camera(self, payload: dict) -> dict | None:
+        with self._lock:
+            device_sn, _ = self._resolve_live_device(payload)
+            if not device_sn or device_sn not in self.bound_device_sns:
+                return None
+            return {}
+
     def set_payload_authority_error(self, *, gateway_sn: str, payload_index: str, code: str = "E0001", msg: str = "mock payload authority failed"):
         with self._lock:
             self.payload_authority_errors[(gateway_sn, payload_index)] = {"code": code, "msg": msg}
