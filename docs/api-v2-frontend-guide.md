@@ -35,6 +35,92 @@
 6. 资源页面按“DJI 连接 -> discover 发现资源 -> bindings 绑定资源 -> drones/docks/gateways/payloads 列表”接。
 7. 巡检页面按“上传 KMZ 航线 -> 选择无人机 -> 选择 `dockId` 或 `executorId` -> 创建任务 -> preflight-check -> start -> active-flights/telemetry/live/camera -> complete/cancel/fail/abort -> flight-records/media-files”接。`dockId` 是机场自动执行，会创建 DJI wayline flight task；`executorId` 是 Pilot2 手动执行，不会调用 `/flight-tasks`。
 
+## 前端最小实现
+
+下面的代码是框架无关的 JavaScript，直接替换页面自己的状态管理即可。不要把 DJI token、连接密码或 MQTT 地址放进浏览器。
+
+### 1. 统一请求封装
+
+```javascript
+let accessToken = localStorage.getItem("accessToken");
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...options.headers,
+    },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.code !== "00000") {
+    const error = new Error(body.msg || `请求失败 (${response.status})`);
+    error.status = response.status;
+    error.code = body.code;
+    throw error;
+  }
+  return body.data;
+}
+
+async function login(username, password) {
+  const data = await api("/api/v2/iam/session/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+  accessToken = data.accessToken;
+  localStorage.setItem("accessToken", accessToken);
+  localStorage.setItem("refreshToken", data.refreshToken);
+  return data;
+}
+```
+
+页面启动时按 `login -> me/context -> menus/current -> me/profile` 调用。`401` 先 refresh token，`403` 显示“没有权限”，`404` 显示“资源不存在”，`502` 显示“DJI 服务暂不可用”；不要把后端堆栈展示给用户。
+
+### 2. 无人机属性卡片
+
+```javascript
+const { list } = await api("/api/v2/resource/drones?pageNum=1&pageSize=20");
+const cards = list.map(drone => {
+  const t = drone.latestTelemetry;
+  return {
+    name: drone.name || drone.sn,
+    battery: t?.batteryPercent == null ? "未知" : `${t.batteryPercent}%`,
+    flightTime: t?.totalFlightTime == null ? "未知" : `${t.totalFlightTime}s`,
+    distance: t?.totalFlightDistance == null ? "未知" : `${t.totalFlightDistance}m`,
+    sorties: t?.totalFlightSorties ?? "未知",
+    batteryCycles: t?.batteryCycles ?? [],
+    updatedAt: t?.updatedAt || null,
+  };
+});
+```
+
+`latestTelemetry` 为 `null` 时显示“暂无遥测”；累计字段为 `null` 时显示“未知”，不要转换成 `0`。`totalFlightDistance` 是字符串，前端按字符串展示即可。`updatedAt` 是后端接收时间，可用于显示“最后同步时间”；不要用它冒充 DJI 的 `reportedAt`。
+
+### 3. HMS 告警列表
+
+```javascript
+const query = new URLSearchParams({
+  pageNum: String(pageNum),
+  pageSize: "20",
+  ...(activeFilter === "all" ? {} : { active: String(activeFilter === "active") }),
+  ...(code ? { code } : {}),
+});
+const result = await api(
+  `/api/v2/resource/dji-connections/${connectionId}/hms-alerts?${query}`
+);
+// result.list: 告警行；result.total: 总条数
+```
+
+告警行使用 `active` 判断状态：`true` 显示“活动中”，`false` 显示“已解除”；解除时间取 `resolvedAt`。筛选时间使用 ISO 8601（例如 `2026-08-14T10:00:00+08:00`），非法筛选会返回 `400`。此接口只允许平台超管和连接所属部门管理员，普通账号不要在菜单中显示告警入口。
+
+### 4. 页面刷新与空状态
+
+- 列表请求显示 loading，成功后用 `list` 渲染；`total=0` 显示空状态，不要当成请求失败。
+- 设备可能暂时没有遥测或告警，这是正常业务状态；保留刷新按钮即可。
+- 任务启动前先调用 `preflight-check`，`canStart=false` 时展示 `blockingReasons`，不要直接调用 `start`。
+- 直播和相机 URL 只使用接口返回值，离开页面或任务结束时调用 stop 并清理播放器。
+
 ## 接口总览
 
 下面清单来自当前 `/api/v2/docs/schema/`。字段结构、枚举和请求示例以 Swagger 为准；这里用于让前端快速判断“哪个页面该调哪个接口”。
